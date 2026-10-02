@@ -44,7 +44,7 @@ docs/        API contract, acceptance tests, session checklist
 
 Runs everything with a fake 1C for the four companies, so no 1C or Windows is needed:
 
-* **VS Code / Codespaces:** *Terminal → Run Task… → Run demo (fake 1C)*, or `bash scripts/demo.sh` in the terminal.
+* **VS Code / Codespaces:** `npm run dev` in the terminal at the repo root (same as `bash scripts/demo.sh`), or *Terminal → Run Task… → Run demo (fake 1C)*.
 * Open port **5173** (in Codespaces: the **PORTS** tab → port 5173 → globe icon).
 * Log in as `owner@example.com` / `owner-password-1` (also `accountant@example.com` / `accountant-password-1`
   and `viewer@example.com` / `viewer-password-1`, who sees TEXMASH only).
