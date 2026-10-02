@@ -43,10 +43,17 @@ def sync_now(company_id: int, full: bool = False, user: User = Depends(require_w
 
 @router.get("/companies/{company_id}/counterparties")
 def search_counterparties(
-    company_id: int, q: str = "", limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    company_id: int,
+    q: str = "",
+    ref: str | None = None,
+    limit: int = 20,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     check_company(db, user, company_id)
     query = select(Counterparty).where(Counterparty.company_id == company_id, Counterparty.deleted.is_(False))
+    if ref:
+        query = query.where(Counterparty.ref_1c == ref)
     if q:
         query = query.where(or_(Counterparty.name.ilike(f"%{q}%"), Counterparty.inn.like(f"{q}%")))
     return [

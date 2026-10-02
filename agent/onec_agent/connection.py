@@ -33,10 +33,12 @@ class AgentConnection:
         self.config = config
         self.extension = extension
         self.stop_event = asyncio.Event()
+        self.connected = False
 
     async def run_forever(self) -> None:
         backoff = BACKOFF_START
         while not self.stop_event.is_set():
+            self.connected = False
             try:
                 await self.run_once()
                 backoff = BACKOFF_START
@@ -46,7 +48,8 @@ class AgentConnection:
                 backoff = BACKOFF_MAX if status in (401, 403) else next_backoff(backoff)
             except (OSError, ConnectionClosed, asyncio.TimeoutError) as e:
                 log.warning("[%s] connection lost: %r", self.config.name, e)
-                backoff = next_backoff(backoff)
+                # A drop after a good connection starts the backoff over; failed attempts grow it.
+                backoff = BACKOFF_START if self.connected else next_backoff(backoff)
             if self.stop_event.is_set():
                 break
             delay = backoff * (0.8 + 0.4 * random.random())
@@ -59,6 +62,7 @@ class AgentConnection:
     async def run_once(self) -> None:
         headers = {"Authorization": f"Bearer {self.config.agent_token}", "X-Agent-Version": VERSION}
         async with connect(self.config.backend_url, additional_headers=headers, open_timeout=20, ping_interval=None) as ws:
+            self.connected = True
             log.info("[%s] connected to %s", self.config.name, self.config.backend_url)
             await ws.send(json.dumps({"type": "hello", "version": VERSION}))
             queue: asyncio.Queue = asyncio.Queue()

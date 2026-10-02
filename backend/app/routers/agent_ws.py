@@ -82,7 +82,8 @@ async def agent_socket(ws: WebSocket):
         return
     await ws.accept()
 
-    r = aioredis.from_url(settings.redis_url, decode_responses=True)
+    # BLMOVE below blocks for up to 5 s; keep the socket timeout well above that.
+    r = aioredis.from_url(settings.redis_url, decode_responses=True, socket_timeout=30)
     ttl = settings.agent_heartbeat_seconds * 3
     await r.set(online_key(company_id), "1", ex=ttl)
     # Re-deliver commands left unanswered by a previous connection.
@@ -90,6 +91,9 @@ async def agent_socket(ws: WebSocket):
         pass
 
     in_flight: dict[str, dict] = {}
+    # Callbacks run in the background: they may send further commands (re-sync after a fix)
+    # whose replies this receiver must stay free to route.
+    callbacks: set[asyncio.Task] = set()
 
     async def sender():
         while True:
@@ -125,7 +129,9 @@ async def agent_socket(ws: WebSocket):
                 await r.rpush(result_key(message["id"]), json.dumps(reply))
                 await r.expire(result_key(message["id"]), 600)
                 if entry["envelope"].get("callback"):
-                    await run_in_threadpool(_dispatch_callback, company_id, entry["envelope"], reply)
+                    task = asyncio.create_task(run_in_threadpool(_dispatch_callback, company_id, entry["envelope"], reply))
+                    callbacks.add(task)
+                    task.add_done_callback(callbacks.discard)
 
     tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
     try:

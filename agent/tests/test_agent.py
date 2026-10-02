@@ -42,9 +42,13 @@ def test_commands_map_to_extension_endpoints():
     log = []
     ext = client(log)
     assert ext.execute("ping", {}) == {"ok": True, "data": {"version": "1.0.0", "base_name": "TEST_CRYSTAL"}}
-    reply = ext.execute("apply_fix", {"approval_id": "a1", "type": "repost"})
+    reply = ext.execute("apply_fix", {"approval_id": "a1", "type": "repost", "approved_by": "acc@example.com"})
     assert reply["ok"] and reply["data"]["after"] == {"x": 2}
     assert log[-1][0] == "POST" and json.loads(log[-1][3])["approval_id"] == "a1"
+
+    ext.execute("post_invoice", {"approval_id": "a2", "ref": "inv-1", "approved_by": "acc@example.com"})
+    assert log[-1][1].endswith("/invoices/inv-1/post")
+    assert json.loads(log[-1][3]) == {"approval_id": "a2", "approved_by": "acc@example.com"}
 
 
 def test_long_ref_lists_are_chunked_and_merged():

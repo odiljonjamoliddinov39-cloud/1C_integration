@@ -1,6 +1,7 @@
 """End-to-end over the real WebSocket + Redis: backend sends a command, the 'agent' answers."""
 
 import threading
+import time
 
 import pytest
 import redis
@@ -23,7 +24,7 @@ def real_redis(monkeypatch):
     r.flushdb()
     monkeypatch.setenv("REDIS_URL", REDIS_URL)
     get_settings.cache_clear()
-    gateway = agent_gateway.RedisAgentGateway(r)
+    gateway = agent_gateway.RedisAgentGateway(redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=30))
     agent_gateway.set_gateway(gateway)
     yield gateway
     agent_gateway.set_gateway(None)
@@ -58,6 +59,8 @@ def test_agent_round_trip_and_queued_write(client, db, real_redis):
         assert cmd["id"] == queued_id and cmd["command"] == "apply_fix"
         ws.send_json({"type": "result", "id": cmd["id"], "reply": {"ok": True, "data": {"before": {}, "after": {}}}})
 
+        # Stay idle past redis-py's default 5 s socket timeout: the socket must survive it.
+        time.sleep(6)
         result = {}
         caller = threading.Thread(target=lambda: result.update(data=real_redis.call(company.id, "ping", {}, timeout=10)))
         caller.start()

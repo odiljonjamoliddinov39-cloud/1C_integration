@@ -70,8 +70,9 @@ class ExtensionClient:
     def cmd_create_invoice(self, **payload) -> Any:
         return self._post("/invoices", payload)
 
-    def cmd_post_invoice(self, approval_id: str, ref: str) -> Any:
-        return self._post(f"/invoices/{ref}/post", {"approval_id": approval_id})
+    def cmd_post_invoice(self, approval_id: str, ref: str, **extra) -> Any:
+        # extra: approved_by and any future fields, passed to 1C for ЖурналИзмененийAI.
+        return self._post(f"/invoices/{ref}/post", {"approval_id": approval_id, **extra})
 
     def cmd_apply_fix(self, **payload) -> Any:
         return self._post("/fixes", payload)
