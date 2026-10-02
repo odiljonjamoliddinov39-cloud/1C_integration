@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+deploy/.env
+node_modules/
+web/dist/
+agent/build/
+agent/dist/
+*.spec.bak
+backups/
+.DS_Store
