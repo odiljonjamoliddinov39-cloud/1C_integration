@@ -6,6 +6,7 @@ import { AskBox } from "./components/AskBox";
 import { Layout } from "./components/Layout";
 import { PageHeader, Spinner } from "./components/ui";
 import "./index.css";
+import { I18nProvider, useT } from "./lib/i18n";
 import { SessionProvider, useSession } from "./lib/session";
 import { AdminPage } from "./pages/Admin";
 import { DashboardPage } from "./pages/Dashboard";
@@ -19,6 +20,16 @@ import { SettingsPage } from "./pages/Settings";
 function OwnerOnly({ children }: { children: ReactNode }) {
   const { isOwner } = useSession();
   return isOwner ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+function AskPage() {
+  const { t } = useT();
+  return (
+    <>
+      <PageHeader title={t("ask.title")} subtitle={t("ask.pageSubtitle")} />
+      <AskBox />
+    </>
+  );
 }
 
 function App() {
@@ -37,7 +48,7 @@ function App() {
         <Route path="invoices/new" element={<InvoiceFormPage />} />
         <Route path="invoices/bulk" element={<BulkInvoicesPage />} />
         <Route path="invoices/:id" element={<InvoiceFormPage />} />
-        <Route path="ask" element={<><PageHeader title="Ask AI" subtitle="Questions about the books, answered from the mirror with a read-only query." /><AskBox /></>} />
+        <Route path="ask" element={<AskPage />} />
         <Route path="admin" element={<OwnerOnly><AdminPage /></OwnerOnly>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -49,9 +60,11 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
-      <SessionProvider>
-        <App />
-      </SessionProvider>
+      <I18nProvider>
+        <SessionProvider>
+          <App />
+        </SessionProvider>
+      </I18nProvider>
     </BrowserRouter>
   </StrictMode>,
 );

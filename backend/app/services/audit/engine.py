@@ -26,6 +26,24 @@ from app.config import Settings, get_settings
 from app.models import AuditFinding, Company, Counterparty, Document, Item, LedgerEntry
 
 CRITICAL, HIGH, MEDIUM, LOW = "critical", "high", "medium", "low"
+
+# Finding messages are written in Russian, like the 1C documents they describe.
+DOC_TYPE_NAMES = {
+    "sale": "Реализация",
+    "purchase": "Поступление",
+    "invoice_out": "Счёт-фактура выданный",
+    "invoice_in": "Счёт-фактура полученный",
+    "cash_in": "ПКО",
+    "cash_out": "РКО",
+    "bank_in": "Поступление на р/с",
+    "bank_out": "Списание с р/с",
+    "operation": "Операция",
+}
+
+
+def pct(value) -> str:
+    """12.00 -> "12", 12.5 -> "12.5" for messages."""
+    return format(Decimal(str(value)).normalize(), "f")
 SEVERITY_ORDER = {CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3}
 
 
@@ -124,7 +142,7 @@ class AuditContext:
         return {d.ref_1c: d for d in self.documents}
 
     def doc_label(self, doc: Document) -> str:
-        return f"{doc.type} №{doc.number} от {doc.date:%d.%m.%Y}"
+        return f"{DOC_TYPE_NAMES.get(doc.type, doc.type)} №{doc.number} от {doc.date:%d.%m.%Y}"
 
 
 def fingerprint(hit: Hit) -> str:

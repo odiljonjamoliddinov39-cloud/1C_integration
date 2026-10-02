@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
 import { useSession } from "../lib/session";
 import { Card, ErrorBox, Table } from "./ui";
 
@@ -12,10 +13,11 @@ interface AskResult {
   truncated: boolean;
 }
 
-const EXAMPLES = ["Почему Касса в минусе?", "Kim bizga eng ko'p qarzdor?", "Top 5 customers by sales this year"];
 
 export function AskBox() {
   const { companyId } = useSession();
+  const { t } = useT();
+  const examples = [t("ask.example1"), t("ask.example2"), t("ask.example3")];
   const [question, setQuestion] = useState("");
   const [anonymize, setAnonymize] = useState(false);
   const [result, setResult] = useState<AskResult | null>(null);
@@ -41,21 +43,21 @@ export function AskBox() {
   }
 
   return (
-    <Card title="Ask AI" actions={<span className="text-xs text-slate-500">Uzbek, Russian or English · read-only</span>}>
+    <Card title={t("ask.title")} actions={<span className="text-xs text-slate-500">{t("ask.hint")}</span>}>
       <form onSubmit={ask} className="flex flex-col gap-2 sm:flex-row">
-        <input className="input flex-1" placeholder="Why is Касса negative?" value={question} onChange={(e) => setQuestion(e.target.value)} />
+        <input className="input flex-1" placeholder={t("ask.placeholder")} value={question} onChange={(e) => setQuestion(e.target.value)} />
         <button className="btn-primary" disabled={busy}>
-          {busy ? "Thinking…" : "Ask"}
+          {busy ? t("ask.thinking") : t("ask.submit")}
         </button>
       </form>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        {EXAMPLES.map((ex) => (
+        {examples.map((ex) => (
           <button key={ex} className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-600 hover:border-brand-500 dark:border-slate-700 dark:text-slate-300" onClick={() => ask(undefined, ex)} type="button">
             {ex}
           </button>
         ))}
         <label className="ml-auto flex items-center gap-1 text-slate-500">
-          <input type="checkbox" checked={anonymize} onChange={(e) => setAnonymize(e.target.checked)} /> Hide names and INNs from Claude
+          <input type="checkbox" checked={anonymize} onChange={(e) => setAnonymize(e.target.checked)} /> {t("ask.anonymize")}
         </label>
       </div>
       <div className="mt-3 space-y-3">
@@ -64,8 +66,7 @@ export function AskBox() {
           <>
             <div className="whitespace-pre-wrap rounded-lg bg-brand-50 p-3 text-sm leading-relaxed dark:bg-brand-700/20">{result.answer}</div>
             <button className="link text-xs" onClick={() => setShowSql((s) => !s)}>
-              {showSql ? "Hide" : "Show"} query and data ({result.rows.length}
-              {result.truncated ? "+" : ""} rows)
+              {t(showSql ? "ask.hideData" : "ask.showData", { n: `${result.rows.length}${result.truncated ? "+" : ""}` })}
             </button>
             {showSql && (
               <>

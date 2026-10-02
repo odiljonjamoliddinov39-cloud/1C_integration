@@ -43,6 +43,19 @@ MSG
   exit 1
 }
 
+need_docker() {
+  need docker
+  if ! docker info >/dev/null 2>&1; then
+    cat >&2 <<MSG
+
+  ✖ Docker is installed but not running, and nothing is listening on 5432/6379.
+    Start Docker (Docker Desktop, or 'sudo service docker start'), or start PostgreSQL and Redis
+    yourself on ports 5432 and 6379, then run this script again.
+MSG
+    exit 1
+  fi
+}
+
 # Node may be installed through nvm without being on PATH in this shell.
 use_node() {
   for nvm_sh in "${NVM_DIR:-}/nvm.sh" /usr/local/share/nvm/nvm.sh "$HOME/.nvm/nvm.sh"; do
@@ -76,7 +89,7 @@ say "PostgreSQL and Redis"
 if port_open 5432; then
   echo "Using the PostgreSQL already listening on 5432"
 else
-  need docker
+  need_docker
   docker rm -f onec-demo-postgres >/dev/null 2>&1 || true
   docker run -d --name onec-demo-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16 >/dev/null
   wait_port 5432
@@ -86,7 +99,7 @@ fi
 if port_open 6379; then
   echo "Using the Redis already listening on 6379"
 else
-  need docker
+  need_docker
   docker rm -f onec-demo-redis >/dev/null 2>&1 || true
   docker run -d --name onec-demo-redis -p 6379:6379 redis:7 redis-server --save "" >/dev/null
   wait_port 6379

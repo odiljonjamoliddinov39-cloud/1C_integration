@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import { Card, Empty, ErrorBox, PageHeader, SeverityBadge, Spinner, StatusBadge, Table } from "../components/ui";
 import { api, qs } from "../lib/api";
-import { FIX_TYPES, fmtDateTime, fmtMoney } from "../lib/format";
+import { fmtDateTime, fmtMoney } from "../lib/format";
+import { useT } from "../lib/i18n";
 import { useData, useSession } from "../lib/session";
 import type { Fix } from "../lib/types";
 
@@ -11,6 +12,7 @@ const MAX_BULK = 50;
 
 export function FixesPage() {
   const { companyId, canWrite } = useSession();
+  const { t } = useT();
   const [params, setParams] = useSearchParams();
   const status = params.get("status") ?? "proposed";
   const { data, error, loading, reload } = useData(() => api<Fix[]>(`/api/fixes${qs({ company_id: companyId, status: status === "all" ? "" : status })}`), [companyId, status]);
@@ -45,12 +47,12 @@ export function FixesPage() {
   return (
     <>
       <PageHeader
-        title="Corrections"
-        subtitle="The system never changes the books on its own: a person approves each correction, then the agent writes it to 1C."
+        title={t("fix.title")}
+        subtitle={t("fix.subtitle")}
         actions={
           canWrite && status === "proposed" && (
-            <button className="btn-primary" disabled={busy || selected.size === 0 || selected.size > MAX_BULK || !sameType} onClick={approveSelected} title={!sameType ? "Bulk approval needs fixes of the same type" : undefined}>
-              Approve {selected.size || ""} selected
+            <button className="btn-primary" disabled={busy || selected.size === 0 || selected.size > MAX_BULK || !sameType} onClick={approveSelected} title={!sameType ? t("fix.sameTypeTitle") : undefined}>
+              {t("fix.approveSelected", { n: selected.size })}
             </button>
           )
         }
@@ -59,24 +61,24 @@ export function FixesPage() {
         <div className="mb-3 flex flex-wrap gap-1">
           {["proposed", "approved", "applied", "failed", "rejected", "all"].map((s) => (
             <button key={s} className={s === status ? "btn-primary" : "btn-ghost"} onClick={() => { setSelected(new Set()); setParams({ status: s }); }}>
-              {s}
+              {t(`status.${s}`)}
             </button>
           ))}
         </div>
         <ErrorBox error={error ?? actionError} />
-        {!sameType && <p className="mb-2 text-xs text-amber-600">Select fixes of one type to approve them together (max {MAX_BULK}).</p>}
+        {!sameType && <p className="mb-2 text-xs text-amber-600">{t("fix.sameTypeHint", { max: MAX_BULK })}</p>}
         {loading && <Spinner />}
-        {data && data.length === 0 && <Empty>No corrections with status “{status}”.</Empty>}
+        {data && data.length === 0 && <Empty>{t("fix.empty", { status: t(`status.${status}`) })}</Empty>}
         {data && data.length > 0 && (
           <Table>
             <thead>
               <tr>
                 {canWrite && status === "proposed" && <th className="th w-8" />}
                 <th className="th">#</th>
-                <th className="th">Type</th>
-                <th className="th">Explanation</th>
-                <th className="th">Status</th>
-                <th className="th">Updated</th>
+                <th className="th">{t("fix.colType")}</th>
+                <th className="th">{t("fix.colExplanation")}</th>
+                <th className="th">{t("common.status")}</th>
+                <th className="th">{t("fix.colUpdated")}</th>
               </tr>
             </thead>
             <tbody>
@@ -84,11 +86,11 @@ export function FixesPage() {
                 <tr key={f.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   {canWrite && status === "proposed" && (
                     <td className="td">
-                      <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggle(f)} aria-label={`Select fix ${f.id}`} />
+                      <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggle(f)} aria-label={t("fix.selectFix", { id: f.id })} />
                     </td>
                   )}
                   <td className="td"><Link className="link" to={`/fixes/${f.id}`}>#{f.id}</Link></td>
-                  <td className="td">{FIX_TYPES[f.fix_type] ?? f.fix_type}</td>
+                  <td className="td">{t(`fixType.${f.fix_type}`)}</td>
                   <td className="td max-w-md truncate text-slate-600 dark:text-slate-300">{f.explanation}</td>
                   <td className="td"><StatusBadge status={f.status} /></td>
                   <td className="td text-xs text-slate-500">{fmtDateTime(f.applied_at ?? f.approved_at ?? f.created_at)}</td>
@@ -103,7 +105,8 @@ export function FixesPage() {
 }
 
 function Value({ value }: { value: unknown }) {
-  if (value === null || value === undefined || value === "") return <span className="text-slate-400">empty</span>;
+  const { t } = useT();
+  if (value === null || value === undefined || value === "") return <span className="text-slate-400">{t("common.empty")}</span>;
   if (typeof value === "object") return <pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(value, null, 2)}</pre>;
   return <span>{String(value)}</span>;
 }
@@ -142,6 +145,7 @@ export function FixDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { canWrite } = useSession();
+  const { t } = useT();
   const { data: fix, error, loading, reload } = useData(() => api<Fix>(`/api/fixes/${id}`), [id]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -149,8 +153,8 @@ export function FixDetailPage() {
   // While the agent applies the fix (or the laptop is offline), poll for the result.
   useEffect(() => {
     if (fix?.status !== "approved") return;
-    const t = setInterval(reload, 4000);
-    return () => clearInterval(t);
+    const timer = setInterval(reload, 4000);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix?.status]);
 
@@ -174,19 +178,19 @@ export function FixDetailPage() {
   return (
     <>
       <PageHeader
-        title={`Correction #${fix.id}: ${FIX_TYPES[fix.fix_type] ?? fix.fix_type}`}
-        subtitle={<>Status <StatusBadge status={fix.status} /> {fix.approval_id && <span className="ml-2 font-mono text-xs">approval {fix.approval_id}</span>}</>}
+        title={t("fix.detailTitle", { id: fix.id, type: t(`fixType.${fix.fix_type}`) })}
+        subtitle={<>{t("common.status")} <StatusBadge status={fix.status} /> {fix.approval_id && <span className="ml-2 font-mono text-xs">{t("fix.approval")} {fix.approval_id}</span>}</>}
         actions={
           <>
             {canWrite && fix.status === "proposed" && (
               <>
-                <button className="btn-secondary" disabled={busy} onClick={() => run(() => api(`/api/fixes/${fix.id}/reject`, { method: "POST" }))}>Reject</button>
-                <button className="btn-primary" disabled={busy} onClick={() => run(() => api("/api/fixes/approve", { method: "POST", json: { fix_ids: [fix.id] } }))}>Approve</button>
+                <button className="btn-secondary" disabled={busy} onClick={() => run(() => api(`/api/fixes/${fix.id}/reject`, { method: "POST" }))}>{t("fix.reject")}</button>
+                <button className="btn-primary" disabled={busy} onClick={() => run(() => api("/api/fixes/approve", { method: "POST", json: { fix_ids: [fix.id] } }))}>{t("fix.approve")}</button>
               </>
             )}
             {canWrite && fix.status === "applied" && fix.before && (
               <button className="btn-secondary" disabled={busy} onClick={() => run(async () => { const undo = await api<Fix>(`/api/fixes/${fix.id}/undo`, { method: "POST", json: {} }); navigate(`/fixes/${undo.id}`); })}>
-                Undo this fix
+                {t("fix.undo")}
               </button>
             )}
           </>
@@ -194,10 +198,10 @@ export function FixDetailPage() {
       />
       <ErrorBox error={actionError} />
       <div className="space-y-4">
-        {fix.status === "approved" && <div className="rounded-lg bg-brand-50 p-3 text-sm dark:bg-brand-700/20">Approved, waiting for the agent. If the laptop is offline, the change runs as soon as it reconnects.</div>}
-        {fix.result && fix.status !== "proposed" && <p className="text-sm text-slate-600 dark:text-slate-300">Result: {fix.result}</p>}
+        {fix.status === "approved" && <div className="rounded-lg bg-brand-50 p-3 text-sm dark:bg-brand-700/20">{t("fix.waiting")}</div>}
+        {fix.result && fix.status !== "proposed" && <p className="text-sm text-slate-600 dark:text-slate-300">{t("fix.result", { result: fix.result })}</p>}
         {fix.finding && (
-          <Card title="Finding">
+          <Card title={t("fix.finding")}>
             <div className="flex items-center gap-2">
               <SeverityBadge severity={fix.finding.severity} />
               <span className="font-mono text-xs">{fix.finding.rule_code}</span>
@@ -207,33 +211,33 @@ export function FixDetailPage() {
           </Card>
         )}
         {(fix.explanation || fix.finding?.ai_explanation) && (
-          <Card title="Why">
+          <Card title={t("fix.why")}>
             <p className="whitespace-pre-wrap text-sm">{fix.finding?.ai_explanation || fix.explanation}</p>
           </Card>
         )}
-        <Card title={fix.status === "applied" ? "Before and after (from 1C)" : "Current value and proposed change"}>
+        <Card title={fix.status === "applied" ? t("fix.beforeAfter") : t("fix.currentProposed")}>
           <div className="grid gap-3 md:grid-cols-2">
             {fix.status === "applied" ? (
               <>
-                <Side title="Before" data={fix.before} tone="old" />
-                <Side title="After" data={fix.after} tone="new" />
+                <Side title={t("fix.before")} data={fix.before} tone="old" />
+                <Side title={t("fix.after")} data={fix.after} tone="new" />
               </>
             ) : (
               <>
-                <Side title="Now in 1C" data={preview?.current} tone="old" />
-                <Side title="Proposed" data={preview?.proposed} tone="new" />
+                <Side title={t("fix.now")} data={preview?.current} tone="old" />
+                <Side title={t("fix.proposed")} data={preview?.proposed} tone="new" />
               </>
             )}
           </div>
         </Card>
         {preview && preview.affected_entries.length > 0 && (
-          <Card title="Affected entries">
+          <Card title={t("fix.affected")}>
             <Table>
               <thead>
                 <tr>
-                  <th className="th">Dt</th>
-                  <th className="th">Kt</th>
-                  <th className="th num">Amount</th>
+                  <th className="th">{t("common.dt")}</th>
+                  <th className="th">{t("common.kt")}</th>
+                  <th className="th num">{t("common.amount")}</th>
                 </tr>
               </thead>
               <tbody>

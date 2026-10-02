@@ -1,25 +1,60 @@
-const money = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const compact = new Intl.NumberFormat("ru-RU", { notation: "compact", maximumFractionDigits: 1 });
+// Number and date formatting in the current UI language (set by I18nProvider).
+// Labels (document types, statuses, ...) live in i18n.tsx.
+
+let locale = "ru-RU";
+let compactSuffixes: [number, string][] = [];
+const cache = new Map<string, Intl.NumberFormat>();
+
+// Uzbek uses the same separators as Russian (2 880 000,00; 02.10.2026), and not every browser
+// ships Uzbek number data, so Uzbek formats with ru-RU and its own short-number words.
+const FORMAT_LOCALE: Record<string, string> = { "uz-Latn-UZ": "ru-RU" };
+const SUFFIXES: Record<string, [number, string][]> = {
+  "uz-Latn-UZ": [[1e9, "mlrd"], [1e6, "mln"], [1e3, "ming"]],
+  "ru-RU": [[1e9, "млрд"], [1e6, "млн"], [1e3, "тыс."]],
+  "en-GB": [[1e9, "B"], [1e6, "M"], [1e3, "K"]],
+};
+
+function numberFormat(kind: "money" | "compact"): Intl.NumberFormat {
+  const key = `${locale}:${kind}`;
+  let f = cache.get(key);
+  if (!f) {
+    f =
+      kind === "money"
+        ? new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+    cache.set(key, f);
+  }
+  return f;
+}
+
+export function setFormatLocale(next: string) {
+  locale = FORMAT_LOCALE[next] ?? next;
+  compactSuffixes = SUFFIXES[next] ?? SUFFIXES["en-GB"];
+}
 
 export function fmtMoney(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
-  return money.format(Number(value));
+  return numberFormat("money").format(Number(value));
 }
 
 export function fmtCompact(value: string | number): string {
-  return compact.format(Number(value));
+  const n = Number(value);
+  for (const [size, word] of compactSuffixes) {
+    if (Math.abs(n) >= size) return `${numberFormat("compact").format(n / size)} ${word}`;
+  }
+  return numberFormat("compact").format(n);
 }
 
 export function fmtDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("ru-RU");
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(locale);
 }
 
 export function fmtDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString(locale, { dateStyle: "short", timeStyle: "short" });
 }
 
 export function today(): string {
@@ -33,39 +68,6 @@ export function startOfYear(): string {
 export function startOfMonth(): string {
   return today().slice(0, 8) + "01";
 }
-
-export const DOC_TYPES: Record<string, string> = {
-  sale: "Реализация",
-  purchase: "Поступление",
-  invoice_out: "Счёт-фактура выданный",
-  invoice_in: "Счёт-фактура полученный",
-  cash_in: "ПКО",
-  cash_out: "РКО",
-  bank_in: "Поступление на р/с",
-  bank_out: "Списание с р/с",
-  operation: "Операция",
-};
-
-export const FIX_TYPES: Record<string, string> = {
-  fill_field: "Fill missing field",
-  repost: "Re-post document",
-  correct_vat: "Correct VAT rate",
-  reverse_duplicate: "Reverse duplicate",
-  merge_counterparties: "Merge counterparties",
-  restore: "Undo (restore)",
-};
-
-export const INVOICE_STATUS: Record<string, string> = {
-  draft: "Draft",
-  creating: "Sending to 1C…",
-  created: "In 1C (unposted)",
-  posting: "Posting…",
-  posted: "Posted",
-  ready: "Ready to send",
-  sent: "Sent",
-  signed: "Signed",
-  rejected: "Rejected",
-};
 
 /** "2026-09" -> "2026-09-30" */
 export function monthEnd(month: string): string {

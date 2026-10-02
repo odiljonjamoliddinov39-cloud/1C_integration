@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
-from app.services.audit.engine import CRITICAL, HIGH, AuditContext, FixType, Hit, rule
+from app.services.audit.engine import CRITICAL, HIGH, AuditContext, FixType, Hit, pct, rule
 from app.services.ledger import matches
 
 VAT_DOC_TYPES = ("sale", "purchase", "invoice_out", "invoice_in")
@@ -31,7 +31,7 @@ def row_vat_rate(ctx: AuditContext) -> list[Hit]:
                     }
                 )
         if wrong:
-            names = ", ".join(f"«{w['item_name']}» {w['row_rate']}% вместо {w['item_rate']}%" for w in wrong[:3])
+            names = ", ".join(f"«{w['item_name']}» {pct(w['row_rate'])}% вместо {pct(w['item_rate'])}%" for w in wrong[:3])
             hits.append(
                 Hit(
                     object_ref=d.ref_1c,

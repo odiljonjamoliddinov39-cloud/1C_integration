@@ -3,10 +3,12 @@ import { useState } from "react";
 
 import { Card, ErrorBox, PageHeader } from "../components/ui";
 import { api } from "../lib/api";
+import { useT } from "../lib/i18n";
 import { useSession } from "../lib/session";
 
 export function SettingsPage() {
   const { user, isOwner } = useSession();
+  const { t } = useT();
   const [mcpToken, setMcpToken] = useState<string | null>(null);
   const [totp, setTotp] = useState<{ secret: string; qr: string } | null>(null);
   const [code, setCode] = useState("");
@@ -38,7 +40,7 @@ export function SettingsPage() {
     try {
       await api("/api/auth/totp/enable", { method: "POST", json: { code } });
       setTotp(null);
-      setMessage("Two-factor authentication is on. You will be asked for a code at every login.");
+      setMessage(t("set.totpDone"));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -46,46 +48,46 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" subtitle={`${user?.email} · ${user?.role}`} />
+      <PageHeader title={t("set.title")} subtitle={`${user?.email} · ${user ? t(`role.${user.role}`) : ""}`} />
       <ErrorBox error={error} />
       {message && <div className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{message}</div>}
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Claude.ai / Claude Desktop connector (MCP)">
+        <Card title={t("set.mcpTitle")}>
           <div className="space-y-3 text-sm">
-            <p>Connect Claude to the books of every company you can see. Read tools answer questions. Write tools only create proposals and drafts that someone approves here.</p>
+            <p>{t("set.mcpText")}</p>
             <div>
-              <span className="label">Server URL</span>
+              <span className="label">{t("set.serverUrl")}</span>
               <code className="block break-all rounded bg-slate-100 p-2 text-xs dark:bg-slate-800">{mcpUrl}</code>
             </div>
             {mcpToken ? (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
-                <div className="mb-1 text-xs font-semibold">Your token (shown once; issuing a new one replaces it):</div>
+                <div className="mb-1 text-xs font-semibold">{t("set.tokenOnce")}</div>
                 <code className="block break-all text-xs">{mcpToken}</code>
-                <p className="mt-2 text-xs">Use it as the Bearer token (header <code>Authorization: Bearer …</code>) when adding the custom connector.</p>
+                <p className="mt-2 text-xs">{t("set.tokenHint")}</p>
               </div>
             ) : (
-              <button className="btn-primary" onClick={issueMcp}>Create MCP token</button>
+              <button className="btn-primary" onClick={issueMcp}>{t("set.createToken")}</button>
             )}
           </div>
         </Card>
         {isOwner && (
-          <Card title="Two-factor authentication (TOTP)">
+          <Card title={t("set.totpTitle")}>
             {user?.totp_enabled && !totp ? (
-              <p className="text-sm">2FA is on for this account.</p>
+              <p className="text-sm">{t("set.totpOn")}</p>
             ) : totp ? (
               <div className="space-y-3 text-sm">
-                <p>Scan with Google Authenticator, Authy or a similar app, then enter the 6-digit code.</p>
+                <p>{t("set.totpScan")}</p>
                 <img src={totp.qr} alt="TOTP QR code" className="rounded bg-white p-2" />
                 <code className="block text-xs">{totp.secret}</code>
                 <div className="flex gap-2">
                   <input className="input w-32 tracking-widest" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
-                  <button className="btn-primary" onClick={enableTotp}>Turn on</button>
+                  <button className="btn-primary" onClick={enableTotp}>{t("set.totpEnable")}</button>
                 </div>
               </div>
             ) : (
               <div className="space-y-3 text-sm">
-                <p>Recommended for owners: logins will need a code from your phone.</p>
-                <button className="btn-primary" onClick={setupTotp}>Set up 2FA</button>
+                <p>{t("set.totpRecommended")}</p>
+                <button className="btn-primary" onClick={setupTotp}>{t("set.totpSetup")}</button>
               </div>
             )}
           </Card>

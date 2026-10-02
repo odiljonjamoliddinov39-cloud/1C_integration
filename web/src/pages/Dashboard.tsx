@@ -6,6 +6,7 @@ import { AskBox } from "../components/AskBox";
 import { Card, ErrorBox, PageHeader, Spinner, Stat, Table } from "../components/ui";
 import { api, download, qs } from "../lib/api";
 import { fmtCompact, fmtDate, fmtMoney, monthEnd, startOfMonth, startOfYear, today } from "../lib/format";
+import { useT } from "../lib/i18n";
 import { useData, useSession } from "../lib/session";
 
 const C = { primary: "#2553e6", secondary: "#94a3b8", accent: "#f59e0b", danger: "#dc2626" };
@@ -36,6 +37,8 @@ export function DashboardPage() {
   const { companyId, companies } = useSession();
   const companyName = (id: number) => companies.find((c) => c.id === id)?.name ?? "";
   const navigate = useNavigate();
+  const { t } = useT();
+  const cur = t("common.currency");
   const [on, setOn] = useState(today());
   const [from, setFrom] = useState(startOfYear());
   const [tbFrom, setTbFrom] = useState(startOfMonth());
@@ -49,13 +52,13 @@ export function DashboardPage() {
   return (
     <>
       <PageHeader
-        title="Dashboard"
-        subtitle={data ? `Built from the mirror · last synced ${fmtDate(data.last_synced_at)}` : undefined}
+        title={t("dash.title")}
+        subtitle={data ? t("dash.subtitle", { date: fmtDate(data.last_synced_at) }) : undefined}
         actions={
           <>
-            <label className="text-xs text-slate-500">From</label>
+            <label className="text-xs text-slate-500">{t("common.from")}</label>
             <input type="date" className="input w-auto" value={from} onChange={(e) => setFrom(e.target.value)} />
-            <label className="text-xs text-slate-500">On</label>
+            <label className="text-xs text-slate-500">{t("common.on")}</label>
             <input type="date" className="input w-auto" value={on} onChange={(e) => setOn(e.target.value)} />
           </>
         }
@@ -65,14 +68,14 @@ export function DashboardPage() {
       {data && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Cash (5010)" value={fmtMoney(data.cash_bank.cash.balance)} tone={Number(data.cash_bank.cash.balance) < 0 ? "red" : undefined} hint="UZS · click for documents" onClick={() => docs({ account: data.cash_bank.cash.account, to: on })} />
-            <Stat label="Bank (5110)" value={fmtMoney(data.cash_bank.bank.balance)} hint="UZS · click for documents" onClick={() => docs({ account: data.cash_bank.bank.account, to: on })} />
-            <Stat label="Receivables" value={fmtMoney(data.receivables_payables.receivables.total)} hint={`90+ days: ${fmtMoney(data.aging.buckets["90+"])}`} />
-            <Stat label="Payables" value={fmtMoney(data.receivables_payables.payables.total)} hint="UZS" />
+            <Stat label={t("dash.cash")} value={fmtMoney(data.cash_bank.cash.balance)} tone={Number(data.cash_bank.cash.balance) < 0 ? "red" : undefined} hint={t("dash.clickHint", { currency: cur })} onClick={() => docs({ account: data.cash_bank.cash.account, to: on })} />
+            <Stat label={t("dash.bank")} value={fmtMoney(data.cash_bank.bank.balance)} hint={t("dash.clickHint", { currency: cur })} onClick={() => docs({ account: data.cash_bank.bank.account, to: on })} />
+            <Stat label={t("dash.receivables")} value={fmtMoney(data.receivables_payables.receivables.total)} hint={t("dash.overdue", { amount: fmtMoney(data.aging.buckets["90+"]) })} />
+            <Stat label={t("dash.payables")} value={fmtMoney(data.receivables_payables.payables.total)} hint={cur} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-            <Card title="Cash and bank, last 90 days">
+            <Card title={t("dash.cashChart")}>
               <div className="h-64">
                 <ResponsiveContainer>
                   <LineChart data={data.cash_bank.cash.series.map((p, i) => ({ date: p.date.slice(5), cash: Number(p.balance), bank: Number(data.cash_bank.bank.series[i]?.balance ?? 0) }))}>
@@ -81,17 +84,17 @@ export function DashboardPage() {
                     <YAxis tick={axisTick} tickFormatter={fmtCompact} width={56} />
                     <Tooltip formatter={(v) => fmtMoney(v as number)} />
                     <Legend />
-                    <Line type="monotone" dataKey="cash" name="Cash" stroke={C.primary} dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="bank" name="Bank" stroke={C.secondary} dot={false} strokeWidth={2} />
+                    <Line type="monotone" dataKey="cash" name={t("dash.cashSeries")} stroke={C.primary} dot={false} strokeWidth={2} />
+                    <Line type="monotone" dataKey="bank" name={t("dash.bankSeries")} stroke={C.secondary} dot={false} strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </Card>
-            <Card title="Open audit findings" actions={<button className="link text-xs" onClick={() => navigate("/findings")}>All findings →</button>}>
+            <Card title={t("dash.openFindings")} actions={<button className="link text-xs" onClick={() => navigate("/findings")}>{t("dash.allFindings")}</button>}>
               <div className="grid grid-cols-2 gap-2">
                 {(["critical", "high", "medium", "low"] as const).map((s) => (
                   <button key={s} onClick={() => navigate(`/findings${qs({ severity: s })}`)} className="rounded-lg border border-slate-200 p-3 text-left hover:border-brand-500 dark:border-slate-800">
-                    <div className="text-xs capitalize text-slate-500">{s}</div>
+                    <div className="text-xs text-slate-500 first-letter:uppercase">{t(`severity.${s}`)}</div>
                     <div className={`text-2xl font-semibold ${s === "critical" && data.findings[s] ? "text-red-600" : ""}`}>{data.findings[s] ?? 0}</div>
                   </button>
                 ))}
@@ -103,14 +106,14 @@ export function DashboardPage() {
             {(["receivables", "payables"] as const).map((kind) => (
               <Card
                 key={kind}
-                title={kind === "receivables" ? "Receivables, top 10" : "Payables, top 10"}
-                actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/receivables${qs({ company_id: companyId, date: on, format: "xlsx" })}`, "receivables_payables.xlsx")}>Excel</button>}
+                title={kind === "receivables" ? t("dash.receivablesTop") : t("dash.payablesTop")}
+                actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/receivables${qs({ company_id: companyId, date: on, format: "xlsx" })}`, "receivables_payables.xlsx")}>{t("common.excel")}</button>}
               >
                 <Table>
                   <thead>
                     <tr>
-                      <th className="th">Counterparty</th>
-                      <th className="th num">Balance, UZS</th>
+                      <th className="th">{t("common.counterparty")}</th>
+                      <th className="th num">{t("dash.balanceCol", { currency: cur })}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -125,7 +128,7 @@ export function DashboardPage() {
                     ))}
                     {data.receivables_payables[kind].top.length === 0 && (
                       <tr>
-                        <td className="td text-slate-500" colSpan={2}>Nothing outstanding</td>
+                        <td className="td text-slate-500" colSpan={2}>{t("dash.nothingOutstanding")}</td>
                       </tr>
                     )}
                   </tbody>
@@ -135,7 +138,7 @@ export function DashboardPage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Card title="Debt aging (receivables)" actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/aging${qs({ company_id: companyId, date: on, format: "xlsx" })}`, "debt_aging.xlsx")}>Excel</button>}>
+            <Card title={t("dash.aging")} actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/aging${qs({ company_id: companyId, date: on, format: "xlsx" })}`, "debt_aging.xlsx")}>{t("common.excel")}</button>}>
               <div className="h-56">
                 <ResponsiveContainer>
                   <BarChart data={Object.entries(data.aging.buckets).map(([bucket, v]) => ({ bucket, amount: Number(v) }))}>
@@ -143,12 +146,12 @@ export function DashboardPage() {
                     <XAxis dataKey="bucket" tick={axisTick} />
                     <YAxis tick={axisTick} tickFormatter={fmtCompact} width={56} />
                     <Tooltip formatter={(v) => fmtMoney(v as number)} />
-                    <Bar dataKey="amount" name="Amount" fill={C.primary} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="amount" name={t("common.amount")} fill={C.primary} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
-            <Card title="Sales and purchases by month" actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/sales${qs({ company_id: companyId, from, to: on, format: "xlsx" })}`, "sales_purchases.xlsx")}>Excel</button>}>
+            <Card title={t("dash.salesChart")} actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/sales${qs({ company_id: companyId, from, to: on, format: "xlsx" })}`, "sales_purchases.xlsx")}>{t("common.excel")}</button>}>
               <div className="h-56">
                 <ResponsiveContainer>
                   <BarChart data={data.sales_purchases.map((r) => ({ month: r.month, sales: Number(r.sales), purchases: Number(r.purchases) }))} onClick={(e) => { const m = e?.activeLabel as string | undefined; if (m) docs({ type: "sale,purchase", from: `${m}-01`, to: monthEnd(m) }); }}>
@@ -157,23 +160,23 @@ export function DashboardPage() {
                     <YAxis tick={axisTick} tickFormatter={fmtCompact} width={56} />
                     <Tooltip formatter={(v) => fmtMoney(v as number)} />
                     <Legend />
-                    <Bar dataKey="sales" name="Sales" fill={C.primary} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="purchases" name="Purchases" fill={C.secondary} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="sales" name={t("dash.sales")} fill={C.primary} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="purchases" name={t("dash.purchases")} fill={C.secondary} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
           </div>
 
-          <Card title="VAT: output vs input" actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/vat${qs({ company_id: companyId, from, to: on, format: "xlsx" })}`, "vat.xlsx")}>Excel</button>}>
+          <Card title={t("dash.vatTitle")} actions={<button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/vat${qs({ company_id: companyId, from, to: on, format: "xlsx" })}`, "vat.xlsx")}>{t("common.excel")}</button>}>
             <Table>
               <thead>
                 <tr>
-                  <th className="th">Month</th>
-                  <th className="th num">Output (6410)</th>
-                  <th className="th num">Input (4410)</th>
-                  <th className="th num">Payable</th>
-                  <th className="th num">On invoices</th>
+                  <th className="th">{t("common.month")}</th>
+                  <th className="th num">{t("dash.vatOutput")}</th>
+                  <th className="th num">{t("dash.vatInput")}</th>
+                  <th className="th num">{t("dash.vatPayable")}</th>
+                  <th className="th num">{t("dash.vatInvoiced")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -191,12 +194,12 @@ export function DashboardPage() {
           </Card>
 
           <Card
-            title="Trial balance (ОСВ)"
+            title={t("dash.tb")}
             actions={
               <>
                 <input type="date" className="input w-auto py-1" value={tbFrom} onChange={(e) => setTbFrom(e.target.value)} />
                 <input type="date" className="input w-auto py-1" value={tbTo} onChange={(e) => setTbTo(e.target.value)} />
-                <button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/trial-balance${qs({ company_id: companyId, from: tbFrom, to: tbTo, format: "xlsx" })}`, "trial_balance.xlsx")}>Excel</button>
+                <button className="btn-ghost text-xs" onClick={() => download(`/api/analytics/trial-balance${qs({ company_id: companyId, from: tbFrom, to: tbTo, format: "xlsx" })}`, "trial_balance.xlsx")}>{t("common.excel")}</button>
               </>
             }
           >
@@ -204,13 +207,13 @@ export function DashboardPage() {
             <Table>
               <thead>
                 <tr>
-                  <th className="th">Account</th>
-                  <th className="th num">Opening Dt</th>
-                  <th className="th num">Opening Kt</th>
-                  <th className="th num">Turnover Dt</th>
-                  <th className="th num">Turnover Kt</th>
-                  <th className="th num">Closing Dt</th>
-                  <th className="th num">Closing Kt</th>
+                  <th className="th">{t("dash.account")}</th>
+                  <th className="th num">{t("dash.openingDt")}</th>
+                  <th className="th num">{t("dash.openingKt")}</th>
+                  <th className="th num">{t("dash.turnoverDt")}</th>
+                  <th className="th num">{t("dash.turnoverKt")}</th>
+                  <th className="th num">{t("dash.closingDt")}</th>
+                  <th className="th num">{t("dash.closingKt")}</th>
                 </tr>
               </thead>
               <tbody>

@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Card, Empty, ErrorBox, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
 import { api, ApiError, download, qs } from "../lib/api";
-import { INVOICE_STATUS, fmtDate, fmtMoney, today } from "../lib/format";
+import { fmtDate, fmtMoney, today } from "../lib/format";
+import { useT } from "../lib/i18n";
 import { useData, useSession } from "../lib/session";
 import type { Counterparty, Invoice, InvoiceRow, Item, ValidationError } from "../lib/types";
 
@@ -15,23 +16,25 @@ function errorsFrom(e: unknown): { message: string; errors: ValidationError[] } 
 }
 
 function NeedCompany() {
-  return <Empty>Choose one company in the switcher at the top to work with invoices.</Empty>;
+  const { t } = useT();
+  return <Empty>{t("inv.needCompany")}</Empty>;
 }
 
 export function InvoicesPage() {
   const { companyId, canWrite } = useSession();
+  const { t } = useT();
   const navigate = useNavigate();
   const { data, error, loading } = useData(() => api<Invoice[]>(`/api/invoices${qs({ company_id: companyId })}`), [companyId]);
   return (
     <>
       <PageHeader
-        title="Schet-faktura"
-        subtitle="Fill the form, create the invoice in 1C, post it, then send it to the operator."
+        title={t("inv.title")}
+        subtitle={t("inv.subtitle")}
         actions={
           canWrite && companyId !== null && (
             <>
-              <button className="btn-secondary" onClick={() => navigate("/invoices/bulk")}>Bulk from Excel</button>
-              <button className="btn-primary" onClick={() => navigate("/invoices/new")}>New invoice</button>
+              <button className="btn-secondary" onClick={() => navigate("/invoices/bulk")}>{t("inv.bulk")}</button>
+              <button className="btn-primary" onClick={() => navigate("/invoices/new")}>{t("inv.new")}</button>
             </>
           )
         }
@@ -39,17 +42,17 @@ export function InvoicesPage() {
       <Card>
         <ErrorBox error={error} />
         {loading && <Spinner />}
-        {data && data.length === 0 && <Empty>No invoices yet.</Empty>}
+        {data && data.length === 0 && <Empty>{t("inv.empty")}</Empty>}
         {data && data.length > 0 && (
           <Table>
             <thead>
               <tr>
-                <th className="th">Date</th>
-                <th className="th">1C number</th>
-                <th className="th">Buyer</th>
-                <th className="th num">Total</th>
-                <th className="th num">VAT</th>
-                <th className="th">Status</th>
+                <th className="th">{t("common.date")}</th>
+                <th className="th">{t("inv.number1c")}</th>
+                <th className="th">{t("inv.buyer")}</th>
+                <th className="th num">{t("common.total")}</th>
+                <th className="th num">{t("common.vat")}</th>
+                <th className="th">{t("common.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -60,7 +63,7 @@ export function InvoicesPage() {
                   <td className="td">{i.buyer_name} <span className="text-xs text-slate-500">{i.buyer_inn}</span></td>
                   <td className="td num">{fmtMoney(i.total)}</td>
                   <td className="td num">{fmtMoney(i.vat)}</td>
-                  <td className="td"><StatusBadge status={i.status} /> <span className="text-xs text-slate-500">{INVOICE_STATUS[i.status]}</span></td>
+                  <td className="td"><StatusBadge status={i.status} /></td>
                 </tr>
               ))}
             </tbody>
@@ -128,6 +131,7 @@ export function InvoiceFormPage() {
   const isNew = id === undefined;
   const navigate = useNavigate();
   const { companyId, canWrite } = useSession();
+  const { t, ts } = useT();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [date, setDate] = useState(today());
   const [buyer, setBuyer] = useState<Counterparty | null>(null);
@@ -161,11 +165,11 @@ export function InvoiceFormPage() {
   // Poll while 1C is creating or posting the invoice.
   useEffect(() => {
     if (!invoice || !["creating", "posting"].includes(invoice.status)) return;
-    const t = setInterval(() => api<Invoice>(`/api/invoices/${invoice.id}`).then(load), 3000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => api<Invoice>(`/api/invoices/${invoice.id}`).then(load), 3000);
+    return () => clearInterval(timer);
   }, [invoice?.status, invoice?.id]);
 
-  if (company === null) return <><PageHeader title="New invoice" /><NeedCompany /></>;
+  if (company === null) return <><PageHeader title={t("inv.newTitle")} /><NeedCompany /></>;
   if (loading) return <Spinner />;
 
   const payload = () => ({ company_id: company, date, buyer_ref: buyer?.ref_1c ?? null, contract_ref: contractRef || null, rows: rows.filter((r) => r.item_ref) });
@@ -215,23 +219,23 @@ export function InvoiceFormPage() {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
 
-  const totals = rows.reduce((acc, r) => { const t = rowTotals(r); return { amount: acc.amount + t.amount, vat: acc.vat + t.vat }; }, { amount: 0, vat: 0 });
-  const errorFor = (field: string, row?: number) => errors.filter((e) => e.field === field && (row === undefined ? e.row === undefined : e.row === row)).map((e) => e.message).join("; ");
+  const totals = rows.reduce((acc, r) => { const rt = rowTotals(r); return { amount: acc.amount + rt.amount, vat: acc.vat + rt.vat }; }, { amount: 0, vat: 0 });
+  const errorFor = (field: string, row?: number) => errors.filter((e) => e.field === field && (row === undefined ? e.row === undefined : e.row === row)).map((e) => ts(e.message)).join("; ");
 
   return (
     <>
       <PageHeader
-        title={isNew ? "New schet-faktura" : `Schet-faktura ${invoice?.number ? `№${invoice.number}` : "(draft)"}`}
-        subtitle={invoice && <><StatusBadge status={invoice.status} /> <span className="ml-1">{INVOICE_STATUS[invoice.status]}</span>{invoice.operator_message && <span className="ml-2 text-amber-700 dark:text-amber-400">{invoice.operator_message}</span>}</>}
+        title={isNew ? t("inv.newTitle") : invoice?.number ? t("inv.titleNumber", { number: invoice.number }) : t("inv.titleDraft")}
+        subtitle={invoice && <><StatusBadge status={invoice.status} />{invoice.operator_message && <span className="ml-2 text-amber-700 dark:text-amber-400">{invoice.operator_message}</span>}</>}
         actions={
           canWrite && (
             <>
-              {invoice && <button className="btn-ghost" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/copy`)}>Copy as template</button>}
-              {editable && <button className="btn-secondary" disabled={busy} onClick={save}>Save draft</button>}
-              {editable && <button className="btn-primary" disabled={busy} onClick={createIn1C}>Create in 1C</button>}
-              {invoice?.status === "created" && <button className="btn-primary" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/post`)}>Post</button>}
-              {(invoice?.status === "posted" || invoice?.status === "rejected") && <button className="btn-primary" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/send`)}>Send to operator</button>}
-              {invoice?.status === "draft" && <button className="btn-ghost text-red-600" disabled={busy} onClick={async () => { await api(`/api/invoices/${invoice.id}`, { method: "DELETE" }); navigate("/invoices"); }}>Delete</button>}
+              {invoice && <button className="btn-ghost" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/copy`)}>{t("inv.copy")}</button>}
+              {editable && <button className="btn-secondary" disabled={busy} onClick={save}>{t("inv.saveDraft")}</button>}
+              {editable && <button className="btn-primary" disabled={busy} onClick={createIn1C}>{t("inv.create")}</button>}
+              {invoice?.status === "created" && <button className="btn-primary" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/post`)}>{t("inv.post")}</button>}
+              {(invoice?.status === "posted" || invoice?.status === "rejected") && <button className="btn-primary" disabled={busy} onClick={() => action(`/api/invoices/${invoice.id}/send`)}>{t("inv.send")}</button>}
+              {invoice?.status === "draft" && <button className="btn-ghost text-red-600" disabled={busy} onClick={async () => { await api(`/api/invoices/${invoice.id}`, { method: "DELETE" }); navigate("/invoices"); }}>{t("common.delete")}</button>}
             </>
           )
         }
@@ -239,24 +243,24 @@ export function InvoiceFormPage() {
       <ErrorBox error={message} />
       {invoice?.status === "created" && (
         <div className="mb-4 rounded-lg bg-brand-50 p-3 text-sm dark:bg-brand-700/20">
-          1C created an unposted invoice <strong>№{invoice.number}</strong> for <strong>{fmtMoney(invoice.total)}</strong> UZS (VAT {fmtMoney(invoice.vat)}). Check the number and totals, then click <strong>Post</strong>.
+          {t("inv.createdBanner", { number: invoice.number, total: fmtMoney(invoice.total), currency: t("common.currency"), vat: fmtMoney(invoice.vat) })}
         </div>
       )}
       <div className="space-y-4">
-        <Card title="Buyer and contract">
+        <Card title={t("inv.buyerContract")}>
           <div className="grid gap-3 md:grid-cols-3">
             <div>
-              <label className="label">Date</label>
+              <label className="label">{t("common.date")}</label>
               <input type="date" className="input" value={date} disabled={!editable} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <label className="label">Buyer (name or INN)</label>
+              <label className="label">{t("inv.buyerLabel")}</label>
               {editable ? (
                 <Search<Counterparty>
-                  placeholder="Search…"
+                  placeholder={t("inv.search")}
                   initial={buyer ? `${buyer.name} (${buyer.inn})` : ""}
                   load={(q) => api<Counterparty[]>(`/api/companies/${company}/counterparties${qs({ q })}`)}
-                  render={(c) => <>{c.name} <span className="text-xs text-slate-500">{c.inn || "no INN"}</span></>}
+                  render={(c) => <>{c.name} <span className="text-xs text-slate-500">{c.inn || t("inv.noInn")}</span></>}
                   onPick={(c) => { setBuyer(c); setContractRef(c.contracts.length === 1 ? c.contracts[0].ref : ""); }}
                 />
               ) : (
@@ -265,9 +269,9 @@ export function InvoiceFormPage() {
               <p className="mt-1 text-xs text-red-600">{errorFor("buyer_inn") || errorFor("buyer_ref")}</p>
             </div>
             <div>
-              <label className="label">Contract</label>
+              <label className="label">{t("common.contract")}</label>
               <select className="input" value={contractRef} disabled={!editable || !buyer} onChange={(e) => setContractRef(e.target.value)}>
-                <option value="">Choose…</option>
+                <option value="">{t("common.choose")}</option>
                 {(buyer?.contracts ?? []).map((c) => <option key={c.ref} value={c.ref}>{c.name || `№${c.number}`}</option>)}
               </select>
               <p className="mt-1 text-xs text-red-600">{errorFor("contract_ref")}</p>
@@ -275,34 +279,34 @@ export function InvoiceFormPage() {
           </div>
         </Card>
 
-        <Card title="Items" actions={editable && <button className="btn-secondary text-xs" onClick={() => setRows((r) => [...r, emptyRow()])}>Add row</button>}>
+        <Card title={t("inv.items")} actions={editable && <button className="btn-secondary text-xs" onClick={() => setRows((r) => [...r, emptyRow()])}>{t("inv.addRow")}</button>}>
           <Table>
             <thead>
               <tr>
-                <th className="th w-72">Item</th>
-                <th className="th">IKPU</th>
-                <th className="th">Unit</th>
-                <th className="th num">Qty</th>
-                <th className="th num">Price</th>
-                <th className="th num">VAT %</th>
-                <th className="th num">Amount</th>
-                <th className="th num">VAT</th>
+                <th className="th w-72">{t("common.item")}</th>
+                <th className="th">{t("common.ikpu")}</th>
+                <th className="th">{t("common.unit")}</th>
+                <th className="th num">{t("common.qty")}</th>
+                <th className="th num">{t("common.price")}</th>
+                <th className="th num">{t("common.vatPct")}</th>
+                <th className="th num">{t("common.amount")}</th>
+                <th className="th num">{t("common.vat")}</th>
                 <th className="th" />
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
-                const t = rowTotals(r);
-                const rowErrors = errors.filter((e) => e.row === i + 1).map((e) => e.message).join("; ");
+                const tot = rowTotals(r);
+                const rowErrors = errors.filter((e) => e.row === i + 1).map((e) => ts(e.message)).join("; ");
                 return (
                   <tr key={i} className="align-top">
                     <td className="td">
                       {editable ? (
                         <Search<Item>
-                          placeholder="Item name or IKPU"
+                          placeholder={t("inv.itemPlaceholder")}
                           initial={r.name ?? ""}
                           load={(q) => api<Item[]>(`/api/companies/${company}/items${qs({ q })}`)}
-                          render={(it) => <>{it.name} <span className="text-xs text-slate-500">{it.ikpu_code || "no IKPU"} · {it.vat_rate ?? "?"}%</span></>}
+                          render={(it) => <>{it.name} <span className="text-xs text-slate-500">{it.ikpu_code || t("inv.noIkpu")} · {it.vat_rate ?? "?"}%</span></>}
                           onPick={(it) => setRow(i, { item_ref: it.ref_1c, name: it.name, unit: it.unit, price: it.price, vat_rate: it.vat_rate ?? "0", ikpu_code: it.ikpu_code })}
                         />
                       ) : (
@@ -315,16 +319,16 @@ export function InvoiceFormPage() {
                     <td className="td num"><input className="input w-20 text-right" type="number" min="0" step="any" value={r.quantity} disabled={!editable} onChange={(e) => setRow(i, { quantity: e.target.value })} /></td>
                     <td className="td num"><input className="input w-28 text-right" type="number" min="0" step="any" value={r.price ?? ""} disabled={!editable} onChange={(e) => setRow(i, { price: e.target.value })} /></td>
                     <td className="td num">{r.vat_rate !== undefined ? Number(r.vat_rate) : ""}</td>
-                    <td className="td num">{fmtMoney(t.amount)}</td>
-                    <td className="td num">{fmtMoney(t.vat)}</td>
-                    <td className="td">{editable && rows.length > 1 && <button className="btn-ghost px-2 text-xs" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Remove row">✕</button>}</td>
+                    <td className="td num">{fmtMoney(tot.amount)}</td>
+                    <td className="td num">{fmtMoney(tot.vat)}</td>
+                    <td className="td">{editable && rows.length > 1 && <button className="btn-ghost px-2 text-xs" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label={t("inv.removeRow")}>✕</button>}</td>
                   </tr>
                 );
               })}
             </tbody>
             <tfoot>
               <tr>
-                <td className="td text-right font-medium" colSpan={6}>Total incl. VAT</td>
+                <td className="td text-right font-medium" colSpan={6}>{t("inv.totalInclVat")}</td>
                 <td className="td num font-semibold" colSpan={2}>{fmtMoney(totals.amount + totals.vat)} <span className="text-xs font-normal text-slate-500">(VAT {fmtMoney(totals.vat)})</span></td>
                 <td className="td" />
               </tr>
@@ -332,7 +336,7 @@ export function InvoiceFormPage() {
           </Table>
           {errors.length > 0 && (
             <ul className="mt-3 list-inside list-disc text-sm text-red-600">
-              {errors.map((e, i) => <li key={i}>{e.row ? `Row ${e.row}: ` : ""}{e.message}</li>)}
+              {errors.map((e, i) => <li key={i}>{e.row ? t("inv.rowPrefix", { n: e.row }) : ""}{ts(e.message)}</li>)}
             </ul>
           )}
         </Card>
@@ -357,13 +361,14 @@ interface BulkInvoice {
 
 export function BulkInvoicesPage() {
   const { companyId } = useSession();
+  const { t, ts } = useT();
   const navigate = useNavigate();
   const [preview, setPreview] = useState<BulkInvoice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<Invoice[] | null>(null);
 
-  if (companyId === null) return <><PageHeader title="Bulk invoices" /><NeedCompany /></>;
+  if (companyId === null) return <><PageHeader title={t("inv.bulkTitle")} /><NeedCompany /></>;
 
   async function upload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -406,13 +411,13 @@ export function BulkInvoicesPage() {
   return (
     <>
       <PageHeader
-        title="Bulk invoices from Excel"
-        subtitle="Columns: invoice_no, date, buyer_inn, contract_number, item (IKPU or name), quantity, price (optional). Rows with the same invoice_no form one invoice."
+        title={t("inv.bulkTitle")}
+        subtitle={t("inv.bulkSubtitle")}
         actions={
           <>
-            <button className="btn-ghost" onClick={() => download("/api/invoices/bulk/template.xlsx", "invoices-template.xlsx")}>Download template</button>
+            <button className="btn-ghost" onClick={() => download("/api/invoices/bulk/template.xlsx", "invoices-template.xlsx")}>{t("inv.template")}</button>
             <label className="btn-primary cursor-pointer">
-              {busy ? "Working…" : "Upload Excel"}
+              {busy ? t("inv.working") : t("inv.upload")}
               <input type="file" accept=".xlsx" className="hidden" onChange={upload} disabled={busy} />
             </label>
           </>
@@ -421,18 +426,18 @@ export function BulkInvoicesPage() {
       <ErrorBox error={error} />
       {preview && (
         <Card
-          title={`Preview: ${preview.length} invoices, ${valid.length} valid`}
-          actions={<button className="btn-primary" disabled={busy || valid.length === 0} onClick={createAll}>Create {valid.length} in 1C</button>}
+          title={t("inv.preview", { n: preview.length, valid: valid.length })}
+          actions={<button className="btn-primary" disabled={busy || valid.length === 0} onClick={createAll}>{t("inv.createN", { n: valid.length })}</button>}
         >
           <Table>
             <thead>
               <tr>
                 <th className="th">invoice_no</th>
-                <th className="th">Lines</th>
-                <th className="th">Date</th>
-                <th className="th">Buyer</th>
-                <th className="th num">Total</th>
-                <th className="th">Validation</th>
+                <th className="th">{t("inv.lines")}</th>
+                <th className="th">{t("common.date")}</th>
+                <th className="th">{t("inv.buyer")}</th>
+                <th className="th num">{t("common.total")}</th>
+                <th className="th">{t("inv.validation")}</th>
               </tr>
             </thead>
             <tbody>
@@ -445,9 +450,9 @@ export function BulkInvoicesPage() {
                   <td className="td num">{fmtMoney(p.total)}</td>
                   <td className="td text-xs">
                     {p.errors.length === 0 ? (
-                      <span className="text-emerald-600">OK</span>
+                      <span className="text-emerald-600">{t("inv.ok")}</span>
                     ) : (
-                      <ul className="text-red-600">{p.errors.map((e, i) => <li key={i}>{e.line ? `line ${e.line}: ` : e.row ? `row ${e.row}: ` : ""}{e.message}</li>)}</ul>
+                      <ul className="text-red-600">{p.errors.map((e, i) => <li key={i}>{e.line ? t("inv.linePrefix", { n: e.line }) : e.row ? t("inv.rowPrefix", { n: e.row }) : ""}{ts(e.message)}</li>)}</ul>
                     )}
                   </td>
                 </tr>
@@ -457,15 +462,15 @@ export function BulkInvoicesPage() {
         </Card>
       )}
       {created && (
-        <Card title="Created">
+        <Card title={t("inv.created")}>
           <ul className="space-y-1 text-sm">
             {created.map((i) => (
               <li key={i.id}>
-                <Link className="link" to={`/invoices/${i.id}`}>Invoice #{i.id}</Link> · <StatusBadge status={i.status} /> {i.errors?.length ? <span className="text-red-600">{i.errors.map((e) => e.message).join("; ")}</span> : null}
+                <Link className="link" to={`/invoices/${i.id}`}>{t("inv.invoiceN", { id: i.id })}</Link> · <StatusBadge status={i.status} /> {i.errors?.length ? <span className="text-red-600">{i.errors.map((e) => ts(e.message)).join("; ")}</span> : null}
               </li>
             ))}
           </ul>
-          <button className="btn-secondary mt-3" onClick={() => navigate("/invoices")}>Back to invoices</button>
+          <button className="btn-secondary mt-3" onClick={() => navigate("/invoices")}>{t("inv.back")}</button>
         </Card>
       )}
     </>

@@ -10,6 +10,9 @@ A web app connected to **1C: Бухгалтерия для Узбекистан�
 | D | Auto audit: 12 rules after every sync and nightly, Claude explanations, monthly PDF | `backend/app/services/audit/`, `web/src/pages/Findings.tsx` |
 | E | Online work: outbound agent, offline mirror and queued writes, roles | `agent/`, `backend/app/routers/agent_ws.py` |
 
+The web app speaks **Uzbek (Latin), Russian and English**, with a switcher in the header and on the login page.
+Audit finding texts are written in Russian, like the 1C documents they describe.
+
 The pilot is for four companies, but every table carries `company_id`, so outsourcing clients
 can be added later.
 

@@ -2,11 +2,13 @@ import { useState, type FormEvent } from "react";
 
 import { ErrorBox } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { LanguageSwitcher, useT } from "../lib/i18n";
 import { useSession } from "../lib/session";
 import type { User } from "../lib/types";
 
 export function Login() {
   const { login } = useSession();
+  const { t } = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
@@ -38,28 +40,29 @@ export function Login() {
       <form onSubmit={submit} className="card w-full max-w-sm space-y-4 p-6">
         <div className="flex items-center gap-2">
           <span className="grid size-8 place-items-center rounded-md bg-brand-600 text-sm font-bold text-white">1C</span>
-          <div>
-            <div className="font-semibold">1C Integration</div>
-            <div className="text-xs text-slate-500">Бухгалтерия для Узбекистана 3.0</div>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{t("app.name")}</div>
+            <div className="text-xs text-slate-500">{t("app.product")}</div>
           </div>
+          <LanguageSwitcher />
         </div>
         <div>
-          <label className="label" htmlFor="email">Email</label>
+          <label className="label" htmlFor="email">{t("login.email")}</label>
           <input id="email" className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
         <div>
-          <label className="label" htmlFor="password">Password</label>
+          <label className="label" htmlFor="password">{t("login.password")}</label>
           <input id="password" className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </div>
         {needTotp && (
           <div>
-            <label className="label" htmlFor="totp">2FA code</label>
+            <label className="label" htmlFor="totp">{t("login.totp")}</label>
             <input id="totp" className="input tracking-widest" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={totp} onChange={(e) => setTotp(e.target.value)} autoFocus required />
           </div>
         )}
         <ErrorBox error={error} />
         <button className="btn-primary w-full py-2" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? t("login.submitting") : t("login.submit")}
         </button>
       </form>
     </div>
