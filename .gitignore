@@ -12,3 +12,4 @@ agent/dist/
 *.spec.bak
 backups/
 .DS_Store
+.demo/

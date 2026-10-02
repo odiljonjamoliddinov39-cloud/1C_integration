@@ -40,6 +40,19 @@ deploy/      docker-compose.yml, Caddyfile, backups
 docs/        API contract, acceptance tests, session checklist
 ```
 
+## Quick demo (Codespaces or VS Code)
+
+Runs everything with a fake 1C for the four companies, so no 1C or Windows is needed:
+
+* **VS Code / Codespaces:** *Terminal → Run Task… → Run demo (fake 1C)*, or `bash scripts/demo.sh` in the terminal.
+* Open port **5173** (in Codespaces: the **PORTS** tab → port 5173 → globe icon).
+* Log in as `owner@example.com` / `owner-password-1` (also `accountant@example.com` / `accountant-password-1`
+  and `viewer@example.com` / `viewer-password-1`, who sees TEXMASH only).
+
+The script starts PostgreSQL and Redis in Docker (or reuses ones already on 5432/6379), installs the Python
+and npm packages, creates a fresh `app_demo` database, and starts the backend, fake 1C, agent and web app.
+It then runs a first sync. `Ctrl+C` stops everything, and the logs are in `.demo/`.
+
 ## Run locally
 
 Requirements: Python 3.12, Node 22, PostgreSQL 16, Redis 7.
