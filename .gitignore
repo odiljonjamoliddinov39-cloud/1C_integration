@@ -13,3 +13,4 @@ agent/dist/
 backups/
 .DS_Store
 .demo/
+*.tsbuildinfo
