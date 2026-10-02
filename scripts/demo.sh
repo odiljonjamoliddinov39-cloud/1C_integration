@@ -32,17 +32,51 @@ wait_port() {
   exit 1
 }
 
+need() {
+  command -v "$1" >/dev/null 2>&1 && return 0
+  cat >&2 <<MSG
+
+  ✖ '$1' is not installed in this environment.
+    In Codespaces this usually means the codespace is in recovery mode (a failed container rebuild).
+    Fix: Ctrl+Shift+P → "Codespaces: Full Rebuild Container", then run this script again.
+MSG
+  exit 1
+}
+
+# Node may be installed through nvm without being on PATH in this shell.
+use_node() {
+  for nvm_sh in "${NVM_DIR:-}/nvm.sh" /usr/local/share/nvm/nvm.sh "$HOME/.nvm/nvm.sh"; do
+    if [ -s "$nvm_sh" ]; then
+      # shellcheck disable=SC1090
+      . "$nvm_sh"
+      break
+    fi
+  done
+  local major
+  major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  if [ "$major" -lt 22 ] && command -v nvm >/dev/null 2>&1; then
+    nvm install 22 >/dev/null && nvm use 22 >/dev/null
+  fi
+  need npm
+}
+
 cleanup() {
   say "Stopping"
   for pid in "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
 }
 trap cleanup EXIT INT TERM
 
+say "Checking tools"
+need python3
+use_node
+echo "python $(python3 -V 2>&1 | cut -d' ' -f2) · node $(node -v) · npm $(npm -v)"
+
 # --- PostgreSQL and Redis --------------------------------------------------------------------
 say "PostgreSQL and Redis"
 if port_open 5432; then
   echo "Using the PostgreSQL already listening on 5432"
 else
+  need docker
   docker rm -f onec-demo-postgres >/dev/null 2>&1 || true
   docker run -d --name onec-demo-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16 >/dev/null
   wait_port 5432
@@ -52,6 +86,7 @@ fi
 if port_open 6379; then
   echo "Using the Redis already listening on 6379"
 else
+  need docker
   docker rm -f onec-demo-redis >/dev/null 2>&1 || true
   docker run -d --name onec-demo-redis -p 6379:6379 redis:7 redis-server --save "" >/dev/null
   wait_port 6379
@@ -103,13 +138,9 @@ EOF
 
 # --- web ---------------------------------------------------------------------------------------
 say "Web app on :5173"
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
-if [ "$NODE_MAJOR" -lt 20 ] && [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
-  # shellcheck disable=SC1091
-  . "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm install 22 >/dev/null && nvm use 22 >/dev/null
-fi
 (cd "$ROOT/web" && { [ -d node_modules ] || npm ci --no-audit --no-fund; })
-(cd "$ROOT/web" && exec npx vite --host 0.0.0.0 --port 5173 --strictPort >"$RUN/web.log" 2>&1) &
+# Run Vite's own entry point (not npx) so the PID we record is the server itself.
+(cd "$ROOT/web" && exec node node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173 --strictPort >"$RUN/web.log" 2>&1) &
 PIDS+=($!)
 wait_port 5173
 
