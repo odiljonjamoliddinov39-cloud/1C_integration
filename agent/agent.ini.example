@@ -1,0 +1,19 @@
+[agent]
+; WebSocket endpoint of the backend (always wss:// in production)
+backend_url = wss://app.example.uz/agent
+heartbeat_seconds = 30
+request_timeout = 120
+log_file = C:\ProgramData\OneCAgent\agent.log
+
+; One section per 1C base. Tokens are issued in the web app: Admin -> Companies -> "New agent token".
+[base:TEST_CRYSTAL]
+agent_token = agt_paste_here
+; The aiapi HTTP service published by Apache on this laptop only
+extension_url = http://127.0.0.1:8080/TEST_CRYSTAL/hs/aiapi/v1
+; Same value as the extension constant ТокенAIAPI in this base
+extension_token = paste_here
+
+; [base:TEST_TEXMASH]
+; agent_token = agt_...
+; extension_url = http://127.0.0.1:8080/TEST_TEXMASH/hs/aiapi/v1
+; extension_token = ...

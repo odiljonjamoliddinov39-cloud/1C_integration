@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Publication of TEST_CRYSTAL: only the aiapi HTTP service, no web client, no OData.
+     usr/pwd: a dedicated 1C user "AIAPI" with the extension's role (see extension/README.md). -->
+<point xmlns="http://v8.1c.ru/8.2/virtual-resource-system"
+       xmlns:xs="http://www.w3.org/2001/XMLSchema"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       base="/TEST_CRYSTAL"
+       ib="File=&quot;C:\1C\Bases\TEST_CRYSTAL&quot;;usr=AIAPI;pwd=CHANGE_ME"
+       enable="false">
+    <ws enable="false"/>
+    <httpServices publishExtensionsByDefault="true">
+        <service name="aiapi" rootUrl="aiapi" enable="true" reuseSessions="autouse" sessionMaxAge="20" poolSize="5" poolTimeout="5"/>
+    </httpServices>
+    <standardOdata enable="false" reuseSessions="autouse" sessionMaxAge="20" poolSize="10" poolTimeout="5"/>
+</point>

@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditFinding, Company, Counterparty, Document, Fix, Item, LedgerEntry, log_event
+from app.models import AuditFinding, Company, Counterparty, Document, Fix, Item, LedgerEntry, User, log_event
 from app.services.agent_gateway import AgentOffline, AgentTimeout, get_gateway
 from app.services.audit.engine import FixType, rule_still_fires
 
@@ -275,9 +275,15 @@ def approve(db: Session, fixes: list[Fix], user_id: int) -> list[Fix]:
             approval_id=fix.approval_id,
         )
     db.commit()
+    approver = db.get(User, user_id)
     for fix in fixes:
         if fix.status == "approved":
-            payload = {**fix.proposed_change_json, "approval_id": fix.approval_id, "fix_id": fix.id}
+            payload = {
+                **fix.proposed_change_json,
+                "approval_id": fix.approval_id,
+                "fix_id": fix.id,
+                "approved_by": approver.email if approver else str(user_id),
+            }
             gateway.enqueue(fix.company_id, "apply_fix", payload, callback="fix_result", context={"fix_id": fix.id})
     return fixes
 

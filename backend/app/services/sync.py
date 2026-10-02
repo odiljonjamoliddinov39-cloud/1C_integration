@@ -27,6 +27,7 @@ DOCUMENT_TYPES = [
     "cash_out",
     "bank_in",
     "bank_out",
+    "operation",  # Операция (бухгалтерская): manual entries, no rows
 ]
 OPENING_REF = "OPENING"
 OPENING_COUNTER_ACCOUNT = "000"
@@ -291,6 +292,7 @@ def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
         rows = fetch("get_documents", {"type": doc_type, "refs": refs})["items"]
         upsert_documents(db, company.id, rows)
         all_refs.extend(refs)
+    mark_physically_deleted(db, company.id, items)
     if all_refs:
         entries = fetch("get_ledger", {"refs": all_refs})["items"]
         replace_entries_for_documents(db, company.id, all_refs, entries)
@@ -304,6 +306,16 @@ def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
     log_event(db, "sync.incremental", company_id=company.id, **stats)
     db.commit()
     return stats
+
+
+def mark_physically_deleted(db: Session, company_id: int, changes: list[dict]) -> None:
+    """Objects deleted from the base (not just marked) are flagged deleted in the mirror."""
+    gone = {c["ref"] for c in changes if c.get("deleted") and c.get("removed")}
+    if not gone:
+        return
+    for model in (Document, Counterparty, Item):
+        for obj in db.scalars(select(model).where(model.company_id == company_id, model.ref_1c.in_(gone))):
+            obj.deleted = True
 
 
 def resync_documents(db: Session, company: Company, fetch: Fetch, refs_by_type: dict[str, list[str]]):

@@ -208,7 +208,7 @@ class FakeOneC:
         self.journal.append({"approval_id": approval_id, "object": doc["ref"], "before": None, "after": result})
         return result
 
-    def cmd_post_invoice(self, approval_id, ref):
+    def cmd_post_invoice(self, approval_id, ref, approved_by=None):
         if (prev := self._approved(approval_id)) is not None:
             return prev
         doc = self.documents.get(ref)
@@ -223,7 +223,7 @@ class FakeOneC:
     def cmd_get_fix(self, id):
         return self.approvals.get(id)
 
-    def cmd_apply_fix(self, approval_id, type, object, changes, fix_id=None, reverse_of=None):
+    def cmd_apply_fix(self, approval_id, type, object, changes, fix_id=None, reverse_of=None, approved_by=None):
         if (prev := self._approved(approval_id)) is not None:
             return prev
         kind, obj_ref = object["kind"], object["ref"]

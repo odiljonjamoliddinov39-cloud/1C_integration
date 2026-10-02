@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, Counterparty, Invoice, Item, log_event
+from app.models import Company, Counterparty, Invoice, Item, User, log_event
 from app.services.agent_gateway import get_gateway
 from app.services.einvoice import get_provider
 
@@ -196,8 +196,10 @@ def send_to_1c(db: Session, invoice: Invoice, user_id: int) -> str:
     log_event(db, "invoice.create_requested", user_id=user_id, company_id=invoice.company_id,
               object_ref=invoice.id, approval_id=approval_id)
     db.commit()
+    user = db.get(User, user_id)
     payload = {
         "approval_id": approval_id,
+        "approved_by": user.email if user else str(user_id),
         "app_invoice_id": invoice.id,
         "date": invoice.date.isoformat(),
         "buyer_ref": invoice.buyer_ref,
@@ -222,10 +224,11 @@ def post_in_1c(db: Session, invoice: Invoice, user_id: int) -> str:
     log_event(db, "invoice.post_requested", user_id=user_id, company_id=invoice.company_id,
               object_ref=invoice.ref_1c, approval_id=approval_id)
     db.commit()
+    user = db.get(User, user_id)
     return get_gateway().enqueue(
         invoice.company_id,
         "post_invoice",
-        {"approval_id": approval_id, "ref": invoice.ref_1c},
+        {"approval_id": approval_id, "ref": invoice.ref_1c, "approved_by": user.email if user else str(user_id)},
         callback="invoice_posted",
         context={"invoice_id": invoice.id},
     )
