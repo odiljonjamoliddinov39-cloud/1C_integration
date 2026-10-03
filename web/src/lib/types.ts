@@ -18,6 +18,8 @@ export interface Company {
   last_synced_at: string | null;
   closed_period_until: string | null;
   agent_online: boolean | null;
+  /** Set when the agent answered from another company's 1C base; reads and writes are blocked. */
+  base_error: string | null;
   pending_commands: number | null;
 }
 

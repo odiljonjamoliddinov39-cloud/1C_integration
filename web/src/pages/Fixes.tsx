@@ -188,7 +188,7 @@ export function FixDetailPage() {
                 <button className="btn-primary" disabled={busy} onClick={() => run(() => api("/api/fixes/approve", { method: "POST", json: { fix_ids: [fix.id] } }))}>{t("fix.approve")}</button>
               </>
             )}
-            {canWrite && fix.status === "applied" && fix.before && (
+            {canWrite && fix.status === "applied" && (fix.before || fix.fix_type === "object_write") && (
               <button className="btn-secondary" disabled={busy} onClick={() => run(async () => { const undo = await api<Fix>(`/api/fixes/${fix.id}/undo`, { method: "POST", json: {} }); navigate(`/fixes/${undo.id}`); })}>
                 {t("fix.undo")}
               </button>

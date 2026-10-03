@@ -49,6 +49,9 @@ def engine():
 
 @pytest.fixture(autouse=True)
 def clean_tables(engine):
+    from app.services.onec import forget_verification
+
+    forget_verification()
     yield
     with engine.begin() as conn:
         names = ", ".join(t.name for t in Base.metadata.sorted_tables)

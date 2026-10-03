@@ -216,9 +216,10 @@ def store_opening_balances(db: Session, company_id: int, on: date, rows: list[di
 # --- sync runs -------------------------------------------------------------------------------
 
 
-def _apply_ping(company: Company, info: dict) -> None:
-    if info.get("inn"):
-        company.inn = info["inn"]
+def _apply_ping(db: Session, company: Company, info: dict) -> None:
+    from app.services.onec import check_base
+
+    check_base(db, company, info)  # raises WrongBase if the agent sits on another base
     if "closed_period_until" in info:
         company.closed_period_until = (
             date.fromisoformat(info["closed_period_until"]) if info["closed_period_until"] else None
@@ -229,7 +230,7 @@ def full_sync(db: Session, company: Company, fetch: Fetch, today: date | None = 
     start, end = full_sync_window(today)
     stats: dict[str, int] = {}
 
-    _apply_ping(company, fetch("ping", {}))
+    _apply_ping(db, company, fetch("ping", {}))
     changes = fetch("get_changes", {"since": None})  # take the cursor *before* reading data
 
     stats["counterparties"] = upsert_counterparties(
@@ -265,6 +266,9 @@ def full_sync(db: Session, company: Company, fetch: Fetch, today: date | None = 
 def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
     if not company.sync_cursor:
         return full_sync(db, company, fetch)
+    from app.services.onec import ensure_right_base
+
+    ensure_right_base(db, company, fetch)  # raises WrongBase before anything is mirrored
 
     changes = fetch("get_changes", {"since": company.sync_cursor})
     items = changes.get("items", [])
@@ -299,7 +303,7 @@ def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
     stats["documents"] = len(all_refs)
 
     if "organizations" in catalogs:
-        _apply_ping(company, fetch("ping", {}))
+        _apply_ping(db, company, fetch("ping", {}))
 
     company.sync_cursor = changes.get("cursor") or company.sync_cursor
     company.last_synced_at = datetime.now(timezone.utc)

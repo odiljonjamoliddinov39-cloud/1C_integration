@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AuditFinding, Company, Counterparty, Document, Fix, Item, LedgerEntry, User, log_event
+from app.services import onec
 from app.services.agent_gateway import AgentOffline, AgentTimeout, get_gateway
 from app.services.audit.engine import FixType, rule_still_fires
 
@@ -131,6 +132,16 @@ def build_change(db: Session, company: Company, fix_type: str, object_ref: str, 
 
 def preview(db: Session, company: Company, change: dict) -> dict:
     """Side-by-side data for the UI: current value, new value and affected entries."""
+    if onec.is_object_write(change):
+        ch = change["changes"]
+        proposed = {"action": ch["action"]}
+        if ch.get("data"):
+            proposed.update(ch["data"])
+        if ch.get("snapshot"):
+            proposed["restore"] = ch["snapshot"]
+        if ch.get("post") is not None:
+            proposed["post"] = ch["post"]
+        return {"current": change.get("current") or {}, "proposed": proposed, "affected_entries": []}
     obj = change["object"]
     current: dict = {}
     proposed: dict = {}
@@ -182,6 +193,8 @@ def preview(db: Session, company: Company, change: dict) -> dict:
 
 def object_date(db: Session, company: Company, change: dict) -> datetime | None:
     obj = change["object"]
+    if onec.is_object_write(change):
+        return datetime.fromisoformat(change["object_date"]) if change.get("object_date") else None
     if obj["kind"] == "document":
         doc = db.scalar(select(Document).where(Document.company_id == company.id, Document.ref_1c == obj["ref"]))
         return doc.date if doc else None
@@ -256,6 +269,10 @@ def approve(db: Session, fixes: list[Fix], user_id: int) -> list[Fix]:
             raise FixError(f"Fix {fix.id} is {fix.status}, not proposed")
     for fix in fixes:
         company = db.get(Company, fix.company_id)
+        if company.base_error:
+            raise FixError(f"{company.base_error}. Nothing is sent until the agent is on the right base.", 409)
+    for fix in fixes:
+        company = db.get(Company, fix.company_id)
         if in_closed_period(company, object_date(db, company, fix.proposed_change_json)):
             fix.status = "rejected"
             fix.result = "Closed period: correct in the current period"
@@ -270,7 +287,7 @@ def approve(db: Session, fixes: list[Fix], user_id: int) -> list[Fix]:
             "fix.approved",
             user_id=user_id,
             company_id=fix.company_id,
-            object_ref=fix.proposed_change_json["object"]["ref"],
+            object_ref=fix.proposed_change_json["object"].get("ref") or "",
             fix_id=fix.id,
             approval_id=fix.approval_id,
         )
@@ -278,18 +295,25 @@ def approve(db: Session, fixes: list[Fix], user_id: int) -> list[Fix]:
     approver = db.get(User, user_id)
     for fix in fixes:
         if fix.status == "approved":
-            payload = {
-                **fix.proposed_change_json,
-                "approval_id": fix.approval_id,
-                "fix_id": fix.id,
-                "approved_by": approver.email if approver else str(user_id),
-            }
-            gateway.enqueue(fix.company_id, "apply_fix", payload, callback="fix_result", context={"fix_id": fix.id})
+            change = fix.proposed_change_json
+            if onec.is_object_write(change):
+                command, payload = "write_object", onec.write_payload(change)
+            else:
+                command = "apply_fix"
+                payload = {k: v for k, v in change.items() if k not in ("current", "object_date")}
+            payload.update(
+                approval_id=fix.approval_id,
+                fix_id=fix.id,
+                approved_by=approver.email if approver else str(user_id),
+            )
+            gateway.enqueue(fix.company_id, command, payload, callback="fix_result", context={"fix_id": fix.id})
     return fixes
 
 
 def affected_objects(db: Session, fix: Fix) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     change = fix.proposed_change_json
+    if onec.is_object_write(change):
+        return onec.mirrored_objects(change, fix.after_json)
     obj = change["object"]
     docs: dict[str, list[str]] = {}
     catalogs: dict[str, list[str]] = {}
@@ -376,17 +400,23 @@ def handle_result(db: Session, fix_id: int, reply: dict) -> Fix:
 
 def build_undo(db: Session, fix: Fix, user_id: int) -> Fix:
     """A reverse fix restores `before_json`. It is approved and applied like any other fix."""
-    if fix.status != "applied" or not fix.before_json:
+    created = fix.proposed_change_json.get("type") == "object_write" and fix.proposed_change_json["changes"]["action"] == "create"
+    if fix.status != "applied" or not (fix.before_json or created):
         raise FixError("Only applied fixes with stored before values can be undone")
     if db.scalar(select(Fix).where(Fix.reverses_fix_id == fix.id, Fix.status.in_(["proposed", "approved", "applied"]))):
         raise FixError("This fix already has an undo")
     original = fix.proposed_change_json
-    change = {
-        "type": "restore",
-        "reverse_of": original["type"],
-        "object": original["object"],
-        "changes": {**original["changes"], "restore": fix.before_json},
-    }
+    if onec.is_object_write(original):
+        if original.get("type") != "object_write":
+            raise FixError("An undo cannot itself be undone; propose a new change instead")
+        change = onec.undo_change(original, fix.before_json, fix.after_json)
+    else:
+        change = {
+            "type": "restore",
+            "reverse_of": original["type"],
+            "object": original["object"],
+            "changes": {**original["changes"], "restore": fix.before_json},
+        }
     company = db.get(Company, fix.company_id)
     if in_closed_period(company, object_date(db, company, change)):
         raise FixError("The document is now in a closed period; it cannot be undone", 409)

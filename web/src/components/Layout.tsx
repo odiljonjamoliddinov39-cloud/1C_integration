@@ -43,6 +43,7 @@ function SyncStatus() {
   const scope = company ? [company] : companies;
   if (scope.length === 0) return null;
   const offline = scope.filter((c) => c.agent_online === false);
+  const wrongBase = scope.filter((c) => c.base_error);
   const oldest = scope.map((c) => c.last_synced_at).filter(Boolean).sort()[0] ?? null;
 
   async function syncNow() {
@@ -58,6 +59,13 @@ function SyncStatus() {
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      {wrongBase.length > 0 && (
+        <span title={wrongBase.map((c) => `${c.name}: ${c.base_error}`).join("\n")}>
+          <Badge tone="red">
+            {company ? t("header.wrongBaseOne") : t("header.wrongBaseMany", { n: wrongBase.length })}
+          </Badge>
+        </span>
+      )}
       {offline.length > 0 ? (
         <Badge tone="amber">{company ? t("header.offlineOne") : t("header.offlineMany", { n: offline.length })}</Badge>
       ) : (

@@ -13,14 +13,18 @@ import argparse
 import json
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from tests.fake_1c import FakeOneC, OneCError, clean_base
 
 
-def demo_base() -> FakeOneC:
-    """The clean test base plus a year of sales and one planted error for several rules."""
+def demo_base(name: str = "TEST_CRYSTAL", inn: str = "300000001") -> FakeOneC:
+    """The clean test base plus a year of sales and one planted error for several rules.
+
+    Each base reports its own name and INN on /ping, so the backend's right-base check passes.
+    """
     f = clean_base("OLD-DEBT")
+    f.name, f.inn = name, inn
     buyer = next(c for c in f.counterparties.values() if c["inn"] == "123456789")
     contract = next(c for c in f.contracts.values() if c["owner_ref"] == buyer["ref"])
     water = next(i for i in f.items.values() if i["name"].startswith("Вода"))
@@ -60,7 +64,7 @@ def make_handler(bases: dict[str, FakeOneC], token: str):
             if self.headers.get("Authorization") != f"Bearer {token}":
                 return self._send(401, {"error": "unauthorized", "message": "bad token", "details": {}})
             url = urlparse(self.path)
-            parts = url.path.strip("/").split("/")
+            parts = [unquote(p) for p in url.path.strip("/").split("/")]
             if len(parts) < 4 or parts[1:3] != ["hs", "aiapi"] or parts[3] != "v1" or parts[0] not in bases:
                 return self._send(404, {"error": "not_found", "message": url.path, "details": {}})
             base, rest = bases[parts[0]], parts[4:]
@@ -68,7 +72,7 @@ def make_handler(bases: dict[str, FakeOneC], token: str):
             if "refs" in q:
                 q["refs"] = q["refs"].split(",")
             body = {}
-            if method == "POST":
+            if method in ("POST", "PUT"):
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")
             try:
@@ -92,17 +96,47 @@ def make_handler(bases: dict[str, FakeOneC], token: str):
                     data = base.cmd_apply_fix(**body)
                 elif method == "GET" and rest[0] == "fixes":
                     data = base.cmd_get_fix(rest[1])
+                # Generic API: any object of the base.
+                elif method == "GET" and rest == ["metadata"]:
+                    data = base.cmd_get_metadata()
+                elif method == "POST" and rest == ["query"]:
+                    data = base.cmd_run_query(body.get("text", ""), body.get("params"), body.get("limit") or 1000)
+                elif rest[0] == "objects" and len(rest) >= 3:
+                    data = self._objects(base, method, rest[1:], q, body)
                 else:
                     return self._send(404, {"error": "not_found", "message": url.path, "details": {}})
             except OneCError as e:
                 return self._send(e.status, {"error": e.code, "message": e.message, "details": {}})
             return self._send(200, data)
 
+        @staticmethod
+        def _objects(base: FakeOneC, method: str, path: list[str], q: dict, body: dict):
+            kind, name = path[0], path[1]
+            if method == "GET" and len(path) == 2:
+                params = {k: q[k] for k in ("from", "to", "limit", "offset") if k in q}
+                if "filter" in q:
+                    params["filter"] = json.loads(q["filter"])
+                if q.get("include_deleted") == "true":
+                    params["include_deleted"] = True
+                return base.cmd_list_objects(kind, name, refs=q.get("refs"), **params)
+            if method == "GET" and len(path) == 3:
+                return base.cmd_get_object(kind, name, path[2])
+            if method == "POST" and len(path) == 2:
+                return base.cmd_write_object(kind=kind, name=name, action="create", **body)
+            if method == "PUT" and len(path) == 3:
+                return base.cmd_write_object(kind=kind, name=name, ref=path[2], **body)
+            if method == "POST" and len(path) == 4:
+                return base.cmd_write_object(kind=kind, name=name, ref=path[2], action=path[3], **body)
+            raise OneCError(404, "not_found", "/".join(path))
+
         def do_GET(self):
             self._route("GET")
 
         def do_POST(self):
             self._route("POST")
+
+        def do_PUT(self):
+            self._route("PUT")
 
     return Handler
 
@@ -113,7 +147,7 @@ def main():
     parser.add_argument("--token", default="ext-token")
     parser.add_argument("--bases", default="TEST_CRYSTAL", help="comma-separated base names")
     args = parser.parse_args()
-    bases = {name: demo_base() for name in args.bases.split(",")}
+    bases = {name: demo_base(name, f"30000000{i}") for i, name in enumerate(args.bases.split(","), start=1)}
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bases, args.token))
     print(f"fake 1C extension on http://127.0.0.1:{args.port}/<BASE>/hs/aiapi/v1 for {list(bases)}")
     server.serve_forever()

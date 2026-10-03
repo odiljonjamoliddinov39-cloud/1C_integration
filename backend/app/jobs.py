@@ -16,6 +16,7 @@ from app.models import Company, log_event
 from app.services import ai, fixes, invoices, sync
 from app.services.agent_gateway import AgentOffline, AgentTimeout, get_gateway
 from app.services.audit.engine import run_audit
+from app.services.onec import WrongBase
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def sync_company(company_id: int, full: bool = False, audit: bool = True) -> dic
 
         try:
             stats = sync.full_sync(db, company, fetch) if full else sync.incremental_sync(db, company, fetch)
-        except (AgentOffline, AgentTimeout) as e:
+        except (AgentOffline, AgentTimeout, WrongBase) as e:
             db.rollback()
             log.info("sync skipped for company %s: %s", company_id, e)
             return {"skipped": str(e)}

@@ -55,6 +55,7 @@ def company_out(c: Company, online: bool | None = None, pending: int | None = No
         "closed_period_until": iso(c.closed_period_until),
         "agent_online": online,
         "pending_commands": pending,
+        "base_error": c.base_error,
     }
 
 

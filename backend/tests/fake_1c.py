@@ -19,6 +19,9 @@ def ref() -> str:
     return str(uuid.uuid4())
 
 
+ref_ = ref  # inside FakeOneC, `ref` is often a parameter name
+
+
 class FakeOneC:
     def __init__(self, inn="300000001", name="TEST_CRYSTAL"):
         self.inn = inn
@@ -35,6 +38,7 @@ class FakeOneC:
         self.calls: list[tuple[str, dict]] = []
         self.clock = datetime(2026, 10, 1, 12, 0, 0)
         self.journal: list[dict] = []  # ЖурналИзмененийAI
+        self.queries: list[tuple] = []
 
     # --- building data ---------------------------------------------------------------------
 
@@ -218,6 +222,212 @@ class FakeOneC:
         self.post(doc)
         result = {"ref": ref, "posted": True}
         self.approvals[approval_id] = result
+        return result
+
+    # --- generic object API (/metadata, /objects, /query) -------------------------------------
+
+    CATALOGS = {
+        "Контрагенты": ("counterparties", {"Наименование": "name"}, {"ИНН": "inn"}),
+        "Номенклатура": ("items", {"Наименование": "name"}, {"КодИКПУ": "ikpu_code", "СтавкаНДС": "vat_rate", "ЕдиницаИзмерения": "unit", "Цена": "price"}),
+        "ДоговорыКонтрагентов": ("contracts", {"Наименование": "name"}, {"Номер": "number"}),
+    }
+    DOCUMENTS = {
+        "РеализацияТоваровУслуг": "sale", "ПоступлениеТоваровУслуг": "purchase", "СчетФактураВыданный": "invoice_out",
+        "СчетФактураПолученный": "invoice_in", "ПриходныйКассовыйОрдер": "cash_in", "РасходныйКассовыйОрдер": "cash_out",
+        "ПоступлениеНаРасчетныйСчет": "bank_in", "СписаниеСРасчетногоСчета": "bank_out",
+    }
+    ROW_FIELDS = {"Количество": "quantity", "Цена": "price", "Сумма": "amount", "СтавкаНДС": "vat_rate", "СуммаНДС": "vat_amount"}
+
+    def _store(self, kind, name):
+        if kind == "catalog" and name in self.CATALOGS:
+            return getattr(self, self.CATALOGS[name][0])
+        if kind == "document" and name in self.DOCUMENTS:
+            return {r: d for r, d in self.documents.items() if d["type"] == self.DOCUMENTS[name]}
+        raise OneCError(404, "not_found", f"{kind} {name} is not in this base")
+
+    def _refobj(self, catalog, ref):
+        if not ref:
+            return None
+        store = getattr(self, self.CATALOGS[catalog][0])
+        return {"_type": f"Справочник.{catalog}", "ref": ref, "presentation": store.get(ref, {}).get("name", "")}
+
+    def _describe(self, kind, name, obj):
+        if kind == "catalog":
+            _, std, attrs = self.CATALOGS[name]
+            out = {
+                "_type": f"Справочник.{name}", "ref": obj["ref"], "presentation": obj.get("name", ""), "deletion_mark": obj.get("deleted", False),
+                "standard": {k: obj.get(v) for k, v in std.items()},
+                "attributes": {k: obj.get(v) for k, v in attrs.items()},
+                "tables": {},
+            }
+            if name == "ДоговорыКонтрагентов":
+                out["standard"]["Владелец"] = self._refobj("Контрагенты", obj.get("owner_ref"))
+            return out
+        rows = [
+            {"Номенклатура": self._refobj("Номенклатура", r["item_ref"]), **{k: r.get(v) for k, v in self.ROW_FIELDS.items()}}
+            for r in obj.get("rows", [])
+        ]
+        return {
+            "_type": f"Документ.{name}", "ref": obj["ref"], "presentation": f"{name} {obj['number']}", "deletion_mark": obj["deleted"],
+            "posted": obj["posted"],
+            "standard": {"Номер": obj["number"], "Дата": obj["date"]},
+            "attributes": {
+                "Контрагент": self._refobj("Контрагенты", obj.get("counterparty_ref")),
+                "ДоговорКонтрагента": self._refobj("ДоговорыКонтрагентов", obj.get("contract_ref")),
+                "СуммаДокумента": obj.get("amount"),
+            },
+            "tables": {"Товары": rows},
+        }
+
+    def cmd_get_metadata(self):
+        catalogs = [
+            {"name": n, "synonym": n, "attributes": [{"name": a} for a in attrs], "tabular_sections": []}
+            for n, (_, _, attrs) in self.CATALOGS.items()
+        ]
+        documents = [
+            {"name": n, "synonym": n, "posting": True, "attributes": [{"name": "Контрагент"}, {"name": "ДоговорКонтрагента"}, {"name": "СуммаДокумента"}],
+             "tabular_sections": [{"name": "Товары", "attributes": [{"name": "Номенклатура"}, *[{"name": k} for k in self.ROW_FIELDS]]}]}
+            for n in self.DOCUMENTS
+        ]
+        return {
+            "configuration": "БухгалтерияДляУзбекистана", "version": "3.0.0", "base_name": self.name,
+            "catalogs": catalogs, "documents": documents,
+            "accounting_registers": [{"name": "Хозрасчетный", "dimensions": [], "resources": [{"name": "Сумма"}, {"name": "Количество"}]}],
+            "accumulation_registers": [], "information_registers": [], "charts_of_accounts": [{"name": "Хозрасчетный"}], "enums": [],
+        }
+
+    def cmd_list_objects(self, kind, name, refs=None, filter=None, limit=100, offset=0, include_deleted=False, **period):
+        rows = list(self._store(kind, name).values())
+        if refs:
+            rows = [r for r in rows if r["ref"] in refs]
+        if kind == "document":
+            if period.get("from"):
+                rows = [r for r in rows if r["date"][:10] >= period["from"]]
+            if period.get("to"):
+                rows = [r for r in rows if r["date"][:10] <= period["to"]]
+        if not include_deleted:
+            rows = [r for r in rows if not r.get("deleted")]
+        items = [self._describe(kind, name, r) for r in rows]
+        for key, value in (filter or {}).items():
+            items = [i for i in items if i["attributes"].get(key, i["standard"].get(key)) == value]
+        total = len(items)
+        return {"kind": kind, "name": name, "total": total, "items": items[int(offset): int(offset) + int(limit)]}
+
+    def cmd_get_object(self, kind, name, ref):
+        obj = self._store(kind, name).get(ref)
+        if obj is None:
+            raise OneCError(404, "not_found", "Object not found")
+        return self._describe(kind, name, obj)
+
+    def cmd_run_query(self, text, params=None, limit=1000):
+        self.queries.append((text, params))
+        if "Хозрасчетный.Остатки" in text:
+            balance = {}
+            for o in self.opening:
+                balance[o["account"]] = balance.get(o["account"], D("0")) + D(o["debit"]) - D(o["credit"])
+            for entries in self.entries.values():
+                for e in entries:
+                    balance[e["dt"]] = balance.get(e["dt"], D("0")) + D(e["amount"])
+                    balance[e["kt"]] = balance.get(e["kt"], D("0")) - D(e["amount"])
+            rows = [[acc, float(max(b, 0)), float(max(-b, 0))] for acc, b in sorted(balance.items()) if b]
+            return {"columns": ["Счет", "СуммаОстатокДт", "СуммаОстатокКт"], "rows": rows[:limit], "truncated": len(rows) > limit}
+        rows = [[d["ref"], d["number"], d["date"]] for d in self.documents.values()]
+        return {"columns": ["Ссылка", "Номер", "Дата"], "rows": rows[:limit], "truncated": len(rows) > limit}
+
+    def _apply_data(self, kind, name, obj, data):
+        data = data or {}
+        if kind == "catalog":
+            _, std, attrs = self.CATALOGS[name]
+            fields = {**std, **attrs}
+            for part in ("standard", "attributes"):
+                for k, v in (data.get(part) or {}).items():
+                    if k not in fields:
+                        raise OneCError(400, "bad_attribute", f"{name} has no attribute {k}")
+                    obj[fields[k]] = v
+            return
+        std = data.get("standard") or {}
+        if "Номер" in std:
+            obj["number"] = std["Номер"]
+        if "Дата" in std:
+            obj["date"] = std["Дата"]
+        for k, v in (data.get("attributes") or {}).items():
+            field = {"Контрагент": "counterparty_ref", "ДоговорКонтрагента": "contract_ref", "СуммаДокумента": "amount"}.get(k)
+            if field is None:
+                raise OneCError(400, "bad_attribute", f"{name} has no attribute {k}")
+            obj[field] = v.get("ref") if isinstance(v, dict) else v
+        if "Товары" in (data.get("tables") or {}):
+            rows = []
+            for r in data["tables"]["Товары"]:
+                row = {"item_ref": (r.get("Номенклатура") or {}).get("ref"), "warehouse_ref": "W1"}
+                for k, v in self.ROW_FIELDS.items():
+                    if k in r:
+                        row[v] = r[k]
+                row["amount"] = str(D(str(row.get("quantity", 0))) * D(str(row.get("price", 0))))
+                row["vat_amount"] = str((D(row["amount"]) * D(str(row.get("vat_rate", 0))) / 100).quantize(D("0.01")))
+                rows.append(row)
+            obj["rows"] = rows
+            obj["vat"] = str(sum((D(r["vat_amount"]) for r in rows), D("0")))
+            obj["amount"] = str(sum((D(r["amount"]) for r in rows), D("0")) + D(obj["vat"]))
+
+    def cmd_write_object(self, approval_id, kind, name, action, ref=None, data=None, post=None, snapshot=None, fix_id=None, approved_by=None):
+        if (prev := self._approved(approval_id)) is not None:
+            return prev
+        if kind not in ("catalog", "document"):
+            raise OneCError(400, "not_writable", "Only catalogs and documents can be changed")
+        store = self._store(kind, name)
+        before = None
+        if action == "create":
+            if kind == "catalog":
+                obj = {"ref": ref_(), "name": "", "deleted": False}
+                if name == "ДоговорыКонтрагентов":
+                    obj["owner_ref"] = ((data or {}).get("standard") or {}).get("Владелец", {}).get("ref")
+                self._apply_data(kind, name, obj, data)
+                getattr(self, self.CATALOGS[name][0])[obj["ref"]] = obj
+                self._register("catalog", name=self.CATALOGS[name][0], ref=obj["ref"], deleted=False)
+            else:
+                obj = {"ref": ref_(), "type": self.DOCUMENTS[name], "number": str(len(self.documents) + 1).zfill(6), "date": self.clock.isoformat(),
+                       "posted": False, "deleted": False, "counterparty_ref": None, "contract_ref": None, "amount": "0", "vat": "0", "rows": []}
+                self._apply_data(kind, name, obj, data)
+                self._check_period(obj["date"])
+                self.documents[obj["ref"]] = obj
+                self.post(obj) if post else self._register("document", type=obj["type"], ref=obj["ref"], deleted=False)
+        else:
+            obj = store.get(ref)
+            if obj is None:
+                raise OneCError(404, "not_found", "Object not found")
+            if kind == "document":
+                self._check_period(obj["date"])
+            before = self._describe(kind, name, obj)
+            if action == "update":
+                self._apply_data(kind, name, obj, data)
+            elif action == "restore":
+                self._apply_data(kind, name, obj, {k: snapshot.get(k) for k in ("standard", "attributes", "tables") if snapshot.get(k)})
+                obj["deleted"] = snapshot.get("deletion_mark", False)
+                if kind == "document" and not snapshot.get("posted", False) and obj["posted"]:
+                    self.unpost(obj)
+                    post = False
+                elif kind == "document" and snapshot.get("posted"):
+                    post = True
+            elif action == "mark_deletion":
+                obj["deleted"] = True
+                if kind == "document" and obj["posted"]:
+                    self.unpost(obj)
+            elif action == "unmark_deletion":
+                obj["deleted"] = False
+            elif action == "post":
+                post = True
+            elif action == "unpost":
+                self.unpost(obj)
+            else:
+                raise OneCError(400, "bad_action", action)
+            if kind == "document" and (post or (action == "update" and obj["posted"])):
+                self.post(obj)
+            elif kind == "catalog":
+                self._register("catalog", name=self.CATALOGS[name][0], ref=obj["ref"], deleted=obj.get("deleted", False))
+        after = self._describe(kind, name, obj)
+        result = {"fix_id": fix_id, "ref": obj["ref"], "before": before, "after": after}
+        self.approvals[approval_id] = result
+        self.journal.append({"approval_id": approval_id, "object": obj["ref"], "before": before, "after": after})
         return result
 
     def cmd_get_fix(self, id):

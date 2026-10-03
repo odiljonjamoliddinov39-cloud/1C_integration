@@ -140,6 +140,86 @@ Rules for every write:
 
 `id` is the `approval_id`. Returns the stored result (`{"fix_id", "before", "after"}`), or `404`.
 
+### Direct API: any object of the base
+
+These endpoints reach the whole base, not only the mirrored catalogs and documents.
+
+`kind` is one of `catalog`, `document`, `information_register`, `accumulation_register`,
+`accounting_register`, `chart_of_accounts`, `chart_of_characteristic_types` or `enum`. `name` is the
+1C metadata name (`Контрагенты`, `РеализацияТоваровУслуг`, `Хозрасчетный`, ...), URL-encoded.
+Only `catalog` and `document` can be written.
+
+Values in JSON:
+
+| 1C value | JSON |
+|---|---|
+| string, number, boolean | as is |
+| date | `"2026-09-30T12:00:00"` |
+| empty reference | `null` |
+| reference | `{"_type": "Справочник.Контрагенты", "ref": "<uuid>", "presentation": "ООО Покупатель"}` |
+| account | the same plus `"code": "4010"` (on write, `{"_type": "ПланСчетов.Хозрасчетный", "code": "4010"}` is enough) |
+| enum value | `{"_type": "Перечисление.СтавкиНДС", "value": "НДС12", "presentation": "12%"}` |
+
+#### `GET /metadata`
+
+The configuration's content: `catalogs`, `documents`, `information_registers`,
+`accumulation_registers`, `accounting_registers`, `charts_of_accounts`,
+`charts_of_characteristic_types` and `enums`. Each entry has `name`, `synonym` and its fields with
+types: `attributes`, `standard`, `tabular_sections`, plus `posting` and `writable` for documents,
+`dimensions`, `resources` and `period_field` for registers, and `values` for enums. Also
+`configuration`, `version` and `base_name`.
+
+#### `GET /objects/{kind}/{name}?refs=&from=&to=&filter=&limit=&offset=&include_deleted=`
+
+* `filter`: a JSON object of field → value, for example `{"ИНН": "123456789"}`. Field names are checked
+  against the metadata.
+* `from` and `to` filter on `Дата` for documents and `Период` for registers.
+* `limit` defaults to 100 (maximum 5000). Objects marked for deletion are left out unless
+  `include_deleted=true`.
+
+→ `{"kind", "name", "total", "items": [...]}`. Catalog, document and chart items are full objects
+(see below). Register items are rows of the register table (`{"Период": …, "Регистратор": …, …}`).
+Enum items are the enum values.
+
+#### `GET /objects/{kind}/{name}/{id}`
+
+```json
+{"_type": "Документ.РеализацияТоваровУслуг", "ref": "…", "presentation": "Реализация 000012 от 05.09.2026",
+ "deletion_mark": false, "posted": true,
+ "standard": {"Номер": "000012", "Дата": "2026-09-05T10:00:00"},
+ "attributes": {"Контрагент": {"_type": "Справочник.Контрагенты", "ref": "…", "presentation": "…"}, "СуммаДокумента": 224000},
+ "tables": {"Товары": [{"Номенклатура": {…}, "Количество": 20, "Цена": 10000, "СтавкаНДС": {…}}]}}
+```
+
+`standard` holds `Номер` and `Дата` for documents. For catalogs it holds `Код`, `Наименование`,
+`Родитель`, `Владелец` and `ЭтоГруппа`, if the catalog has them.
+
+#### `POST /query`
+
+`{"text": "ВЫБРАТЬ … ИЗ …", "params": {"Дата": "2026-10-01", "Контрагент": {"_type": …, "ref": …}}, "limit": 1000}`
+→ `{"columns": ["…"], "rows": [[…]], "truncated": false}`. The 1C query language cannot change data.
+Strings shaped like dates become dates, and arrays become lists for `В (&Список)`. The limit
+defaults to 1000 rows (maximum 10000). A query that does not compile returns `400 bad_query`.
+
+#### Writes (the write rules above apply)
+
+| Request | Body | What 1C does |
+|---|---|---|
+| `POST /objects/{kind}/{name}` | `{approval_id, approved_by, fix_id, data, post}` | Creates the object; `post: true` posts a document |
+| `PUT /objects/{kind}/{name}/{id}` | `{…, "action": "update", data, post}` | Applies `data`; a posted document is re-posted |
+| `PUT /objects/{kind}/{name}/{id}` | `{…, "action": "restore", "snapshot": <before>}` | Undo: puts back attributes, tables, the deletion mark and the posted state |
+| `POST /objects/{kind}/{name}/{id}/post` | `{approval_id, approved_by, fix_id}` | Posts |
+| `POST /objects/{kind}/{name}/{id}/unpost` | same | Unposts |
+| `POST /objects/{kind}/{name}/{id}/mark_deletion` | same | Marks for deletion (unposts a posted document) |
+| `POST /objects/{kind}/{name}/{id}/unmark_deletion` | same | Clears the deletion mark |
+
+`data` = `{"standard": {...}, "attributes": {...}, "tables": {"Товары": [rows]}}`. Every key is
+optional, and a tabular section that is sent replaces the existing one completely. An unknown
+field returns `400 bad_attribute`.
+
+→ `{"fix_id", "ref", "before", "after"}`, where `before` and `after` are full objects (`before` is
+`null` for create).
+
 ---
 
 ## 2. Agent ↔ backend WebSocket (`/agent`)
@@ -168,6 +248,11 @@ Commands and the extension call each one maps to:
 | `post_invoice` | `approval_id`, `ref`, `approved_by` | `POST /invoices/{ref}/post` |
 | `apply_fix` | fix payload | `POST /fixes` |
 | `get_fix` | `id` | `GET /fixes/{id}` |
+| `get_metadata` | — | `GET /metadata` |
+| `list_objects` | `kind`, `name`, `refs?`, `filter?`, `from?`, `to?`, `limit?`, `offset?`, `include_deleted?` | `GET /objects/{kind}/{name}` |
+| `get_object` | `kind`, `name`, `ref` | `GET /objects/{kind}/{name}/{ref}` |
+| `run_query` | `text`, `params?`, `limit?` | `POST /query` |
+| `write_object` | `approval_id`, `approved_by`, `fix_id`, `kind`, `name`, `action`, `ref?`, `data?`, `post?`, `snapshot?` | create → `POST /objects/{kind}/{name}`; update/restore → `PUT …/{ref}`; others → `POST …/{ref}/{action}` |
 
 Backend side (Redis):
 
@@ -179,3 +264,42 @@ Backend side (Redis):
 
 If the laptop is offline, reads come from the mirror (the UI shows "last synced"), and writes wait in
 the queue and run on reconnect.
+
+---
+
+## 3. Backend direct 1C API (`/api/onec/{company_id}/...`)
+
+The browser and MCP side of the direct API. Every call goes live through the agent to the
+company's own base. If the agent is offline the call returns `503`, and if 1C does not answer in
+time it returns `504`.
+
+| Request | Who | What |
+|---|---|---|
+| `GET /metadata` | anyone with access to the company | `GET /metadata` |
+| `GET /objects/{kind}/{name}?filter=<json>&from=&to=&limit=&offset=&include_deleted=` | same | list |
+| `GET /objects/{kind}/{name}/{ref}` | same | one object |
+| `POST /query` `{text, params, limit}` | owner, accountant | 1C query (logged as `onec.query`) |
+| `POST /changes` `{kind, name, action, ref?, data?, post?, explanation}` | owner, accountant | **proposes** a change |
+
+`POST /changes` never writes to 1C. It reads the object's current state, refuses a closed period
+with `409`, and creates a fix of type `object_write` with a before/after preview. The change runs
+only after someone approves it on the Fixes page (`POST /api/fixes/approve`). Approval issues the
+`approval_id`, the agent sends `write_object`, and the mirror re-syncs the touched object. Undo
+(`POST /api/fixes/{id}/undo`) proposes a `restore` from the stored `before`. Undoing a create
+proposes `mark_deletion`.
+
+MCP exposes the same calls as the `onec_metadata`, `onec_list_objects` and `onec_get_object`
+tools, plus `onec_query` and `onec_propose_change`. The last two are not shown to viewers.
+
+### Right-base guard
+
+Each agent token belongs to one company, so every call must reach that company's base. Before
+syncing, and before any live read or write (at most once every 10 minutes per company), the
+backend pings 1C and compares two things:
+
+* the reported `inn` with the company's INN. An empty company INN is filled in from the first ping;
+* the reported `base_name` with the last part of the company's `base_path`.
+
+On a mismatch it stores `companies.base_error`, logs `agent.wrong_base`, and refuses with
+`409`. Sync is skipped, live reads and new proposals are refused, and fix approval is blocked.
+The web app shows the error in the header. The error clears on the first ping that matches again.

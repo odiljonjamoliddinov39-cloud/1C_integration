@@ -48,8 +48,13 @@ READ_COMMANDS = {
     "get_balances",
     "get_changes",
     "get_fix",
+    # Generic access to any object of the base (see services/onec.py).
+    "get_metadata",
+    "list_objects",
+    "get_object",
+    "run_query",
 }
-WRITE_COMMANDS = {"create_invoice", "post_invoice", "apply_fix"}
+WRITE_COMMANDS = {"create_invoice", "post_invoice", "apply_fix", "write_object"}
 
 
 def make_envelope(command: str, params: dict, callback: str | None = None, context: dict | None = None):

@@ -92,6 +92,57 @@ READ_TOOLS = [
     },
 ]
 
+ONEC_COMPANY = {"type": "integer", "description": "Company id (one 1C base); see list_companies"}
+ONEC_KIND = {"type": "string", "enum": ["catalog", "document", "information_register", "accumulation_register", "accounting_register", "chart_of_accounts", "chart_of_characteristic_types", "enum"]}
+
+READ_TOOLS += [
+    {
+        "name": "onec_metadata",
+        "description": "Live list of everything in a company's 1C base: catalogs, documents, registers, charts of accounts, enums, with their attributes and tabular sections. Use it to find the exact 1C names before reading or changing objects.",
+        "inputSchema": {"type": "object", "properties": {"company_id": ONEC_COMPANY}, "required": ["company_id"]},
+    },
+    {
+        "name": "onec_list_objects",
+        "description": "Live list of objects of one catalog/document/register from 1C, with all attributes and tabular sections.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "company_id": ONEC_COMPANY,
+                "kind": ONEC_KIND,
+                "name": {"type": "string", "description": "1C name, e.g. Контрагенты, РеализацияТоваровУслуг"},
+                "from": {"type": "string", "description": "Documents: from date YYYY-MM-DD"},
+                "to": {"type": "string", "description": "Documents: to date YYYY-MM-DD"},
+                "filter": {"type": "object", "description": "Attribute equality filter, e.g. {\"ИНН\": \"123456789\"}"},
+                "limit": {"type": "integer", "default": 50},
+                "offset": {"type": "integer", "default": 0},
+            },
+            "required": ["company_id", "kind", "name"],
+        },
+    },
+    {
+        "name": "onec_get_object",
+        "description": "Live read of one 1C object by its UUID, with all attributes and tabular sections.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": ONEC_COMPANY, "kind": ONEC_KIND, "name": {"type": "string"}, "ref": {"type": "string"}},
+            "required": ["company_id", "kind", "name", "ref"],
+        },
+    },
+]
+
+# Readable by owners and accountants only (a 1C query can read every part of the base).
+WRITER_READ_TOOLS = [
+    {
+        "name": "onec_query",
+        "description": "Run a 1C query (ЗАПРОС language, read-only) on a company's live base, e.g. balances from РегистрБухгалтерии.Хозрасчетный.Остатки. Max 10000 rows.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": ONEC_COMPANY, "text": {"type": "string"}, "params": {"type": "object"}, "limit": {"type": "integer"}},
+            "required": ["company_id", "text"],
+        },
+    },
+]
+
 WRITE_TOOLS = [
     {
         "name": "propose_fix",
@@ -128,7 +179,27 @@ WRITE_TOOLS = [
         },
     },
 ]
-WRITE_TOOL_NAMES = {t["name"] for t in WRITE_TOOLS}
+WRITE_TOOLS.append(
+    {
+        "name": "onec_propose_change",
+        "description": "Propose a change to any catalog item or document in 1C: create, update attributes/tables, post, unpost, mark or unmark deletion. Nothing changes until a person approves it in the web app (Corrections).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "company_id": ONEC_COMPANY,
+                "kind": {"type": "string", "enum": ["catalog", "document"]},
+                "name": {"type": "string"},
+                "action": {"type": "string", "enum": ["create", "update", "post", "unpost", "mark_deletion", "unmark_deletion"]},
+                "ref": {"type": "string", "description": "UUID of the object (not for create)"},
+                "data": {"type": "object", "description": "{standard: {...}, attributes: {...}, tables: {Name: [rows]}}; references as {\"_type\": \"Справочник.Контрагенты\", \"ref\": \"uuid\"}"},
+                "post": {"type": "boolean", "description": "Documents: post after writing"},
+                "explanation": {"type": "string"},
+            },
+            "required": ["company_id", "kind", "name", "action"],
+        },
+    }
+)
+WRITE_TOOL_NAMES = {t["name"] for t in WRITE_TOOLS} | {t["name"] for t in WRITER_READ_TOOLS}
 
 
 class ToolError(Exception):
@@ -197,6 +268,8 @@ def call_tool(db: Session, user: User, name: str, args: dict) -> Any:
         except Exception as e:  # noqa: BLE001
             raise ToolError(f"Query failed: {str(e).splitlines()[0][:300]}") from e
         return {"columns": columns, "rows": [[ai.jsonable(v) for v in r] for r in rows[: ai.MAX_RESULT_ROWS]]}
+    if name.startswith("onec_"):
+        return _onec_tool(db, user, name, args)
     if name == "propose_fix":
         finding = db.get(AuditFinding, int(args["finding_id"]))
         if not finding or finding.company_id not in allowed_company_ids(db, user):
@@ -228,6 +301,44 @@ def call_tool(db: Session, user: User, name: str, args: dict) -> Any:
     raise ToolError(f"Unknown tool {name}")
 
 
+def _onec_tool(db: Session, user: User, name: str, args: dict) -> Any:
+    from app.services import onec
+    from app.services.agent_gateway import AgentCommandError, AgentOffline, AgentTimeout
+
+    if int(args.get("company_id") or 0) not in allowed_company_ids(db, user):
+        raise ToolError("No access to this company")
+    company = db.get(Company, int(args["company_id"]))
+    try:
+        if name == "onec_metadata":
+            return onec.metadata(db, company)
+        if name == "onec_list_objects":
+            return onec.list_objects(db, company, args.get("kind", ""), args.get("name", ""), {**args, "limit": args.get("limit") or 50})
+        if name == "onec_get_object":
+            return onec.get_object(db, company, args.get("kind", ""), args.get("name", ""), args.get("ref", ""))
+        if name == "onec_query":
+            result = onec.run_query(db, company, args.get("text", ""), args.get("params"), args.get("limit"))
+            log_event(db, "onec.query", user_id=user.id, company_id=company.id, text=args.get("text", "")[:2000])
+            return result
+        if name == "onec_propose_change":
+            fix = onec.propose_change(
+                db, company, user.id, kind=args.get("kind", ""), name=args.get("name", ""), action=args.get("action", ""),
+                ref=args.get("ref"), data=args.get("data"), post=args.get("post"), explanation=args.get("explanation", ""),
+            )
+            db.commit()
+            return {"fix_id": fix.id, "status": fix.status, "next_step": "Approve it in the web app (Corrections)"}
+    except onec.OneCError as e:
+        raise ToolError(str(e)) from e
+    except AgentOffline as e:
+        raise ToolError("1C is offline: the agent for this company is not connected") from e
+    except AgentTimeout as e:
+        raise ToolError("1C did not answer in time") from e
+    except AgentCommandError as e:
+        raise ToolError(f"1C refused: {e.message}") from e
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    raise ToolError(f"Unknown tool {name}")
+
+
 def _rpc_result(msg_id, result) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
@@ -254,7 +365,7 @@ def handle_message(db: Session, user: User, msg: dict) -> dict | None:
     if method == "ping":
         return _rpc_result(msg_id, {})
     if method == "tools/list":
-        tools = READ_TOOLS + ([] if user.role == Role.VIEWER else WRITE_TOOLS)
+        tools = READ_TOOLS + ([] if user.role == Role.VIEWER else WRITER_READ_TOOLS + WRITE_TOOLS)
         return _rpc_result(msg_id, {"tools": tools})
     if method == "tools/call":
         params = msg.get("params") or {}

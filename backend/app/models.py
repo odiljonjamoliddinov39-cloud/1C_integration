@@ -57,6 +57,9 @@ class Company(Base):
     sync_cursor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_period_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Set when the agent turns out to be connected to a different base (wrong INN or base name);
+    # sync and writes are refused until it is cleared by a matching /ping.
+    base_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

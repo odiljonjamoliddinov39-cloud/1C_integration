@@ -28,6 +28,14 @@ Laptop (no inbound ports)                    VPS (Docker Compose, HTTPS)
                                                           Claude API · e-invoice operator
 ```
 
+Besides the five functions there is a **direct 1C API** (`/api/onec/{company_id}/...`, and the same
+calls as MCP tools). It reads anything in the company's base, such as the configuration's
+metadata, any catalog, document, register, chart of accounts or enum, and runs 1C queries. It also
+proposes changes to any catalog item or document: create, update, post, unpost, mark for deletion.
+A proposed change is a normal fix: nothing reaches 1C until a person approves it, and it can be
+undone. A **right-base guard** checks that the agent is connected to that company's base (INN and
+base name) before any sync, read or write. See [`docs/api-contract.md`](docs/api-contract.md) §1 and §3.
+
 Only the agent touches 1C. Every write needs an `approval_id` that the backend issues when a
 person approves. In 1C each write runs in one transaction, is logged to `ЖурналИзмененийAI`, and
 is refused for a closed period.
@@ -88,7 +96,7 @@ and run `cd agent && ONEC_AGENT_CONFIG=agent.ini python -m onec_agent run`. Then
 ## Tests
 
 ```bash
-cd backend && pytest     # 57 tests on PostgreSQL, including all 12 audit rules and the acceptance flows
+cd backend && pytest     # 64 tests on PostgreSQL, including all 12 audit rules and the acceptance flows
 cd agent && pytest
 cd web && npm run build
 ```

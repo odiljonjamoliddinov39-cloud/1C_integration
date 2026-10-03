@@ -6,6 +6,7 @@ into chunks so URLs stay short, and the chunks' `items` are merged.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -64,6 +65,35 @@ class ExtensionClient:
 
     def cmd_get_fix(self, id: str) -> Any:
         return self._get(f"/fixes/{id}")
+
+    # --- generic access to any object -----------------------------------------------------------
+
+    def cmd_get_metadata(self) -> Any:
+        return self._get("/metadata")
+
+    def cmd_list_objects(self, kind: str, name: str, refs: list[str] | None = None, filter: dict | None = None, **params) -> Any:
+        query = {k: params.get(k) for k in ("from", "to", "limit", "offset")}
+        if params.get("include_deleted"):
+            query["include_deleted"] = "true"
+        if filter:
+            query["filter"] = json.dumps(filter, ensure_ascii=False)
+        return self._get_chunked(f"/objects/{kind}/{name}", query, refs)
+
+    def cmd_get_object(self, kind: str, name: str, ref: str) -> Any:
+        return self._get(f"/objects/{kind}/{name}/{ref}")
+
+    def cmd_run_query(self, text: str, params: dict | None = None, limit: int | None = None) -> Any:
+        return self._post("/query", {"text": text, "params": params or {}, "limit": limit})
+
+    def cmd_write_object(self, kind: str, name: str, action: str, ref: str | None = None, **payload) -> Any:
+        """create -> POST /objects/{kind}/{name}; update/restore -> PUT .../{ref}; others -> POST .../{ref}/{action}."""
+        if action == "create":
+            return self._post(f"/objects/{kind}/{name}", payload)
+        if not ref:
+            raise ExtensionError(400, {"error": "bad_params", "message": "ref is required", "details": {}})
+        if action in ("update", "restore"):
+            return self._handle(self.http.put(f"/objects/{kind}/{name}/{ref}", json={**payload, "action": action}))
+        return self._post(f"/objects/{kind}/{name}/{ref}/{action}", payload)
 
     # --- writes (each carries the backend's approval_id) ---------------------------------------
 

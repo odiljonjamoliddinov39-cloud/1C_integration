@@ -69,6 +69,7 @@ All of them: *Сервер* ✔, *Вызов сервера* ✘, *Привил�
 | `AIAPI_Чтение` | `src/CommonModules/AIAPI_Чтение.bsl` |
 | `AIAPI_Запись` | `src/CommonModules/AIAPI_Запись.bsl` |
 | `AIAPI_РегистрацияИзменений` | `src/CommonModules/AIAPI_РегистрацияИзменений.bsl` |
+| `AIAPI_Объекты` | `src/CommonModules/AIAPI_Объекты.bsl`: direct access to any object of the base |
 
 ### HTTP service `aiapi`
 
@@ -86,6 +87,16 @@ All of them: *Сервер* ✔, *Вызов сервера* ✘, *Привил�
 | ПровестиСФ | `/v1/invoices/{id}/post` | POST | `ПровестиСчетФактуруPOST` |
 | Исправления | `/v1/fixes` | POST | `ИсправленияPOST` |
 | Исправление | `/v1/fixes/{id}` | GET | `ИсправлениеGET` |
+| Метаданные | `/v1/metadata` | GET | `МетаданныеGET` |
+| Запрос | `/v1/query` | POST | `ЗапросPOST` |
+| Объекты | `/v1/objects/{kind}/{name}` | GET, POST | `ОбъектыGET`, `ОбъектыPOST` |
+| Объект | `/v1/objects/{kind}/{name}/{id}` | GET, PUT | `ОбъектGET`, `ОбъектPUT` |
+| ДействиеОбъекта | `/v1/objects/{kind}/{name}/{id}/{action}` | POST | `ДействиеОбъектаPOST` |
+
+The last five templates are the **direct API**. It reads any catalog, document, register, chart of
+accounts or enum, runs 1C queries (the query language cannot change data), and creates, changes,
+posts, unposts or marks for deletion any catalog item or document. Every write goes through
+the same approval rules as the other write endpoints (section 5).
 
 ### Event subscriptions
 
@@ -104,7 +115,8 @@ configuration.
 Grant: the HTTP service (*Использование*); read on the borrowed catalogs, documents and
 `Хозрасчетный`; read and write on the two registers; *Изменение* and *Проведение* on
 `СчетФактураВыданный`; *Изменение* on the documents and catalogs touched by fixes; and
-*Получение* on the constant. Create a 1C user `AIAPI` with this role only (plus the base's minimal
+*Получение* on the constant. The common modules are privileged, so the direct API can reach
+objects that are not borrowed. The role only limits what the `AIAPI` user can do outside them. Create a 1C user `AIAPI` with this role only (plus the base's minimal
 role, if the configuration requires one). Its credentials go into `default.vrd`.
 
 ## 3. Check the names against your base
@@ -144,3 +156,8 @@ sync. No other module needs changes.
 * Each write adds a `ЖурналИзмененийAI` record: who (web-app user), when, object, before and after.
 * A document dated on or before the change-prohibition date (БСП `ДатыЗапретаИзменения`) is
   refused with **409 `closed_period`**, and nothing changes.
+* Direct API writes (`/objects/...`) record the full object before and after (`before`, `after`).
+  Undo sends `PUT ... {"action": "restore", "snapshot": before}`, which restores attributes,
+  tabular sections, the deletion mark and the posted state. A created object is undone by marking
+  it for deletion. 1C does not recalculate totals for these writes, so the caller sends the
+  values the document should have (for example `СуммаДокумента` and the row amounts).

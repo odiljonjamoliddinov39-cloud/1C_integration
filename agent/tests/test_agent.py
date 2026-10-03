@@ -51,6 +51,56 @@ def test_commands_map_to_extension_endpoints():
     assert json.loads(log[-1][3]) == {"approval_id": "a2", "approved_by": "acc@example.com"}
 
 
+def test_generic_object_commands_map_to_extension_endpoints():
+    log = []
+
+    def echo(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        log.append((request.method, request.url.path, dict(request.url.params), body))
+        return httpx.Response(200, json={"items": []})
+
+    ext = ExtensionClient("http://127.0.0.1/TEST/hs/aiapi/v1", "t", transport=httpx.MockTransport(echo))
+    root = "/TEST/hs/aiapi/v1"
+
+    assert ext.execute("get_metadata", {})["ok"]
+    assert log[-1][:2] == ("GET", f"{root}/metadata")
+
+    ext.execute(
+        "list_objects",
+        {"kind": "catalog", "name": "Контрагенты", "filter": {"ИНН": "123"}, "limit": 10, "include_deleted": True},
+    )
+    method, path, params, _ = log[-1]
+    assert (method, path) == ("GET", f"{root}/objects/catalog/Контрагенты")
+    assert json.loads(params["filter"]) == {"ИНН": "123"}
+    assert params["limit"] == "10" and params["include_deleted"] == "true"
+
+    ext.execute("get_object", {"kind": "document", "name": "РеализацияТоваровУслуг", "ref": "r1"})
+    assert log[-1][:2] == ("GET", f"{root}/objects/document/РеализацияТоваровУслуг/r1")
+
+    ext.execute("run_query", {"text": "ВЫБРАТЬ 1", "params": {"p": 1}, "limit": 5})
+    assert log[-1][0:2] == ("POST", f"{root}/query")
+    assert log[-1][3] == {"text": "ВЫБРАТЬ 1", "params": {"p": 1}, "limit": 5}
+
+    write = {"approval_id": "a1", "approved_by": "acc@example.com", "kind": "catalog", "name": "Номенклатура"}
+    ext.execute("write_object", {**write, "action": "create", "data": {"standard": {"Наименование": "X"}}})
+    assert log[-1][:2] == ("POST", f"{root}/objects/catalog/Номенклатура")
+    assert log[-1][3] == {"approval_id": "a1", "approved_by": "acc@example.com", "data": {"standard": {"Наименование": "X"}}}
+
+    ext.execute("write_object", {**write, "action": "update", "ref": "n1", "data": {"attributes": {}}})
+    assert log[-1][:2] == ("PUT", f"{root}/objects/catalog/Номенклатура/n1")
+    assert log[-1][3]["action"] == "update" and log[-1][3]["approval_id"] == "a1"
+
+    ext.execute("write_object", {**write, "action": "restore", "ref": "n1", "snapshot": {"ref": "n1"}})
+    assert log[-1][0] == "PUT" and log[-1][3]["action"] == "restore" and log[-1][3]["snapshot"] == {"ref": "n1"}
+
+    ext.execute("write_object", {**write, "action": "mark_deletion", "ref": "n1"})
+    assert log[-1][:2] == ("POST", f"{root}/objects/catalog/Номенклатура/n1/mark_deletion")
+
+    calls = len(log)
+    reply = ext.execute("write_object", {**write, "action": "post"})
+    assert reply["status"] == 400 and len(log) == calls  # no ref, nothing sent
+
+
 def test_long_ref_lists_are_chunked_and_merged():
     log = []
     refs = [f"r{i}" for i in range(REF_CHUNK * 2 + 5)]
