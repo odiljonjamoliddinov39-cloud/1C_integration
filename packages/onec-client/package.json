@@ -1,0 +1,27 @@
+{
+  "name": "@platform/onec-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./com": "./src/com-transport.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "ping": "tsx scripts/ping.ts",
+    "metadata": "tsx scripts/dump-metadata.ts",
+    "create-invoice": "tsx scripts/create-invoice.ts"
+  },
+  "dependencies": {
+    "@platform/shared": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "optionalDependencies": {
+    "winax": "3.6.9"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@platform/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop app: imports, review, audit and AI chat next to 1C (TD §4)",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:demo": "cross-env PLATFORM_DEMO_1C=1 electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "rebuild:native": "electron-rebuild -f -w winax"
+  },
+  "dependencies": {
+    "@platform/onec-client": "workspace:*",
+    "@platform/shared": "workspace:*",
+    "@tanstack/react-query": "5.104.1",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "i18next": "26.4.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-i18next": "17.0.15",
+    "tailwind-merge": "3.7.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "cross-env": "10.1.0",
+    "electron": "44.0.0",
+    "electron-vite": "5.0.0",
+    "tailwindcss": "4.3.3",
+    "vite": "7.3.6"
+  }
+}
