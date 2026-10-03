@@ -135,3 +135,18 @@ def test_query_needs_the_extension(client, harness, db, transport):
     r = client.post(f"/api/onec/{harness.company.id}/query", json={"text": "ВЫБРАТЬ 1"}, headers=login(client, acc.email))
     assert r.status_code == 501 and "extension" in r.json()["detail"]["message"]
     assert db.get(Company, harness.company.id).connection_type == "odata"
+
+
+def test_localhost_means_the_host_computer_in_docker(monkeypatch):
+    from app.config import get_settings
+    from app.services.odata import ODataOneC, reachable
+
+    url = "http://localhost:8081/TEST_CRYSTAL/odata/standard.odata/"
+    assert reachable(url) == url  # outside Docker: unchanged
+    monkeypatch.setattr(get_settings(), "onec_localhost_alias", "host.docker.internal")
+    assert reachable(url) == "http://host.docker.internal:8081/TEST_CRYSTAL/odata/standard.odata/"
+    assert reachable("http://127.0.0.1/B/odata/standard.odata/") == "http://host.docker.internal/B/odata/standard.odata/"
+    assert reachable("http://192.168.1.25/B/odata/standard.odata/") == "http://192.168.1.25/B/odata/standard.odata/"
+    conn = ODataOneC(url, "u", "p")
+    assert conn.url.startswith("http://host.docker.internal:8081/") and conn.publication == "TEST_CRYSTAL"
+    conn.close()

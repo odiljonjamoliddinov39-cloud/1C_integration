@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     einvoice_provider: str = "stub"
 
+    # Direct (OData) connections: when the backend runs in Docker, "localhost" / "127.0.0.1" typed
+    # in Connect 1C is rewritten to this host name (host.docker.internal), i.e. the computer itself.
+    onec_localhost_alias: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

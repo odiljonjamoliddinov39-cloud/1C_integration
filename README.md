@@ -64,6 +64,11 @@ deploy/      docker-compose.yml, Caddyfile, backups
 docs/        API contract, acceptance tests, session checklist
 ```
 
+## Testing on your own computer with your real 1C
+
+Docker Desktop, then `powershell -ExecutionPolicy Bypass -File start-local.ps1` (or `./start-local.sh`)
+→ http://localhost:8080 → Admin → **Connect a 1C base**. See [`docs/local-testing.md`](docs/local-testing.md).
+
 ## Quick demo (Codespaces or VS Code)
 
 Runs everything with a fake 1C for the four companies, so no 1C or Windows is needed:
@@ -111,7 +116,7 @@ and run `cd agent && ONEC_AGENT_CONFIG=agent.ini python -m onec_agent run`. Then
 ## Tests
 
 ```bash
-cd backend && pytest     # 102 tests on PostgreSQL; sync, audit, fixes, invoices and the direct API run on both transports, including all 12 audit rules and the acceptance flows
+cd backend && pytest     # 103 tests on PostgreSQL; sync, audit, fixes, invoices and the direct API run on both transports, including all 12 audit rules and the acceptance flows
 cd agent && pytest
 cd web && npm run build
 ```

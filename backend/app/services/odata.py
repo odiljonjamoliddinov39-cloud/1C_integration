@@ -179,6 +179,18 @@ def odata_url(address: str, base: str | None = None) -> str:
     return f"{parts.scheme}://{parts.netloc}{path}/{ODATA_PATH}"
 
 
+def reachable(url: str) -> str:
+    """The URL as the backend must call it: in Docker, localhost means the host computer."""
+    from app.config import get_settings
+
+    alias = get_settings().onec_localhost_alias
+    parts = urlsplit(url)
+    if alias and parts.hostname in ("localhost", "127.0.0.1"):
+        netloc = alias + (f":{parts.port}" if parts.port else "")
+        return parts._replace(netloc=netloc).geturl()
+    return url
+
+
 def publication_name(url: str) -> str:
     path = urlsplit(url).path
     if "/odata/" in path:
@@ -306,7 +318,7 @@ class ODataOneC:
         snapshots: SnapshotStore | None = None,
         today: Callable[[], date] = date.today,
     ):
-        self.url = url
+        self.url = reachable(url)
         self.publication = publication_name(url)
         self.http = httpx.Client(
             auth=(username, password),

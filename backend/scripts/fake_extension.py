@@ -166,6 +166,7 @@ def make_handler(bases: dict[str, FakeOneC], token: str, odata: FakeODataServer 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from Docker containers")
     parser.add_argument("--token", default="ext-token")
     parser.add_argument("--bases", default="TEST_CRYSTAL", help="comma-separated base names")
     parser.add_argument("--odata-user", default="odata")
@@ -173,7 +174,7 @@ def main():
     args = parser.parse_args()
     bases = {name: demo_base(name, f"30000000{i}") for i, name in enumerate(args.bases.split(","), start=1)}
     odata = FakeODataServer(bases, args.odata_user, args.odata_password)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bases, args.token, odata))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(bases, args.token, odata))
     print(f"fake 1C extension on http://127.0.0.1:{args.port}/<BASE>/hs/aiapi/v1 for {list(bases)}")
     print(f"fake 1C OData on http://127.0.0.1:{args.port}/<BASE>/odata/standard.odata/ (user {args.odata_user})")
     server.serve_forever()
