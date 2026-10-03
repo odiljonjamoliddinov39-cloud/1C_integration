@@ -569,6 +569,7 @@ def clean_base(plant: str | None = None) -> FakeOneC:
     elif plant == "VAT-RATE":
         sale["rows"][0]["vat_rate"] = 15  # label only: amounts and entries stay at 12%
     elif plant == "VAT-MISMATCH":
+        invoice["rows"][0]["vat_amount"] = "20000"  # the row's VAT, as 1C stores it (СуммаНДС)
         invoice["vat"] = "20000"
     elif plant == "UNPOSTED":
         f.add_document("sale", "2026-09-20", buyer, c1, [{"item_ref": water["ref"], "quantity": 1, "price": 10000, "vat_rate": 12}], posted=False)

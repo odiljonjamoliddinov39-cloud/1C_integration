@@ -127,7 +127,7 @@ export SECRET_KEY="demo-secret-key-$(date +%s)-long-enough-for-hs256"
 (cd "$ROOT/backend" && exec "$PY" -m uvicorn app.main:app --port 8000 >"$RUN/api.log" 2>&1) &
 PIDS+=($!)
 (cd "$ROOT/backend" && exec "$PY" -m scripts.fake_extension --port 8081 --token ext-token \
-  --bases TEST_CRYSTAL,TEST_TEXMASH,TEST_CRYSTAL_OOO,TEST_TEHMASH >"$RUN/fake1c.log" 2>&1) &
+  --bases TEST_CRYSTAL,TEST_TEXMASH,TEST_CRYSTAL_OOO,TEST_TEHMASH,TEST_DIRECT >"$RUN/fake1c.log" 2>&1) &
 PIDS+=($!)
 wait_port 8000
 wait_port 8081
@@ -165,6 +165,9 @@ cat <<EOF
   owner@example.com       owner-password-1       all 4 companies
   accountant@example.com  accountant-password-1  all 4 companies
   viewer@example.com      viewer-password-1      TEXMASH only
+
+  Try the direct connection (no agent): Admin → "Connect a 1C base" →
+     address 127.0.0.1:8081 · base TEST_DIRECT · user odata · password odata-password
 
   API docs: http://localhost:8000/api/docs     Logs: .demo/*.log
   Press Ctrl+C to stop.

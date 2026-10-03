@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pytest
 from sqlalchemy import select
 
 from app.models import AuditFinding, EventLog, Role
@@ -12,6 +13,7 @@ def _finding(db, rule):
     return db.scalar(select(AuditFinding).where(AuditFinding.rule_code == rule))
 
 
+@pytest.mark.both_transports
 def test_vat_rate_fix_then_undo(client, make_harness, db):
     h = make_harness("VAT-RATE")
     h.full_sync()
@@ -48,11 +50,13 @@ def test_vat_rate_fix_then_undo(client, make_harness, db):
     # Both writes logged in the backend and in 1C (ЖурналИзмененийAI).
     actions = [e.action for e in db.scalars(select(EventLog).order_by(EventLog.id))]
     assert actions.count("fix.applied") == 2
-    assert len(h.fake.journal) == 2
+    if h.transport == "agent":
+        assert len(h.fake.journal) == 2  # over OData the log is the backend's EventLog only
     db.expire_all()
     assert _finding(db, "VAT-RATE").status == "open"
 
 
+@pytest.mark.both_transports
 def test_fix_in_closed_period_is_refused_and_nothing_changes(client, make_harness, db):
     h = make_harness("NO-CONTRACT")
     h.full_sync()
@@ -78,6 +82,7 @@ def test_fix_in_closed_period_is_refused_and_nothing_changes(client, make_harnes
     assert r.status_code == 409
 
 
+@pytest.mark.both_transports
 def test_bulk_approve_limits(client, make_harness, db):
     h = make_harness("NO-INN")
     h.full_sync()
@@ -113,6 +118,7 @@ def test_writes_wait_in_queue_while_agent_offline(client, make_harness, db):
     assert client.get(f"/api/fixes/{fix['id']}", headers=headers).json()["status"] == "applied"
 
 
+@pytest.mark.both_transports
 def test_merge_and_reverse_duplicate(client, make_harness, db):
     for rule in ("DUP-CP", "DUP-DOC"):
         h = make_harness(rule)

@@ -6,6 +6,8 @@ from sqlalchemy import select
 from app.models import AuditFinding
 from app.services.audit.engine import RULES
 
+pytestmark = pytest.mark.both_transports
+
 ALL_RULES = [
     "CASH-NEG",
     "DUP-DOC",

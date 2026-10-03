@@ -16,6 +16,19 @@ Audit finding texts are written in Russian, like the 1C documents they describe.
 The pilot is for four companies, but every table carries `company_id`, so outsourcing clients
 can be added later.
 
+## Connecting a 1C base: two ways
+
+| | **Direct (recommended to start)** | **Agent + extension** |
+|---|---|---|
+| Set up in 1C | Publish the base with «Публиковать стандартный интерфейс OData» ticked, allow the objects in «Настройка стандартного интерфейса OData», create a 1C user | Build the AIAPI extension in the Configurator, publish it on Apache, install the agent service |
+| Set up in the app | Admin → **Connect a 1C base**: address, base name, 1C user and password → *Test connection* → *Connect and sync* | Admin → Agent token → `agent.ini` on the laptop |
+| Network | The app must reach the 1C web server (same LAN, or VPN) | None inbound: the agent connects out |
+| 1C queries (`/query`) | Not available (OData filters only) | Available |
+| Multi-object writes (merge counterparties) | Several calls | One 1C transaction |
+
+Both feed the same mirror, audit, fixes, invoices and direct API, and both need approval for
+every write. A company can switch between them at any time. See [`docs/direct-connection.md`](docs/direct-connection.md).
+
 ## Architecture
 
 ```
@@ -36,7 +49,7 @@ A proposed change is a normal fix: nothing reaches 1C until a person approves it
 undone. A **right-base guard** checks that the agent is connected to that company's base (INN and
 base name) before any sync, read or write. See [`docs/api-contract.md`](docs/api-contract.md) §1 and §3.
 
-Only the agent touches 1C. Every write needs an `approval_id` that the backend issues when a
+Only the agent (or, for directly connected companies, the backend over OData) touches 1C. Every write needs an `approval_id` that the backend issues when a
 person approves. In 1C each write runs in one transaction, is logged to `ЖурналИзмененийAI`, and
 is refused for a closed period.
 
@@ -59,6 +72,8 @@ Runs everything with a fake 1C for the four companies, so no 1C or Windows is ne
 * Open port **5173** (in Codespaces: the **PORTS** tab → port 5173 → globe icon).
 * Log in as `owner@example.com` / `owner-password-1` (also `accountant@example.com` / `accountant-password-1`
   and `viewer@example.com` / `viewer-password-1`, who sees TEXMASH only).
+* To try the direct connection: Admin → **Connect a 1C base** → address `127.0.0.1:8081`, base `TEST_DIRECT`,
+  user `odata`, password `odata-password`.
 
 The script starts PostgreSQL and Redis in Docker (or reuses ones already on 5432/6379), installs the Python
 and npm packages, creates a fresh `app_demo` database, and starts the backend, fake 1C, agent and web app.
@@ -96,7 +111,7 @@ and run `cd agent && ONEC_AGENT_CONFIG=agent.ini python -m onec_agent run`. Then
 ## Tests
 
 ```bash
-cd backend && pytest     # 64 tests on PostgreSQL, including all 12 audit rules and the acceptance flows
+cd backend && pytest     # 102 tests on PostgreSQL; sync, audit, fixes, invoices and the direct API run on both transports, including all 12 audit rules and the acceptance flows
 cd agent && pytest
 cd web && npm run build
 ```

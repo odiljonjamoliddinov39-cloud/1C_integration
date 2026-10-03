@@ -21,6 +21,27 @@ export interface Company {
   /** Set when the agent answered from another company's 1C base; reads and writes are blocked. */
   base_error: string | null;
   pending_commands: number | null;
+  /** "agent": agent + AIAPI extension on the laptop; "odata": direct connection by address and 1C login. */
+  connection_type: "agent" | "odata";
+}
+
+export interface DirectConnection {
+  url: string;
+  address: string;
+  base: string;
+  username: string;
+  last_ok_at: string | null;
+  last_error: string | null;
+}
+
+export interface ConnectionTest {
+  url: string;
+  ok: boolean;
+  error?: string;
+  organizations: { ref: string; name: string; inn: string }[];
+  found: string[];
+  missing: string[];
+  published?: number;
 }
 
 export interface DocumentRow {

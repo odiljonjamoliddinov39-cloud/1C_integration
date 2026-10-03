@@ -3,6 +3,7 @@
 import io
 from decimal import Decimal
 
+import pytest
 from openpyxl import Workbook
 
 from app.models import Role
@@ -36,6 +37,7 @@ def _lifecycle(client, headers, invoice_id, fake):
     return inv
 
 
+@pytest.mark.both_transports
 def test_form_invoice_lifecycle_and_copy(client, harness, db):
     headers, buyer, water = _setup(client, harness, db)
     draft = client.post(
@@ -63,6 +65,7 @@ def test_form_invoice_lifecycle_and_copy(client, harness, db):
     _lifecycle(client, headers, copy["id"], harness.fake)
 
 
+@pytest.mark.both_transports
 def test_excel_bulk_invoice(client, harness, db):
     headers, buyer, water = _setup(client, harness, db)
     wb = Workbook()
@@ -93,6 +96,7 @@ def test_excel_bulk_invoice(client, harness, db):
     assert client.post(f"/api/invoices/{created[0]['id']}/send", headers=headers).json()["status"] == "ready"
 
 
+@pytest.mark.both_transports
 def test_invalid_inn_is_blocked_before_1c(client, harness, db):
     headers, buyer, water = _setup(client, harness, db)
     bad_cp = next(c for c in harness.fake.counterparties.values() if c["inn"] == "123456789")
@@ -113,6 +117,7 @@ def test_invalid_inn_is_blocked_before_1c(client, harness, db):
     assert not [c for c in harness.fake.calls if c[0] == "create_invoice"]
 
 
+@pytest.mark.both_transports
 def test_three_invoices_numbers_and_totals_match_1c(client, harness, db):
     headers, buyer, water = _setup(client, harness, db)
     for qty in (1, 2, 3):

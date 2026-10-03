@@ -303,3 +303,20 @@ backend pings 1C and compares two things:
 On a mismatch it stores `companies.base_error`, logs `agent.wrong_base`, and refuses with
 `409`. Sync is skipped, live reads and new proposals are refused, and fix approval is blocked.
 The web app shows the error in the header. The error clears on the first ping that matches again.
+
+---
+
+## 4. Direct connection (`/api/admin/...`, owner only)
+
+A company can reach 1C without the agent, over the base's standard OData interface
+(see [`direct-connection.md`](direct-connection.md)). `services/odata.py` answers the same
+commands as the agent (section 2), so everything above works on either transport. The exception
+is `run_query`, which returns `501`.
+
+| Request | Body | What |
+|---|---|---|
+| `POST /onec/test` | `{address, base, username, password, company_id?}` | Tries the connection without saving → `{ok, error?, organizations, found, missing}` |
+| `POST /companies/connect` | the same plus `organization_ref?`, `name?` | Creates a company from the 1C organization, saves the connection, runs a full sync |
+| `POST /companies/{id}/connection` | the same; an empty `password` keeps the stored one | Tests and saves; refuses with `409` if the base's INN is another company's |
+| `GET /companies/{id}/connection` | — | `{connection_type, direct: {url, address, base, username, last_ok_at, last_error}}`; the password is never returned |
+| `DELETE /companies/{id}/connection` | — | Back to the agent; the stored address and password are deleted |

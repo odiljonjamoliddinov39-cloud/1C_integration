@@ -56,6 +56,7 @@ def company_out(c: Company, online: bool | None = None, pending: int | None = No
         "agent_online": online,
         "pending_commands": pending,
         "base_error": c.base_error,
+        "connection_type": c.connection_type,
     }
 
 

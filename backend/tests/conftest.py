@@ -65,15 +65,43 @@ def db(engine):
     session.close()
 
 
-class Harness:
-    """One company backed by a FakeOneC, plus an in-process gateway that runs callbacks inline."""
+def pytest_configure(config):
+    config.addinivalue_line("markers", "both_transports: run the test through the agent and over a direct OData connection")
 
-    def __init__(self, db, fake):
+
+def pytest_generate_tests(metafunc):
+    if metafunc.definition.get_closest_marker("both_transports") and "transport" in metafunc.fixturenames:
+        metafunc.parametrize("transport", ["agent", "odata"])
+
+
+@pytest.fixture
+def transport():
+    """How the harness reaches its fake 1C; tests marked both_transports run with each."""
+    return "agent"
+
+
+class Harness:
+    """One company backed by a FakeOneC, plus an in-process gateway that runs callbacks inline.
+
+    transport="agent": the gateway hands commands straight to the FakeOneC (agent + extension).
+    transport="odata": the company is connected directly and the same FakeOneC is served over
+    HTTP as 1C's OData interface (tests/fake_odata.py).
+    """
+
+    def __init__(self, db, fake, transport="agent"):
         from app.jobs import command_callback
+        from app.services.connections import RoutingGateway
+        from tests.fake_odata import FakeODataServer
 
         self.db = db
+        self.transport = transport
         self.fakes = {}
-        self.gateway = agent_gateway.LocalAgentGateway(self._handle, on_callback=command_callback)
+        self.odata = FakeODataServer()
+        self.local = agent_gateway.LocalAgentGateway(self._handle, on_callback=command_callback)
+        if transport == "odata":
+            self.gateway = RoutingGateway(self.local, transport_factory=lambda company_id: self.odata.transport())
+        else:
+            self.gateway = self.local
         agent_gateway.set_gateway(self.gateway)
         self.company = self.add_company("TEST_CRYSTAL", fake)
 
@@ -85,6 +113,15 @@ class Harness:
         self.db.add(company)
         self.db.commit()
         self.fakes[company.id] = fake
+        if self.transport == "odata":
+            from app.security import encrypt_secret
+
+            self.odata.bases[name] = fake
+            url = f"http://fake-1c/{name}/odata/standard.odata/"
+            company.connection_type = "odata"
+            company.base_path = f"http://fake-1c/{name}"
+            self.db.add(models.OneCConnection(company_id=company.id, url=url, username="odata", password_enc=encrypt_secret("secret")))
+            self.db.commit()
         return company
 
     @property
@@ -110,18 +147,18 @@ class Harness:
 
 
 @pytest.fixture
-def harness(db):
-    h = Harness(db, clean_base())
+def harness(db, transport):
+    h = Harness(db, clean_base(), transport)
     yield h
     agent_gateway.set_gateway(None)
 
 
 @pytest.fixture
-def make_harness(db):
+def make_harness(db, transport):
     created = []
 
     def factory(plant=None):
-        h = Harness(db, clean_base(plant))
+        h = Harness(db, clean_base(plant), transport)
         created.append(h)
         return h
 

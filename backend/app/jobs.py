@@ -102,6 +102,17 @@ def command_callback(company_id: int, envelope: dict, reply: dict) -> None:
         db.close()
 
 
+def run_direct_command(company_id: int, envelope: dict) -> None:
+    """A queued write for a company connected directly (OData): run it, then handle the reply."""
+    gateway = get_gateway()
+    execute = getattr(gateway, "execute_direct", None)
+    if execute is None:
+        reply = {"ok": False, "status": 500, "error": {"error": "no_direct_gateway", "message": "Direct connections are not enabled", "details": {}}}
+    else:
+        reply = execute(company_id, envelope["command"], envelope["params"])
+    command_callback(company_id, envelope, reply)
+
+
 def all_company_ids() -> list[int]:
     from sqlalchemy import select
 

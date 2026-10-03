@@ -3,6 +3,7 @@
 import json
 from datetime import date
 
+import pytest
 from sqlalchemy import select
 
 from app.models import Counterparty, Document, Role
@@ -17,6 +18,7 @@ def _setup(client, harness, db, role=Role.ACCOUNTANT):
     return login(client, user.email), f"/api/onec/{harness.company.id}"
 
 
+@pytest.mark.both_transports
 def test_metadata_and_reads(client, harness, db):
     headers, base = _setup(client, harness, db, Role.VIEWER)
     meta = client.get(f"{base}/metadata", headers=headers).json()
@@ -28,7 +30,11 @@ def test_metadata_and_reads(client, harness, db):
 
     sale = client.get(f"{base}/objects/document/РеализацияТоваровУслуг", params={"from": "2026-09-01", "to": "2026-09-30"}, headers=headers).json()["items"][0]
     one = client.get(f"{base}/objects/document/РеализацияТоваровУслуг/{sale['ref']}", headers=headers).json()
-    assert one["tables"]["Товары"][0]["Номенклатура"]["presentation"] == "Вода питьевая 19л"
+    water = next(i for i in harness.fake.items.values() if i["name"].startswith("Вода"))
+    assert one["tables"]["Товары"][0]["Номенклатура"]["ref"] == water["ref"]
+    assert one["tables"]["Товары"][0]["Номенклатура"]["_type"] == "Справочник.Номенклатура"
+    if harness.transport == "agent":  # OData returns references without their presentation
+        assert one["tables"]["Товары"][0]["Номенклатура"]["presentation"] == "Вода питьевая 19л"
     assert one["attributes"]["Контрагент"]["_type"] == "Справочник.Контрагенты"
 
     assert client.get(f"{base}/objects/catalog/Контрагенты/{UNKNOWN}", headers=headers).status_code == 404
@@ -49,6 +55,7 @@ def test_query_is_for_owners_and_accountants(client, harness, db):
     assert client.post(f"{base}/query", json={"text": text}, headers=login(client, viewer.email)).status_code == 403
 
 
+@pytest.mark.both_transports
 def test_update_is_approved_applied_resynced_and_undone(client, harness, db):
     headers, base = _setup(client, harness, db)
     buyer = next(c for c in harness.fake.counterparties.values() if c["inn"] == "123456789")
@@ -72,9 +79,11 @@ def test_update_is_approved_applied_resynced_and_undone(client, harness, db):
     undo = client.post(f"/api/fixes/{proposal['id']}/undo", json={}, headers=headers).json()
     client.post("/api/fixes/approve", json={"fix_ids": [undo["id"]]}, headers=headers)
     assert buyer["inn"] == "123456789"
-    assert len(harness.fake.journal) == 2
+    if harness.transport == "agent":
+        assert len(harness.fake.journal) == 2
 
 
+@pytest.mark.both_transports
 def test_create_and_post_document_then_undo(client, harness, db):
     headers, base = _setup(client, harness, db)
     fake = harness.fake
@@ -105,6 +114,7 @@ def test_create_and_post_document_then_undo(client, harness, db):
     assert fake.documents[new_ref]["deleted"] is True and fake.documents[new_ref]["posted"] is False
 
 
+@pytest.mark.both_transports
 def test_closed_period_and_validation(client, harness, db):
     headers, base = _setup(client, harness, db)
     harness.company.closed_period_until = date(2026, 9, 30)
@@ -122,6 +132,7 @@ def test_closed_period_and_validation(client, harness, db):
         assert client.post(f"{base}/changes", json=body, headers=headers).status_code == 400, body
 
 
+@pytest.mark.both_transports
 def test_wrong_base_blocks_sync_reads_and_writes(client, harness, db):
     from app.jobs import sync_company
 
@@ -155,6 +166,7 @@ def test_wrong_base_blocks_sync_reads_and_writes(client, harness, db):
     assert harness.company.base_error is None
 
 
+@pytest.mark.both_transports
 def test_mcp_onec_tools(client, harness, db):
     harness.full_sync()
     make_user(db, "owner@example.com", Role.OWNER)

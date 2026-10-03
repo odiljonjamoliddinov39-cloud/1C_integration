@@ -1,11 +1,13 @@
-"""Passwords (Argon2), login sessions (12-hour JWT), TOTP, and hashed bearer tokens."""
+"""Passwords (Argon2), login sessions (12-hour JWT), TOTP, hashed bearer tokens, and stored secrets."""
 
+import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
 import pyotp
+from cryptography.fernet import Fernet, InvalidToken
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
@@ -59,3 +61,21 @@ def totp_uri(secret: str, email: str) -> str:
 
 def verify_totp(secret: str, code: str) -> bool:
     return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def _fernet() -> Fernet:
+    key = hashlib.sha256(f"onec-connection|{get_settings().secret_key}".encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def encrypt_secret(value: str) -> str:
+    """For secrets the backend must use later (a 1C password), unlike user passwords."""
+    return _fernet().encrypt(value.encode()).decode()
+
+
+def decrypt_secret(value: str) -> str:
+    """Raises ValueError if SECRET_KEY changed since the value was stored."""
+    try:
+        return _fernet().decrypt(value.encode()).decode()
+    except InvalidToken as e:
+        raise ValueError("Stored 1C password cannot be decrypted; enter it again") from e

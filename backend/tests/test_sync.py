@@ -1,11 +1,13 @@
 from datetime import datetime
 
+import pytest
 from sqlalchemy import func, select
 
 from app.models import Counterparty, Document, LedgerEntry
 from app.services.sync import OPENING_REF, incremental_sync
 
 
+@pytest.mark.both_transports
 def test_full_sync_mirrors_catalogs_documents_entries_and_opening(harness, db):
     stats = harness.full_sync()
     assert stats["counterparties"] == 2
@@ -20,6 +22,7 @@ def test_full_sync_mirrors_catalogs_documents_entries_and_opening(harness, db):
     assert harness.company.last_synced_at is not None
 
 
+@pytest.mark.both_transports
 def test_incremental_sync_picks_up_edits_and_new_documents(harness, db):
     harness.full_sync()
     fake = harness.fake
@@ -34,7 +37,8 @@ def test_incremental_sync_picks_up_edits_and_new_documents(harness, db):
     stats = incremental_sync(db, harness.company, harness.fetch())
     assert stats["documents"] == 2
     # Only the changed objects were requested, not the whole period.
-    assert all("from" not in params for cmd, params in fake.calls[calls_before:] if cmd == "get_documents")
+    if harness.transport == "agent":
+        assert all("from" not in params for cmd, params in fake.calls[calls_before:] if cmd == "get_documents")
 
     doc = db.scalar(select(Document).where(Document.ref_1c == sale["ref"]))
     assert doc.number == "EDITED"
@@ -43,6 +47,7 @@ def test_incremental_sync_picks_up_edits_and_new_documents(harness, db):
     assert db.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.document_ref == sale["ref"])) == 3
 
 
+@pytest.mark.both_transports
 def test_unposting_removes_entries_from_the_mirror(harness, db):
     harness.full_sync()
     sale = next(d for d in harness.fake.documents.values() if d["type"] == "sale")

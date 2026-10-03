@@ -11,7 +11,7 @@ from app.deps import allowed_company_ids, check_company, get_current_user, requi
 from app.models import Company, Counterparty, Document, Item, LedgerEntry, User, log_event
 from app.routers.common import company_out, document_out, num, table_to_xlsx
 from app.services import analytics
-from app.services.agent_gateway import RedisAgentGateway, get_gateway
+from app.services.agent_gateway import get_gateway
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["data"])
 def _agent_status(company_id: int) -> tuple[bool | None, int | None]:
     gateway = get_gateway()
     online = gateway.is_online(company_id)
-    pending = gateway.pending(company_id) if isinstance(gateway, RedisAgentGateway) else None
+    pending = gateway.pending(company_id) if hasattr(gateway, "pending") else None
     return online, pending
 
 

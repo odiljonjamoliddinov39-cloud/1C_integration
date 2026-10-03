@@ -187,8 +187,10 @@ def get_gateway() -> AgentGateway:
     global _gateway
     if _gateway is None:
         from app.redis_conn import get_redis
+        from app.services.connections import RoutingGateway
 
-        _gateway = RedisAgentGateway(get_redis())
+        # Companies connected directly (OData) bypass the agent; see services/connections.py.
+        _gateway = RoutingGateway(RedisAgentGateway(get_redis()))
     return _gateway
 
 

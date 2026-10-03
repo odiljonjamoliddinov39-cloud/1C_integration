@@ -60,6 +60,35 @@ class Company(Base):
     # Set when the agent turns out to be connected to a different base (wrong INN or base name);
     # sync and writes are refused until it is cleared by a matching /ping.
     base_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # How the backend reaches 1C: "agent" (agent + AIAPI extension) or "odata" (direct, OneCConnection).
+    connection_type: Mapped[str] = mapped_column(String(10), default="agent", server_default="agent")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OneCConnection(Base):
+    """Address and 1C login for a direct (OData) connection. Kept out of `companies`, which the
+    read-only Ask AI role can see; the password is encrypted with a key derived from SECRET_KEY."""
+
+    __tablename__ = "onec_connections"
+
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True)
+    url: Mapped[str] = mapped_column(String(500))  # ends with /odata/standard.odata/
+    username: Mapped[str] = mapped_column(String(255))
+    password_enc: Mapped[str] = mapped_column(Text, default="")
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OneCSnapshot(Base):
+    """DataVersion of every mirrored object at a sync cursor (direct connections find changes this way)."""
+
+    __tablename__ = "onec_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    cursor: Mapped[str] = mapped_column(String(64))
+    versions: Mapped[dict] = mapped_column(JSONType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

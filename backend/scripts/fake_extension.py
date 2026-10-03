@@ -1,10 +1,13 @@
-"""Serve the in-memory FakeOneC over HTTP exactly like the 1C extension (docs/api-contract.md).
+"""Serve the in-memory FakeOneC over HTTP exactly like the 1C extension (docs/api-contract.md),
+and also like 1C's standard OData interface, for the direct connection.
 
 Lets the real agent, backend and web app run end to end without 1C:
 
     python -m scripts.fake_extension --port 8081 --token ext-token
 
 Base URL for the agent: http://127.0.0.1:8081/TEST_CRYSTAL/hs/aiapi/v1
+Direct connection (Admin -> Connect a 1C base): address 127.0.0.1:8081, base TEST_CRYSTAL,
+user odata, password odata-password.
 """
 
 from __future__ import annotations
@@ -15,7 +18,10 @@ from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+import httpx
+
 from tests.fake_1c import FakeOneC, OneCError, clean_base
+from tests.fake_odata import FakeODataServer
 
 
 def demo_base(name: str = "TEST_CRYSTAL", inn: str = "300000001") -> FakeOneC:
@@ -47,7 +53,7 @@ def demo_base(name: str = "TEST_CRYSTAL", inn: str = "300000001") -> FakeOneC:
     return f
 
 
-def make_handler(bases: dict[str, FakeOneC], token: str):
+def make_handler(bases: dict[str, FakeOneC], token: str, odata: FakeODataServer | None = None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             print("[fake-1c]", self.command, self.path)
@@ -60,7 +66,20 @@ def make_handler(bases: dict[str, FakeOneC], token: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _odata(self, method: str):
+            length = int(self.headers.get("Content-Length") or 0)
+            request = httpx.Request(method, f"http://127.0.0.1{self.path}", headers=dict(self.headers.items()),
+                                    content=self.rfile.read(length) if length else b"")
+            response = odata.handle(request)
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
         def _route(self, method: str):
+            if odata is not None and "/odata/standard.odata/" in self.path:
+                return self._odata(method)
             if self.headers.get("Authorization") != f"Bearer {token}":
                 return self._send(401, {"error": "unauthorized", "message": "bad token", "details": {}})
             url = urlparse(self.path)
@@ -138,6 +157,9 @@ def make_handler(bases: dict[str, FakeOneC], token: str):
         def do_PUT(self):
             self._route("PUT")
 
+        def do_PATCH(self):
+            self._route("PATCH")
+
     return Handler
 
 
@@ -146,10 +168,14 @@ def main():
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--token", default="ext-token")
     parser.add_argument("--bases", default="TEST_CRYSTAL", help="comma-separated base names")
+    parser.add_argument("--odata-user", default="odata")
+    parser.add_argument("--odata-password", default="odata-password")
     args = parser.parse_args()
     bases = {name: demo_base(name, f"30000000{i}") for i, name in enumerate(args.bases.split(","), start=1)}
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bases, args.token))
+    odata = FakeODataServer(bases, args.odata_user, args.odata_password)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bases, args.token, odata))
     print(f"fake 1C extension on http://127.0.0.1:{args.port}/<BASE>/hs/aiapi/v1 for {list(bases)}")
+    print(f"fake 1C OData on http://127.0.0.1:{args.port}/<BASE>/odata/standard.odata/ (user {args.odata_user})")
     server.serve_forever()
 
 

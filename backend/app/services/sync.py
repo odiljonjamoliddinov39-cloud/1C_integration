@@ -272,23 +272,25 @@ def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
 
     changes = fetch("get_changes", {"since": company.sync_cursor})
     items = changes.get("items", [])
-    catalogs = {c["name"] for c in items if c["kind"] == "catalog"}
+    catalogs: dict[str, list[str]] = {}
+    for c in items:
+        if c["kind"] == "catalog":
+            catalogs.setdefault(c["name"], []).append(c["ref"])
     docs_by_type: dict[str, list[str]] = {}
     for c in items:
         if c["kind"] == "document":
             docs_by_type.setdefault(c["type"], []).append(c["ref"])
 
     stats = {"changes": len(items)}
-    since = company.sync_cursor
     if "counterparties" in catalogs:
-        rows = fetch("get_catalog", {"name": "counterparties", "changed_since": since})["items"]
+        rows = fetch("get_catalog", {"name": "counterparties", "refs": catalogs["counterparties"]})["items"]
         stats["counterparties"] = upsert_counterparties(db, company.id, rows)
         db.flush()
     if "contracts" in catalogs:
-        rows = fetch("get_catalog", {"name": "contracts", "changed_since": since})["items"]
+        rows = fetch("get_catalog", {"name": "contracts", "refs": catalogs["contracts"]})["items"]
         stats["contracts"] = attach_contracts(db, company.id, rows)
     if "items" in catalogs:
-        rows = fetch("get_catalog", {"name": "items", "changed_since": since})["items"]
+        rows = fetch("get_catalog", {"name": "items", "refs": catalogs["items"]})["items"]
         stats["items"] = upsert_items(db, company.id, rows)
 
     all_refs: list[str] = []
@@ -298,7 +300,8 @@ def incremental_sync(db: Session, company: Company, fetch: Fetch) -> dict:
         all_refs.extend(refs)
     mark_physically_deleted(db, company.id, items)
     if all_refs:
-        entries = fetch("get_ledger", {"refs": all_refs})["items"]
+        types = {r: t for t, refs in docs_by_type.items() for r in refs}
+        entries = fetch("get_ledger", {"refs": all_refs, "types": types})["items"]
         replace_entries_for_documents(db, company.id, all_refs, entries)
     stats["documents"] = len(all_refs)
 
@@ -330,7 +333,8 @@ def resync_documents(db: Session, company: Company, fetch: Fetch, refs_by_type: 
             upsert_documents(db, company.id, fetch("get_documents", {"type": doc_type, "refs": refs})["items"])
             all_refs.extend(refs)
     if all_refs:
-        entries = fetch("get_ledger", {"refs": all_refs})["items"]
+        types = {r: t for t, refs in refs_by_type.items() for r in refs}
+        entries = fetch("get_ledger", {"refs": all_refs, "types": types})["items"]
         replace_entries_for_documents(db, company.id, all_refs, entries)
     db.flush()
 

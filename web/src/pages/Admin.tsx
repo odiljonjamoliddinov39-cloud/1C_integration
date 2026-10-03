@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
-import { Card, ErrorBox, Modal, PageHeader, Spinner, Table } from "../components/ui";
+import { Badge, Card, ErrorBox, Modal, PageHeader, Spinner, Table } from "../components/ui";
 import { api } from "../lib/api";
 import { fmtDate, fmtDateTime } from "../lib/format";
 import { useT } from "../lib/i18n";
 import { useData, useSession } from "../lib/session";
-import type { Company, Role, User } from "../lib/types";
+import type { Company, ConnectionTest, DirectConnection, Role, User } from "../lib/types";
 
 interface AgentRow {
   id: number;
@@ -22,6 +22,8 @@ export function AdminPage() {
   const [editing, setEditing] = useState<Partial<User> & { password?: string } | null>(null);
   const [companyEdit, setCompanyEdit] = useState<Partial<Company> | null>(null);
   const [agentsFor, setAgentsFor] = useState<Company | null>(null);
+  // null: closed; {}: connect a new base; a company: connect or edit that company's base.
+  const [connectFor, setConnectFor] = useState<Partial<Company> | null>(null);
 
   return (
     <>
@@ -54,14 +56,22 @@ export function AdminPage() {
           </Table>
         </Card>
 
-        <Card title={t("admin.companiesCard")} actions={<button className="btn-primary" onClick={() => setCompanyEdit({})}>{t("admin.addCompany")}</button>}>
+        <Card
+          title={t("admin.companiesCard")}
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-secondary" onClick={() => setCompanyEdit({})}>{t("admin.addCompany")}</button>
+              <button className="btn-primary" onClick={() => setConnectFor({})}>{t("admin.connectNew")}</button>
+            </div>
+          }
+        >
           <Table>
             <thead>
               <tr>
                 <th className="th">{t("admin.name")}</th>
                 <th className="th">{t("common.inn")}</th>
                 <th className="th">{t("admin.closedUntil")}</th>
-                <th className="th">{t("admin.agent")}</th>
+                <th className="th">{t("admin.connection")}</th>
                 <th className="th">{t("admin.lastSync")}</th>
                 <th className="th" />
               </tr>
@@ -72,11 +82,18 @@ export function AdminPage() {
                   <td className="td">{c.name}<div className="text-xs text-slate-500">{c.base_path}</div></td>
                   <td className="td">{c.inn}</td>
                   <td className="td">{fmtDate(c.closed_period_until)}</td>
-                  <td className="td">{c.agent_online ? t("admin.online") : t("admin.offline")}{c.pending_commands ? ` · ${t("admin.queued", { n: c.pending_commands })}` : ""}</td>
+                  <td className="td">
+                    <Badge tone={c.connection_type === "odata" ? "blue" : "slate"}>{c.connection_type === "odata" ? t("admin.direct") : t("admin.viaAgent")}</Badge>{" "}
+                    {c.agent_online ? t("admin.online") : t("admin.offline")}
+                    {c.pending_commands ? ` · ${t("admin.queued", { n: c.pending_commands })}` : ""}
+                  </td>
                   <td className="td text-xs">{fmtDateTime(c.last_synced_at)}</td>
                   <td className="td whitespace-nowrap">
                     <button className="btn-ghost text-xs" onClick={() => setCompanyEdit(c)}>{t("common.edit")}</button>
-                    <button className="btn-ghost text-xs" onClick={() => setAgentsFor(c)}>{t("admin.agentToken")}</button>
+                    <button className="btn-ghost text-xs" onClick={() => setConnectFor(c)}>{t("admin.connect1c")}</button>
+                    {c.connection_type !== "odata" && (
+                      <button className="btn-ghost text-xs" onClick={() => setAgentsFor(c)}>{t("admin.agentToken")}</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -88,6 +105,7 @@ export function AdminPage() {
       {editing && <UserModal user={editing} companies={companies} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); users.reload(); }} />}
       {companyEdit && <CompanyModal company={companyEdit} onClose={() => setCompanyEdit(null)} onSaved={() => { setCompanyEdit(null); void reloadCompanies(); }} />}
       {agentsFor && <AgentModal company={agentsFor} onClose={() => setAgentsFor(null)} />}
+      {connectFor && <ConnectModal company={connectFor} onClose={() => setConnectFor(null)} onSaved={() => { setConnectFor(null); void reloadCompanies(); }} />}
     </>
   );
 }
@@ -215,6 +233,128 @@ function AgentModal({ company, onClose }: { company: Company; onClose: () => voi
         </ul>
         <button className="btn-primary" onClick={issue}>{t("admin.newToken")}</button>
       </div>
+    </Modal>
+  );
+}
+
+/** Connect a company to its 1C base directly: address, base name, 1C user and password. */
+function ConnectModal({ company, onClose, onSaved }: { company: Partial<Company>; onClose: () => void; onSaved: () => void }) {
+  const { t } = useT();
+  const [form, setForm] = useState({ address: "", base: "", username: "", password: "" });
+  const [orgRef, setOrgRef] = useState<string>("");
+  const [hasSaved, setHasSaved] = useState(false);
+  const [test, setTest] = useState<ConnectionTest | null>(null);
+  const [busy, setBusy] = useState<"test" | "save" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const isNew = !company.id;
+
+  useEffect(() => {
+    if (!company.id) return;
+    api<{ connection_type: string; direct: DirectConnection | null }>(`/api/admin/companies/${company.id}/connection`)
+      .then((c) => {
+        if (!c.direct) return;
+        const host = c.direct.address.slice(0, c.direct.address.length - c.direct.base.length).replace(/\/$/, "");
+        setForm({ address: host, base: c.direct.base, username: c.direct.username, password: "" });
+        setHasSaved(true);
+      })
+      .catch(() => undefined);
+  }, [company.id]);
+
+  const body = () => ({ ...form, company_id: company.id ?? null });
+  const set = (key: keyof typeof form) => (e: { target: { value: string } }) => { setForm({ ...form, [key]: e.target.value }); setTest(null); };
+
+  async function runTest() {
+    setBusy("test");
+    setError(null);
+    try {
+      const result = await api<ConnectionTest>("/api/admin/onec/test", { method: "POST", json: body() });
+      setTest(result);
+      if (result.organizations.length) setOrgRef(result.organizations[0].ref);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy("save");
+    setError(null);
+    try {
+      if (isNew) await api("/api/admin/companies/connect", { method: "POST", json: { ...body(), organization_ref: orgRef || null } });
+      else await api(`/api/admin/companies/${company.id}/connection`, { method: "POST", json: body() });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnect() {
+    if (!company.id || !window.confirm(t("admin.confirmDisconnect"))) return;
+    try {
+      await api(`/api/admin/companies/${company.id}/connection`, { method: "DELETE" });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const total = test ? test.found.length + test.missing.length : 0;
+  return (
+    <Modal open onClose={onClose} title={isNew ? t("admin.connectNew") : t("admin.connectTitle", { company: company.name ?? "" })}>
+      <form onSubmit={save} className="space-y-3 text-sm">
+        <p className="text-slate-600 dark:text-slate-300">{t("admin.connectHelp")}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div><label className="label">{t("admin.address")}</label><input className="input" placeholder="192.168.1.10" value={form.address} onChange={set("address")} required autoFocus /></div>
+          <div><label className="label">{t("admin.baseName")}</label><input className="input" placeholder="TEST_CRYSTAL" value={form.base} onChange={set("base")} /></div>
+          <div><label className="label">{t("admin.user1c")}</label><input className="input" autoComplete="off" value={form.username} onChange={set("username")} required /></div>
+          <div>
+            <label className="label">{t("admin.password1c")}</label>
+            <input className="input" type="password" autoComplete="new-password" placeholder={hasSaved ? t("admin.passwordKeep") : ""} value={form.password} onChange={set("password")} required={!hasSaved} />
+          </div>
+        </div>
+
+        {test && !test.ok && <ErrorBox error={test.error ?? t("admin.testFailed")} />}
+        {test?.ok && (
+          <div className="space-y-2 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950/40">
+            <div className="font-medium text-green-800 dark:text-green-300">✓ {t("admin.testOk")}</div>
+            {test.organizations.length > 1 && isNew ? (
+              <div>
+                <label className="label">{t("admin.org")}</label>
+                <select className="input" value={orgRef} onChange={(e) => setOrgRef(e.target.value)}>
+                  {test.organizations.map((o) => <option key={o.ref} value={o.ref}>{o.name} · {o.inn}</option>)}
+                </select>
+              </div>
+            ) : (
+              test.organizations.map((o) => <div key={o.ref}>{t("admin.org")}: <b>{o.name}</b> · {t("common.inn")} {o.inn || "—"}</div>)
+            )}
+            <div>{t("admin.published", { found: test.found.length, total })}</div>
+            {test.missing.length > 0 && (
+              <div className="text-amber-800 dark:text-amber-300">{t("admin.missing", { list: test.missing.join(", ") })}</div>
+            )}
+          </div>
+        )}
+
+        <details className="text-xs text-slate-500 dark:text-slate-400">
+          <summary className="cursor-pointer">{t("admin.connectSetupTitle")}</summary>
+          <p className="mt-1 whitespace-pre-line">{t("admin.connectSetup")}</p>
+        </details>
+        <ErrorBox error={error} />
+        <div className="flex flex-wrap justify-between gap-2">
+          <div>
+            {hasSaved && <button type="button" className="btn-ghost text-xs" onClick={disconnect}>{t("admin.disconnect")}</button>}
+          </div>
+          <div className="flex gap-2">
+            <button type="button" className="btn-secondary" onClick={runTest} disabled={busy !== null || !form.address || !form.username}>
+              {busy === "test" ? t("admin.testing") : t("admin.test")}
+            </button>
+            <button className="btn-primary" disabled={busy !== null}>{busy === "save" ? t("admin.testing") : t("admin.connectSave")}</button>
+          </div>
+        </div>
+      </form>
     </Modal>
   );
 }
