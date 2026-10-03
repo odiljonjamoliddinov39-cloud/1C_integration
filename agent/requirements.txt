@@ -1,3 +1,0 @@
-httpx==0.28.1
-websockets==17.1
-pywin32==311; sys_platform == "win32"
