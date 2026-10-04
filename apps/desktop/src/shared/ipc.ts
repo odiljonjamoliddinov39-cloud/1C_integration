@@ -57,6 +57,7 @@ export interface CompanyView {
   createdAt: string;
   lastStatus: ConnectorStatus | null;
   lastSyncAt: string | null;
+  aiEnabled: boolean;
 }
 
 /** The license as the desktop sees it (TD §4 "Licensing behavior"). */
@@ -90,6 +91,20 @@ export interface AppInfo {
   demo1C: boolean;
 }
 
+export const AssistantInput = z.object({
+  companyId: z.string().min(1),
+  text: z.string().trim().min(1).max(4000),
+});
+export type AssistantInput = z.infer<typeof AssistantInput>;
+
+/** What the assistant is doing, pushed from the main process while it answers. */
+export type AssistantEvent = { companyId: string } & (
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string; detail: string }
+  | { type: "done" }
+  | { type: "error"; code: string; message: string }
+);
+
 export type Result<T> = { ok: true; data: T } | { ok: false; code: string; message: string };
 
 export interface PlatformBridge {
@@ -108,6 +123,16 @@ export interface PlatformBridge {
     add(input: AddCompanyInput): Promise<Result<CompanyView>>;
     checkStatus(id: string): Promise<CompanyView>;
     remove(id: string): Promise<void>;
+  };
+  assistant: {
+    /** Turns the assistant on or off for a company (on only after the user agreed). */
+    enable(companyId: string, enabled: boolean): Promise<CompanyView>;
+    /** Sends a question; the answer arrives through onEvent. Resolves when the answer is complete. */
+    send(input: AssistantInput): Promise<Result<null>>;
+    stop(companyId: string): Promise<void>;
+    /** Forgets the conversation of a company. */
+    reset(companyId: string): Promise<void>;
+    onEvent(listener: (event: AssistantEvent) => void): () => void;
   };
 }
 

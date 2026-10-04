@@ -5,7 +5,13 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { InvoiceReceivedInput, Organization, PlatformFunction } from "@platform/shared";
+import type {
+  InvoiceReceivedInput,
+  Organization,
+  PlatformFunction,
+  QueryResult,
+  RunQueryInput,
+} from "@platform/shared";
 
 import type { PlatformTransport } from "./transport.js";
 
@@ -52,6 +58,54 @@ export class FakePlatform implements PlatformTransport {
   /** Change-prohibition date (YYYY-MM-DD); documents on or before it are refused. */
   closedUntil: string | null = null;
   documents: FakeDocument[] = [];
+  /**
+   * Demo answers to RunQuery, picked by what the query reads (first match wins). A real 1C runs
+   * the query itself; this only lets the assistant be tried without 1C.
+   */
+  queryAnswers: { match: RegExp; answer: () => QueryResult }[] = [
+    {
+      match: /Хозрасчетный/i,
+      answer: () => ({
+        columns: ["Счет", "СальдоДт", "СальдоКт"],
+        rows: [
+          ["5110 Расчетный счет", 125_000_000, 0],
+          ["4010 Счета к получению от покупателей", 48_000_000, 0],
+          ["6010 Счета к оплате поставщикам", 0, 36_500_000],
+          ["6410 Задолженность по платежам в бюджет", 0, 9_200_000],
+        ],
+        truncated: false,
+      }),
+    },
+    {
+      match: /СчетФактураПолученный/i,
+      answer: () => ({
+        columns: ["Номер", "Дата", "Контрагент", "ExternalID"],
+        rows: this.documents.map((d) => [
+          d.number,
+          d.date,
+          this.counterparties.find((c) => c.ref === d.counterpartyRef)?.name ?? null,
+          d.externalId,
+        ]),
+        truncated: false,
+      }),
+    },
+    {
+      match: /Контрагенты/i,
+      answer: () => ({
+        columns: ["Наименование", "ИНН"],
+        rows: this.counterparties.map((c) => [c.name, c.inn]),
+        truncated: false,
+      }),
+    },
+    {
+      match: /Номенклатура/i,
+      answer: () => ({
+        columns: ["Наименование", "ИКПУ"],
+        rows: this.items.map((i) => [i.name, i.ikpu]),
+        truncated: false,
+      }),
+    },
+  ];
   calls: { fn: PlatformFunction; arg?: string }[] = [];
   closed = false;
 
@@ -88,9 +142,24 @@ export class FakePlatform implements PlatformTransport {
         return this.organizations;
       case "GetMetadata":
         return [];
+      case "RunQuery":
+        return this.runQuery(parse(arg) as RunQueryInput);
       case "CreateInvoiceReceived":
         return this.createInvoiceReceived(parse(arg) as InvoiceReceivedInput);
     }
+  }
+
+  private runQuery(input: RunQueryInput): QueryResult {
+    if (typeof input?.query !== "string" || !input.query.trim()) {
+      throw new Failure("VALIDATION", "query is required");
+    }
+    if (!/^\s*ВЫБРАТЬ|^\s*SELECT/i.test(input.query)) {
+      throw new Failure("QUERY_ERROR", "{(1, 1)}: Ожидается ключевое слово ВЫБРАТЬ");
+    }
+    const found = this.queryAnswers.find((q) => q.match.test(input.query));
+    const result = found ? found.answer() : { columns: [], rows: [], truncated: false };
+    const limit = input.limit ?? 200;
+    return { ...result, rows: result.rows.slice(0, limit), truncated: result.rows.length > limit };
   }
 
   private createInvoiceReceived(input: InvoiceReceivedInput) {

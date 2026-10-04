@@ -7,7 +7,7 @@ updates.
 
 ```
 src/CommonModules/
-  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, CreateInvoiceReceived (JSON in, JSON out)
+  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived (JSON in, JSON out)
   PlatformAPI_Map.bsl    configuration names, one module per configuration version
   PlatformAPI_Log.bsl    writes PlatformLog (privileged)
 build.ps1                XML dump -> PlatformAPI.cfe, optionally installs it into a base

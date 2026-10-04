@@ -35,6 +35,8 @@ interface StoredCompany {
   createdAt: string;
   lastStatus: ConnectorStatus | null;
   lastSyncAt: string | null;
+  /** The AI assistant may read this company's 1C (TD §11: off by default, turned on with consent). */
+  aiEnabled?: boolean;
 }
 
 /** Signed-in state. The refresh token is encrypted; the license token is signed, not secret. */
@@ -154,6 +156,17 @@ export class LocalStore {
     return view(c);
   }
 
+  setAiEnabled(id: string, enabled: boolean): CompanyView {
+    const c = this.find(id);
+    c.aiEnabled = enabled;
+    this.save();
+    return view(c);
+  }
+
+  company(id: string): CompanyView {
+    return view(this.find(id));
+  }
+
   removeCompany(id: string): void {
     this.data.companies = this.data.companies.filter((c) => c.id !== id);
     this.save();
@@ -183,5 +196,6 @@ function view(c: StoredCompany): CompanyView {
     createdAt: c.createdAt,
     lastStatus: c.lastStatus,
     lastSyncAt: c.lastSyncAt,
+    aiEnabled: c.aiEnabled ?? false,
   };
 }

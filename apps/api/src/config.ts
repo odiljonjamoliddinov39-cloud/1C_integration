@@ -19,6 +19,15 @@ const Env = z.object({
     .default("true")
     .transform((v) => v === "true"),
   LOG_LEVEL: z.string().default("info"),
+  /** Claude API key for the AI proxy. Without it the assistant answers AI_NOT_CONFIGURED. */
+  ANTHROPIC_API_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  /** TD §8: default Sonnet 5.5. */
+  AI_MODEL: z.string().default("claude-sonnet-5-5"),
+  /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
+  AI_DAILY_TOKENS: z.coerce.number().int().positive().default(300_000),
 });
 
 export type Config = z.infer<typeof Env>;

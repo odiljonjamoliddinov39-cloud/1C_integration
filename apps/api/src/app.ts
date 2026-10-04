@@ -2,6 +2,8 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import {
   ActivateDeviceInput,
+  AiChatInput,
+  type AiEvent,
   LicenseCheckInput,
   LoginInput,
   RefreshInput,
@@ -11,6 +13,8 @@ import { sql } from "drizzle-orm";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { ZodError, type z } from "zod";
 
+import { type AiModel, claudeModel } from "./ai/model.js";
+import { AiProxy } from "./ai/proxy.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
@@ -21,7 +25,12 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return schema.parse(value);
 }
 
-export async function buildApp(db: Db, config: Config) {
+export interface AppDeps {
+  /** Replaces the Claude API in tests. */
+  aiModel?: AiModel;
+}
+
+export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const app = Fastify({
     logger: { level: config.LOG_LEVEL, redact: ["req.headers.authorization"] },
     trustProxy: true, // behind Caddy
@@ -29,6 +38,8 @@ export async function buildApp(db: Db, config: Config) {
   });
   const tokens = new Tokens(config);
   const service = new Service(db, tokens, config);
+  const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
+  const ai = new AiProxy(db, service, config, aiModel, app.log);
 
   // The desktop app calls from its main process; browsers (website, admin) come later.
   await app.register(cors, { origin: false });
@@ -91,6 +102,32 @@ export async function buildApp(db: Db, config: Config) {
     return service.checkLicense(userId, parse(LicenseCheckInput, req.body).machineId);
   });
   app.get("/v1/license/public-key", async () => ({ publicKey: await tokens.publicKey() }));
+
+  // One model turn of the assistant. The answer streams as newline-delimited JSON (AiEvent).
+  app.post(
+    "/v1/ai/chat",
+    { bodyLimit: 2 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      const who = await auth(req);
+      const input = parse(AiChatInput, req.body);
+      await ai.ensureAllowed(who.accountId);
+
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      const aborted = new AbortController();
+      reply.raw.on("close", () => {
+        if (!reply.raw.writableEnded) aborted.abort();
+      });
+      const send = (event: AiEvent) => {
+        if (!reply.raw.writableEnded) reply.raw.write(`${JSON.stringify(event)}\n`);
+      };
+      await ai.turn(who, input, send, aborted.signal);
+      reply.raw.end();
+    },
+  );
 
   return app;
 }

@@ -3,7 +3,18 @@
  * Migrations are generated from this file: pnpm --filter @platform/api db:generate
  */
 import { sql } from "drizzle-orm";
-import { boolean, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 const id = () =>
   uuid("id")
@@ -125,3 +136,25 @@ export const refreshTokens = pgTable("refresh_tokens", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+/** One row per Claude API call made through the AI proxy (TD §8 "AI proxy"). */
+export const aiUsage = pgTable(
+  "ai_usage",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    cacheReadTokens: integer("cache_read_tokens").notNull(),
+    cacheWriteTokens: integer("cache_write_tokens").notNull(),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_usage_account_created_idx").on(t.accountId, t.createdAt)],
+);

@@ -7,6 +7,7 @@ import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from "electro
 
 import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
+import { AssistantService } from "./assistant.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
@@ -74,10 +75,20 @@ void app.whenReady().then(() => {
     deviceName: hostname(),
     bakedPublicKey,
   });
+  const assistant = new AssistantService({
+    store,
+    session,
+    connector,
+    emit: (event) => {
+      for (const window of BrowserWindow.getAllWindows())
+        window.webContents.send(CHANNELS.assistantEvent, event);
+    },
+  });
   const handlers = createHandlers({
     store,
     session,
     connector,
+    assistant,
     info: {
       version: app.getVersion(),
       platform: process.platform,
@@ -106,6 +117,12 @@ void app.whenReady().then(() => {
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
+  ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
+    handlers.assistantEnable(id, enabled),
+  );
+  ipcMain.handle(CHANNELS.assistantSend, (_e, input: unknown) => handlers.assistantSend(input));
+  ipcMain.handle(CHANNELS.assistantStop, (_e, id: unknown) => handlers.assistantStop(id));
+  ipcMain.handle(CHANNELS.assistantReset, (_e, id: unknown) => handlers.assistantReset(id));
 
   // License check at start and every 6 hours (TD §4).
   void session.refreshLicense();

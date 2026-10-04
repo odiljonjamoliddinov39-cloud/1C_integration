@@ -22,11 +22,28 @@ licenses, payments and AI requests.
 TD §13. Status: [`docs/phase-0.md`](docs/phase-0.md).
 
 - [x] Monorepo skeleton (pnpm, Turborepo, TypeScript strict, ESLint, Prettier, Vitest, CI)
-- [x] `PlatformAPI` extension with `Ping`, `GetOrganizations`, `GetMetadata`, `CreateInvoiceReceived`
+- [x] `PlatformAPI` extension with `Ping`, `GetOrganizations`, `GetMetadata`, `RunQuery` (read-only), `CreateInvoiceReceived`
 - [x] Node scripts that call it through `winax` (ping, metadata dump, create invoice)
 - [x] Electron shell: sign-in stub, Companies screen, connect company, connector status
 - [ ] **On a Windows PC with 1C:** read the real metadata and confirm the field map; run Ping; write one
       unposted Счет-фактура from JSON (the gate). Steps: [`onec/extension/README.md`](onec/extension/README.md)
+
+## AI assistant (prototype of TD §7, phase 1)
+
+Read-only chat about a company's books, in the desktop app's **Assistant** tab. It is off per company
+until the accountant agrees that 1C data goes to the AI.
+
+```
+Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──▶ Claude API (key on the server)
+     ▲   runs the model's 1C queries locally          checks subscription and token quota,
+     └── (RunQuery, GetMetadata, GetOrganizations)    adds the prompt and tools, records tokens
+```
+
+- Server: `apps/api/src/ai/` (prompt and tools, Claude call, quota). Model `claude-sonnet-5-5` (TD §8),
+  `AI_MODEL` to change it; per-account daily cap `AI_DAILY_TOKENS`; plan quota `plans.ai_token_quota`.
+- Desktop: `apps/desktop/src/main/assistant.ts` (the tool loop) and `screens/Assistant.tsx`.
+- The API key reaches the server from the `ANTHROPIC_API_KEY` repository secret on deploy
+  ([`docs/deploy.md`](docs/deploy.md)).
 
 ## Prototype deployment
 
@@ -46,6 +63,7 @@ pnpm build
 # Control system API (needs PostgreSQL)
 export DATABASE_URL=postgres://postgres@127.0.0.1:5432/platform JWT_SECRET=$(openssl rand -hex 32)
 export LICENSE_PRIVATE_KEY="$(pnpm --silent --filter @platform/api keygen 2>/dev/null)"
+export ANTHROPIC_API_KEY=sk-ant-...        # optional: the AI assistant
 pnpm --filter @platform/api dev            # http://localhost:3000
 
 # Desktop app (signs in to PLATFORM_API_URL, default http://localhost:3000)

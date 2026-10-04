@@ -7,6 +7,7 @@ import { FakePlatform } from "@platform/onec-client/testing";
 import { describe, expect, it } from "vitest";
 
 import type { ConnectionInput } from "../shared/ipc.js";
+import { AssistantService } from "./assistant.js";
 import { InProcessConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
 import { SessionService } from "./session.js";
@@ -32,15 +33,17 @@ function setup() {
     return bases.get(key)!;
   });
   const store = new LocalStore(file, secrets);
+  const session = new SessionService({
+    store,
+    machineId: async () => "m".repeat(64),
+    deviceName: "PC",
+    bakedPublicKey: "",
+  });
   const handlers = createHandlers({
     store,
-    session: new SessionService({
-      store,
-      machineId: async () => "m".repeat(64),
-      deviceName: "PC",
-      bakedPublicKey: "",
-    }),
+    session,
     connector,
+    assistant: new AssistantService({ store, session, connector, emit: () => undefined }),
     info: {
       version: "0.0.0",
       platform: "win32",
@@ -135,15 +138,18 @@ describe("without secure storage", () => {
     };
     const base = new FakePlatform();
     const store = new LocalStore(file, noKeyring);
+    const session = new SessionService({
+      store,
+      machineId: async () => "m".repeat(64),
+      deviceName: "PC",
+      bakedPublicKey: "",
+    });
+    const connector = new InProcessConnector(() => base);
     const handlers = createHandlers({
       store,
-      session: new SessionService({
-        store,
-        machineId: async () => "m".repeat(64),
-        deviceName: "PC",
-        bakedPublicKey: "",
-      }),
-      connector: new InProcessConnector(() => base),
+      session,
+      connector,
+      assistant: new AssistantService({ store, session, connector, emit: () => undefined }),
       info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
     });

@@ -1,14 +1,16 @@
 import { generateKeyPairSync } from "node:crypto";
 
-import { LicenseClaims } from "@platform/shared";
+import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
+import { AiEvent, LicenseClaims } from "@platform/shared";
 import { decodeJwt, importSPKI, jwtVerify } from "jose";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { subscriptions } from "./db/schema.js";
+import { aiUsage, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -26,9 +28,34 @@ const account = {
   accountName: "Buxgalter MChJ",
 };
 
+/** Stands in for Claude: streams "Balans: " + "125 mln", then returns the finished message. */
+const aiCalls: BetaMessageStreamParams[] = [];
+const fakeModel = {
+  async turn(params: BetaMessageStreamParams, onText: (text: string) => void) {
+    aiCalls.push(params);
+    onText("Balans: ");
+    onText("125 mln");
+    return {
+      model: "claude-sonnet-5-5",
+      stop_reason: "end_turn",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig" },
+        { type: "text", text: "Balans: 125 mln" },
+      ],
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_read_input_tokens: 3000,
+        cache_creation_input_tokens: 0,
+      },
+    } as unknown as BetaMessage;
+  },
+};
+
 describe.skipIf(!available)("control system API", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let db: ReturnType<typeof createDb>;
+  let config: ReturnType<typeof loadConfig>;
 
   beforeAll(async () => {
     await admin.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
@@ -36,15 +63,13 @@ describe.skipIf(!available)("control system API", () => {
     const url = ADMIN_URL.replace(/\/[^/]*$/, `/${TEST_DB}`);
     db = createDb(url);
     await runMigrations(db.db);
-    app = await buildApp(
-      db.db,
-      loadConfig({
-        DATABASE_URL: url,
-        JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
-        LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-        LOG_LEVEL: "silent",
-      }),
-    );
+    config = loadConfig({
+      DATABASE_URL: url,
+      JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
+      LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      LOG_LEVEL: "silent",
+    });
+    app = await buildApp(db.db, config, { aiModel: fakeModel });
   });
 
   beforeEach(async () => {
@@ -154,6 +179,77 @@ describe.skipIf(!available)("control system API", () => {
     expect((await post("/v1/license/check", { machineId }, accessToken)).json().claims.status).toBe(
       "suspended",
     );
+  });
+
+  it("relays an assistant turn as a stream and records its tokens", async () => {
+    const { accessToken } = (await post("/v1/auth/register", account)).json();
+    const chat = { company: "ООО «Тест»", messages: [{ role: "user", content: "5110 qoldig'i?" }] };
+    expect((await post("/v1/ai/chat", chat)).statusCode).toBe(401);
+    aiCalls.length = 0;
+
+    const res = await post("/v1/ai/chat", chat, accessToken);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/x-ndjson");
+    const events = res.body
+      .trim()
+      .split("\n")
+      .map((line) => AiEvent.parse(JSON.parse(line)));
+    expect(events.filter((e) => e.type === "text").map((e) => e.text)).toEqual(["Balans: ", "125 mln"]);
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: "message", stopReason: "end_turn" });
+    // Thinking blocks come back too: the desktop must send them back unchanged.
+    expect(done?.type === "message" && done.content.map((b) => b.type)).toEqual(["thinking", "text"]);
+
+    // The proxy, not the app, adds the prompt, the tools and the model.
+    const params = aiCalls[0]!;
+    expect(params.model).toBe("claude-sonnet-5-5");
+    expect(JSON.stringify(params.system)).toContain(SYSTEM_PROMPT.slice(0, 40));
+    expect(JSON.stringify(params.system)).toContain("ООО «Тест»");
+    expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual([
+      "list_organizations",
+      "describe_objects",
+      "run_query",
+    ]);
+
+    const [usage] = await db.db.select().from(aiUsage);
+    expect(usage).toMatchObject({ inputTokens: 1000, outputTokens: 200, cacheReadTokens: 3000 });
+    expect(usage?.costUsd).toBeCloseTo((1000 * 2 + 200 * 10 + 3000 * 0.2) / 1e6, 6);
+  });
+
+  it("stops the assistant at the daily cap, the plan quota and an inactive subscription", async () => {
+    const reg = (await post("/v1/auth/register", account)).json();
+    const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
+    const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
+    const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
+
+    await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
+    expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_DAILY_LIMIT");
+
+    await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) });
+    await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 1_000_000 });
+    await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000 / 2 - 86_400_000) });
+    await db.db.update(subscriptions).set({ startsAt: new Date(Date.now() - 3 * 86_400_000) });
+    expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_QUOTA_EXCEEDED");
+
+    await db.sql`TRUNCATE ai_usage`;
+    await db.db.update(subscriptions).set({ endsAt: new Date(Date.now() - 4 * 86_400_000) });
+    const res = await post("/v1/ai/chat", chat, reg.accessToken);
+    expect(res.statusCode).toBe(402);
+    expect(res.json().code).toBe("SUBSCRIPTION_INACTIVE");
+  });
+
+  it("answers AI_NOT_CONFIGURED when the server has no Claude API key", async () => {
+    const bare = await buildApp(db.db, config);
+    const { accessToken } = (await post("/v1/auth/register", account)).json();
+    const res = await bare.inject({
+      method: "POST",
+      url: "/v1/ai/chat",
+      payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe("AI_NOT_CONFIGURED");
+    await bare.close();
   });
 
   it("validates input", async () => {

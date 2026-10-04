@@ -27,6 +27,9 @@ function fail(e: unknown): Result<never> {
 
 export class SessionService {
   private readonly clientFor: (serverUrl: string) => ControlClient;
+  /** Access tokens live in memory only; refresh tokens rotate, so one refresh runs at a time. */
+  private access: { token: string; expiresAt: number } | null = null;
+  private refreshing: Promise<string> | null = null;
 
   constructor(private readonly deps: SessionDeps) {
     this.clientFor = deps.clientFor ?? ((url) => new ControlClient(url));
@@ -71,6 +74,7 @@ export class SessionService {
         name: this.deps.deviceName,
       };
       const license = await client.activate(signedIn.accessToken, device);
+      this.access = { token: signedIn.accessToken, expiresAt: Date.now() + signedIn.expiresIn * 1000 };
       const now = new Date().toISOString();
       const stored: StoredSession = {
         email: signedIn.me.user.email,
@@ -105,27 +109,69 @@ export class SessionService {
     if (!s) return null;
     const client = this.clientFor(s.serverUrl);
     try {
-      const tokens = await client.refresh(this.deps.store.decrypt(s.refreshTokenEnc));
-      const license = await client.check(tokens.accessToken, await this.deps.machineId());
-      this.deps.store.setSession({
-        ...s,
-        refreshTokenEnc: this.deps.store.encrypt(tokens.refreshToken),
-        licenseToken: license.licenseToken,
-        checkedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      if (
-        e instanceof ControlError &&
-        ["INVALID_REFRESH", "UNAUTHORIZED", "DEVICE_REVOKED"].includes(e.code)
-      ) {
-        this.deps.store.setSession(null); // must sign in again; the license is gone with it
+      const accessToken = await this.refreshAccess(true);
+      const license = await client.check(accessToken, await this.deps.machineId());
+      const current = this.deps.store.session;
+      if (current) {
+        this.deps.store.setSession({
+          ...current,
+          licenseToken: license.licenseToken,
+          checkedAt: new Date().toISOString(),
+        });
       }
+    } catch (e) {
+      this.signOutIfRejected(e);
       // OFFLINE and server errors: keep working on the last token until it expires.
     }
     return this.view();
   }
 
+  /** A control-system client and a valid access token, for calls such as the AI proxy. */
+  async authorized(): Promise<{ client: ControlClient; accessToken: string }> {
+    const s = this.deps.store.session;
+    if (!s) throw new ControlError("UNAUTHORIZED", "Sign in again");
+    try {
+      const fresh = this.access && this.access.expiresAt - Date.now() > 30_000;
+      const accessToken = fresh && this.access ? this.access.token : await this.refreshAccess(false);
+      return { client: this.clientFor(s.serverUrl), accessToken };
+    } catch (e) {
+      this.signOutIfRejected(e);
+      throw e;
+    }
+  }
+
+  private refreshAccess(force: boolean): Promise<string> {
+    if (!force && this.access && this.access.expiresAt - Date.now() > 30_000) {
+      return Promise.resolve(this.access.token);
+    }
+    this.refreshing ??= (async () => {
+      try {
+        const s = this.deps.store.session;
+        if (!s) throw new ControlError("UNAUTHORIZED", "Sign in again");
+        const tokens = await this.clientFor(s.serverUrl).refresh(this.deps.store.decrypt(s.refreshTokenEnc));
+        const current = this.deps.store.session ?? s;
+        this.deps.store.setSession({
+          ...current,
+          refreshTokenEnc: this.deps.store.encrypt(tokens.refreshToken),
+        });
+        this.access = { token: tokens.accessToken, expiresAt: Date.now() + tokens.expiresIn * 1000 };
+        return tokens.accessToken;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
+  }
+
+  private signOutIfRejected(e: unknown): void {
+    if (e instanceof ControlError && ["INVALID_REFRESH", "UNAUTHORIZED", "DEVICE_REVOKED"].includes(e.code)) {
+      this.access = null;
+      this.deps.store.setSession(null); // must sign in again; the license is gone with it
+    }
+  }
+
   async signOut(): Promise<void> {
+    this.access = null;
     const s = this.deps.store.session;
     if (s) await this.clientFor(s.serverUrl).logout(this.deps.store.decrypt(s.refreshTokenEnc));
     this.deps.store.setSession(null);

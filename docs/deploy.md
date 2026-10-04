@@ -49,6 +49,22 @@ The address is printed at the end of the run. Every push to `main` that changes 
 
 > **Back up `/opt/platform/.env`.** `LICENSE_PRIVATE_KEY` signs every desktop license.
 
+## 2a. Turn on the AI assistant (optional)
+
+1. At **console.anthropic.com**: add billing, set a monthly spend limit (Settings → Limits), and
+   create an API key.
+2. Add it on GitHub as the repository secret **`ANTHROPIC_API_KEY`** (same page as above).
+3. Run **Deploy server** again. The key is copied into `/opt/platform/.env` on the server; it never
+   goes into the desktop app.
+
+Limits: each trial account may use 1 000 000 tokens (about $1–3 of Claude usage) and at most
+`AI_DAILY_TOKENS` (default 300 000) per day. Usage per request is in the `ai_usage` table:
+
+```bash
+docker compose exec postgres psql -U platform platform -c \
+  "select a.name, count(*), sum(cost_usd) from ai_usage u join accounts a on a.id = u.account_id group by 1"
+```
+
 ## 3. Build the Windows installer
 
 GitHub → **Actions → Desktop app (Windows .exe) → Run workflow**, with the address from step 2,

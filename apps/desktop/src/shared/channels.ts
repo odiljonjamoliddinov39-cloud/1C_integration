@@ -12,4 +12,10 @@ export const CHANNELS = {
   addCompany: "companies:add",
   checkStatus: "companies:check",
   removeCompany: "companies:remove",
+  assistantEnable: "assistant:enable",
+  assistantSend: "assistant:send",
+  assistantStop: "assistant:stop",
+  assistantReset: "assistant:reset",
+  /** main → renderer */
+  assistantEvent: "assistant:event",
 } as const;

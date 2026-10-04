@@ -24,6 +24,10 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       LICENSE_PRIVATE_KEY: ${LICENSE_PRIVATE_KEY}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      # The AI proxy: without a key the assistant answers AI_NOT_CONFIGURED.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
+      AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-300000}
     depends_on:
       postgres:
         condition: service_healthy

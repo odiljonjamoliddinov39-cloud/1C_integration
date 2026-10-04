@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { CHANNELS } from "../shared/channels.js";
-import type { PlatformBridge } from "../shared/ipc.js";
+import type { AssistantEvent, PlatformBridge } from "../shared/ipc.js";
 
 const bridge: PlatformBridge = {
   app: { info: () => ipcRenderer.invoke(CHANNELS.appInfo) },
@@ -19,6 +19,17 @@ const bridge: PlatformBridge = {
     add: (input) => ipcRenderer.invoke(CHANNELS.addCompany, input),
     checkStatus: (id) => ipcRenderer.invoke(CHANNELS.checkStatus, id),
     remove: (id) => ipcRenderer.invoke(CHANNELS.removeCompany, id),
+  },
+  assistant: {
+    enable: (companyId, enabled) => ipcRenderer.invoke(CHANNELS.assistantEnable, companyId, enabled),
+    send: (input) => ipcRenderer.invoke(CHANNELS.assistantSend, input),
+    stop: (companyId) => ipcRenderer.invoke(CHANNELS.assistantStop, companyId),
+    reset: (companyId) => ipcRenderer.invoke(CHANNELS.assistantReset, companyId),
+    onEvent: (listener) => {
+      const handler = (_e: unknown, event: AssistantEvent) => listener(event);
+      ipcRenderer.on(CHANNELS.assistantEvent, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.assistantEvent, handler);
+    },
   },
 };
 

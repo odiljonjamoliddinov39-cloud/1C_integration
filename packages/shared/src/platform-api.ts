@@ -11,6 +11,7 @@ export const PLATFORM_FUNCTIONS = [
   "Ping",
   "GetOrganizations",
   "GetMetadata",
+  "RunQuery",
   "CreateInvoiceReceived",
 ] as const;
 export type PlatformFunction = (typeof PLATFORM_FUNCTIONS)[number];
@@ -26,6 +27,7 @@ export const ERROR_CODES = [
   "ITEM_NOT_FOUND",
   "VAT_RATE_NOT_FOUND",
   "CLOSED_PERIOD",
+  "QUERY_ERROR",
   "WRITE_FAILED",
   "INTERNAL",
   // client
@@ -87,6 +89,30 @@ export const MetadataObject = z.object({
   ),
 });
 export type MetadataObject = z.infer<typeof MetadataObject>;
+
+// --- RunQuery (read-only, for the AI assistant and the audit) ------------------------------------
+
+/** Query parameter values: strings like "2026-01-31" become 1C dates. */
+export const QueryParams = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
+
+export const RunQueryInput = z.object({
+  /** Text in the 1C query language (ВЫБРАТЬ ...). It cannot change data. */
+  query: z.string().trim().min(1).max(20_000),
+  params: QueryParams.optional().describe(
+    'Values of &Name parameters in the query; "YYYY-MM-DD" strings become dates',
+  ),
+  /** Rows to return, at most 1000 (default 200). */
+  limit: z.number().int().min(1).max(1000).optional().describe("Rows to return, default 200"),
+});
+export type RunQueryInput = z.infer<typeof RunQueryInput>;
+
+/** References and enums come back as their 1C presentation; dates as YYYY-MM-DDTHH:mm:ss. */
+export const QueryResult = z.object({
+  columns: z.array(z.string()),
+  rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+  truncated: z.boolean(),
+});
+export type QueryResult = z.infer<typeof QueryResult>;
 
 // --- CreateInvoiceReceived ---------------------------------------------------------------------
 

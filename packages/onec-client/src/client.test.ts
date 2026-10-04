@@ -58,6 +58,19 @@ describe("PlatformApiClient", () => {
     await expect(client.createInvoiceReceived(invoice)).rejects.toMatchObject({ code: "CLOSED_PERIOD" });
   });
 
+  it("runs read-only queries with a row limit, and reports query errors", async () => {
+    const { client } = setup();
+    const balances = await client.runQuery({
+      query: "ВЫБРАТЬ Счет, СуммаОстатокДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки",
+      limit: 2,
+    });
+    expect(balances.columns).toContain("Счет");
+    expect(balances).toMatchObject({ truncated: true });
+    expect(balances.rows).toHaveLength(2);
+    await expect(client.runQuery({ query: "УДАЛИТЬ ВСЁ" })).rejects.toMatchObject({ code: "QUERY_ERROR" });
+    await expect(client.runQuery({ query: "  " })).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
   it("validates before calling 1C", async () => {
     const { client, fake } = setup();
     const bad = { ...invoice, lines: [{ ...invoice.lines[0]!, total: 1 }] };

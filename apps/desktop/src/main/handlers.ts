@@ -4,6 +4,7 @@
  */
 import {
   AddCompanyInput,
+  AssistantInput,
   type AppInfo,
   type CompanyView,
   ConnectionInput,
@@ -13,6 +14,7 @@ import {
   type Session,
   SignInInput,
 } from "../shared/ipc.js";
+import type { AssistantService } from "./assistant.js";
 import type { ConnectorRunner } from "./connector.js";
 import type { SessionService } from "./session.js";
 import { type LocalStore, StoreError } from "./store.js";
@@ -21,6 +23,7 @@ export interface HandlerDeps {
   store: LocalStore;
   session: SessionService;
   connector: ConnectorRunner;
+  assistant: AssistantService;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
 }
@@ -29,7 +32,7 @@ function invalid(error: { issues: { message: string }[] }): Result<never> {
   return { ok: false, code: "VALIDATION", message: error.issues.map((i) => i.message).join("; ") };
 }
 
-export function createHandlers({ store, session, connector, info, pickFolder }: HandlerDeps) {
+export function createHandlers({ store, session, connector, assistant, info, pickFolder }: HandlerDeps) {
   return {
     appInfo: async (): Promise<AppInfo> => info,
 
@@ -91,7 +94,24 @@ export function createHandlers({ store, session, connector, info, pickFolder }: 
       return store.setStatus(String(id), check.status);
     },
 
-    removeCompany: async (id: unknown): Promise<void> => store.removeCompany(String(id)),
+    removeCompany: async (id: unknown): Promise<void> => {
+      assistant.reset(String(id));
+      store.removeCompany(String(id));
+    },
+
+    assistantEnable: async (id: unknown, enabled: unknown): Promise<CompanyView> => {
+      if (enabled !== true) assistant.reset(String(id));
+      return store.setAiEnabled(String(id), enabled === true);
+    },
+
+    assistantSend: async (raw: unknown): Promise<Result<null>> => {
+      const input = AssistantInput.safeParse(raw);
+      return input.success ? assistant.send(input.data) : invalid(input.error);
+    },
+
+    assistantStop: async (id: unknown): Promise<void> => assistant.stop(String(id)),
+
+    assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),
   };
 }
 

@@ -1,8 +1,12 @@
 # Automatic HTTPS (Let's Encrypt) for SITE_ADDRESS. Without a domain this is <ip-with-dashes>.sslip.io,
 # a free name that points to the server's IP, so the desktop app still gets a real certificate.
 {$SITE_ADDRESS} {
-	encode gzip
-	reverse_proxy api:3000
+	# The assistant's answer streams as it is written: no compression or buffering on that path.
+	@compressible not path /v1/ai/*
+	encode @compressible gzip
+	reverse_proxy api:3000 {
+		flush_interval -1
+	}
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff

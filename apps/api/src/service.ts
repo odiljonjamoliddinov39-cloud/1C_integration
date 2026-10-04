@@ -129,7 +129,7 @@ export class Service {
     };
   }
 
-  private async currentSubscription(accountId: string) {
+  async currentSubscription(accountId: string) {
     const [row] = await this.db
       .select({ subscription: subscriptions, plan: plans })
       .from(subscriptions)

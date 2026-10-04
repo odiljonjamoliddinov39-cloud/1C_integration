@@ -39,6 +39,16 @@ ALLOW_REGISTRATION=true
 ENV
 fi
 
+# The deploy workflow drops the Claude API key here (from the ANTHROPIC_API_KEY repository secret).
+if [ -f .anthropic-key ]; then
+  anthropic_key=$(tr -d '\r\n' < .anthropic-key)
+  rm -f .anthropic-key
+  umask 077
+  { grep -v '^ANTHROPIC_API_KEY=' .env || true; echo "ANTHROPIC_API_KEY=${anthropic_key}"; } > .env.new
+  mv .env.new .env
+  echo "Claude API key updated."
+fi
+
 if [ -n "${API_IMAGE:-}" ]; then
   grep -q '^API_IMAGE=' .env && sed -i "s#^API_IMAGE=.*#API_IMAGE=${API_IMAGE}#" .env || echo "API_IMAGE=${API_IMAGE}" >> .env
 fi

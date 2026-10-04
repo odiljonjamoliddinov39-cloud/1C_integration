@@ -6,6 +6,8 @@ import {
   Organization,
   PingResult,
   type PlatformFunction,
+  QueryResult,
+  RunQueryInput,
 } from "@platform/shared";
 import { z } from "zod";
 
@@ -27,6 +29,15 @@ export class PlatformApiClient {
   /** Attributes and tabular sections of the given objects, e.g. ["Документ.СчетФактураПолученный"]. */
   getMetadata(fullNames: string[]): Promise<MetadataObject[]> {
     return this.invoke("GetMetadata", z.array(MetadataObject), { objects: fullNames });
+  }
+
+  /** Runs a read-only 1C query with the 1C user's rights; at most `limit` rows come back. */
+  async runQuery(input: RunQueryInput): Promise<QueryResult> {
+    const parsed = RunQueryInput.safeParse(input);
+    if (!parsed.success) {
+      throw new OneCError("VALIDATION", "Query does not pass validation", { issues: parsed.error.issues });
+    }
+    return this.invoke("RunQuery", QueryResult, parsed.data);
   }
 
   /** Writes one unposted Счет-фактура полученный. A repeated externalId returns the existing one. */

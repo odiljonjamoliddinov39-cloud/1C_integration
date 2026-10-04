@@ -13,7 +13,7 @@ import { ComTransport } from "@platform/onec-client/com";
 import { FakePlatform } from "@platform/onec-client/testing";
 
 import type { ConnectionInput } from "../shared/ipc.js";
-import { checkConnection, failure, toLocation } from "./onec-jobs.js";
+import { type OneCJob, failure, runJob, toLocation, toolFailure } from "./onec-jobs.js";
 
 const IDLE_MS = 5 * 60 * 1000;
 const demo = Boolean((workerData as { demo?: boolean } | undefined)?.demo);
@@ -43,20 +43,26 @@ async function open(connection: ConnectionInput): Promise<PlatformTransport> {
   return transport;
 }
 
-async function run(message: { id: number; connection: ConnectionInput }) {
+interface JobMessage {
+  id: number;
+  connection: ConnectionInput;
+  job: OneCJob;
+}
+
+async function run(message: JobMessage) {
   clearTimeout(idleTimer);
   let result;
   try {
-    result = await checkConnection(await open(message.connection));
+    result = await runJob(await open(message.connection), message.job);
   } catch (e) {
     await closeConnection(); // reconnect from scratch next time
-    result = failure(e);
+    result = message.job.kind === "check" ? failure(e) : toolFailure(e);
   }
   idleTimer = setTimeout(() => void closeConnection(), IDLE_MS);
   parentPort?.postMessage({ id: message.id, result });
 }
 
 let queue = Promise.resolve();
-parentPort?.on("message", (message: { id: number; connection: ConnectionInput }) => {
+parentPort?.on("message", (message: JobMessage) => {
   queue = queue.then(() => run(message));
 });

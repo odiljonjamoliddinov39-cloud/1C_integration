@@ -1,5 +1,7 @@
 /** HTTP client for the control system (apps/api). Runs in the main process, never in the UI. */
 import {
+  AiEvent,
+  type AiChatInput,
   ApiErrorBody,
   LicenseResponse,
   Me,
@@ -20,6 +22,9 @@ export class ControlError extends Error {
 }
 
 const SignedIn = TokenPair.extend({ me: Me });
+export type AiTurn = Extract<AiEvent, { type: "message" }>;
+/** An assistant turn may take a few minutes when it thinks or the answer is long. */
+const AI_TURN_TIMEOUT_MS = 5 * 60_000;
 export type SignedIn = z.infer<typeof SignedIn>;
 
 export class ControlClient {
@@ -56,6 +61,52 @@ export class ControlClient {
     return this.call("/v1/license/check", LicenseResponse, { machineId }, accessToken);
   }
 
+  /**
+   * One assistant turn through the AI proxy. Text arrives through `onText` as it is written; the
+   * finished turn is returned. An error event from the proxy becomes a ControlError.
+   */
+  async aiTurn(
+    accessToken: string,
+    input: AiChatInput,
+    onText: (text: string) => void,
+    signal: AbortSignal,
+  ): Promise<AiTurn> {
+    const response = await this.request(
+      "POST",
+      "/v1/ai/chat",
+      input,
+      accessToken,
+      AbortSignal.any([signal, AbortSignal.timeout(AI_TURN_TIMEOUT_MS)]),
+    );
+    if (!response.body) throw new ControlError("BAD_RESPONSE", "The server sent no answer");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let newline: number;
+        while ((newline = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line) continue;
+          const event = AiEvent.safeParse(JSON.parse(line));
+          if (!event.success) continue; // a newer server may send event types this app does not know
+          if (event.data.type === "text") onText(event.data.text);
+          else if (event.data.type === "error") throw new ControlError(event.data.code, event.data.message);
+          else return event.data;
+        }
+      }
+    } catch (e) {
+      if (e instanceof ControlError) throw e;
+      if (signal.aborted) throw new ControlError("AI_ABORTED", "Stopped");
+      throw new ControlError(
+        "OFFLINE",
+        `The answer was cut off: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    throw new ControlError("BAD_RESPONSE", "The answer ended before it was complete");
+  }
+
   async publicKey(): Promise<string> {
     const response = await this.request("GET", "/v1/license/public-key");
     return z.object({ publicKey: z.string() }).parse(await response.json()).publicKey;
@@ -74,6 +125,7 @@ export class ControlClient {
     path: string,
     body?: unknown,
     accessToken?: string,
+    signal: AbortSignal = AbortSignal.timeout(15_000),
   ): Promise<Response> {
     let response: Response;
     try {
@@ -84,9 +136,15 @@ export class ControlClient {
           ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(15_000),
+        signal,
       });
     } catch (e) {
+      if (
+        signal.aborted &&
+        !(signal.reason instanceof DOMException && signal.reason.name === "TimeoutError")
+      ) {
+        throw new ControlError("AI_ABORTED", "Stopped");
+      }
       throw new ControlError(
         "OFFLINE",
         `Cannot reach ${this.base}: ${e instanceof Error ? e.message : String(e)}`,

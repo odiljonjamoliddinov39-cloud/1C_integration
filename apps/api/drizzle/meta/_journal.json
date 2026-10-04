@@ -15,6 +15,20 @@
       "when": 1791109672023,
       "tag": "0001_seed_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791114569542,
+      "tag": "0002_ai_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791114570401,
+      "tag": "0003_trial_ai_quota",
+      "breakpoints": true
     }
   ]
 }
