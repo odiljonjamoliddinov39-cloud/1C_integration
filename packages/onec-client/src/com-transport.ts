@@ -17,7 +17,7 @@ import { OneCError } from "./errors.js";
 import type { PlatformTransport } from "./transport.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- COM objects are untyped dispatch objects */
-interface Winax {
+export interface Winax {
   Object: new (progId: string) => any;
   release(...objects: unknown[]): void;
 }
@@ -55,8 +55,8 @@ export class ComTransport implements PlatformTransport {
     private readonly connection: any,
   ) {}
 
-  static connect(options: ComConnectOptions): ComTransport {
-    const winax = loadWinax();
+  /** `winax` is only passed by tests. */
+  static connect(options: ComConnectOptions, winax: Winax = loadWinax()): ComTransport {
     const progId = options.progId ?? "V83.COMConnector";
     let connector: any;
     try {
@@ -84,14 +84,20 @@ export class ComTransport implements PlatformTransport {
   }
 
   async call(fn: PlatformFunction, arg?: string): Promise<string> {
+    const missing =
+      "The PlatformAPI extension is not installed in this base, or its common module lacks the «Внешнее соединение» flag";
     let api: any;
     try {
       api = this.connection.PlatformAPI;
     } catch (e) {
+      throw new OneCError("NOT_FOUND", missing, { cause: comMessage(e) });
+    }
+    // 1C answers a missing module with nothing rather than an error.
+    if (api == null) throw new OneCError("NOT_FOUND", missing);
+    if (api[fn] == null) {
       throw new OneCError(
         "NOT_FOUND",
-        "The PlatformAPI extension is not installed in this base, or its common module lacks the «Внешнее соединение» flag",
-        { cause: comMessage(e) },
+        `The PlatformAPI extension in this base has no ${fn}: update the extension`,
       );
     }
     try {

@@ -90,6 +90,34 @@ describe("PlatformApiClient", () => {
 });
 
 describe("ComTransport", () => {
+  /** A stand-in for winax: V83.COMConnector.Connect() returns the given connection object. */
+  const fakeWinax = (connection: object) => ({
+    Object: class {
+      Connect() {
+        return connection;
+      }
+    },
+    release: () => undefined,
+  });
+
+  it("says the extension is missing when the base has no PlatformAPI module or function", async () => {
+    const bare = ComTransport.connect({ infobase: { file: "D:\\x" } }, fakeWinax({}));
+    await expect(bare.call("Ping")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const old = ComTransport.connect(
+      { infobase: { file: "D:\\x" } },
+      fakeWinax({ PlatformAPI: { Ping: () => "" } }),
+    );
+    await expect(old.call("RunQuery", "{}")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: expect.stringContaining("RunQuery"),
+    });
+    const ok = ComTransport.connect(
+      { infobase: { file: "D:\\x" } },
+      fakeWinax({ PlatformAPI: { Ping: () => '{"ok":true,"data":1}' } }),
+    );
+    expect(await ok.call("Ping")).toBe('{"ok":true,"data":1}');
+  });
+
   it.skipIf(process.platform === "win32")("explains that COM needs Windows", () => {
     expect(() => ComTransport.connect({ infobase: { file: "D:\\x" } })).toThrow(
       expect.objectContaining({ code: "COM_UNAVAILABLE" }),
