@@ -9,7 +9,7 @@ name: Deploy server
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, claude/exciting-carson-vcb2hr] # the default branch deploys every server change
     paths: [apps/api/**, packages/shared/**, deploy/**, pnpm-lock.yaml, .github/workflows/deploy.yml]
 
 permissions:
