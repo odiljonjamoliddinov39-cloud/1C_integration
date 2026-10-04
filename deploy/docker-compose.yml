@@ -42,6 +42,8 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The desktop installer for the website's Download page (the desktop workflow puts it here).
+      - ./downloads:/srv/downloads:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

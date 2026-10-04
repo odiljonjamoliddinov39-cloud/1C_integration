@@ -1,0 +1,36 @@
+---
+import Base from "../../layouts/Base.astro";
+import { dict, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).security;
+---
+
+<Base locale={locale} path="/security" title={t.title}>
+  <section class="mx-auto max-w-4xl px-4 py-14">
+    <h1 class="text-4xl font-bold">{t.title}</h1>
+    <p class="mt-3 text-muted-foreground">{t.subtitle}</p>
+    <div class="mt-8 overflow-x-auto rounded-xl border border-border bg-card">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-muted">
+          <tr><th class="px-4 py-3 font-medium">{t.tableWhat}</th><th class="px-4 py-3 font-medium">{t.tableWhere}</th></tr>
+        </thead>
+        <tbody class="divide-y divide-border">
+          {t.rows.map(([what, where]) => <tr><td class="px-4 py-3">{what}</td><td class="px-4 py-3 text-muted-foreground">{where}</td></tr>)}
+        </tbody>
+      </table>
+    </div>
+    <h2 class="mt-12 text-2xl font-semibold">{t.principlesTitle}</h2>
+    <div class="mt-5 grid gap-4 md:grid-cols-2">
+      {
+        t.principles.map((p) => (
+          <div class="rounded-xl border border-border bg-card p-5">
+            <h3 class="font-semibold">{p.title}</h3>
+            <p class="mt-1 text-sm text-muted-foreground">{p.text}</p>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+</Base>

@@ -86,6 +86,24 @@ Click **More info → Run anyway**.
 To try the app without 1C, start it with the demo base: in PowerShell,
 `$env:PLATFORM_DEMO_1C=1; & "$env:LOCALAPPDATA\Programs\1C Platform\1C-Platform.exe"`.
 
+## 5. Website on Vercel
+
+The marketing site and customer cabinet (`apps/web`, Astro) are static pages on Vercel. Vercel forwards
+`/api/*` to the server (`apps/web/vercel.json`), so the browser never talks to another domain.
+
+1. At **vercel.com**, sign in with GitHub and choose **Add New → Project**. Import
+   `1C_integration` (allow Vercel access to the repository if it asks).
+2. Set **Root Directory** to `apps/web`. Vercel detects Astro; the install and build commands come from
+   `vercel.json`. Leave the environment variables empty.
+3. Click **Deploy**. The site gets an address such as `https://1c-integration.vercel.app`; every push
+   to the production branch (the repository's default branch) deploys again.
+
+The Download page links to `https://<server>/download/1C-Platform-Setup.exe`. The **Desktop app
+(Windows .exe)** workflow puts the installer there after each build (it uses the same deploy secrets).
+
+When the server address changes (a domain is bought), update the `destination` in
+`apps/web/vercel.json` and `DOWNLOAD_URL` in `apps/web/src/lib/config.ts`.
+
 ## Useful commands on the server
 
 ```bash

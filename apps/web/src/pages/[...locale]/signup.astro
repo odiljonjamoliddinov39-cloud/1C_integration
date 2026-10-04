@@ -1,0 +1,19 @@
+---
+import { AuthForm } from "../../components/AuthForm";
+import Base from "../../layouts/Base.astro";
+import { dict, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).auth;
+---
+
+<Base locale={locale} path="/signup" title={t.signupTitle}>
+  <section class="mx-auto max-w-md px-4 py-14">
+    <h1 class="text-3xl font-bold">{t.signupTitle}</h1>
+    <p class="mt-2 text-sm text-muted-foreground">{t.signupSubtitle}</p>
+    <div class="mt-8 rounded-2xl border border-border bg-card p-6">
+      <AuthForm client:load locale={locale} mode="signup" />
+    </div>
+  </section>
+</Base>

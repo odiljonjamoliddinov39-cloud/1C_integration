@@ -11,7 +11,7 @@ import {
 } from "@platform/shared";
 import { sql } from "drizzle-orm";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { ZodError, type z } from "zod";
+import { ZodError, z } from "zod";
 
 import { type AiModel, claudeModel } from "./ai/model.js";
 import { AiProxy } from "./ai/proxy.js";
@@ -70,7 +70,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return identity;
   }
 
-  const strict = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
+  const strict = { config: { rateLimit: { max: config.AUTH_RATE_PER_MINUTE, timeWindow: "1 minute" } } };
 
   app.get("/health", async (_req, reply: FastifyReply) => {
     await db.execute(sql`select 1`);
@@ -96,6 +96,13 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     const { userId } = await auth(req);
     const { machineId, name } = parse(ActivateDeviceInput, req.body);
     return service.activateDevice(userId, machineId, name);
+  });
+  app.get("/v1/devices", async (req) => service.listDevices((await auth(req)).userId));
+  app.post("/v1/devices/:id/revoke", async (req, reply) => {
+    const { userId } = await auth(req);
+    const { id } = parse(z.object({ id: z.uuid() }), req.params);
+    await service.revokeDevice(userId, id);
+    return reply.status(204).send();
   });
   app.post("/v1/license/check", async (req) => {
     const { userId } = await auth(req);

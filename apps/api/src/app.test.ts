@@ -68,6 +68,7 @@ describe.skipIf(!available)("control system API", () => {
       JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
       LOG_LEVEL: "silent",
+      AUTH_RATE_PER_MINUTE: "1000",
     });
     app = await buildApp(db.db, config, { aiModel: fakeModel });
   });
@@ -168,6 +169,24 @@ describe.skipIf(!available)("control system API", () => {
       (await post("/v1/devices/activate", { machineId: "1".repeat(64), name: "PC1" }, accessToken))
         .statusCode,
     ).toBe(200);
+  });
+
+  it("lists the user's PCs and revokes one, which then cannot get a license", async () => {
+    const { accessToken } = (await post("/v1/auth/register", account)).json();
+    await post("/v1/devices/activate", { machineId, name: "Office PC" }, accessToken);
+    const get = (url: string, token: string) =>
+      app.inject({ method: "GET", url, headers: { authorization: `Bearer ${token}` } });
+    const list = (await get("/v1/devices", accessToken)).json();
+    expect(list).toEqual([expect.objectContaining({ name: "Office PC", revoked: false })]);
+
+    expect((await post(`/v1/devices/${list[0].id}/revoke`, {}, accessToken)).statusCode).toBe(204);
+    expect((await get("/v1/devices", accessToken)).json()[0].revoked).toBe(true);
+    expect((await post("/v1/license/check", { machineId }, accessToken)).json().code).toBe("DEVICE_REVOKED");
+
+    // Someone else's PC, or not a PC id at all.
+    const other = (await post("/v1/auth/register", { ...account, email: "other@example.com" })).json();
+    expect((await post(`/v1/devices/${list[0].id}/revoke`, {}, other.accessToken)).statusCode).toBe(404);
+    expect((await post("/v1/devices/nope/revoke", {}, accessToken)).statusCode).toBe(400);
   });
 
   it("reports an expired trial as grace, then suspended", async () => {

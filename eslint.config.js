@@ -4,7 +4,16 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/**", "**/out/**", "**/dist/**", "**/.turbo/**"] },
+  {
+    ignores: [
+      "**/node_modules/**",
+      "**/out/**",
+      "**/dist/**",
+      "**/.turbo/**",
+      "**/.astro/**",
+      "**/.vercel/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.strict,
   {
@@ -19,7 +28,7 @@ export default tseslint.config(
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
   {
-    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "apps/web/src/**/*.{ts,tsx}"],
     languageOptions: { globals: { ...globals.browser } },
     plugins: { "react-hooks": reactHooks },
     rules: reactHooks.configs.recommended.rules,

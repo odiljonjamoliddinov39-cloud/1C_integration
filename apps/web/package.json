@@ -1,0 +1,28 @@
+{
+  "name": "@platform/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Marketing website and customer cabinet (TD \u00a79), deployed on Vercel",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@astrojs/react": "7.0.0",
+    "@platform/shared": "workspace:*",
+    "astro": "7.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}

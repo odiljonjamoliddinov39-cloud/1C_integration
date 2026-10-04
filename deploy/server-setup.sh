@@ -20,7 +20,7 @@ if command -v ufw >/dev/null 2>&1; then
   ufw --force enable >/dev/null
 fi
 
-mkdir -p backups
+mkdir -p backups downloads
 if [ ! -f .env ]; then
   echo "Writing $APP_DIR/.env with new secrets..."
   ip=$(curl -fsS --max-time 3 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null \

@@ -2,7 +2,9 @@ name: Desktop app (Windows .exe)
 
 # Builds the Windows installer. Run it from the Actions tab ("Run workflow") and give the address
 # of the control system, e.g. https://203-0-113-5.sslip.io. The .exe is attached to the run as an
-# artifact. Without a code-signing certificate Windows SmartScreen shows a warning on first start.
+# artifact and, when the deploy secrets are set, published on the server at
+# https://<server>/download/1C-Platform-Setup.exe for the website's Download page.
+# Without a code-signing certificate Windows SmartScreen shows a warning on first start.
 on:
   workflow_dispatch:
     inputs:
@@ -35,3 +37,41 @@ jobs:
           name: platform-desktop-windows
           path: apps/desktop/release/*.exe
           if-no-files-found: error
+
+  publish:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deploy secrets
+        id: secrets
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$KEY" ]; then
+            echo "::notice::DEPLOY_HOST / DEPLOY_SSH_KEY are not set: the installer stays a run artifact only."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          name: platform-desktop-windows
+          path: release
+      - name: Copy the installer to the server
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER || 'root' }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          ssh_opts="-i $HOME/.ssh/deploy -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          target="$USER_NAME@$HOST"
+          exe=$(ls release/*.exe | head -1)
+          ssh $ssh_opts "$target" "mkdir -p /opt/platform/downloads"
+          scp $ssh_opts "$exe" "$target:/opt/platform/downloads/.upload.exe"
+          # Versioned name plus a stable one; the rename makes the stable link switch at once.
+          ssh $ssh_opts "$target" "cd /opt/platform/downloads && cp .upload.exe '$(basename "$exe")' && mv .upload.exe 1C-Platform-Setup.exe"

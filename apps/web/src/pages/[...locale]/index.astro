@@ -1,0 +1,73 @@
+---
+import Base from "../../layouts/Base.astro";
+import { dict, href, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).home;
+---
+
+<Base locale={locale} path="/">
+  <section class="mx-auto max-w-6xl px-4 pt-16 pb-12 md:pt-24">
+    <span class="inline-block rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{t.badge}</span>
+    <h1 class="mt-5 max-w-3xl text-4xl font-bold tracking-tight md:text-6xl">{t.title}</h1>
+    <p class="mt-5 max-w-2xl text-lg text-muted-foreground">{t.subtitle}</p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a href={href(locale, "/signup")} class="rounded-lg bg-primary px-5 py-3 font-medium text-primary-foreground hover:opacity-90">{t.cta}</a>
+      <a href="#how" class="rounded-lg border border-border bg-card px-5 py-3 font-medium hover:bg-muted">{t.ctaSecondary}</a>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-6xl px-4 py-10">
+    <h2 class="text-2xl font-semibold">{t.problemTitle}</h2>
+    <ul class="mt-5 grid gap-3 md:grid-cols-3">
+      {t.problems.map((p) => <li class="rounded-xl border border-border bg-card p-5 text-muted-foreground">{p}</li>)}
+    </ul>
+  </section>
+
+  <section id="how" class="mx-auto max-w-6xl scroll-mt-20 px-4 py-10">
+    <h2 class="text-2xl font-semibold">{t.howTitle}</h2>
+    <ol class="mt-5 grid gap-4 md:grid-cols-3">
+      {
+        t.steps.map((s, i) => (
+          <li class="rounded-xl border border-border bg-card p-5">
+            <span class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{i + 1}</span>
+            <h3 class="mt-3 font-semibold">{s.title}</h3>
+            <p class="mt-1 text-sm text-muted-foreground">{s.text}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section id="features" class="mx-auto max-w-6xl scroll-mt-20 px-4 py-10">
+    <h2 class="text-2xl font-semibold">{t.featuresTitle}</h2>
+    <div class="mt-5 grid gap-4 md:grid-cols-3">
+      {
+        t.features.map((f) => (
+          <div class="rounded-xl border border-border bg-card p-5">
+            <div class="flex items-start gap-2">
+              <h3 class="font-semibold">{f.title}</h3>
+              {f.soon && <span class="ml-auto shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.soon}</span>}
+            </div>
+            <p class="mt-1 text-sm text-muted-foreground">{f.text}</p>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-6xl px-4 py-10">
+    <div class="rounded-2xl bg-muted p-8">
+      <h2 class="text-2xl font-semibold">{t.securityTitle}</h2>
+      <p class="mt-3 max-w-3xl text-muted-foreground">{t.securityText}</p>
+      <a class="mt-4 inline-block text-primary underline" href={href(locale, "/security")}>{t.securityLink}</a>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-6xl px-4 pt-6 pb-20 text-center">
+    <h2 class="text-3xl font-bold">{t.finalTitle}</h2>
+    <p class="mt-2 text-muted-foreground">{t.finalText}</p>
+    <a href={href(locale, "/signup")} class="mt-6 inline-block rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.cta}</a>
+  </section>
+</Base>

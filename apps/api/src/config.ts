@@ -19,6 +19,8 @@ const Env = z.object({
     .default("true")
     .transform((v) => v === "true"),
   LOG_LEVEL: z.string().default("info"),
+  /** Sign-up, sign-in and refresh attempts per IP per minute. */
+  AUTH_RATE_PER_MINUTE: z.coerce.number().int().positive().default(10),
   /** Claude API key for the AI proxy. Without it the assistant answers AI_NOT_CONFIGURED. */
   ANTHROPIC_API_KEY: z
     .string()

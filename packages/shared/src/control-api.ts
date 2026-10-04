@@ -52,6 +52,16 @@ export type ActivateDeviceInput = z.infer<typeof ActivateDeviceInput>;
 
 export const LicenseCheckInput = ActivateDeviceInput.pick({ machineId: true });
 
+/** A PC activated for the user, as the customer cabinet shows it. */
+export const DeviceView = z.object({
+  id: z.string(),
+  name: z.string(),
+  activatedAt: z.string(),
+  lastSeenAt: z.string(),
+  revoked: z.boolean(),
+});
+export type DeviceView = z.infer<typeof DeviceView>;
+
 /** Claims of the Ed25519-signed license token (TD §4 "Licensing behavior", §11 "Pirated copies"). */
 export const LicenseClaims = z.object({
   sub: z.string(), // user id

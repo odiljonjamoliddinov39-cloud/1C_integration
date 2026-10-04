@@ -2,7 +2,14 @@
  * Accounts, sign-in, devices and licenses. Routes stay thin; the rules live here.
  */
 import { hash, verify } from "@node-rs/argon2";
-import type { LicenseResponse, Me, RegisterInput, SubscriptionStatus, TokenPair } from "@platform/shared";
+import type {
+  DeviceView,
+  LicenseResponse,
+  Me,
+  RegisterInput,
+  SubscriptionStatus,
+  TokenPair,
+} from "@platform/shared";
 import { and, count, desc, eq, gt, isNull } from "drizzle-orm";
 
 import type { Config } from "./config.js";
@@ -169,6 +176,30 @@ export class Service {
       if (!device) throw new HttpError(500, "INTERNAL", "Device was not saved");
     }
     return this.issueLicense(user.id, user.accountId, device.id, machineId);
+  }
+
+  async listDevices(userId: string): Promise<DeviceView[]> {
+    const rows = await this.db.query.devices.findMany({
+      where: eq(devices.userId, userId),
+      orderBy: desc(devices.lastSeenAt),
+    });
+    return rows.map((d) => ({
+      id: d.id,
+      name: d.name,
+      activatedAt: d.activatedAt.toISOString(),
+      lastSeenAt: d.lastSeenAt.toISOString(),
+      revoked: d.revoked,
+    }));
+  }
+
+  /** Frees a seat: that PC stops getting licenses and must not sign in again (TD §4). */
+  async revokeDevice(userId: string, deviceId: string): Promise<void> {
+    const [row] = await this.db
+      .update(devices)
+      .set({ revoked: true })
+      .where(and(eq(devices.id, deviceId), eq(devices.userId, userId)))
+      .returning({ id: devices.id });
+    if (!row) throw new HttpError(404, "NOT_FOUND", "No such PC on this account");
   }
 
   /** The desktop's periodic check (every 6 hours): a fresh token, or the reason it cannot have one. */

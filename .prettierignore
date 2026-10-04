@@ -5,3 +5,5 @@ dist
 pnpm-lock.yaml
 docs/*.pdf
 *.bsl
+.astro
+.vercel

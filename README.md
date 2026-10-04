@@ -12,7 +12,7 @@ Three systems in one TypeScript monorepo, plus the 1C extension:
 | 1C connector: `PlatformAPI` extension + COM client                             | `onec/extension`, `packages/onec-client` | Phase 0       |
 | Shared types and JSON contracts                                                | `packages/shared`                        | Phase 0       |
 | Control system (Fastify): accounts, licenses, billing, AI proxy                | `apps/api`, `apps/admin`                 | Phase 1       |
-| Marketing website (Astro)                                                      | `apps/web`                               | Phase 1       |
+| Marketing website and customer cabinet (Astro, on Vercel)                      | `apps/web`                               | Prototype     |
 
 Accounting data stays on the client's PC and in their 1C. The cloud only handles accounts,
 licenses, payments and AI requests.
@@ -69,6 +69,9 @@ pnpm --filter @platform/api dev            # http://localhost:3000
 # Desktop app (signs in to PLATFORM_API_URL, default http://localhost:3000)
 pnpm --filter @platform/desktop dev:demo   # in-memory 1C, on any OS
 pnpm --filter @platform/desktop dev        # real 1C over COM (Windows, 64-bit 1C, comcntr.dll registered)
+
+# Website (forwards /api to API_URL, default http://localhost:3000)
+pnpm --filter @platform/web dev            # http://localhost:4321
 ```
 
 On Windows, `pnpm install` builds `winax`, the COM bridge to 1C. For the Electron app, rebuild it

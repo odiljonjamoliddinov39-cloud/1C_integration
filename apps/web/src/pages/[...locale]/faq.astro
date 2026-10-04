@@ -1,0 +1,27 @@
+---
+import Base from "../../layouts/Base.astro";
+import { dict, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).faq;
+---
+
+<Base locale={locale} path="/faq" title={t.title}>
+  <section class="mx-auto max-w-3xl px-4 py-14">
+    <h1 class="text-4xl font-bold">{t.title}</h1>
+    <div class="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
+      {
+        t.items.map((item) => (
+          <details class="group p-5">
+            <summary class="cursor-pointer list-none font-medium">
+              <span class="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
+              {item.q}
+            </summary>
+            <p class="mt-3 pl-5 text-sm text-muted-foreground">{item.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </section>
+</Base>
