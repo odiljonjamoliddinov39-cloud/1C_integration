@@ -35,7 +35,7 @@ built by GitHub Actions ("Deploy server" and "Desktop app (Windows .exe)").
 
 ## Develop
 
-Needs Node 22 and pnpm 10 (`corepack enable`).
+Needs Node 24 and pnpm 10 (`corepack enable`). The 1C COM bridge (`winax`) does not compile on Node 22.
 
 ```bash
 pnpm install
