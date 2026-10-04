@@ -13,6 +13,7 @@ import { createHandlers } from "./handlers.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
 import { SessionService } from "./session.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
+import { type Updater, UpdateService, loadElectronUpdater } from "./updater.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -65,7 +66,22 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-void app.whenReady().then(() => {
+/** Installed Windows builds update themselves from the control system's download folder. */
+async function updater(): Promise<Updater | null> {
+  if (!app.isPackaged || process.platform !== "win32") return null;
+  try {
+    return await loadElectronUpdater(`${defaultServerUrl.replace(/\/+$/, "")}/download/`);
+  } catch (error) {
+    console.error("Auto-update is not available:", error);
+    return null;
+  }
+}
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
+}
+
+void app.whenReady().then(async () => {
   const store = new LocalStore(join(app.getPath("userData"), "platform.json"), secrets);
   const connector = new WorkerConnector(onecWorkerPath, demo1C);
   let machineId: Promise<string> | undefined;
@@ -79,10 +95,11 @@ void app.whenReady().then(() => {
     store,
     session,
     connector,
-    emit: (event) => {
-      for (const window of BrowserWindow.getAllWindows())
-        window.webContents.send(CHANNELS.assistantEvent, event);
-    },
+    emit: (event) => broadcast(CHANNELS.assistantEvent, event),
+  });
+  const updates = new UpdateService({
+    updater: await updater(),
+    emit: (state) => broadcast(CHANNELS.updateChanged, state),
   });
   const handlers = createHandlers({
     store,
@@ -123,10 +140,14 @@ void app.whenReady().then(() => {
   ipcMain.handle(CHANNELS.assistantSend, (_e, input: unknown) => handlers.assistantSend(input));
   ipcMain.handle(CHANNELS.assistantStop, (_e, id: unknown) => handlers.assistantStop(id));
   ipcMain.handle(CHANNELS.assistantReset, (_e, id: unknown) => handlers.assistantReset(id));
+  ipcMain.handle(CHANNELS.updateState, () => updates.current());
+  ipcMain.handle(CHANNELS.updateCheck, () => updates.check());
+  ipcMain.handle(CHANNELS.updateInstall, () => updates.install());
 
   // License check at start and every 6 hours (TD §4).
   void session.refreshLicense();
   setInterval(() => void session.refreshLicense(), LICENSE_CHECK_HOURS * 3600 * 1000);
+  updates.start();
 
   createWindow();
   app.on("activate", () => {

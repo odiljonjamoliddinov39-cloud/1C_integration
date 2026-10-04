@@ -16,6 +16,10 @@ export const CHANNELS = {
   assistantSend: "assistant:send",
   assistantStop: "assistant:stop",
   assistantReset: "assistant:reset",
+  updateState: "update:state",
+  updateCheck: "update:check",
+  updateInstall: "update:install",
   /** main → renderer */
   assistantEvent: "assistant:event",
+  updateChanged: "update:changed",
 } as const;

@@ -105,6 +105,18 @@ export type AssistantEvent = { companyId: string } & (
   | { type: "error"; code: string; message: string }
 );
 
+/** The app's own updates (electron-updater), pushed from the main process as they change. */
+export type UpdateState =
+  /** Development runs and non-Windows builds do not update themselves. */
+  | { status: "unsupported" }
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "latest"; checkedAt: string }
+  | { status: "downloading"; version: string; percent: number }
+  /** Downloaded: installs on restart (or when the app quits). */
+  | { status: "ready"; version: string }
+  | { status: "error"; message: string };
+
 export type Result<T> = { ok: true; data: T } | { ok: false; code: string; message: string };
 
 export interface PlatformBridge {
@@ -133,6 +145,14 @@ export interface PlatformBridge {
     /** Forgets the conversation of a company. */
     reset(companyId: string): Promise<void>;
     onEvent(listener: (event: AssistantEvent) => void): () => void;
+  };
+  update: {
+    state(): Promise<UpdateState>;
+    /** Looks for a newer version now; one found is downloaded in the background. */
+    check(): Promise<UpdateState>;
+    /** Restarts the app into the downloaded version. */
+    install(): Promise<void>;
+    onState(listener: (state: UpdateState) => void): () => void;
   };
 }
 

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { LicenseBadge, ReadOnlyBanner } from "@/components/LicenseBadge";
 import { Button } from "@/components/ui/button";
+import { UpdateBanner, VersionButton, useUpdateState } from "@/components/Updates";
 import { LANGUAGES, type Language, setLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { AssistantScreen } from "@/screens/Assistant";
@@ -19,6 +20,7 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("companies");
   const session = useQuery({ queryKey: ["session"], queryFn: () => window.platform.auth.session() });
   const info = useQuery({ queryKey: ["info"], queryFn: () => window.platform.app.info() });
+  const update = useUpdateState();
   const signOut = useMutation({
     mutationFn: () => window.platform.auth.signOut(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["session"] }),
@@ -58,6 +60,7 @@ export function App() {
               </span>
             </>
           )}
+          {info.data && <VersionButton version={info.data.version} state={update} />}
           <select
             aria-label={t("header.language")}
             className="h-8 rounded-lg border border-border bg-card px-2"
@@ -77,6 +80,7 @@ export function App() {
           )}
         </div>
       </header>
+      <UpdateBanner state={update} />
       {info.data?.demo1C && <div className="bg-warning/20 px-6 py-2 text-sm">{t("demoBanner")}</div>}
       {session.data && <ReadOnlyBanner license={session.data.license} />}
       <main className="flex-1">

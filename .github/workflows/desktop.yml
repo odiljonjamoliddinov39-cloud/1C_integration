@@ -4,6 +4,8 @@ name: Desktop app (Windows .exe)
 # of the control system, e.g. https://203-0-113-5.sslip.io. The .exe is attached to the run as an
 # artifact and, when the deploy secrets are set, published on the server at
 # https://<server>/download/1C-Platform-Setup.exe for the website's Download page.
+# Every build gets its own version (<major.minor from package.json>.<run number>) and is published
+# with latest.yml, so installed apps find it, download it in the background and update themselves.
 # Without a code-signing certificate Windows SmartScreen shows a warning on first start.
 on:
   workflow_dispatch:
@@ -13,7 +15,7 @@ on:
         required: false
         default: ""
   push:
-    branches: [main]
+    branches: [main, claude/exciting-carson-vcb2hr] # the default branch builds and ships every change
     paths: [apps/desktop/**, packages/**, pnpm-lock.yaml, .github/workflows/desktop.yml]
 
 jobs:
@@ -27,15 +29,41 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Set this build's version
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          base=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          npm pkg set version="$base.${{ github.run_number }}"
+          echo "::notice::Desktop version $base.${{ github.run_number }}"
+      - name: Pick the control system address
+        shell: bash
+        env:
+          INPUT_URL: ${{ inputs.api_url }}
+          VAR_URL: ${{ vars.PLATFORM_API_URL }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          # The run's input, else the PLATFORM_API_URL variable, else the deploy server's sslip.io address.
+          url="${INPUT_URL:-$VAR_URL}"
+          if [ -z "$url" ] && [[ "$HOST" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then url="https://${HOST//./-}.sslip.io"; fi
+          if [ -z "$url" ]; then
+            echo "::error::No control system address: give api_url, or set the PLATFORM_API_URL variable."
+            exit 1
+          fi
+          echo "PLATFORM_API_URL=${url%/}" >> "$GITHUB_ENV"
       - name: Build the installer
         env:
-          PLATFORM_API_URL: ${{ inputs.api_url || vars.PLATFORM_API_URL }}
           PLATFORM_LICENSE_PUBLIC_KEY: ${{ vars.PLATFORM_LICENSE_PUBLIC_KEY }}
         run: pnpm --filter @platform/desktop dist
       - uses: actions/upload-artifact@v4
         with:
           name: platform-desktop-windows
-          path: apps/desktop/release/*.exe
+          # The installer, plus what the auto-updater reads: latest.yml and the .blockmap (for
+          # downloading only the changed parts of the next version).
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
 
   publish:
@@ -59,7 +87,7 @@ jobs:
         with:
           name: platform-desktop-windows
           path: release
-      - name: Copy the installer to the server
+      - name: Publish the installer and the update to the server
         if: steps.secrets.outputs.ready == 'true'
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
@@ -71,7 +99,17 @@ jobs:
           ssh_opts="-i $HOME/.ssh/deploy -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           target="$USER_NAME@$HOST"
           exe=$(ls release/*.exe | head -1)
-          ssh $ssh_opts "$target" "mkdir -p /opt/platform/downloads"
-          scp $ssh_opts "$exe" "$target:/opt/platform/downloads/.upload.exe"
-          # Versioned name plus a stable one; the rename makes the stable link switch at once.
-          ssh $ssh_opts "$target" "cd /opt/platform/downloads && cp .upload.exe '$(basename "$exe")' && mv .upload.exe 1C-Platform-Setup.exe"
+          name=$(basename "$exe")
+          ssh $ssh_opts "$target" "mkdir -p /opt/platform/downloads/.incoming"
+          scp $ssh_opts "$exe" "$exe.blockmap" release/latest.yml "$target:/opt/platform/downloads/.incoming/"
+          # latest.yml goes last, so an app never sees a version whose files are not there yet. The
+          # stable name is for the website; old versions stay a while for differential downloads.
+          ssh $ssh_opts "$target" bash -s -- "$name" <<'SCRIPT'
+          set -euo pipefail
+          name="$1"
+          cd /opt/platform/downloads
+          mv ".incoming/$name" ".incoming/$name.blockmap" .
+          cp "$name" .stable.exe && mv .stable.exe 1C-Platform-Setup.exe
+          mv .incoming/latest.yml latest.yml
+          ls -t 1C-Platform-Setup-*.exe | tail -n +6 | while read -r old; do rm -f "$old" "$old.blockmap"; done
+          SCRIPT

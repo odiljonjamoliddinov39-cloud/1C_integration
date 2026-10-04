@@ -39,6 +39,15 @@ const en = {
     },
   },
   header: { signOut: "Sign out", language: "Language" },
+  update: {
+    downloading: "Downloading the new version {{version}}… {{percent}}%",
+    ready: "Version {{version}} is ready. It installs when the app restarts.",
+    restart: "Restart and update",
+    check: "Check for updates",
+    checking: "checking…",
+    latest: "latest version",
+    error: "Could not check for updates",
+  },
   nav: { companies: "Companies", assistant: "Assistant" },
   assistant: {
     title: "AI assistant",
@@ -185,6 +194,15 @@ const ru: Dict = {
     },
   },
   header: { signOut: "Выйти", language: "Язык" },
+  update: {
+    downloading: "Загружается новая версия {{version}}… {{percent}}%",
+    ready: "Версия {{version}} готова. Она установится при перезапуске приложения.",
+    restart: "Перезапустить и обновить",
+    check: "Проверить обновления",
+    checking: "проверяем…",
+    latest: "последняя версия",
+    error: "Не удалось проверить обновления",
+  },
   nav: { companies: "Компании", assistant: "Ассистент" },
   assistant: {
     title: "ИИ-ассистент",
@@ -330,6 +348,15 @@ const uz: Dict = {
     },
   },
   header: { signOut: "Chiqish", language: "Til" },
+  update: {
+    downloading: "Yangi versiya {{version}} yuklanmoqda… {{percent}}%",
+    ready: "Yangi versiya {{version}} tayyor. Ilova qayta ishga tushganda oʻrnatiladi.",
+    restart: "Qayta ishga tushirish va yangilash",
+    check: "Yangilanishni tekshirish",
+    checking: "tekshirilmoqda…",
+    latest: "eng soʻnggi versiya",
+    error: "Yangilanishni tekshirib boʻlmadi",
+  },
   nav: { companies: "Kompaniyalar", assistant: "Yordamchi" },
   assistant: {
     title: "AI yordamchi",

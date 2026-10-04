@@ -69,7 +69,25 @@ docker compose exec postgres psql -U platform platform -c \
 
 GitHub → **Actions → Desktop app (Windows .exe) → Run workflow**, with the address from step 2,
 e.g. `https://203-0-113-5.sslip.io`. When it finishes, download **platform-desktop-windows** from
-the run page. It contains `1C-Platform-Setup-0.1.0.exe`.
+the run page. It contains `1C-Platform-Setup-0.1.<run number>.exe`.
+
+After that, every push to the default branch that changes the app builds it again (the address comes
+from the `PLATFORM_API_URL` repository variable, else from `DEPLOY_HOST`).
+
+### Updates
+
+Installed apps update themselves; nobody downloads a new installer:
+
+1. Each build gets a new version, `0.1.<run number>` (change major/minor in
+   `apps/desktop/package.json`).
+2. With the deploy secrets set, the workflow puts the installer, its `.blockmap` and `latest.yml` in
+   `https://<server>/download/` (`latest.yml` last, so apps never see a half-uploaded version).
+3. The app reads `latest.yml` at start and every 4 hours, downloads a newer version in the background
+   (only the changed parts when it can), and shows _"Version … is ready"_ with **Restart and update**.
+   If the user ignores it, the update installs when the app is closed.
+
+Clicking the version in the app's header checks right away. Versions installed before auto-update
+existed (0.1.0) need one manual install of a new build.
 
 The installer is not code-signed yet (TD §14), so Windows shows _"Windows protected your PC"_.
 Click **More info → Run anyway**.
