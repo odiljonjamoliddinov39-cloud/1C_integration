@@ -89,6 +89,8 @@ describe("desktop main handlers", () => {
       password: "",
     });
     expect(invalid.status).toMatchObject({ ok: false, code: "VALIDATION" });
+    const blank = await handlers.testConnection({ ...connection, infobase: { kind: "file", file: "   " } });
+    expect(blank.status).toMatchObject({ ok: false, code: "VALIDATION" });
   });
 
   it("refuses an organization that the infobase does not have", async () => {

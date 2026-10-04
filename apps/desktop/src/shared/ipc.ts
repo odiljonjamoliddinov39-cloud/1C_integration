@@ -7,8 +7,8 @@ import type { Organization, PingResult } from "@platform/shared";
 import { z } from "zod";
 
 export const InfobaseInput = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), file: z.string().min(1) }),
-  z.object({ kind: z.literal("server"), server: z.string().min(1), ref: z.string().min(1) }),
+  z.object({ kind: z.literal("file"), file: z.string().trim().min(1) }),
+  z.object({ kind: z.literal("server"), server: z.string().trim().min(1), ref: z.string().trim().min(1) }),
 ]);
 export type InfobaseInput = z.infer<typeof InfobaseInput>;
 

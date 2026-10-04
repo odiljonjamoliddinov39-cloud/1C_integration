@@ -3,7 +3,8 @@
  * the UI). winax calls are synchronous and would otherwise block the main process.
  *
  * The connection stays open between calls and is closed after 5 idle minutes: each open
- * connection uses a 1C license.
+ * connection uses a 1C license. Jobs run one at a time, so one job never closes the connection
+ * another is still using.
  */
 import { parentPort, workerData } from "node:worker_threads";
 
@@ -27,10 +28,10 @@ async function closeConnection() {
   if (current) await current.close().catch(() => undefined);
 }
 
-function open(connection: ConnectionInput): PlatformTransport {
+async function open(connection: ConnectionInput): Promise<PlatformTransport> {
   const key = JSON.stringify([connection.user, connection.password]);
   if (transport && key === credentials) return transport;
-  void closeConnection();
+  await closeConnection();
   transport = demo
     ? new FakePlatform()
     : ComTransport.connect({
@@ -42,15 +43,20 @@ function open(connection: ConnectionInput): PlatformTransport {
   return transport;
 }
 
-parentPort?.on("message", async (message: { id: number; connection: ConnectionInput }) => {
+async function run(message: { id: number; connection: ConnectionInput }) {
   clearTimeout(idleTimer);
   let result;
   try {
-    result = await checkConnection(open(message.connection));
+    result = await checkConnection(await open(message.connection));
   } catch (e) {
     await closeConnection(); // reconnect from scratch next time
     result = failure(e);
   }
   idleTimer = setTimeout(() => void closeConnection(), IDLE_MS);
   parentPort?.postMessage({ id: message.id, result });
+}
+
+let queue = Promise.resolve();
+parentPort?.on("message", (message: { id: number; connection: ConnectionInput }) => {
+  queue = queue.then(() => run(message));
 });
