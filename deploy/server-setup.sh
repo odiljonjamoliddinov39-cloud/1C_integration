@@ -49,6 +49,24 @@ if [ -f .anthropic-key ]; then
   echo "Claude API key updated."
 fi
 
+# The admin dashboard's owner sign-in (ADMIN_EMAIL / ADMIN_PASSWORD repository secrets), line by line.
+if [ -f .admin-credentials ]; then
+  admin_email=$(sed -n 1p .admin-credentials | tr -d '\r')
+  admin_password=$(sed -n 2p .admin-credentials | tr -d '\r')
+  rm -f .admin-credentials
+  case "$admin_password" in
+    *"'"*) echo "ADMIN_PASSWORD must not contain a single quote ('); the admin sign-in was not changed." >&2 ;;
+    *)
+      umask 077
+      { grep -v -e '^ADMIN_EMAIL=' -e '^ADMIN_PASSWORD=' .env || true
+        echo "ADMIN_EMAIL=${admin_email}"
+        echo "ADMIN_PASSWORD='${admin_password}'"; } > .env.new
+      mv .env.new .env
+      echo "Admin sign-in updated."
+      ;;
+  esac
+fi
+
 if [ -n "${API_IMAGE:-}" ]; then
   grep -q '^API_IMAGE=' .env && sed -i "s#^API_IMAGE=.*#API_IMAGE=${API_IMAGE}#" .env || echo "API_IMAGE=${API_IMAGE}" >> .env
 fi

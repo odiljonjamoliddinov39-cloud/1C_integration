@@ -29,6 +29,13 @@
       "when": 1791114570401,
       "tag": "0003_trial_ai_quota",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791139592877,
+      "tag": "0004_admin",
+      "breakpoints": true
     }
   ]
 }

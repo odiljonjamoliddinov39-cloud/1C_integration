@@ -158,3 +158,33 @@ export const aiUsage = pgTable(
   },
   (t) => [index("ai_usage_account_created_idx").on(t.accountId, t.createdAt)],
 );
+
+/** Our staff who use the admin dashboard (TD §8 "Admin API": owner, support). Not customers. */
+export const admins = pgTable(
+  "admins",
+  {
+    id: id(),
+    email: text("email").notNull(),
+    name: text("name").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: text("role", { enum: ["owner", "support"] }).notNull(),
+    disabled: boolean("disabled").notNull().default(false),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("admins_email_key").on(t.email)],
+);
+
+/** Every admin action (TD §10 admin_audit). The target names what it touched, e.g. "account:<id>". */
+export const adminAudit = pgTable(
+  "admin_audit",
+  {
+    id: id(),
+    adminId: uuid("admin_id").references(() => admins.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    target: text("target").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("admin_audit_target_idx").on(t.target, t.createdAt)],
+);

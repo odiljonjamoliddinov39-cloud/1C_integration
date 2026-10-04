@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* The desktop app's tokens, so both products look alike; dark mode follows the system. */
+@theme {
+  --color-background: oklch(0.985 0.002 260);
+  --color-foreground: oklch(0.2 0.02 260);
+  --color-muted: oklch(0.955 0.005 260);
+  --color-muted-foreground: oklch(0.5 0.02 260);
+  --color-border: oklch(0.91 0.005 260);
+  --color-card: oklch(1 0 0);
+  --color-primary: oklch(0.5 0.17 260);
+  --color-primary-foreground: oklch(0.99 0 0);
+  --color-destructive: oklch(0.55 0.2 27);
+  --color-success: oklch(0.55 0.13 150);
+  --color-warning: oklch(0.7 0.15 75);
+  --color-chart: oklch(0.55 0.15 260);
+  --radius-lg: 0.6rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: oklch(0.17 0.01 260);
+    --color-foreground: oklch(0.95 0.005 260);
+    --color-muted: oklch(0.24 0.01 260);
+    --color-muted-foreground: oklch(0.72 0.01 260);
+    --color-border: oklch(0.3 0.01 260);
+    --color-card: oklch(0.21 0.01 260);
+    --color-primary: oklch(0.66 0.15 260);
+    --color-success: oklch(0.72 0.14 150);
+    --color-destructive: oklch(0.7 0.17 27);
+    --color-chart: oklch(0.7 0.13 260);
+  }
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: system-ui, "Segoe UI", sans-serif;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

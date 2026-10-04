@@ -136,6 +136,11 @@ export class Service {
     };
   }
 
+  async isBlocked(accountId: string): Promise<boolean> {
+    const account = await this.db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
+    return account?.status === "blocked";
+  }
+
   async currentSubscription(accountId: string) {
     const [row] = await this.db
       .select({ subscription: subscriptions, plan: plans })
@@ -220,6 +225,8 @@ export class Service {
     deviceId: string,
     machineId: string,
   ): Promise<LicenseResponse> {
+    if (await this.isBlocked(accountId))
+      throw new HttpError(403, "ACCOUNT_BLOCKED", "This account is blocked");
     const { subscription, plan } = await this.currentSubscription(accountId);
     const status = effectiveStatus(subscription.status, subscription.endsAt);
     const { token, claims } = await this.tokens.license({

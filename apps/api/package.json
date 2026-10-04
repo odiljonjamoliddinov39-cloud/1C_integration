@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "0.131.0",
     "@fastify/cors": "11.3.0",
     "@fastify/rate-limit": "11.2.0",
+    "@fastify/static": "10.1.5",
     "@node-rs/argon2": "2.2.1",
     "@platform/shared": "workspace:*",
     "drizzle-orm": "0.45.3",

@@ -67,8 +67,10 @@ describe.skipIf(!available)("control system API", () => {
       DATABASE_URL: url,
       JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-      LOG_LEVEL: "silent",
+      LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
+      ADMIN_EMAIL: "Boss@Platform.uz",
+      ADMIN_PASSWORD: "admin-password-123",
     });
     app = await buildApp(db.db, config, { aiModel: fakeModel });
   });
@@ -269,6 +271,169 @@ describe.skipIf(!available)("control system API", () => {
     expect(res.statusCode).toBe(503);
     expect(res.json().code).toBe("AI_NOT_CONFIGURED");
     await bare.close();
+  });
+
+  describe("admin dashboard", () => {
+    const boss = { email: "boss@platform.uz", password: "admin-password-123" };
+    const call = (method: "GET" | "POST", url: string, token?: string, payload?: unknown) =>
+      app.inject({
+        method,
+        url,
+        ...(payload === undefined ? {} : { payload: payload as object }),
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      });
+    const adminLogin = async (creds = boss) =>
+      (await post("/v1/admin/login", creds)).json().accessToken as string;
+
+    it("signs in the owner from ADMIN_EMAIL / ADMIN_PASSWORD, and keeps admin and customer tokens apart", async () => {
+      expect((await post("/v1/admin/login", { ...boss, password: "wrong-password" })).statusCode).toBe(401);
+      const login = (await post("/v1/admin/login", boss)).json();
+      expect(login.admin).toMatchObject({ email: "boss@platform.uz", role: "owner" });
+
+      const customer = (await post("/v1/auth/register", account)).json();
+      expect((await call("GET", "/v1/admin/accounts", customer.accessToken)).statusCode).toBe(401);
+      expect((await call("GET", "/v1/me", login.accessToken)).statusCode).toBe(401);
+      expect((await call("GET", "/v1/admin/accounts")).statusCode).toBe(401);
+    });
+
+    it("lists and searches customers, shows one with its PCs and AI use", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      await post("/v1/devices/activate", { machineId, name: "BUX-PC" }, customer.accessToken);
+      await db.db.insert(aiUsage).values({
+        accountId: customer.me.account.id,
+        userId: customer.me.user.id,
+        model: "claude-sonnet-5-5",
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0.007,
+      });
+      const token = await adminLogin();
+
+      const list = (await call("GET", "/v1/admin/accounts?q=owner@exa", token)).json();
+      expect(list).toEqual([
+        expect.objectContaining({
+          name: "Buxgalter MChJ",
+          ownerEmail: "owner@example.com",
+          plan: "trial",
+          status: "trial",
+          activeDevices: 1,
+          aiCostUsd30d: 0.007,
+        }),
+      ]);
+      expect((await call("GET", "/v1/admin/accounts?q=nobody", token)).json()).toEqual([]);
+      expect((await call("GET", "/v1/admin/accounts?status=suspended", token)).json()).toEqual([]);
+
+      const detail = (await call("GET", `/v1/admin/accounts/${list[0].id}`, token)).json();
+      expect(detail.devices).toEqual([
+        expect.objectContaining({ name: "BUX-PC", userEmail: "owner@example.com" }),
+      ]);
+      expect(detail).toMatchObject({ aiQuota: 1_000_000, aiUsedTokens: 1500 });
+      expect(detail.usage).toHaveLength(30);
+      expect(detail.usage.at(-1)).toMatchObject({ requests: 1, tokens: 1500 });
+
+      const overview = (await call("GET", "/v1/admin/overview", token)).json();
+      expect(overview).toMatchObject({
+        accounts: 1,
+        newAccounts7d: 1,
+        byStatus: { trial: 1 },
+        activeDevices24h: 1,
+      });
+      expect((await call("GET", "/v1/admin/usage?days=7", token)).json()).toEqual([
+        expect.objectContaining({ accountName: "Buxgalter MChJ", requests: 1, tokens: 1500 }),
+      ]);
+    });
+
+    it("extends an expired license, manages the customer's PCs, and logs every action", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      await post("/v1/devices/activate", { machineId, name: "BUX-PC" }, customer.accessToken);
+      await db.db
+        .update(subscriptions)
+        .set({ endsAt: new Date(Date.now() - 10 * 86_400_000), status: "suspended" });
+      const token = await adminLogin();
+      const id = customer.me.account.id;
+
+      const extended = (
+        await call("POST", `/v1/admin/accounts/${id}/extend`, token, { days: 30, reason: "paid by transfer" })
+      ).json();
+      expect(extended.account.status).toBe("active");
+      expect(Date.parse(extended.account.endsAt) - Date.now()).toBeGreaterThan(29.9 * 86_400_000);
+      expect(
+        (await post("/v1/license/check", { machineId }, customer.accessToken)).json().claims.status,
+      ).toBe("active");
+
+      const deviceId = extended.devices[0].id;
+      expect(
+        (await call("POST", `/v1/admin/devices/${deviceId}/revoke`, token)).json().devices[0].revoked,
+      ).toBe(true);
+      expect((await post("/v1/license/check", { machineId }, customer.accessToken)).json().code).toBe(
+        "DEVICE_REVOKED",
+      );
+      await call("POST", `/v1/admin/devices/${deviceId}/restore`, token);
+      expect((await post("/v1/license/check", { machineId }, customer.accessToken)).statusCode).toBe(200);
+
+      const audit = (await call("GET", `/v1/admin/accounts/${id}`, token)).json().audit;
+      expect(audit.map((e: { action: string }) => e.action)).toEqual([
+        "device.restore",
+        "device.revoke",
+        "license.extend",
+      ]);
+      expect(audit[2]).toMatchObject({
+        adminEmail: "boss@platform.uz",
+        payload: { days: 30, reason: "paid by transfer" },
+      });
+    });
+
+    it("lets only an owner block accounts and manage admins", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      await post("/v1/devices/activate", { machineId, name: "BUX-PC" }, customer.accessToken);
+      const owner = await adminLogin();
+      const support = { email: "help@platform.uz", password: "support-password-1" };
+      await db.sql`DELETE FROM admins WHERE email = ${support.email}`;
+      const created = await call("POST", "/v1/admin/admins", owner, {
+        ...support,
+        name: "Help",
+        role: "support",
+      });
+      expect(created.json()).toMatchObject({ role: "support", disabled: false });
+      const helper = await adminLogin(support);
+
+      const id = customer.me.account.id;
+      expect((await call("POST", `/v1/admin/accounts/${id}/block`, helper)).statusCode).toBe(403);
+      expect((await call("GET", "/v1/admin/admins", helper)).statusCode).toBe(403);
+      expect((await call("POST", `/v1/admin/accounts/${id}/extend`, helper, { days: 7 })).statusCode).toBe(
+        200,
+      );
+
+      expect((await call("POST", `/v1/admin/accounts/${id}/block`, owner)).json().account.blocked).toBe(true);
+      expect((await post("/v1/auth/login", account)).json().code).toBe("ACCOUNT_BLOCKED");
+      expect((await post("/v1/license/check", { machineId }, customer.accessToken)).json().code).toBe(
+        "ACCOUNT_BLOCKED",
+      );
+      const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
+      expect((await post("/v1/ai/chat", chat, customer.accessToken)).json().code).toBe("ACCOUNT_BLOCKED");
+      await call("POST", `/v1/admin/accounts/${id}/unblock`, owner);
+      expect((await post("/v1/auth/login", account)).statusCode).toBe(200);
+
+      // A disabled admin's open session stops working at once.
+      await call("POST", `/v1/admin/admins/${created.json().id}/disable`, owner);
+      expect((await call("GET", "/v1/admin/overview", helper)).statusCode).toBe(401);
+      expect((await post("/v1/admin/login", support)).json().code).toBe("ADMIN_DISABLED");
+    });
+
+    it("resets the owner's password when ADMIN_PASSWORD changes", async () => {
+      const again = await buildApp(db.db, { ...config, ADMIN_PASSWORD: "a-new-admin-password" });
+      const res = await again.inject({
+        method: "POST",
+        url: "/v1/admin/login",
+        payload: { email: boss.email, password: "a-new-admin-password" },
+      });
+      expect(res.statusCode).toBe(200);
+      await again.close();
+      await buildApp(db.db, config).then((a) => a.close()); // back to the original password
+      expect((await post("/v1/admin/login", boss)).statusCode).toBe(200);
+    });
   });
 
   it("validates input", async () => {

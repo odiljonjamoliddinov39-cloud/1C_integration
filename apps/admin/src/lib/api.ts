@@ -1,0 +1,96 @@
+/**
+ * The admin API (apps/api, /v1/admin). The session token lives in sessionStorage: it is gone when
+ * the tab closes, and an expired or revoked one sends the admin back to the sign-in screen.
+ */
+import type {
+  AccountDetail,
+  AccountRow,
+  AdminSession,
+  AdminView,
+  AuditEntry,
+  CreateAdminInput,
+  Overview,
+  SubscriptionStatus,
+  UsageRow,
+} from "@platform/shared";
+
+const TOKEN_KEY = "platform-admin-token";
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export function getToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: the session lasts until reload */
+  }
+  for (const listener of listeners) listener();
+}
+
+const listeners = new Set<() => void>();
+export function onTokenChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (body !== undefined) headers["content-type"] = "application/json";
+  const res = await fetch(`/v1/admin${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  const data = text ? (JSON.parse(text) as unknown) : null;
+  if (!res.ok) {
+    const error = (data ?? {}) as { code?: string; message?: string };
+    if (res.status === 401 && path !== "/login") setToken(null);
+    throw new ApiError(res.status, error.code ?? `HTTP_${res.status}`, error.message ?? res.statusText);
+  }
+  return data as T;
+}
+
+export const api = {
+  login: (email: string, password: string) => request<AdminSession>("POST", "/login", { email, password }),
+  me: () => request<AdminView>("GET", "/me"),
+  overview: () => request<Overview>("GET", "/overview"),
+  accounts: (q: string, status: SubscriptionStatus | "") => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set("q", q.trim());
+    if (status) params.set("status", status);
+    return request<AccountRow[]>("GET", `/accounts?${params}`);
+  },
+  account: (id: string) => request<AccountDetail>("GET", `/accounts/${id}`),
+  extend: (id: string, days: number, reason: string) =>
+    request<AccountDetail>("POST", `/accounts/${id}/extend`, { days, reason }),
+  setBlocked: (id: string, blocked: boolean) =>
+    request<AccountDetail>("POST", `/accounts/${id}/${blocked ? "block" : "unblock"}`),
+  setDeviceRevoked: (id: string, revoked: boolean) =>
+    request<AccountDetail>("POST", `/devices/${id}/${revoked ? "revoke" : "restore"}`),
+  usage: (days: number) => request<UsageRow[]>("GET", `/usage?days=${days}`),
+  audit: () => request<AuditEntry[]>("GET", "/audit"),
+  admins: () => request<AdminView[]>("GET", "/admins"),
+  createAdmin: (input: CreateAdminInput) => request<AdminView>("POST", "/admins", input),
+  setAdminDisabled: (id: string, disabled: boolean) =>
+    request<AdminView>("POST", `/admins/${id}/${disabled ? "disable" : "enable"}`),
+};

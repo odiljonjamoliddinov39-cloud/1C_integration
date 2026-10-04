@@ -122,6 +122,27 @@ The Download page links to `https://<server>/download/1C-Platform-Setup.exe`. Th
 When the server address changes (a domain is bought), update the `destination` in
 `apps/web/vercel.json` and `DOWNLOAD_URL` in `apps/web/src/lib/config.ts`.
 
+## 6. Admin dashboard
+
+Our staff's dashboard is served by the server itself at `https://<server>/admin/` (no separate
+hosting). It shows customers (plan, status, end date, PCs, companies, last activity), each customer's
+users, PCs and AI use, AI cost per day and per customer, and a log of every admin action.
+
+1. GitHub → **Settings → Secrets and variables → Actions → New repository secret**, twice:
+   - `ADMIN_EMAIL`: the owner's email, e.g. `you@yourcompany.uz`
+   - `ADMIN_PASSWORD`: at least 10 characters, without the `'` character
+2. Push any change, or run **Actions → Deploy server → Run workflow**.
+3. Open `https://<server>/admin/` and sign in.
+
+Changing `ADMIN_PASSWORD` and deploying again resets the owner's password. Owners add more admins on
+the **Admins** page: _support_ admins can look up customers, extend licenses and remove or restore
+PCs; only owners can block accounts and manage admins.
+
+**Extend** adds days to the end date (from today if it has passed) and reactivates a suspended
+account; PCs pick it up at their next license check (every 6 hours, or when the app starts).
+**Remove** on a PC frees its seat. **Block account** signs the customer out of the app and the
+assistant until unblocked. Revenue reports come with Payme payments.
+
 ## Useful commands on the server
 
 ```bash

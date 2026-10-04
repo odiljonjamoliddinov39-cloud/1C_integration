@@ -28,7 +28,11 @@ export default tseslint.config(
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
   {
-    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "apps/web/src/**/*.{ts,tsx}"],
+    files: [
+      "apps/desktop/src/renderer/**/*.{ts,tsx}",
+      "apps/web/src/**/*.{ts,tsx}",
+      "apps/admin/src/**/*.{ts,tsx}",
+    ],
     languageOptions: { globals: { ...globals.browser } },
     plugins: { "react-hooks": reactHooks },
     rules: reactHooks.configs.recommended.rules,

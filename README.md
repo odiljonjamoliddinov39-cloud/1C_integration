@@ -6,13 +6,13 @@ The design is in [`docs/technical-design.pdf`](docs/technical-design.pdf).
 
 Three systems in one TypeScript monorepo, plus the 1C extension:
 
-| Part                                                                           | Where                                    | Status        |
-| ------------------------------------------------------------------------------ | ---------------------------------------- | ------------- |
-| Desktop app (Electron) on the accountant's PC: imports, review, audit, AI chat | `apps/desktop`                           | Phase 0 shell |
-| 1C connector: `PlatformAPI` extension + COM client                             | `onec/extension`, `packages/onec-client` | Phase 0       |
-| Shared types and JSON contracts                                                | `packages/shared`                        | Phase 0       |
-| Control system (Fastify): accounts, licenses, billing, AI proxy                | `apps/api`, `apps/admin`                 | Phase 1       |
-| Marketing website and customer cabinet (Astro, on Vercel)                      | `apps/web`                               | Prototype     |
+| Part                                                                             | Where                                    | Status        |
+| -------------------------------------------------------------------------------- | ---------------------------------------- | ------------- |
+| Desktop app (Electron) on the accountant's PC: imports, review, audit, AI chat   | `apps/desktop`                           | Phase 0 shell |
+| 1C connector: `PlatformAPI` extension + COM client                               | `onec/extension`, `packages/onec-client` | Phase 0       |
+| Shared types and JSON contracts                                                  | `packages/shared`                        | Phase 0       |
+| Control system (Fastify): accounts, licenses, billing, AI proxy, admin dashboard | `apps/api`, `apps/admin`                 | Prototype     |
+| Marketing website and customer cabinet (Astro, on Vercel)                        | `apps/web`                               | Prototype     |
 
 Accounting data stays on the client's PC and in their 1C. The cloud only handles accounts,
 licenses, payments and AI requests.
@@ -81,6 +81,7 @@ against Electron once: `pnpm --filter @platform/desktop rebuild:native`.
 
 ```
 apps/api/              control system: Fastify, Drizzle/PostgreSQL, licenses (Ed25519), Dockerfile
+apps/admin/            admin dashboard (Vite + React), served by the API at /admin/
 apps/desktop/          Electron: main/ (1C, storage, IPC, sign-in), preload/ (typed bridge), renderer/ (React UI)
 deploy/                docker-compose (PostgreSQL, API, Caddy HTTPS, backups), server setup script
 packages/shared/       Zod schemas: PlatformAPI contract, SourceItem

@@ -1,7 +1,14 @@
+import { existsSync } from "node:fs";
+
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
+import fastifyStatic from "@fastify/static";
 import {
+  AccountsQuery,
   ActivateDeviceInput,
+  AdminLoginInput,
+  CreateAdminInput,
+  ExtendInput,
   AiChatInput,
   type AiEvent,
   LicenseCheckInput,
@@ -14,6 +21,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { ZodError, z } from "zod";
 
 import { type AiModel, claudeModel } from "./ai/model.js";
+import { type AdminIdentity, AdminService } from "./admin/service.js";
 import { AiProxy } from "./ai/proxy.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
@@ -28,6 +36,8 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
 export interface AppDeps {
   /** Replaces the Claude API in tests. */
   aiModel?: AiModel;
+  /** The built admin dashboard (apps/admin/dist), served at /admin/ when present. */
+  adminUiDir?: string;
 }
 
 export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
@@ -40,8 +50,11 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const service = new Service(db, tokens, config);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
   const ai = new AiProxy(db, service, config, aiModel, app.log);
+  const admin = new AdminService(db, tokens, config);
+  await admin.bootstrap(app.log);
 
-  // The desktop app calls from its main process; browsers (website, admin) come later.
+  // The desktop calls from its main process; the website (via Vercel) and the admin dashboard
+  // (served below) reach the API from their own origin, so no cross-origin requests are allowed.
   await app.register(cors, { origin: false });
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
 
@@ -66,6 +79,13 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   async function auth(req: FastifyRequest): Promise<{ userId: string; accountId: string }> {
     const header = req.headers.authorization ?? "";
     const identity = header.startsWith("Bearer ") ? await tokens.verifyAccess(header.slice(7)) : null;
+    if (!identity) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
+    return identity;
+  }
+
+  async function adminAuth(req: FastifyRequest): Promise<AdminIdentity> {
+    const header = req.headers.authorization ?? "";
+    const identity = header.startsWith("Bearer ") ? await admin.identify(header.slice(7)) : null;
     if (!identity) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
     return identity;
   }
@@ -135,6 +155,70 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       reply.raw.end();
     },
   );
+
+  // --- admin dashboard (TD §8) ---------------------------------------------------------------
+  const idParam = z.object({ id: z.uuid() });
+
+  app.post("/v1/admin/login", strict, async (req) => {
+    const { email, password } = parse(AdminLoginInput, req.body);
+    return admin.login(email, password);
+  });
+  app.get("/v1/admin/me", async (req) => admin.me((await adminAuth(req)).id));
+  app.get("/v1/admin/overview", async (req) => {
+    await adminAuth(req);
+    return admin.overview();
+  });
+  app.get("/v1/admin/accounts", async (req) => {
+    await adminAuth(req);
+    return admin.listAccounts(parse(AccountsQuery, req.query));
+  });
+  app.get("/v1/admin/accounts/:id", async (req) => {
+    await adminAuth(req);
+    return admin.account(parse(idParam, req.params).id);
+  });
+  app.post("/v1/admin/accounts/:id/extend", async (req) =>
+    admin.extend(await adminAuth(req), parse(idParam, req.params).id, parse(ExtendInput, req.body)),
+  );
+  app.post("/v1/admin/accounts/:id/block", async (req) =>
+    admin.setBlocked(await adminAuth(req), parse(idParam, req.params).id, true),
+  );
+  app.post("/v1/admin/accounts/:id/unblock", async (req) =>
+    admin.setBlocked(await adminAuth(req), parse(idParam, req.params).id, false),
+  );
+  app.post("/v1/admin/devices/:id/revoke", async (req) =>
+    admin.setDeviceRevoked(await adminAuth(req), parse(idParam, req.params).id, true),
+  );
+  app.post("/v1/admin/devices/:id/restore", async (req) =>
+    admin.setDeviceRevoked(await adminAuth(req), parse(idParam, req.params).id, false),
+  );
+  app.get("/v1/admin/usage", async (req) => {
+    await adminAuth(req);
+    const { days } = parse(
+      z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }),
+      req.query,
+    );
+    return admin.usage(days);
+  });
+  app.get("/v1/admin/audit", async (req) => {
+    await adminAuth(req);
+    return admin.auditEntries();
+  });
+  app.get("/v1/admin/admins", async (req) => admin.listAdmins(await adminAuth(req)));
+  app.post("/v1/admin/admins", async (req) =>
+    admin.createAdmin(await adminAuth(req), parse(CreateAdminInput, req.body)),
+  );
+  app.post("/v1/admin/admins/:id/disable", async (req) =>
+    admin.setAdminDisabled(await adminAuth(req), parse(idParam, req.params).id, true),
+  );
+  app.post("/v1/admin/admins/:id/enable", async (req) =>
+    admin.setAdminDisabled(await adminAuth(req), parse(idParam, req.params).id, false),
+  );
+
+  // The dashboard itself: static files, routed by the URL hash, so /admin/ is the only page.
+  if (deps.adminUiDir && existsSync(deps.adminUiDir)) {
+    await app.register(fastifyStatic, { root: deps.adminUiDir, prefix: "/admin/", maxAge: "1h" });
+    app.get("/admin", (_req, reply) => reply.redirect("/admin/"));
+  }
 
   return app;
 }

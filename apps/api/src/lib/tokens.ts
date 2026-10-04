@@ -6,6 +6,7 @@ import { SignJWT, exportSPKI, importPKCS8, jwtVerify } from "jose";
 import type { Config } from "../config.js";
 
 const ISSUER = "platform-control";
+const ADMIN_ISSUER = "platform-admin";
 
 export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -41,6 +42,31 @@ export class Tokens {
       const { payload } = await jwtVerify(token, this.secret, { issuer: ISSUER, algorithms: ["HS256"] });
       if (typeof payload.sub !== "string" || typeof payload.acc !== "string") return null;
       return { userId: payload.sub, accountId: payload.acc };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Admin dashboard sessions: a separate issuer, so a customer token never passes as an admin's. */
+  async adminToken(adminId: string): Promise<{ token: string; expiresIn: number }> {
+    const expiresIn = this.config.ADMIN_TOKEN_HOURS * 3600;
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(adminId)
+      .setIssuer(ADMIN_ISSUER)
+      .setIssuedAt()
+      .setExpirationTime(`${expiresIn}s`)
+      .sign(this.secret);
+    return { token, expiresIn };
+  }
+
+  async verifyAdmin(token: string): Promise<string | null> {
+    try {
+      const { payload } = await jwtVerify(token, this.secret, {
+        issuer: ADMIN_ISSUER,
+        algorithms: ["HS256"],
+      });
+      return typeof payload.sub === "string" ? payload.sub : null;
     } catch {
       return null;
     }

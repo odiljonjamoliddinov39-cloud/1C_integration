@@ -31,6 +31,8 @@ export class AiProxy {
   async ensureAllowed(accountId: string): Promise<void> {
     if (!this.model)
       throw new HttpError(503, "AI_NOT_CONFIGURED", "The AI assistant is not set up on the server");
+    if (await this.service.isBlocked(accountId))
+      throw new HttpError(403, "ACCOUNT_BLOCKED", "This account is blocked");
     const { subscription, plan } = await this.service.currentSubscription(accountId);
     const status = effectiveStatus(subscription.status, subscription.endsAt);
     if (status === "suspended" || status === "cancelled") {

@@ -4,13 +4,22 @@ name: Deploy server
 # server over SSH. Needs two repository secrets (Settings → Secrets and variables → Actions):
 #   DEPLOY_HOST     the server's IP address
 #   DEPLOY_SSH_KEY  a private SSH key whose public key is in the server's ~/.ssh/authorized_keys
-# Optional: DEPLOY_USER (default root), ANTHROPIC_API_KEY (the Claude API key for the AI assistant;
-# it is written to the server's .env on each deploy).
+# Optional: DEPLOY_USER (default root), ANTHROPIC_API_KEY (the Claude API key for the AI assistant),
+# ADMIN_EMAIL and ADMIN_PASSWORD (the owner's sign-in for the admin dashboard at https://<site>/admin/).
+# They are written to the server's .env on each deploy.
 on:
   workflow_dispatch:
   push:
     branches: [main, claude/exciting-carson-vcb2hr] # the default branch deploys every server change
-    paths: [apps/api/**, packages/shared/**, deploy/**, pnpm-lock.yaml, .github/workflows/deploy.yml]
+    paths:
+      [
+        apps/api/**,
+        apps/admin/**,
+        packages/shared/**,
+        deploy/**,
+        pnpm-lock.yaml,
+        .github/workflows/deploy.yml,
+      ]
 
 permissions:
   contents: read
@@ -63,6 +72,8 @@ jobs:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
@@ -74,6 +85,9 @@ jobs:
           # Secrets go over stdin, never on a command line; server-setup.sh moves the key into .env.
           if [ -n "$ANTHROPIC_API_KEY" ]; then
             printf '%s' "$ANTHROPIC_API_KEY" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.anthropic-key"
+          fi
+          if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
+            printf '%s\n%s\n' "$ADMIN_EMAIL" "$ADMIN_PASSWORD" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.admin-credentials"
           fi
           # The registry token only lives for this job; it goes in on stdin, is used to pull, then logged out.
           printf '%s' "$GHCR_TOKEN" | ssh $ssh_opts "$target" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"

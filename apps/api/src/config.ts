@@ -30,6 +30,19 @@ const Env = z.object({
   AI_MODEL: z.string().default("claude-sonnet-5-5"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
   AI_DAILY_TOKENS: z.coerce.number().int().positive().default(300_000),
+  /**
+   * The first admin (owner) of the admin dashboard. On start the API creates it, or sets this
+   * password when it changed, so the password can be reset by changing the secret.
+   */
+  ADMIN_EMAIL: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toLowerCase() || undefined),
+  ADMIN_PASSWORD: z
+    .string()
+    .optional()
+    .transform((v) => v || undefined),
+  ADMIN_TOKEN_HOURS: z.coerce.number().positive().default(12),
 });
 
 export type Config = z.infer<typeof Env>;
