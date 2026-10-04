@@ -94,16 +94,35 @@ export class ComTransport implements PlatformTransport {
     }
     // 1C answers a missing module with nothing rather than an error.
     if (api == null) throw new OneCError("NOT_FOUND", missing);
-    if (api[fn] == null) {
+
+    // Read the member once. 1C's COM objects carry no type information, so winax cannot tell a
+    // method from a property: a function that takes no arguments (Ping, GetOrganizations) runs as
+    // soon as it is read, and the read returns its result. One that takes arguments is returned
+    // as something to call.
+    let member: any;
+    try {
+      member = api[fn];
+    } catch (e) {
+      // PlatformAPI catches its own errors; reaching here means the call itself failed.
+      throw new OneCError("INTERNAL", `${fn} failed in 1C: ${comMessage(e)}`);
+    }
+    if (member == null) {
       throw new OneCError(
         "NOT_FOUND",
         `The PlatformAPI extension in this base has no ${fn}: update the extension`,
       );
     }
+    if (typeof member !== "function") {
+      if (arg !== undefined) {
+        throw new OneCError("INTERNAL", `${fn} in this base takes no argument: update the extension`);
+      }
+      return String(
+        typeof member === "object" && typeof member.valueOf === "function" ? member.valueOf() : member,
+      );
+    }
     try {
       return String(arg === undefined ? api[fn]() : api[fn](arg));
     } catch (e) {
-      // PlatformAPI catches its own errors; reaching here means the call itself failed.
       throw new OneCError("INTERNAL", `${fn} failed in 1C: ${comMessage(e)}`);
     }
   }

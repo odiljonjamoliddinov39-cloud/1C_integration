@@ -118,6 +118,26 @@ describe("ComTransport", () => {
     expect(await ok.call("Ping")).toBe('{"ok":true,"data":1}');
   });
 
+  it("uses the value when winax already ran a no-argument function on read, and calls the others", async () => {
+    let pings = 0;
+    const calls: unknown[] = [];
+    const api = {
+      get Ping() {
+        pings += 1;
+        return '{"ok":true,"data":"pong"}';
+      },
+      RunQuery: (arg: string) => {
+        calls.push(arg);
+        return '{"ok":true,"data":2}';
+      },
+    };
+    const transport = ComTransport.connect({ infobase: { file: "D:\\x" } }, fakeWinax({ PlatformAPI: api }));
+    expect(await transport.call("Ping")).toBe('{"ok":true,"data":"pong"}');
+    expect(pings).toBe(1); // run once, not twice
+    expect(await transport.call("RunQuery", '{"query":"ВЫБРАТЬ 1"}')).toBe('{"ok":true,"data":2}');
+    expect(calls).toEqual(['{"query":"ВЫБРАТЬ 1"}']);
+  });
+
   it.skipIf(process.platform === "win32")("explains that COM needs Windows", () => {
     expect(() => ComTransport.connect({ infobase: { file: "D:\\x" } })).toThrow(
       expect.objectContaining({ code: "COM_UNAVAILABLE" }),
