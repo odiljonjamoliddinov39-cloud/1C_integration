@@ -51,6 +51,9 @@ interface JobMessage {
 
 async function run(message: JobMessage) {
   clearTimeout(idleTimer);
+  // A connection check always starts fresh: the user may have just changed the base in the
+  // Configurator, and an open connection keeps seeing the old configuration.
+  if (message.job.kind === "check") await closeConnection();
   let result;
   try {
     result = await runJob(await open(message.connection), message.job);
