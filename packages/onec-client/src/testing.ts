@@ -135,7 +135,7 @@ export class FakePlatform implements PlatformTransport {
             version: "3.0.0.0",
           },
           platformVersion: "8.3.24.1342",
-          extensionVersion: "0.1.0",
+          extensionVersion: "0.2.0",
           infobase: 'File="FAKE";',
         };
       case "GetOrganizations":
@@ -166,7 +166,10 @@ export class FakePlatform implements PlatformTransport {
     if (!input?.externalId || !Array.isArray(input.lines) || input.lines.length === 0) {
       throw new Failure("VALIDATION", "externalId and at least one line are required");
     }
-    const existing = this.documents.find((d) => d.externalId === input.externalId);
+    // Like PlatformLog in 1C: one document per source and external id.
+    const existing = this.documents.find(
+      (d) => d.source === input.source && d.externalId === input.externalId,
+    );
     if (existing) {
       return {
         ref: existing.ref,

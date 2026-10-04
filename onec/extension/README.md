@@ -8,68 +8,53 @@ updates.
 ```
 src/CommonModules/
   PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived (JSON in, JSON out)
-  PlatformAPI_Map.bsl    configuration names, one module per configuration version
-  PlatformAPI_Log.bsl    writes PlatformLog (privileged)
-build.ps1                XML dump -> PlatformAPI.cfe, optionally installs it into a base
-xml/                     the Configurator's XML dump (created once, see below)
+  PlatformAPI_Map.bsl    configuration names, one module per configuration version; extension version
+  PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index (privileged)
+build-xml.mjs            src/ -> xml/: the whole extension as Configurator files
+xml/                     generated, ready to load into a base (do not edit by hand)
+build.ps1                xml/ -> PlatformAPI.cfe with the 1C platform, optionally installs it
 ```
 
 > Work on a **copy** of a base (e.g. `TEST_CRYSTAL`) until the phase 0 gate has passed.
 
-## 1. Create the extension (once)
+## 1. Install or update the extension
 
-Configurator → _Конфигурация → Расширения конфигурации → Добавить_:
+The extension borrows nothing from the configuration, so the same files load into any base of
+Бухгалтерия для Узбекистана 3.0, and loading a newer version keeps the PlatformLog records.
 
-| Property                   | Value                                  |
-| -------------------------- | -------------------------------------- |
-| Имя                        | `PlatformAPI`                          |
-| Синоним                    | `Platform API`                         |
-| Префикс                    | _(empty)_                              |
-| Назначение                 | Адаптация                              |
-| Безопасный режим           | **No**: the extension writes documents |
-| Защита от опасных действий | No                                     |
+1. Download `xml/` (or `PlatformAPI-xml.zip`) and unpack it, e.g. to `D:\PlatformAPI-xml`.
+2. Configurator → _Конфигурация → Расширения конфигурации_. If there is no **PlatformAPI** yet,
+   _Добавить_ one: Имя `PlatformAPI`, Назначение _Адаптация_.
+3. Select **PlatformAPI**, then _Конфигурация ▾ → Загрузить конфигурацию из файлов…_ and choose the
+   folder. Answer _Да_ if it asks to replace the extension.
+4. In the extension's window: _Конфигурация → Обновить конфигурацию базы данных_ (F7) → _Принять_.
+5. In the list of extensions, untick **Безопасный режим** and **Защита от опасных действий** for
+   PlatformAPI: the extension writes documents and its log module runs privileged.
+6. The app's **Ulanishni tekshirish** shows the extension version (`0.2.0`).
 
-### Objects
+What is inside:
 
-**Borrowed** (right-click → _Заимствовать_): `Документ.СчетФактураПолученный`.
-On it, add the attribute **`ExternalID`**: Строка(100), _Индексировать_ = Индексировать.
+| Object                          | Properties                                                                                                |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Common module `PlatformAPI`     | Сервер, Внешнее соединение; the connecting 1C user's rights apply                                         |
+| Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                |
+| Common module `PlatformAPI_Log` | Сервер, Внешнее соединение, **Привилегированный**                                                         |
+| Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `Document`, `Operation`, `UserName`, `CreatedAt` |
 
-**Catalog `PlatformLog`**: one element per write. Длина кода 0, длина наименования 150, not hierarchical.
+Duplicates are found by source + `ExternalID` in PlatformLog, written in the same transaction as the
+document, so no attribute is added to the configuration's documents. A document deleted or marked
+for deletion in 1C does not count: importing it again creates a new one.
 
-| Attribute    | Type                 |
-| ------------ | -------------------- |
-| `Source`     | Строка(50)           |
-| `ExternalID` | Строка(100), indexed |
-| `Document`   | ЛюбаяСсылка          |
-| `Operation`  | Строка(50)           |
-| `UserName`   | Строка(100)          |
-| `CreatedAt`  | Дата (дата и время)  |
+### Changing the extension
 
-**Common modules.** Paste each one's text from `src/CommonModules`:
-
-| Module            | Сервер | Внешнее соединение | Привилегированный                         |
-| ----------------- | ------ | ------------------ | ----------------------------------------- |
-| `PlatformAPI`     | ✔      | ✔                  | ✘ (the connecting 1C user's rights apply) |
-| `PlatformAPI_Map` | ✔      | ✔                  | ✘                                         |
-| `PlatformAPI_Log` | ✔      | ✔                  | ✔                                         |
-
-**Role `PlatformAPI_User`**: _Чтение_ and _Добавление_ on `PlatformLog`. Give it to the 1C users the
-app connects with, alongside their normal accounting role.
-
-Save and update the database configuration (_Обновить конфигурацию базы данных_).
-
-### Dump to XML (so the build is repeatable)
-
-_Конфигурация → Расширения конфигурации → PlatformAPI → Выгрузить в файлы_ → `onec/extension/xml`.
-Commit that folder. From then on, edit the BSL in `src/` and run:
+Edit the BSL in `src/`, bump `ВерсияРасширения()` in `PlatformAPI_Map.bsl` and run
+`node onec/extension/build-xml.mjs`; commit `xml/` with it (CI checks they match). `build.ps1` turns
+`xml/` into `PlatformAPI.cfe` on a PC with 1C, for _Добавить из файла_:
 
 ```powershell
 $env:ONEC_PASSWORD = "..."
 powershell -ExecutionPolicy Bypass -File build.ps1 -Base "D:\Bases\TEST_CRYSTAL" -User Admin -Install
 ```
-
-This builds `PlatformAPI.cfe`, which loads into the other bases with _Расширения конфигурации →
-Добавить из файла_.
 
 ## 2. Make the COM connection work on the PC
 

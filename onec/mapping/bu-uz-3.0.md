@@ -18,7 +18,7 @@ against the real metadata (`pnpm --filter @platform/onec-client metadata ...`, w
 | Lines                            | tabular section `Товары`                                                        | to verify |
 | Line columns                     | `Номенклатура`, `Количество`, `Цена`, `Сумма`, `СтавкаНДС`, `СуммаНДС`, `Всего` | to verify |
 | VAT rate type                    | number, enum (`НДС12`, `БезНДС`) or catalog with `Ставка`; detected at run time | n/a       |
-| Our dedup attribute              | `ExternalID` (added by the extension)                                           | ours      |
+| Our dedup key                    | source + `ExternalID` in our `Справочник.PlatformLog` (no borrowed attribute)   | ours      |
 
 ## Catalogs
 

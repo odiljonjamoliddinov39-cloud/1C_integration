@@ -30,6 +30,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: The 1C extension files match their BSL sources
+        run: node onec/extension/build-xml.mjs && git diff --exit-code -- onec/extension/xml
 
   # The 1C connection is Windows-only: make sure the COM bridge (winax) builds there.
   windows:
