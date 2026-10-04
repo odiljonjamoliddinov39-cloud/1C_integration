@@ -16,7 +16,7 @@ on:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022 # node-gyp 11 (bundled with pnpm 10) does not detect Visual Studio 2026 on windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

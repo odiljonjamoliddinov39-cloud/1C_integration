@@ -20,7 +20,7 @@ written from Node**.
 2. **Create the extension** in the Configurator: [`onec/extension/README.md`](../onec/extension/README.md) §1.
 3. **Register the COM connector** (64-bit platform, as administrator):
    `regsvr32 "C:\Program Files\1cv8\<version>\bin\comcntr.dll"`.
-4. **Install:** Node 22 x64, pnpm, Visual Studio Build Tools (for `winax`). Then run `pnpm install` in the repo.
+4. **Install:** Node 22 x64, pnpm, and **Visual Studio Build Tools 2022** with "Desktop development with C++" (for `winax`; the node-gyp bundled with pnpm does not recognize Visual Studio 2026 yet). Then run `pnpm install` in the repo.
 5. **Run the checks:**
    ```powershell
    $env:ONEC_PASSWORD = "..."
