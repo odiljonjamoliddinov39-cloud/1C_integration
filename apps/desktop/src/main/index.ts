@@ -1,15 +1,23 @@
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { LICENSE_CHECK_HOURS } from "@platform/shared";
 import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from "electron";
 
 import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
+import { machineIdHash, newFallbackId } from "./machine-id.js";
+import { SessionService } from "./session.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// Set at build time (PLATFORM_API_URL, PLATFORM_LICENSE_PUBLIC_KEY); see electron.vite.config.ts.
+const defaultServerUrl = process.env.PLATFORM_API_URL || __DEFAULT_SERVER_URL__;
+const bakedPublicKey = __LICENSE_PUBLIC_KEY__;
 
 // PLATFORM_DEMO_1C=1 replaces 1C with an in-memory base, to try the app without Windows or 1C.
 const demo1C = process.env.PLATFORM_DEMO_1C === "1";
@@ -59,10 +67,24 @@ function createWindow(): BrowserWindow {
 void app.whenReady().then(() => {
   const store = new LocalStore(join(app.getPath("userData"), "platform.json"), secrets);
   const connector = new WorkerConnector(onecWorkerPath, demo1C);
+  let machineId: Promise<string> | undefined;
+  const session = new SessionService({
+    store,
+    machineId: () => (machineId ??= machineIdHash(() => store.machineIdFallback(newFallbackId))),
+    deviceName: hostname(),
+    bakedPublicKey,
+  });
   const handlers = createHandlers({
     store,
+    session,
     connector,
-    info: { version: app.getVersion(), platform: process.platform, arch: process.arch, demo1C },
+    info: {
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      demo1C,
+      defaultServerUrl,
+    },
     pickFolder: async () => {
       const result = await dialog.showOpenDialog({
         title: "1C infobase folder",
@@ -75,6 +97,8 @@ void app.whenReady().then(() => {
   ipcMain.handle(CHANNELS.appInfo, () => handlers.appInfo());
   ipcMain.handle(CHANNELS.session, () => handlers.session());
   ipcMain.handle(CHANNELS.signIn, (_e, input: unknown) => handlers.signIn(input));
+  ipcMain.handle(CHANNELS.register, (_e, input: unknown) => handlers.register(input));
+  ipcMain.handle(CHANNELS.refreshLicense, () => handlers.refreshLicense());
   ipcMain.handle(CHANNELS.signOut, () => handlers.signOut());
   ipcMain.handle(CHANNELS.listCompanies, () => handlers.listCompanies());
   ipcMain.handle(CHANNELS.pickFolder, () => handlers.pickFolder());
@@ -82,6 +106,10 @@ void app.whenReady().then(() => {
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
+
+  // License check at start and every 6 hours (TD §4).
+  void session.refreshLicense();
+  setInterval(() => void session.refreshLicense(), LICENSE_CHECK_HOURS * 3600 * 1000);
 
   createWindow();
   app.on("activate", () => {

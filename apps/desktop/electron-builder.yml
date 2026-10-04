@@ -1,0 +1,26 @@
+# Windows installer (TD §4: electron-builder, NSIS). Code signing and auto-update come with releases.
+appId: uz.platform.desktop
+productName: 1C Platform
+executableName: 1C-Platform
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+# winax is the native COM bridge to 1C: it is rebuilt for Electron and kept outside the asar.
+npmRebuild: true
+asarUnpack:
+  - "**/node_modules/winax/**"
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: 1C-Platform-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+linux:
+  target: [dir]

@@ -8,15 +8,18 @@ import {
   type CompanyView,
   ConnectionInput,
   type ConnectionTestResult,
+  RegisterAccountInput,
   type Result,
   type Session,
   SignInInput,
 } from "../shared/ipc.js";
 import type { ConnectorRunner } from "./connector.js";
+import type { SessionService } from "./session.js";
 import { type LocalStore, StoreError } from "./store.js";
 
 export interface HandlerDeps {
   store: LocalStore;
+  session: SessionService;
   connector: ConnectorRunner;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
@@ -26,22 +29,25 @@ function invalid(error: { issues: { message: string }[] }): Result<never> {
   return { ok: false, code: "VALIDATION", message: error.issues.map((i) => i.message).join("; ") };
 }
 
-export function createHandlers({ store, connector, info, pickFolder }: HandlerDeps) {
+export function createHandlers({ store, session, connector, info, pickFolder }: HandlerDeps) {
   return {
     appInfo: async (): Promise<AppInfo> => info,
 
-    session: async (): Promise<Session | null> => store.session,
+    session: async (): Promise<Session | null> => session.view(),
 
-    // Stub: phase 1 signs in against the control system and activates the license on this PC.
     signIn: async (raw: unknown): Promise<Result<Session>> => {
       const input = SignInInput.safeParse(raw);
-      if (!input.success) return invalid(input.error);
-      const session = { email: input.data.email.toLowerCase(), signedInAt: new Date().toISOString() };
-      store.setSession(session);
-      return { ok: true, data: session };
+      return input.success ? session.signIn(input.data) : invalid(input.error);
     },
 
-    signOut: async (): Promise<void> => store.setSession(null),
+    register: async (raw: unknown): Promise<Result<Session>> => {
+      const input = RegisterAccountInput.safeParse(raw);
+      return input.success ? session.register(input.data) : invalid(input.error);
+    },
+
+    refreshLicense: async (): Promise<Session | null> => session.refreshLicense(),
+
+    signOut: async (): Promise<void> => session.signOut(),
 
     listCompanies: async (): Promise<CompanyView[]> => store.listCompanies(),
 

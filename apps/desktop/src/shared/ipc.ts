@@ -24,8 +24,19 @@ export const AddCompanyInput = ConnectionInput.extend({
 });
 export type AddCompanyInput = z.infer<typeof AddCompanyInput>;
 
-export const SignInInput = z.object({ email: z.email(), password: z.string().min(1) });
+export const SignInInput = z.object({
+  serverUrl: z.url({ protocol: /^https?$/ }),
+  email: z.email(),
+  password: z.string().min(1),
+});
 export type SignInInput = z.infer<typeof SignInInput>;
+
+export const RegisterAccountInput = SignInInput.extend({
+  password: z.string().min(10),
+  name: z.string().trim().min(1),
+  accountName: z.string().trim().min(1),
+});
+export type RegisterAccountInput = z.infer<typeof RegisterAccountInput>;
 
 /** Result of reaching 1C; never throws across the bridge. */
 export type ConnectorStatus =
@@ -48,12 +59,31 @@ export interface CompanyView {
   lastSyncAt: string | null;
 }
 
+/** The license as the desktop sees it (TD §4 "Licensing behavior"). */
+export interface LicenseView {
+  plan: string;
+  status: string;
+  /** End of the trial or paid period. */
+  paidUntil: string;
+  /** End of the offline grace: after this, without a check, the app is read-only. */
+  expiresAt: string;
+  checkedAt: string;
+  mode: "active" | "read_only";
+  reason: null | "expired_offline" | "suspended" | "cancelled" | "wrong_machine" | "invalid";
+}
+
 export interface Session {
   email: string;
+  name: string;
+  accountName: string;
+  serverUrl: string;
   signedInAt: string;
+  license: LicenseView | null;
 }
 
 export interface AppInfo {
+  /** Control system address baked into this build (editable on the sign-in screen). */
+  defaultServerUrl: string;
   version: string;
   platform: string;
   arch: string;
@@ -67,6 +97,8 @@ export interface PlatformBridge {
   auth: {
     session(): Promise<Session | null>;
     signIn(input: SignInInput): Promise<Result<Session>>;
+    register(input: RegisterAccountInput): Promise<Result<Session>>;
+    refreshLicense(): Promise<Session | null>;
     signOut(): Promise<void>;
   };
   companies: {

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
+import { LicenseBadge, ReadOnlyBanner } from "@/components/LicenseBadge";
 import { Button } from "@/components/ui/button";
 import { LANGUAGES, type Language, setLanguage } from "@/lib/i18n";
 import { CompaniesScreen } from "@/screens/Companies";
@@ -26,7 +27,14 @@ export function App() {
         </div>
         <span className="font-semibold">{t("appName")}</span>
         <div className="ml-auto flex items-center gap-3 text-sm">
-          {session.data && <span className="text-muted-foreground">{session.data.email}</span>}
+          {session.data && (
+            <>
+              <LicenseBadge license={session.data.license} />
+              <span className="text-muted-foreground" title={session.data.serverUrl}>
+                {session.data.email} · {session.data.accountName}
+              </span>
+            </>
+          )}
           <select
             aria-label={t("header.language")}
             className="h-8 rounded-lg border border-border bg-card px-2"
@@ -47,6 +55,7 @@ export function App() {
         </div>
       </header>
       {info.data?.demo1C && <div className="bg-warning/20 px-6 py-2 text-sm">{t("demoBanner")}</div>}
+      {session.data && <ReadOnlyBanner license={session.data.license} />}
       <main className="flex-1">{session.data ? <CompaniesScreen /> : <SignInScreen />}</main>
     </div>
   );

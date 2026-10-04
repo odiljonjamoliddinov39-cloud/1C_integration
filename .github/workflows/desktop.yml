@@ -1,0 +1,37 @@
+name: Desktop app (Windows .exe)
+
+# Builds the Windows installer. Run it from the Actions tab ("Run workflow") and give the address
+# of the control system, e.g. https://203-0-113-5.sslip.io. The .exe is attached to the run as an
+# artifact. Without a code-signing certificate Windows SmartScreen shows a warning on first start.
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Control system address (https://<ip-with-dashes>.sslip.io)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: [apps/desktop/**, packages/**, pnpm-lock.yaml, .github/workflows/desktop.yml]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the installer
+        env:
+          PLATFORM_API_URL: ${{ inputs.api_url || vars.PLATFORM_API_URL }}
+          PLATFORM_LICENSE_PUBLIC_KEY: ${{ vars.PLATFORM_LICENSE_PUBLIC_KEY }}
+        run: pnpm --filter @platform/desktop dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-desktop-windows
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error

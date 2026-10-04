@@ -8,6 +8,8 @@ const bridge: PlatformBridge = {
   auth: {
     session: () => ipcRenderer.invoke(CHANNELS.session),
     signIn: (input) => ipcRenderer.invoke(CHANNELS.signIn, input),
+    register: (input) => ipcRenderer.invoke(CHANNELS.register, input),
+    refreshLicense: () => ipcRenderer.invoke(CHANNELS.refreshLicense),
     signOut: () => ipcRenderer.invoke(CHANNELS.signOut),
   },
   companies: {

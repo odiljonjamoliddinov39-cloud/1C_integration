@@ -14,7 +14,6 @@ import type {
   ConnectionInput,
   ConnectorStatus,
   InfobaseInput,
-  Session,
 } from "../shared/ipc.js";
 import { infobaseKey } from "./onec-jobs.js";
 
@@ -38,9 +37,25 @@ interface StoredCompany {
   lastSyncAt: string | null;
 }
 
+/** Signed-in state. The refresh token is encrypted; the license token is signed, not secret. */
+export interface StoredSession {
+  email: string;
+  name: string;
+  accountName: string;
+  serverUrl: string;
+  signedInAt: string;
+  refreshTokenEnc: string;
+  licenseToken: string | null;
+  /** Public key that signs license tokens (baked into the build, or fetched at first sign-in). */
+  publicKey: string;
+  checkedAt: string;
+}
+
 interface StoreFile {
   version: 1;
-  session: Session | null;
+  session: StoredSession | null;
+  /** Used when the OS gives no machine id. */
+  machineIdFallback?: string;
   companies: StoredCompany[];
 }
 
@@ -65,15 +80,31 @@ export class LocalStore {
       : { version: 1, session: null, companies: [] };
   }
 
-  // --- session (stub until the control system exists) ------------------------------------------
+  // --- session ------------------------------------------------------------------------------------
 
-  get session(): Session | null {
+  get session(): StoredSession | null {
     return this.data.session;
   }
 
-  setSession(session: Session | null): void {
+  setSession(session: StoredSession | null): void {
     this.data.session = session;
     this.save();
+  }
+
+  encrypt(plain: string): string {
+    return this.secrets.encrypt(plain);
+  }
+
+  decrypt(encrypted: string): string {
+    return this.secrets.decrypt(encrypted);
+  }
+
+  machineIdFallback(create: () => string): string {
+    if (!this.data.machineIdFallback) {
+      this.data.machineIdFallback = create();
+      this.save();
+    }
+    return this.data.machineIdFallback;
   }
 
   // --- companies --------------------------------------------------------------------------------

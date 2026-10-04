@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { ConnectionInput } from "../shared/ipc.js";
 import { InProcessConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
+import { SessionService } from "./session.js";
 import { infobaseKey } from "./onec-jobs.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
 
@@ -33,8 +34,20 @@ function setup() {
   const store = new LocalStore(file, secrets);
   const handlers = createHandlers({
     store,
+    session: new SessionService({
+      store,
+      machineId: async () => "m".repeat(64),
+      deviceName: "PC",
+      bakedPublicKey: "",
+    }),
     connector,
-    info: { version: "0.0.0", platform: "win32", arch: "x64", demo1C: false },
+    info: {
+      version: "0.0.0",
+      platform: "win32",
+      arch: "x64",
+      demo1C: false,
+      defaultServerUrl: "http://localhost:3000",
+    },
     pickFolder: async () => "D:\\Bases\\TEST",
   });
   return { handlers, file, seen, store };
@@ -47,17 +60,6 @@ const connection = {
 };
 
 describe("desktop main handlers", () => {
-  it("signs in (stub) and keeps the session without the password", async () => {
-    const { handlers, file } = setup();
-    expect((await handlers.signIn({ email: "bad", password: "x" })).ok).toBe(false);
-    const result = await handlers.signIn({ email: "Acc@Example.com", password: "whatever" });
-    expect(result).toMatchObject({ ok: true, data: { email: "acc@example.com" } });
-    expect(await handlers.session()).toMatchObject({ email: "acc@example.com" });
-    expect(readFileSync(file, "utf8")).not.toContain("whatever");
-    await handlers.signOut();
-    expect(await handlers.session()).toBeNull();
-  });
-
   it("tests a connection, then connects the chosen organization", async () => {
     const { handlers, file } = setup();
     const test = await handlers.testConnection(connection);
@@ -130,10 +132,17 @@ describe("without secure storage", () => {
       decrypt: () => "",
     };
     const base = new FakePlatform();
+    const store = new LocalStore(file, noKeyring);
     const handlers = createHandlers({
-      store: new LocalStore(file, noKeyring),
+      store,
+      session: new SessionService({
+        store,
+        machineId: async () => "m".repeat(64),
+        deviceName: "PC",
+        bakedPublicKey: "",
+      }),
       connector: new InProcessConnector(() => base),
-      info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false },
+      info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
     });
     const org = (await handlers.testConnection(connection)).organizations[0]!;

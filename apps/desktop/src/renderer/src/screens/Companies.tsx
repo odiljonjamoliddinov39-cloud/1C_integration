@@ -14,6 +14,8 @@ export function CompaniesScreen() {
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
+  const session = useQuery({ queryKey: ["session"], queryFn: () => window.platform.auth.session() });
+  const readOnly = session.data?.license?.mode !== "active";
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["companies"] });
   const check = useMutation({
     mutationFn: (id: string) => window.platform.companies.checkStatus(id),
@@ -35,7 +37,7 @@ export function CompaniesScreen() {
           <h1 className="text-2xl font-semibold">{t("companies.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("companies.subtitle")}</p>
         </div>
-        <Button className="ml-auto" onClick={() => setConnecting(true)}>
+        <Button className="ml-auto" disabled={readOnly} onClick={() => setConnecting(true)}>
           {t("companies.connect")}
         </Button>
       </div>

@@ -1,0 +1,31 @@
+{
+  "name": "@platform/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Control system backend: accounts, licenses, devices (TD §8)",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "node build.mjs",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "keygen": "tsx src/cli.ts keygen"
+  },
+  "dependencies": {
+    "@fastify/cors": "11.3.0",
+    "@fastify/rate-limit": "11.2.0",
+    "@node-rs/argon2": "2.2.1",
+    "@platform/shared": "workspace:*",
+    "drizzle-orm": "0.45.3",
+    "fastify": "5.12.5",
+    "jose": "6.2.12",
+    "postgres": "3.4.9",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.11",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15"
+  }
+}

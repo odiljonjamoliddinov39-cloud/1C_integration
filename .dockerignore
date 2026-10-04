@@ -1,0 +1,10 @@
+**/node_modules
+**/out
+**/dist
+**/release
+.git
+.turbo
+apps/desktop
+docs
+onec
+deploy

@@ -3,6 +3,8 @@ export const CHANNELS = {
   appInfo: "app:info",
   session: "auth:session",
   signIn: "auth:sign-in",
+  register: "auth:register",
+  refreshLicense: "auth:refresh-license",
   signOut: "auth:sign-out",
   listCompanies: "companies:list",
   pickFolder: "companies:pick-folder",
