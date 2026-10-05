@@ -7,8 +7,9 @@ updates.
 
 ```
 src/CommonModules/
-  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived,
-                         PreviewInvoiceIssued, CreateInvoiceIssued (JSON in, JSON out)
+  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, GetObject, PreviewChange,
+                         ApplyChange, CreateInvoiceReceived, PreviewInvoiceIssued, CreateInvoiceIssued
+                         (JSON in, JSON out)
   PlatformAPI_Map.bsl    configuration names, one module per configuration version; extension version
   PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index
 build-xml.mjs            src/ -> xml/: the whole extension as Configurator files
@@ -32,16 +33,24 @@ The extension borrows nothing from the configuration, so the same files load int
 5. In the list of extensions, untick **Безопасный режим** and **Защита от опасных действий** for
    PlatformAPI: the extension writes documents, and its log switches to privileged mode while it
    writes (1C does not allow privileged modules in extensions).
-6. The app's **Ulanishni tekshirish** shows the extension version (`0.3.0`).
+6. The app's **Ulanishni tekshirish** shows the extension version (`0.4.0`).
 
 What is inside:
 
-| Object                          | Properties                                                                                                                                                 |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Common module `PlatformAPI`     | Сервер, Внешнее соединение; the connecting 1C user's rights apply                                                                                          |
-| Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                                                                 |
-| Common module `PlatformAPI_Log` | Сервер, Внешнее соединение; turns privileged mode on in its own procedures                                                                                 |
-| Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `DocumentType`, `DocumentID` (UUID), `DocumentPresentation`, `Operation`, `UserName`, `CreatedAt` |
+| Object                          | Properties                                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Common module `PlatformAPI`     | Сервер, Внешнее соединение; the connecting 1C user's rights apply                                                                                                            |
+| Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                                                                                   |
+| Common module `PlatformAPI_Log` | Сервер, Внешнее соединение; turns privileged mode on in its own procedures                                                                                                   |
+| Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `DocumentType`, `DocumentID` (UUID), `DocumentPresentation`, `Operation`, `Details` (JSON), `UserName`, `CreatedAt` |
+
+**Any document or directory item** (`GetObject`, `PreviewChange`, `ApplyChange`): read it whole;
+preview a create / update / delete / undelete field by field without writing; apply it after the
+user confirmed. Delete only sets the deletion mark (1C removes marked objects when an administrator
+runs «Удаление помеченных объектов»). A document is posted when asked; a changed posted document is
+re-posted. `ApplyChange` takes the `version` from the preview and refuses (CONFLICT) if the object
+changed since; the write, 1C's own checks and the PlatformLog record (with the change as JSON in
+`Details`) are one transaction. Writes run with the connected 1C user's rights.
 
 **Issued invoices** (`CreateInvoiceIssued`) are made on the basis of a sale (Реализация товаров и
 услуг) with the configuration's own filling, as its «Выписать счет-фактуру» button does, and saved

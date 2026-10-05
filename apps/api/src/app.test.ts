@@ -230,6 +230,8 @@ describe.skipIf(!available)("control system API", () => {
       "list_organizations",
       "describe_objects",
       "run_query",
+      "get_object",
+      "propose_change",
       "propose_invoice_issued",
       "propose_invoice_received",
     ]);

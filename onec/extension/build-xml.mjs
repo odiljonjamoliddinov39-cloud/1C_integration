@@ -70,6 +70,7 @@ const ID = {
     DocumentType: "13907a83-44e2-4476-8942-8800f4224b95",
     DocumentID: "7dfa38ed-0f08-460d-a5c8-e65c193a23f8",
     DocumentPresentation: "30701462-d2e8-4341-8630-9565b819524f",
+    Details: "a3f995fa-f410-4a05-bf1d-04fa3e36368b",
     Operation: "084d5489-8162-4986-ab50-e2c9e6b0a21b",
     UserName: "812dad67-70bd-49d6-a876-b10b87632f60",
     CreatedAt: "7a83191b-abba-4319-9a0e-d1eb6122ebb2",
@@ -196,6 +197,7 @@ const ATTRIBUTES = [
   ["DocumentType", "Вид документа", string(100), false],
   ["DocumentID", "УИД документа", string(36), false],
   ["DocumentPresentation", "Документ", string(150), false],
+  ["Details", "Подробности (JSON)", string(0), false],
   ["Operation", "Операция", string(50), false],
   ["UserName", "Пользователь", string(100), false],
   [

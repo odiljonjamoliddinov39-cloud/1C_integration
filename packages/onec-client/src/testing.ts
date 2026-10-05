@@ -6,6 +6,9 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  ApplyChangeInput,
+  ChangeInput,
+  GetObjectInput,
   InvoiceIssuedInput,
   InvoiceReceivedInput,
   Organization,
@@ -126,6 +129,20 @@ export class FakePlatform implements PlatformTransport {
     },
   ];
   issued: { ref: string; number: string; date: string; saleRef: string }[] = [];
+  /**
+   * Any other document or directory item, for GetObject / PreviewChange / ApplyChange. Keyed by
+   * ref; a counter stands in for 1C's data version.
+   */
+  objects = new Map<
+    string,
+    {
+      object: string;
+      fields: Record<string, unknown>;
+      posted: boolean;
+      deletionMark: boolean;
+      version: number;
+    }
+  >();
   calls: { fn: PlatformFunction; arg?: string }[] = [];
   closed = false;
 
@@ -174,6 +191,23 @@ export class FakePlatform implements PlatformTransport {
           existing: existing ? { ref: existing.ref, number: existing.number, date: existing.date } : null,
         };
       }
+      case "GetObject": {
+        const input = parse(arg) as GetObjectInput;
+        const found = this.objects.get(input.ref);
+        if (!found || found.object !== input.object)
+          throw new Failure("NOT_FOUND", `${input.object} not found`);
+        return { ...this.state(input.ref), fields: found.fields, tables: {} };
+      }
+      case "PreviewChange":
+        return this.prepareChange(parse(arg) as ChangeInput).preview;
+      case "ApplyChange": {
+        const input = parse(arg) as ApplyChangeInput;
+        const { preview, apply } = this.prepareChange(input);
+        if (input.action !== "create" && preview.version !== input.version) {
+          throw new Failure("CONFLICT", "The object changed after the preview");
+        }
+        return this.state(apply());
+      }
       case "CreateInvoiceIssued": {
         const sale = this.findSale(parse(arg) as InvoiceIssuedInput);
         const existing = this.issued.find((i) => i.saleRef === sale.ref);
@@ -191,6 +225,73 @@ export class FakePlatform implements PlatformTransport {
         return { ref: doc.ref, number: doc.number, date: doc.date, posted: false, duplicate: false };
       }
     }
+  }
+
+  private state(ref: string) {
+    const o = this.objects.get(ref);
+    if (!o) throw new Failure("NOT_FOUND", "Object not found");
+    const name = String(o.fields["Наименование"] ?? o.fields["Номер"] ?? ref);
+    return {
+      object: o.object,
+      ref,
+      presentation: name,
+      posted: o.posted,
+      deletionMark: o.deletionMark,
+      version: String(o.version),
+    };
+  }
+
+  /** Like the extension's ПодготовитьИзменение, for plain fields only. */
+  private prepareChange(input: ChangeInput) {
+    if (!/^(Справочник|Документ)\./.test(input?.object ?? "")) {
+      throw new Failure("VALIDATION", "Only documents and directories can be changed");
+    }
+    const isDocument = input.object.startsWith("Документ.");
+    const existing = input.action === "create" ? undefined : this.objects.get(input.ref ?? "");
+    if (input.action !== "create" && (!existing || existing.object !== input.object)) {
+      throw new Failure("NOT_FOUND", `${input.object} ${input.ref} not found`);
+    }
+    const fields = { ...(existing?.fields ?? {}) };
+    const changes = Object.entries(input.fields ?? {})
+      .filter(([field, value]) => fields[field] !== value)
+      .map(([field, value]) => ({ field, before: fields[field] ?? null, after: value }));
+    for (const change of changes) fields[change.field] = change.after;
+    const wasPosted = existing?.posted ?? false;
+    const willPost =
+      isDocument && (input.action === "create" || input.action === "update")
+        ? (input.post ?? wasPosted)
+        : false;
+    const preview = {
+      action: input.action,
+      object: input.object,
+      ref: input.ref ?? null,
+      presentation: String(fields["Наименование"] ?? fields["Номер"] ?? input.object),
+      posted: wasPosted,
+      deletionMark: existing?.deletionMark ?? false,
+      version: existing ? String(existing.version) : "",
+      willPost,
+      changes,
+      tables: [],
+      warnings: [],
+    };
+    const apply = () => {
+      const ref = input.ref ?? randomUUID();
+      const deletionMark =
+        input.action === "delete"
+          ? true
+          : input.action === "undelete"
+            ? false
+            : (existing?.deletionMark ?? false);
+      this.objects.set(ref, {
+        object: input.object,
+        fields,
+        posted: input.action === "delete" ? false : input.action === "undelete" ? wasPosted : willPost,
+        deletionMark,
+        version: (existing?.version ?? 0) + 1,
+      });
+      return ref;
+    };
+    return { preview, apply };
   }
 
   /** Like the extension: by ref, or by number (also its last digits) and day. */

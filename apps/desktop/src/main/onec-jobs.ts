@@ -10,7 +10,14 @@ import {
   type PlatformTransport,
 } from "@platform/onec-client";
 
-import { AI_TOOLS, type AiReadTool, InvoiceIssuedInput, InvoiceReceivedInput } from "@platform/shared";
+import {
+  AI_TOOLS,
+  type AiReadTool,
+  ApplyChangeInput,
+  ChangeInput,
+  InvoiceIssuedInput,
+  InvoiceReceivedInput,
+} from "@platform/shared";
 
 import type { ConnectionInput, ConnectionTestResult, InfobaseInput } from "../shared/ipc.js";
 
@@ -48,7 +55,12 @@ export type ToolResult = { ok: true; data: unknown } | { ok: false; code: string
 
 /** 1C operations behind the assistant: its reads, and the writes the user confirmed in the app. */
 export type OneCOperation =
-  AiReadTool | "previewInvoiceIssued" | "createInvoiceIssued" | "createInvoiceReceived";
+  | AiReadTool
+  | "previewInvoiceIssued"
+  | "createInvoiceIssued"
+  | "createInvoiceReceived"
+  | "previewChange"
+  | "applyChange";
 
 /** A job for the worker of one infobase. */
 export type OneCJob = { kind: "check" } | { kind: "tool"; name: OneCOperation; input: unknown };
@@ -68,6 +80,12 @@ export async function runTool(
         return { ok: true, data: await client.getMetadata(AI_TOOLS.describe_objects.parse(input).objects) };
       case "run_query":
         return { ok: true, data: await client.runQuery(AI_TOOLS.run_query.parse(input)) };
+      case "get_object":
+        return { ok: true, data: await client.getObject(AI_TOOLS.get_object.parse(input)) };
+      case "previewChange":
+        return { ok: true, data: await client.previewChange(ChangeInput.parse(input)) };
+      case "applyChange":
+        return { ok: true, data: await client.applyChange(ApplyChangeInput.parse(input)) };
       case "previewInvoiceIssued":
         return { ok: true, data: await client.previewInvoiceIssued(InvoiceIssuedInput.parse(input)) };
       case "createInvoiceIssued":

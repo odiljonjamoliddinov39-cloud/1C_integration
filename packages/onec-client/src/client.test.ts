@@ -95,6 +95,52 @@ describe("PlatformApiClient", () => {
     });
   });
 
+  it("previews and applies a change to any object, refusing a stale version", async () => {
+    const { client } = setup();
+    const create = {
+      action: "create" as const,
+      object: "Документ.ПоступлениеНаРасчетныйСчет",
+      fields: { Номер: "1" },
+      post: true,
+    };
+    const preview = await client.previewChange(create);
+    expect(preview).toMatchObject({
+      action: "create",
+      ref: null,
+      willPost: true,
+      changes: [{ field: "Номер" }],
+    });
+    const created = await client.applyChange(create);
+    expect(created).toMatchObject({ posted: true, deletionMark: false });
+
+    const update = {
+      action: "update" as const,
+      object: create.object,
+      ref: created.ref!,
+      fields: { Номер: "2" },
+    };
+    const seen = await client.previewChange(update);
+    expect(seen).toMatchObject({ posted: true, willPost: true }); // a posted document is re-posted
+    await client.applyChange({ ...update, version: seen.version });
+    await expect(
+      client.applyChange({ ...update, fields: { Номер: "3" }, version: seen.version }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await client.getObject({ object: create.object, ref: created.ref! })).toMatchObject({
+      fields: { Номер: "2" },
+    });
+
+    await expect(
+      client.previewChange({ action: "update", object: create.object, fields: {} }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    await expect(
+      client.previewChange({ action: "create", object: "РегистрСведений.Курсы", fields: { a: 1 } }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
   it("validates before calling 1C", async () => {
     const { client, fake } = setup();
     const bad = { ...invoice, lines: [{ ...invoice.lines[0]!, total: 1 }] };

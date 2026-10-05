@@ -5,7 +5,13 @@
  */
 import { z } from "zod";
 
-import { InvoiceReceivedDraft, RunQueryInput, SaleLookup } from "./platform-api.js";
+import {
+  ChangeInput,
+  GetObjectInput,
+  InvoiceReceivedDraft,
+  RunQueryInput,
+  SaleLookup,
+} from "./platform-api.js";
 
 /**
  * Tools the assistant may call; the desktop runs them through PlatformAPI. The read tools run at
@@ -19,12 +25,18 @@ export const AI_TOOLS = {
     objects: z.array(z.string().min(1)).min(1).max(20),
   }),
   run_query: RunQueryInput,
+  get_object: GetObjectInput,
+  propose_change: ChangeInput,
   propose_invoice_issued: z.object({ sale: SaleLookup }),
   propose_invoice_received: InvoiceReceivedDraft,
 } as const;
 export type AiToolName = keyof typeof AI_TOOLS;
 
-export const AI_PROPOSAL_TOOLS = ["propose_invoice_issued", "propose_invoice_received"] as const;
+export const AI_PROPOSAL_TOOLS = [
+  "propose_change",
+  "propose_invoice_issued",
+  "propose_invoice_received",
+] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
 export type AiReadTool = Exclude<AiToolName, AiProposalTool>;
 

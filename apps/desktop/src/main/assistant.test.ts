@@ -306,6 +306,95 @@ describe("assistant", () => {
       expect(base.documents[0]!.externalId).toMatch(/^chat-/);
     });
 
+    it("adds, changes and marks a directory item for deletion, each after its own confirmation", async () => {
+      const create = {
+        action: "create",
+        object: "Справочник.Контрагенты",
+        fields: { Наименование: "ООО «Новый»", ИНН: "305999999" },
+      };
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_change", create),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Yangi kontragent qoʻsh" });
+      await answerCards(events, assistant, true);
+      await sending;
+      const card = events.find((e) => e.type === "confirm");
+      expect(card).toMatchObject({
+        proposal: {
+          kind: "change",
+          preview: {
+            action: "create",
+            changes: [{ field: "Наименование", before: null, after: "ООО «Новый»" }, expect.anything()],
+          },
+        },
+      });
+      const result = resultOf(proxy.requests);
+      expect(result).toMatchObject({ status: "done", action: "create", object: { deletionMark: false } });
+      const ref = result.object.ref as string;
+      expect(base.objects.get(ref)?.fields).toEqual({ Наименование: "ООО «Новый»", ИНН: "305999999" });
+
+      // Change it, then mark it for deletion: each is a new card the user confirms.
+      for (const change of [
+        {
+          action: "update",
+          object: "Справочник.Контрагенты",
+          ref,
+          fields: { Наименование: "ООО «Новое имя»" },
+        },
+        { action: "delete", object: "Справочник.Контрагенты", ref },
+      ]) {
+        const next = setup(proposeThenAnswer("propose_change", change));
+        next.base.objects = base.objects;
+        next.store.setAiEnabled(next.company.id, true);
+        const asking = next.assistant.send({ companyId: next.company.id, text: "?" });
+        await answerCards(next.events, next.assistant, true);
+        await asking;
+        expect(resultOf(next.proxy.requests)).toMatchObject({ status: "done", action: change.action });
+      }
+      expect(base.objects.get(ref)).toMatchObject({
+        fields: { Наименование: "ООО «Новое имя»" },
+        deletionMark: true,
+      });
+    });
+
+    it("refuses a confirmed change when the object was edited after the card was shown", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_change", {
+          action: "update",
+          object: "Справочник.Контрагенты",
+          ref: "22222222-2222-2222-2222-222222222222",
+          fields: { Наименование: "B" },
+        }),
+      );
+      base.objects.set("22222222-2222-2222-2222-222222222222", {
+        object: "Справочник.Контрагенты",
+        fields: { Наименование: "A" },
+        posted: false,
+        deletionMark: false,
+        version: 1,
+      });
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          const card = events.find((e) => e.type === "confirm");
+          if (card?.type === "confirm") {
+            clearInterval(timer);
+            base.objects.get("22222222-2222-2222-2222-222222222222")!.version = 2; // someone saved it in 1C meanwhile
+            assistant.decide(card.companyId, card.id, true);
+            resolve();
+          }
+        }, 1);
+      });
+      await sending;
+      expect(resultOf(proxy.requests)).toMatchObject({ error: "CONFLICT" });
+      expect(events.find((e) => e.type === "decided")).toMatchObject({
+        outcome: { status: "failed", code: "CONFLICT" },
+      });
+      expect(base.objects.get("22222222-2222-2222-2222-222222222222")?.fields).toEqual({ Наименование: "A" });
+    });
+
     it("prepares nothing while the license is read-only", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),

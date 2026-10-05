@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import type { ChangePreview } from "@platform/shared";
+
 import type { AssistantEvent, CompanyView, Proposal, ProposalOutcome } from "../../../shared/ipc";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -307,7 +309,9 @@ function ProposalCard({
 
   return (
     <Card className="space-y-3 border-primary/40 p-4 text-sm">
-      {proposal.kind === "invoice_issued" ? (
+      {proposal.kind === "change" ? (
+        <ChangeBody preview={proposal.preview} />
+      ) : proposal.kind === "invoice_issued" ? (
         <>
           <div>
             <div className="font-semibold">{t("assistant.proposal.issuedTitle")}</div>
@@ -372,15 +376,19 @@ function ProposalCard({
           </table>
         </>
       )}
-      <p className="text-xs text-muted-foreground">
-        {t(
-          proposal.kind === "invoice_issued" ? "assistant.proposal.note" : "assistant.proposal.noteReceived",
-        )}
-      </p>
+      {proposal.kind !== "change" && (
+        <p className="text-xs text-muted-foreground">
+          {t(
+            proposal.kind === "invoice_issued"
+              ? "assistant.proposal.note"
+              : "assistant.proposal.noteReceived",
+          )}
+        </p>
+      )}
       {outcome === null ? (
         <div className="flex gap-2">
           <Button size="sm" disabled={sent} onClick={() => decide(true)}>
-            {t("assistant.proposal.create")}
+            {t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -393,11 +401,124 @@ function ProposalCard({
             date: day(outcome.document.date),
           })}
         </div>
+      ) : outcome.status === "applied" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.applied", { presentation: outcome.state.presentation })}
+          {outcome.state.posted ? ` ${t("assistant.proposal.isPosted")}` : ""}
+          {outcome.state.deletionMark ? ` ${t("assistant.proposal.isMarked")}` : ""}
+        </div>
       ) : outcome.status === "declined" ? (
         <div className="text-muted-foreground">{t("assistant.proposal.declined")}</div>
       ) : (
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
       )}
     </Card>
+  );
+}
+
+/** Shows a value from 1C as text: references by name, dates as dd.mm.yyyy. */
+function show(value: unknown, t: (key: string) => string): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "number") return money(value);
+  if (typeof value === "boolean") return t(value ? "assistant.proposal.yes" : "assistant.proposal.no");
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T00:00:00$/.test(value)) return day(value);
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value))
+    return `${day(value)} ${value.slice(11, 16)}`;
+  if (typeof value === "object" && value && "name" in value) return String((value as { name: unknown }).name);
+  return String(value);
+}
+
+/** A change to any document or directory item: what, field by field, and what happens to posting. */
+function ChangeBody({ preview }: { preview: ChangePreview }) {
+  const { t } = useTranslation();
+  const isDocument = preview.object.startsWith("Документ.");
+  const posting = !isDocument
+    ? null
+    : preview.action === "delete" && preview.posted
+      ? "assistant.proposal.postingDeleteUnposts"
+      : preview.willPost && preview.posted
+        ? "assistant.proposal.postingRepost"
+        : preview.willPost
+          ? "assistant.proposal.postingPost"
+          : preview.posted && preview.action === "update"
+            ? "assistant.proposal.postingUnpost"
+            : preview.action === "create" || preview.action === "update"
+              ? "assistant.proposal.postingNone"
+              : null;
+  return (
+    <>
+      <div>
+        <div className="font-semibold">
+          {t(`assistant.proposal.action.${preview.action}`)} · {preview.object}
+        </div>
+        <div className="text-muted-foreground">{preview.presentation}</div>
+      </div>
+      {preview.changes.length > 0 && (
+        <table className="w-full text-xs">
+          <thead className="text-muted-foreground">
+            <tr className="text-left">
+              <th className="py-1 font-medium">{t("assistant.proposal.field")}</th>
+              <th className="py-1 font-medium">{t("assistant.proposal.before")}</th>
+              <th className="py-1 font-medium">{t("assistant.proposal.after")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {preview.changes.map((change) => (
+              <tr key={change.field} className="border-t border-border align-top">
+                <td className="py-1 pr-2 text-muted-foreground">{change.field}</td>
+                <td className="py-1 pr-2 line-through decoration-muted-foreground/60">
+                  {show(change.before, t)}
+                </td>
+                <td className="py-1 font-medium">{show(change.after, t)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {preview.tables.map((table) => {
+        const columns = [...new Set(table.rows.flatMap((row) => Object.keys(row)))].slice(0, 6);
+        return (
+          <div key={table.table} className="space-y-1">
+            <div className="text-xs text-muted-foreground">
+              {t("assistant.proposal.tableRows", {
+                table: table.table,
+                before: table.rowsBefore,
+                after: table.rowsAfter,
+              })}
+            </div>
+            <table className="w-full text-xs tabular-nums">
+              <thead className="text-muted-foreground">
+                <tr className="text-left">
+                  {columns.map((column) => (
+                    <th key={column} className="py-1 pr-2 font-medium">
+                      {column}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {table.rows.slice(0, 10).map((row, i) => (
+                  <tr key={i} className="border-t border-border">
+                    {columns.map((column) => (
+                      <td key={column} className="py-1 pr-2">
+                        {show(row[column], t)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+      {posting && <div className="text-xs font-medium">{t(posting)}</div>}
+      {preview.warnings.length > 0 && (
+        <ul className="list-disc rounded-lg bg-warning/15 py-2 pr-3 pl-7 text-xs">
+          {preview.warnings.map((warning, i) => (
+            <li key={i}>{warning}</li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }

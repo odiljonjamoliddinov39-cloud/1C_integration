@@ -4,8 +4,10 @@
  * files or secrets runs in the main process.
  */
 import type {
+  ChangePreview,
   CreateInvoiceResult,
   InvoiceReceivedDraft,
+  ObjectState,
   Organization,
   PingResult,
   SaleSummary,
@@ -105,11 +107,14 @@ export type AssistantInput = z.infer<typeof AssistantInput>;
 
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
-  { kind: "invoice_issued"; sale: SaleSummary } | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
+  | { kind: "change"; preview: ChangePreview }
+  | { kind: "invoice_issued"; sale: SaleSummary }
+  | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
 
 export type ProposalOutcome =
   | { status: "declined" }
   | { status: "created"; document: CreateInvoiceResult }
+  | { status: "applied"; state: ObjectState }
   | { status: "failed"; code: string; message: string };
 
 /** What the assistant is doing, pushed from the main process while it answers. */

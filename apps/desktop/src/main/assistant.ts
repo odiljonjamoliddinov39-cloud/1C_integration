@@ -16,8 +16,12 @@ import {
   type AiMessage,
   type AiProposalTool,
   AiToolUse,
+  type ChangeInput,
+  type ChangePreview,
+  type CreateInvoiceResult,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
+  type ObjectState,
   isAiToolName,
   isProposalTool,
 } from "@platform/shared";
@@ -176,7 +180,17 @@ export class AssistantService {
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
-    if (tool === "propose_invoice_issued") {
+    if (tool === "propose_change") {
+      const change = input as ChangeInput;
+      emit({ type: "tool", name: tool, detail: describe(tool, change) });
+      const preview = await this.deps.connector.tool(connection, "previewChange", change);
+      if (!preview.ok) return preview;
+      const shown = preview.data as ChangePreview;
+      proposal = { kind: "change", preview: shown };
+      // The version seen on the card: if someone changes the object meanwhile, 1C refuses.
+      create = () =>
+        this.deps.connector.tool(connection, "applyChange", { ...change, version: shown.version });
+    } else if (tool === "propose_invoice_issued") {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
       const preview = await this.deps.connector.tool(connection, "previewInvoiceIssued", input);
       if (!preview.ok) return preview;
@@ -222,7 +236,12 @@ export class AssistantService {
       decided({ status: "failed", code: result.code, message: result.message });
       return result;
     }
-    const document = result.data as Extract<ProposalOutcome, { status: "created" }>["document"];
+    if (proposal.kind === "change") {
+      const state = result.data as ObjectState;
+      decided({ status: "applied", state });
+      return { ok: true, data: { status: "done", action: proposal.preview.action, object: state } };
+    }
+    const document = result.data as CreateInvoiceResult;
     decided({ status: "created", document });
     return { ok: true, data: { status: document.duplicate ? "already_exists" : "created", document } };
   }
@@ -249,6 +268,11 @@ function describe(name: string, input: unknown): string {
       .replace(/\s+/g, " ")
       .slice(0, 160);
   if (name === "describe_objects") return (input as { objects: string[] }).objects.join(", ");
+  if (name === "get_object") return (input as { object: string }).object;
+  if (name === "propose_change") {
+    const change = input as { action: string; object: string };
+    return `${change.action} ${change.object}`;
+  }
   if (name === "propose_invoice_issued") {
     const { sale } = input as { sale: { number?: string; date?: string } };
     return [sale.number, sale.date].filter(Boolean).join(" · ");

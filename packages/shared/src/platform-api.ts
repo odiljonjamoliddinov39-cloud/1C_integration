@@ -15,6 +15,9 @@ export const PLATFORM_FUNCTIONS = [
   "CreateInvoiceReceived",
   "PreviewInvoiceIssued",
   "CreateInvoiceIssued",
+  "GetObject",
+  "PreviewChange",
+  "ApplyChange",
 ] as const;
 export type PlatformFunction = (typeof PLATFORM_FUNCTIONS)[number];
 
@@ -32,6 +35,7 @@ export const ERROR_CODES = [
   "CLOSED_PERIOD",
   "QUERY_ERROR",
   "WRITE_FAILED",
+  "CONFLICT",
   "INTERNAL",
   // client
   "COM_UNAVAILABLE",
@@ -106,6 +110,12 @@ export const RunQueryInput = z.object({
   ),
   /** Rows to return, at most 1000 (default 200). */
   limit: z.number().int().min(1).max(1000).optional().describe("Rows to return, default 200"),
+  refs: z
+    .boolean()
+    .optional()
+    .describe(
+      "Return references as {type, ref, name} instead of their names (to change those objects later)",
+    ),
 });
 export type RunQueryInput = z.infer<typeof RunQueryInput>;
 
@@ -222,3 +232,79 @@ export const InvoiceIssuedPreview = z.object({
   existing: z.object({ ref: Uuid, number: z.string(), date: z.string() }).nullable(),
 });
 export type InvoiceIssuedPreview = z.infer<typeof InvoiceIssuedPreview>;
+
+// --- GetObject / PreviewChange / ApplyChange: any document or directory ------------------------
+
+/** A reference as 1C returns it with refs: true. For an enumeration, `ref` is the value's name. */
+export const RefValue = z.object({ type: z.string(), ref: z.string(), name: z.string() });
+export type RefValue = z.infer<typeof RefValue>;
+
+export const GetObjectInput = z.object({
+  /** Full name, e.g. "Справочник.Контрагенты", "Документ.РеализацияТоваровУслуг". */
+  object: z.string().trim().min(1).max(200),
+  ref: Uuid,
+});
+export type GetObjectInput = z.infer<typeof GetObjectInput>;
+
+export const ObjectState = z.object({
+  object: z.string(),
+  ref: Uuid.nullable(),
+  presentation: z.string(),
+  posted: z.boolean(),
+  deletionMark: z.boolean(),
+  /** 1C's data version: a change confirmed on an older version is refused (CONFLICT). */
+  version: z.string(),
+});
+export type ObjectState = z.infer<typeof ObjectState>;
+
+export const ObjectSnapshot = ObjectState.extend({
+  fields: z.record(z.string(), z.unknown()),
+  tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
+});
+export type ObjectSnapshot = z.infer<typeof ObjectSnapshot>;
+
+/**
+ * A change to one document or directory item. Field names are 1C's (see GetMetadata). A reference
+ * field takes {ref} | {find: {field: value}} | {name} | {code}, with `type` when the field allows
+ * several types; an enumeration takes the value's name; a date "YYYY-MM-DD[THH:mm:ss]". `tables`
+ * replaces whole tabular sections. delete = deletion mark (undelete removes it). A document is
+ * posted when `post` is true; a posted document that is changed is re-posted unless `post` is false.
+ */
+export const ChangeInput = z
+  .object({
+    action: z.enum(["create", "update", "delete", "undelete"]),
+    object: z.string().trim().min(1).max(200),
+    ref: Uuid.optional(),
+    fields: z.record(z.string(), z.unknown()).optional(),
+    tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).optional(),
+    post: z.boolean().optional(),
+  })
+  .refine((c) => c.action === "create" || c.ref, {
+    message: "ref is required to change an existing object",
+    path: ["ref"],
+  })
+  .refine((c) => c.action !== "create" || c.fields || c.tables, {
+    message: "fields or tables are required to create an object",
+    path: ["fields"],
+  });
+export type ChangeInput = z.infer<typeof ChangeInput>;
+
+export const ChangePreview = ObjectState.extend({
+  action: z.enum(["create", "update", "delete", "undelete"]),
+  willPost: z.boolean(),
+  changes: z.array(z.object({ field: z.string(), before: z.unknown(), after: z.unknown() })),
+  tables: z.array(
+    z.object({
+      table: z.string(),
+      rowsBefore: z.number(),
+      rowsAfter: z.number(),
+      rows: z.array(z.record(z.string(), z.unknown())),
+    }),
+  ),
+  /** 1C's own filling checks (ПроверитьЗаполнение); the write may still be refused. */
+  warnings: z.array(z.string()),
+});
+export type ChangePreview = z.infer<typeof ChangePreview>;
+
+export const ApplyChangeInput = z.intersection(ChangeInput, z.object({ version: z.string().optional() }));
+export type ApplyChangeInput = z.infer<typeof ApplyChangeInput>;

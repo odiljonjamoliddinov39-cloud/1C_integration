@@ -1,5 +1,11 @@
 import {
+  ApplyChangeInput,
+  ChangeInput,
+  ChangePreview,
   CreateInvoiceResult,
+  GetObjectInput,
+  ObjectSnapshot,
+  ObjectState,
   Envelope,
   InvoiceIssuedInput,
   InvoiceIssuedPreview,
@@ -59,6 +65,21 @@ export class PlatformApiClient {
   /** Writes one unposted Счет-фактура выданный on the basis of a sale; an existing one is returned instead. */
   async createInvoiceIssued(input: InvoiceIssuedInput): Promise<CreateInvoiceResult> {
     return this.invoke("CreateInvoiceIssued", CreateInvoiceResult, this.valid(InvoiceIssuedInput, input));
+  }
+
+  /** One document or directory item with all its fields and tabular sections. */
+  async getObject(input: GetObjectInput): Promise<ObjectSnapshot> {
+    return this.invoke("GetObject", ObjectSnapshot, this.valid(GetObjectInput, input));
+  }
+
+  /** What a change would do, field by field. Writes nothing. */
+  async previewChange(input: ChangeInput): Promise<ChangePreview> {
+    return this.invoke("PreviewChange", ChangePreview, this.valid(ChangeInput, input));
+  }
+
+  /** Writes a change the user confirmed; `version` from the preview guards against a newer edit. */
+  async applyChange(input: ApplyChangeInput): Promise<ObjectState> {
+    return this.invoke("ApplyChange", ObjectState, this.valid(ApplyChangeInput, input));
   }
 
   close(): Promise<void> {
