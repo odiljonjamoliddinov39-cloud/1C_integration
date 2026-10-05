@@ -11,6 +11,7 @@ import type { AiMessage } from "@platform/shared";
 import type { ChatSummary } from "../shared/ipc.js";
 import type { ChatEntry } from "../shared/transcript.js";
 import type { SecretBox } from "./store.js";
+import type { TableFile } from "./tables.js";
 
 /** Older chats beyond this many per company are deleted. */
 export const MAX_CHATS = 200;
@@ -20,6 +21,8 @@ export interface StoredChat extends ChatSummary {
   /** The conversation as the model sees it, sent back every turn. */
   messages: AiMessage[];
   entries: ChatEntry[];
+  /** Spreadsheets and CSV files attached to this chat, whole, for read_attachment. */
+  tables?: TableFile[];
 }
 
 // Ids become file names: only UUIDs, so no id can point outside the chats folder.

@@ -5,16 +5,17 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type {
-  ApplyChangeInput,
-  ChangeInput,
-  GetObjectInput,
-  InvoiceIssuedInput,
-  InvoiceReceivedInput,
-  Organization,
-  PlatformFunction,
-  QueryResult,
-  RunQueryInput,
+import {
+  type ApplyChangeInput,
+  type ChangeInput,
+  EXTENSION_VERSION,
+  type GetObjectInput,
+  type InvoiceIssuedInput,
+  type InvoiceReceivedInput,
+  type Organization,
+  type PlatformFunction,
+  type QueryResult,
+  type RunQueryInput,
 } from "@platform/shared";
 
 import type { PlatformTransport } from "./transport.js";
@@ -172,7 +173,7 @@ export class FakePlatform implements PlatformTransport {
             version: "3.0.0.0",
           },
           platformVersion: "8.3.24.1342",
-          extensionVersion: "0.3.0",
+          extensionVersion: EXTENSION_VERSION,
           infobase: 'File="FAKE";',
         };
       case "GetOrganizations":

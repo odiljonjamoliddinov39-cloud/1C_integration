@@ -22,6 +22,7 @@ import {
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
   type ObjectState,
+  type ReadAttachmentInput,
   isAiToolName,
   isProposalTool,
 } from "@platform/shared";
@@ -38,6 +39,7 @@ import type {
 import { applyEvent } from "../shared/transcript.js";
 import { AttachmentError, type ShrinkImage, readAttachments } from "./attachments.js";
 import type { ChatStore, StoredChat } from "./chats.js";
+import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
@@ -118,6 +120,7 @@ export class AssistantService {
       ...chat.entries,
       { kind: "user", text: text.trim(), ...(attached.info.length > 0 ? { files: attached.info } : {}) },
     ];
+    if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
     try {
@@ -156,7 +159,7 @@ export class AssistantService {
         for (const use of toolUses) {
           const result = abort.signal.aborted
             ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-            : await this.runTool(companyId, use, emit, abort.signal);
+            : await this.runTool(chat, use, emit, abort.signal);
           results.push(toToolResult(use.id, result));
         }
         if (turn === MAX_TURNS - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
@@ -250,7 +253,7 @@ export class AssistantService {
   }
 
   private async runTool(
-    companyId: string,
+    chat: StoredChat,
     use: AiToolUse,
     emit: Emit,
     signal: AbortSignal,
@@ -264,9 +267,12 @@ export class AssistantService {
         message: input.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
       };
     }
-    if (isProposalTool(use.name)) return this.propose(companyId, use.name, input.data, emit, signal);
+    if (isProposalTool(use.name)) return this.propose(chat.companyId, use.name, input.data, emit, signal);
     emit({ type: "tool", name: use.name, detail: describe(use.name, input.data) });
-    return this.deps.connector.tool(this.deps.store.connection(companyId), use.name, input.data);
+    if (use.name === "read_attachment") {
+      return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
+    }
+    return this.deps.connector.tool(this.deps.store.connection(chat.companyId), use.name, input.data);
   }
 
   /**
@@ -403,6 +409,14 @@ function describe(name: string, input: unknown): string {
       .slice(0, 160);
   if (name === "describe_objects") return (input as { objects: string[] }).objects.join(", ");
   if (name === "get_object") return (input as { object: string }).object;
+  if (name === "read_attachment") {
+    const read = input as ReadAttachmentInput;
+    const parts = [read.file];
+    if (read.group_by) parts.push(`by ${read.group_by.column} (${read.group_by.by})`);
+    if (read.sum) parts.push(`sum ${read.sum.join(", ")}`);
+    if (read.from || read.to) parts.push(`rows ${read.from ?? 1}–${read.to ?? "end"}`);
+    return parts.join(" · ");
+  }
   if (name === "propose_change") {
     const change = input as { action: string; object: string };
     return `${change.action} ${change.object}`;

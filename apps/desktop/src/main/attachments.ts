@@ -1,19 +1,22 @@
 /**
  * Files attached to a question, turned into what the model reads. Images and PDFs go as they are
  * (the model sees the pages); spreadsheets, Word files and text files are read here and go as
- * text, so they cost fewer tokens and need no viewer on the server.
+ * text, so they cost fewer tokens and need no viewer on the server. Spreadsheets and CSV files are
+ * also kept whole as tables (tables.ts): a large one goes as a summary, and the model reads the
+ * rest with read_attachment.
  */
 import type { AiContentBlock } from "@platform/shared";
 import mammoth from "mammoth";
 import readXlsxFile from "read-excel-file/node";
 
 import type { AssistantFile, AttachmentInfo } from "../shared/ipc.js";
+import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
 
 /** The longest side the model looks at; larger photos are scaled down before they are sent. */
 const IMAGE_SIDE = 1568;
 /** The API refuses larger images. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** Text taken from one spreadsheet, Word or text file. */
+/** Text taken from one Word or text file. */
 const MAX_TEXT_CHARS = 150_000;
 
 /** Scales a PNG or JPEG down and re-encodes it as JPEG; null when it cannot read the image. */
@@ -31,6 +34,8 @@ export class AttachmentError extends Error {
 export interface ReadAttachments {
   blocks: AiContentBlock[];
   info: AttachmentInfo[];
+  /** Spreadsheets and CSV files, whole, for read_attachment. */
+  tables: TableFile[];
 }
 
 export async function readAttachments(
@@ -39,18 +44,20 @@ export async function readAttachments(
 ): Promise<ReadAttachments> {
   const blocks: AiContentBlock[] = [];
   const info: AttachmentInfo[] = [];
+  const tables: TableFile[] = [];
   for (const file of files) {
     const read = await readOne(file, shrink);
     blocks.push(read.block);
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
+    if (read.table) tables.push(read.table);
   }
-  return { blocks, info };
+  return { blocks, info, tables };
 }
 
 async function readOne(
   { name, data }: AssistantFile,
   shrink?: ShrinkImage,
-): Promise<{ block: AiContentBlock; kind: AttachmentInfo["kind"] }> {
+): Promise<{ block: AiContentBlock; kind: AttachmentInfo["kind"]; table?: TableFile }> {
   const extension = name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
   const image = imageType(data);
   if (image) return { block: imageBlock(data, image, shrink, name), kind: "image" };
@@ -66,7 +73,12 @@ async function readOne(
     };
   }
   if (extension === ".xlsx" || extension === ".xlsm") {
-    return { block: textBlock(name, await spreadsheetText(data, name)), kind: "spreadsheet" };
+    const table = await spreadsheet(data, name);
+    return { block: tableBlock(table), kind: "spreadsheet", table };
+  }
+  if (extension === ".csv" || extension === ".tsv") {
+    const table = { name, sheets: [{ name, rows: parseCsv(decodeText(data)) }] };
+    return { block: tableBlock(table), kind: "text", table };
   }
   if (extension === ".docx") {
     try {
@@ -76,7 +88,7 @@ async function readOne(
       throw unreadable(name);
     }
   }
-  if ([".csv", ".txt", ".tsv", ".xml", ".json", ".md"].includes(extension)) {
+  if ([".txt", ".xml", ".json", ".md"].includes(extension)) {
     return { block: textBlock(name, decodeText(data)), kind: "text" };
   }
   if (extension === ".xls" || extension === ".doc") {
@@ -124,31 +136,33 @@ function imageBlock(data: Uint8Array, type: ImageType, shrink: ShrinkImage | und
   return { type: "image", source: { type: "base64", media_type: mediaType, data: base64(bytes) } };
 }
 
-async function spreadsheetText(data: Uint8Array, name: string): Promise<string> {
+async function spreadsheet(data: Uint8Array, name: string): Promise<TableFile> {
   let sheets;
   try {
     sheets = await readXlsxFile(Buffer.from(data));
   } catch {
     throw unreadable(name);
   }
-  // Tab-separated rows, one block per sheet: compact, and columns stay aligned for the model.
-  return sheets
-    .map(({ sheet, data: rows }) => {
-      const lines = rows
-        .map((row) => row.map(cell).join("\t").replace(/\t+$/, ""))
-        .filter((line) => line.length > 0);
-      return `### ${sheet}\n${lines.join("\n")}`;
-    })
-    .join("\n\n");
+  return {
+    name,
+    sheets: sheets.map(({ sheet, data: rows }) => ({
+      name: sheet,
+      rows: rows.map((row) => row.map(cellText)),
+    })),
+  };
 }
 
-function cell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (value instanceof Date) {
-    const iso = value.toISOString();
-    return iso.endsWith("T00:00:00.000Z") ? iso.slice(0, 10) : iso.slice(0, 19);
-  }
-  return String(value).replace(/[\t\r\n]+/g, " ");
+/** A table, whole when it is small, else its start and end and how to read the rest. */
+function tableBlock(table: TableFile): AiContentBlock {
+  return {
+    type: "document",
+    source: {
+      type: "text",
+      media_type: "text/plain",
+      data: describeTable(table).text || "(the file is empty)",
+    },
+    title: table.name,
+  };
 }
 
 /** UTF-8, or Windows-1251 as 1C and older Excel save CSV and text files in Uzbekistan. */

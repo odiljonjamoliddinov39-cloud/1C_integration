@@ -66,6 +66,25 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
 
 // --- Ping / organizations / metadata ---------------------------------------------------------
 
+/**
+ * The PlatformAPI extension version this app is built for: it has every function the app calls
+ * (GetObject, PreviewChange, ApplyChange). An older one still answers questions, but cannot change 1C.
+ */
+export const EXTENSION_VERSION = "0.4.0";
+
+/** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
+export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
+  const parts = (v: string) => v.split(".").map((n) => Number.parseInt(n, 10));
+  const a = parts(version);
+  const b = parts(than);
+  if (a.some(Number.isNaN)) return true;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d < 0;
+  }
+  return false;
+}
+
 export const PingResult = z.object({
   configuration: z.object({ name: z.string(), synonym: z.string(), version: z.string() }),
   platformVersion: z.string(),

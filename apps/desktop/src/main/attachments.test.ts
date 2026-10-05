@@ -18,7 +18,9 @@ describe("attachments", () => {
     expect(info).toEqual([{ name: "Выписка.xlsx", kind: "spreadsheet", size: expect.any(Number) }]);
     expect(blocks[0]).toMatchObject({ type: "document", title: "Выписка.xlsx", source: { type: "text" } });
     const text = textOf(blocks[0]);
-    expect(text).toBe("### Выписка\nКонтрагент\tСумма\nООО Тест\t1500000\nИП Каримов\t250000.5");
+    expect(text).toBe(
+      "### Выписка (3 rows, columns A–B)\nrow\tA\tB\n1\tКонтрагент\tСумма\n2\tООО Тест\t1500000\n3\tИП Каримов\t250000.5",
+    );
   });
 
   it("reads the text of a Word file", async () => {
@@ -36,7 +38,11 @@ describe("attachments", () => {
     const { blocks, info } = await readAttachments([{ name: "oborot.csv", data: cp1251 }]);
     expect(info[0]?.kind).toBe("text");
     expect(blocks[0]).toMatchObject({
-      source: { type: "text", media_type: "text/plain", data: "Сумма;100" },
+      source: {
+        type: "text",
+        media_type: "text/plain",
+        data: "### oborot.csv (1 rows, columns A–B)\nrow\tA\tB\n1\tСумма\t100",
+      },
     });
   });
 

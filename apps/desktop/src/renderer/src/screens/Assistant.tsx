@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { ChangePreview } from "@platform/shared";
+import { type ChangePreview, EXTENSION_VERSION, isOlderExtension } from "@platform/shared";
 
 import {
   ATTACHMENTS,
@@ -112,29 +112,61 @@ export function AssistantScreen() {
         </select>
       </div>
       {company.aiEnabled ? (
-        <div className="flex min-h-0 flex-1 gap-4">
-          <ChatList company={company} transcript={transcript} onOpen={setTranscript} />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <Chat
-              company={company}
-              transcript={transcript}
-              onUserMessage={(chatId, text, files) =>
-                setTranscripts((all) => {
-                  const current = all[company.id] ?? NEW_CHAT;
-                  const entry: Entry = { kind: "user", text, ...(files.length > 0 ? { files } : {}) };
-                  return {
-                    ...all,
-                    [company.id]: { chatId, entries: [...current.entries, entry], busy: true },
-                  };
-                })
-              }
-              onReset={() => setTranscript(NEW_CHAT)}
-            />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ExtensionNotice company={company} />
+          <div className="flex min-h-0 flex-1 gap-4">
+            <ChatList company={company} transcript={transcript} onOpen={setTranscript} />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <Chat
+                company={company}
+                transcript={transcript}
+                onUserMessage={(chatId, text, files) =>
+                  setTranscripts((all) => {
+                    const current = all[company.id] ?? NEW_CHAT;
+                    const entry: Entry = { kind: "user", text, ...(files.length > 0 ? { files } : {}) };
+                    return {
+                      ...all,
+                      [company.id]: { chatId, entries: [...current.entries, entry], busy: true },
+                    };
+                  })
+                }
+                onReset={() => setTranscript(NEW_CHAT)}
+              />
+            </div>
           </div>
         </div>
       ) : (
         <Consent company={company} />
       )}
+    </div>
+  );
+}
+
+/**
+ * The 1C base has an older PlatformAPI extension: questions work, but nothing can be created or
+ * changed until the new one is loaded. Says how, and re-checks after.
+ */
+function ExtensionNotice({ company }: { company: CompanyView }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const recheck = useMutation({
+    mutationFn: () => window.platform.companies.checkStatus(company.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["companies"] }),
+  });
+  const status = company.lastStatus;
+  const version = status?.ok ? status.ping.extensionVersion : null;
+  if (!version || !isOlderExtension(version)) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-start gap-3 rounded-lg border border-warning/50 bg-warning/15 px-4 py-3 text-sm">
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="font-medium">
+          {t("assistant.oldExtension", { version, needed: EXTENSION_VERSION })}
+        </div>
+        <div className="text-muted-foreground">{t("assistant.oldExtensionHow")}</div>
+      </div>
+      <Button size="sm" variant="outline" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
+        {recheck.isPending ? t("assistant.rechecking") : t("assistant.recheck")}
+      </Button>
     </div>
   );
 }

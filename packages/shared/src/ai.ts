@@ -13,6 +13,44 @@ import {
   SaleLookup,
 } from "./platform-api.js";
 
+const Column = z
+  .string()
+  .regex(/^[A-Za-z]{1,3}$/)
+  .describe("A column by its letter, as in Excel: A, B, … AA");
+
+/**
+ * Reads a spreadsheet or CSV the user attached to the chat; runs on the PC, over the whole file.
+ * Rows can be filtered; with group_by or sum it returns counts and totals instead of rows.
+ */
+export const ReadAttachmentInput = z.object({
+  /** The file name as attached. */
+  file: z.string().min(1).max(200),
+  /** Sheet name; the first sheet when absent. */
+  sheet: z.string().max(100).optional(),
+  /** Row numbers (1-based, inclusive) to look at; the whole sheet when absent. */
+  from: z.number().int().min(1).optional(),
+  to: z.number().int().min(1).optional(),
+  where: z
+    .array(
+      z.object({
+        column: Column,
+        op: z.enum(["=", "!=", "contains", ">", ">=", "<", "<=", "empty", "not_empty"]),
+        value: z.string().max(200).optional(),
+      }),
+    )
+    .max(10)
+    .optional(),
+  /** Groups the matching rows by a column's value, or by the day or month of a date column. */
+  group_by: z.object({ column: Column, by: z.enum(["value", "day", "month"]).default("value") }).optional(),
+  /** Columns to total (numbers like "1 234 567,89" are read too). */
+  sum: z.array(Column).max(10).optional(),
+  /** Columns to return when listing rows; all when absent. */
+  columns: z.array(Column).max(30).optional(),
+  /** Rows (or groups) to return, at most 500; 200 by default. */
+  limit: z.number().int().min(1).max(500).optional(),
+});
+export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
+
 /**
  * Tools the assistant may call; the desktop runs them through PlatformAPI. The read tools run at
  * once. The propose_* tools never write: the desktop shows the document to the user, and only the
@@ -26,6 +64,7 @@ export const AI_TOOLS = {
   }),
   run_query: RunQueryInput,
   get_object: GetObjectInput,
+  read_attachment: ReadAttachmentInput,
   propose_change: ChangeInput,
   propose_invoice_issued: z.object({ sale: SaleLookup }),
   propose_invoice_received: InvoiceReceivedDraft,
@@ -38,7 +77,11 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoice_received",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
-export type AiReadTool = Exclude<AiToolName, AiProposalTool>;
+/** Tools that run in the app itself, over the chat's attached files, not in 1C. */
+export const AI_LOCAL_TOOLS = ["read_attachment"] as const;
+export type AiLocalTool = (typeof AI_LOCAL_TOOLS)[number];
+/** Tools that read 1C. */
+export type AiReadTool = Exclude<AiToolName, AiProposalTool | AiLocalTool>;
 
 export function isProposalTool(name: AiToolName): name is AiProposalTool {
   return (AI_PROPOSAL_TOOLS as readonly string[]).includes(name);

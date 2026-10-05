@@ -485,7 +485,11 @@ describe("assistant", () => {
         content: [
           {
             type: "document",
-            source: { type: "text", media_type: "text/plain", data: "Контрагент;Сумма\nООО Тест;1500000" },
+            source: {
+              type: "text",
+              media_type: "text/plain",
+              data: "### oborot.csv (2 rows, columns A–B)\nrow\tA\tB\n1\tКонтрагент\tСумма\n2\tООО Тест\t1500000",
+            },
             title: "oborot.csv",
           },
           {
@@ -517,6 +521,58 @@ describe("assistant", () => {
             { kind: "assistant", text: "Jami 1 750 000,5 so'm." },
           ],
         },
+      });
+    });
+
+    it("sends a large statement as a summary, and totals the whole file on the PC when asked", async () => {
+      const lines = ["Сана;Контрагент;Сумма"];
+      for (let i = 0; i < 3000; i++) {
+        const month = (i % 3) + 1;
+        lines.push(`${String((i % 28) + 1).padStart(2, "0")}.0${month}.2026;ООО Контрагент ${i};1 000,50`);
+      }
+      const csv = new TextEncoder().encode(lines.join("\n"));
+      const { assistant, store, company, proxy, events } = setup([
+        () => [
+          {
+            type: "message",
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_f",
+                name: "read_attachment",
+                input: { file: "vypiska.csv", group_by: { column: "A", by: "month" }, sum: ["C"], from: 2 },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "Mos." }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({
+        companyId: company.id,
+        text: "Solishtir",
+        files: [{ name: "vypiska.csv", data: csv }],
+      });
+      const sent = (proxy.requests[0]!.messages[0]!.content as { source?: { data: string } }[])[0]!.source!
+        .data;
+      expect(sent).toContain("This file is large (3001 rows)");
+      expect(sent).toContain("read_attachment");
+      expect(sent.length).toBeLessThan(10_000);
+      expect(sent).toContain("3001\t"); // the last row is shown too
+
+      const result = (proxy.requests[1]!.messages.at(-1)!.content as unknown as { content: string }[])[0]!;
+      expect(JSON.parse(result.content)).toMatchObject({
+        matchedRows: 3000,
+        groups: [
+          ["2026-01", 1000, 1000500],
+          ["2026-02", 1000, 1000500],
+          ["2026-03", 1000, 1000500],
+        ],
+      });
+      expect(events.find((e) => e.type === "tool")).toMatchObject({
+        name: "read_attachment",
+        detail: "vypiska.csv · by A (month) · sum C · rows 2–end",
       });
     });
 

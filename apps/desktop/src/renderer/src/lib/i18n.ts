@@ -82,6 +82,12 @@ const en = {
     deleteChat: "Delete chat",
     deleteConfirm: "Delete this chat? It cannot be restored.",
     historyNote: "Chats are saved on this PC only.",
+    oldExtension:
+      "The PlatformAPI extension in this 1C base is version {{version}}; the assistant needs {{needed}} to create or change documents.",
+    oldExtensionHow:
+      "Questions still work. To update: back up the base, then in the Configurator open the extension, choose «Загрузить конфигурацию из файлов» with the new PlatformAPI files and press F7. Then check again here.",
+    recheck: "Check again",
+    rechecking: "Checking…",
     newChat: "New conversation",
     readOnlyNote:
       "The assistant can be wrong: check important figures in 1C. Documents are created only when you confirm.",
@@ -91,6 +97,7 @@ const en = {
       run_query: "Querying 1C:",
       propose_invoice_issued: "Finding the sale:",
       get_object: "Reading from 1C:",
+      read_attachment: "Reading the file:",
       propose_change: "Preparing:",
     },
     proposal: {
@@ -303,6 +310,12 @@ const ru: Dict = {
     deleteChat: "Удалить чат",
     deleteConfirm: "Удалить этот чат? Восстановить его будет нельзя.",
     historyNote: "Чаты хранятся только на этом ПК.",
+    oldExtension:
+      "В этой базе 1С расширение PlatformAPI версии {{version}}; чтобы создавать и изменять документы, ассистенту нужна {{needed}}.",
+    oldExtensionHow:
+      "Вопросы работают и так. Как обновить: сделайте копию базы, в Конфигураторе откройте расширение, выберите «Загрузить конфигурацию из файлов» с новыми файлами PlatformAPI и нажмите F7. Затем проверьте здесь ещё раз.",
+    recheck: "Проверить ещё раз",
+    rechecking: "Проверяем…",
     newChat: "Новый разговор",
     readOnlyNote:
       "Ассистент может ошибаться: важные цифры проверяйте в 1С. Документы создаются только после вашего подтверждения.",
@@ -312,6 +325,7 @@ const ru: Dict = {
       run_query: "Запрос к 1С:",
       propose_invoice_issued: "Ищу реализацию:",
       get_object: "Читаю из 1С:",
+      read_attachment: "Читаю файл:",
       propose_change: "Готовлю:",
     },
     proposal: {
@@ -522,6 +536,12 @@ const uz: Dict = {
     deleteChat: "Suhbatni oʻchirish",
     deleteConfirm: "Bu suhbat oʻchirilsinmi? Uni qaytarib boʻlmaydi.",
     historyNote: "Suhbatlar faqat shu kompyuterda saqlanadi.",
+    oldExtension:
+      "Bu 1C bazasida PlatformAPI kengaytmasi {{version}} versiyada; hujjat yaratish va oʻzgartirish uchun yordamchiga {{needed}} kerak.",
+    oldExtensionHow:
+      "Savollar baribir ishlaydi. Yangilash: bazaning nusxasini oling, Konfiguratorda kengaytmani oching, yangi PlatformAPI fayllari bilan «Загрузить конфигурацию из файлов» ni tanlang va F7 ni bosing. Soʻng shu yerda qayta tekshiring.",
+    recheck: "Qayta tekshirish",
+    rechecking: "Tekshirilmoqda…",
     newChat: "Yangi suhbat",
     readOnlyNote:
       "Yordamchi xato qilishi mumkin: muhim raqamlarni 1C da tekshiring. Hujjatlar faqat sizning tasdigʻingizdan keyin yaratiladi.",
@@ -531,6 +551,7 @@ const uz: Dict = {
       run_query: "1C ga soʻrov:",
       propose_invoice_issued: "Sotuvni qidiryapman:",
       get_object: "1C dan oʻqiyapman:",
+      read_attachment: "Faylni oʻqiyapman:",
       propose_change: "Tayyorlayapman:",
     },
     proposal: {
