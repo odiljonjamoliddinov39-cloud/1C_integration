@@ -305,6 +305,13 @@ describe.skipIf(!available)("control system API", () => {
     const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
     const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
 
+    // Cache reads count a tenth: five caps' worth of them is half a day.
+    await db.db
+      .insert(aiUsage)
+      .values({ ...ids, ...usage, inputTokens: 0, cacheReadTokens: 5 * config.AI_DAILY_TOKENS });
+    expect((await post("/v1/ai/chat", chat, reg.accessToken)).statusCode).toBe(200);
+    await db.sql`TRUNCATE ai_usage`;
+
     await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
     expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_DAILY_LIMIT");
 

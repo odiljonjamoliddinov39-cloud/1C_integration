@@ -26,6 +26,7 @@ import type { Db } from "../db/client.js";
 import { accounts, adminAudit, admins, devices, subscriptions, users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Tokens } from "../lib/tokens.js";
+import { QUOTA_TOKENS } from "../ai/quota.js";
 import { effectiveStatus } from "../service.js";
 
 const DAY = 86_400_000;
@@ -150,7 +151,7 @@ export class AdminService {
     const current = subs[0];
     const quota = await this.db.execute<{ quota: number; used: number }>(sql`
       select p.ai_token_quota as quota,
-        coalesce((select sum(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens)
+        coalesce((select sum(${QUOTA_TOKENS})
           from ai_usage where account_id = ${id} and created_at >= ${new Date(current?.starts_at ?? 0).toISOString()}::timestamptz), 0)::float8 as used
       from subscriptions s join plans p on p.id = s.plan_id
       where s.account_id = ${id} order by s.ends_at desc limit 1`);

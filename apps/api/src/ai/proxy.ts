@@ -15,6 +15,7 @@ import { HttpError } from "../lib/errors.js";
 import { type Service, effectiveStatus } from "../service.js";
 import { type AiModel, usageOf } from "./model.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock } from "./prompt.js";
+import { QUOTA_TOKENS } from "./quota.js";
 
 const MAX_TOKENS = 16_000;
 
@@ -105,7 +106,7 @@ export class AiProxy {
   private async tokensSince(accountId: string, since: Date): Promise<number> {
     const [row] = await this.db
       .select({
-        total: sql<string>`coalesce(sum(${aiUsage.inputTokens} + ${aiUsage.outputTokens} + ${aiUsage.cacheReadTokens} + ${aiUsage.cacheWriteTokens}), 0)`,
+        total: sql<string>`coalesce(sum(${QUOTA_TOKENS}), 0)`,
       })
       .from(aiUsage)
       .where(and(eq(aiUsage.accountId, accountId), gte(aiUsage.createdAt, since)));
