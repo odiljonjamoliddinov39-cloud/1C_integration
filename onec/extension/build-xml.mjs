@@ -67,18 +67,23 @@ const ID = {
   attributes: {
     Source: "c5b7eb4f-f235-479f-96e7-b9477e2dc306",
     ExternalID: "630f934e-d3f4-4d21-ab78-1f19a918b137",
-    Document: "7dfa38ed-0f08-460d-a5c8-e65c193a23f8",
+    DocumentType: "13907a83-44e2-4476-8942-8800f4224b95",
+    DocumentID: "7dfa38ed-0f08-460d-a5c8-e65c193a23f8",
+    DocumentPresentation: "30701462-d2e8-4341-8630-9565b819524f",
     Operation: "084d5489-8162-4986-ab50-e2c9e6b0a21b",
     UserName: "812dad67-70bd-49d6-a876-b10b87632f60",
     CreatedAt: "7a83191b-abba-4319-9a0e-d1eb6122ebb2",
   },
 };
 
-/** Common modules: name, synonym, privileged (TD §5; README.md "Common modules"). */
+/**
+ * Common modules: name, synonym, privileged. Extensions may not have privileged modules (the
+ * Configurator refuses them), so PlatformAPI_Log turns privileged mode on in its own code.
+ */
 const MODULES = [
   ["PlatformAPI", "Platform API", false],
   ["PlatformAPI_Map", "Platform API: карта имён", false],
-  ["PlatformAPI_Log", "Platform API: журнал", true],
+  ["PlatformAPI_Log", "Platform API: журнал", false],
 ];
 
 const esc = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -180,11 +185,17 @@ function commonModule(name, synonym, privileged) {
 const string = (length) =>
   `<v8:Type>xs:string</v8:Type>\n\t\t\t\t\t\t<v8:StringQualifiers>\n\t\t\t\t\t\t\t<v8:Length>${length}</v8:Length>\n\t\t\t\t\t\t\t<v8:AllowedLength>Variable</v8:AllowedLength>\n\t\t\t\t\t\t</v8:StringQualifiers>`;
 
-/** PlatformLog's attributes: name, synonym, type, indexed (README.md "Catalog PlatformLog"). */
+/**
+ * PlatformLog's attributes: name, synonym, type, indexed (README.md "Catalog PlatformLog"). The
+ * document is kept as its kind and UUID: extensions may not use "any document" types, and a type of
+ * the configuration's own document would have to be borrowed.
+ */
 const ATTRIBUTES = [
   ["Source", "Источник", string(50), false],
   ["ExternalID", "Внешний ID", string(100), true],
-  ["Document", "Документ", "<v8:TypeSet>cfg:DocumentRef</v8:TypeSet>", false],
+  ["DocumentType", "Вид документа", string(100), false],
+  ["DocumentID", "УИД документа", string(36), false],
+  ["DocumentPresentation", "Документ", string(150), false],
   ["Operation", "Операция", string(50), false],
   ["UserName", "Пользователь", string(100), false],
   [

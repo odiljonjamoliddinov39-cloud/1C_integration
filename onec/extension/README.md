@@ -9,7 +9,7 @@ updates.
 src/CommonModules/
   PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived (JSON in, JSON out)
   PlatformAPI_Map.bsl    configuration names, one module per configuration version; extension version
-  PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index (privileged)
+  PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index
 build-xml.mjs            src/ -> xml/: the whole extension as Configurator files
 xml/                     generated, ready to load into a base (do not edit by hand)
 build.ps1                xml/ -> PlatformAPI.cfe with the 1C platform, optionally installs it
@@ -29,17 +29,18 @@ The extension borrows nothing from the configuration, so the same files load int
    folder. Answer _Да_ if it asks to replace the extension.
 4. In the extension's window: _Конфигурация → Обновить конфигурацию базы данных_ (F7) → _Принять_.
 5. In the list of extensions, untick **Безопасный режим** and **Защита от опасных действий** for
-   PlatformAPI: the extension writes documents and its log module runs privileged.
+   PlatformAPI: the extension writes documents, and its log switches to privileged mode while it
+   writes (1C does not allow privileged modules in extensions).
 6. The app's **Ulanishni tekshirish** shows the extension version (`0.2.0`).
 
 What is inside:
 
-| Object                          | Properties                                                                                                |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Common module `PlatformAPI`     | Сервер, Внешнее соединение; the connecting 1C user's rights apply                                         |
-| Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                |
-| Common module `PlatformAPI_Log` | Сервер, Внешнее соединение, **Привилегированный**                                                         |
-| Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `Document`, `Operation`, `UserName`, `CreatedAt` |
+| Object                          | Properties                                                                                                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Common module `PlatformAPI`     | Сервер, Внешнее соединение; the connecting 1C user's rights apply                                                                                          |
+| Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                                                                 |
+| Common module `PlatformAPI_Log` | Сервер, Внешнее соединение; turns privileged mode on in its own procedures                                                                                 |
+| Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `DocumentType`, `DocumentID` (UUID), `DocumentPresentation`, `Operation`, `UserName`, `CreatedAt` |
 
 Duplicates are found by source + `ExternalID` in PlatformLog, written in the same transaction as the
 document, so no attribute is added to the configuration's documents. A document deleted or marked
