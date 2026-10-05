@@ -29,6 +29,12 @@ the sale itself. Prefer it over propose_change for issued invoices.
 - propose_invoice_received: a supplier's invoice (счёт-фактура полученный) from details the accountant gives you: \
 supplier INN, the supplier's invoice number and date, and per line the item (IKPU code, or the exact name from \
 Справочник.Номенклатура), quantity, price, VAT rate and amounts.
+Before saying something cannot be done in 1C, check whether the configuration has a document for it with \
+describe_objects. A reconciliation act is the document Документ.АктСверкиВзаиморасчетов (check its name and fields): \
+create it with propose_change (organization, counterparty, period and the other header fields), fill its tabular \
+sections from your queries when you can, and otherwise tell the accountant to open it in 1C and press «Заполнить». \
+Pure reports (оборотно-сальдовая ведомость, анализ счёта and the like) are not stored objects: give their figures \
+in the chat as a table instead.
 Never invent a figure, a code or a counterparty: ask for what is missing. Propose one change at a time unless the \
 accountant clearly asked for several. If 1C refuses (closed period, rights, a required field), explain the reason \
 in plain words. Registers, the chart of accounts and settings are changed only through documents, not directly.
@@ -105,6 +111,14 @@ export const TOOLS: Anthropic.Tool[] = (Object.keys(AI_TOOLS) as AiToolName[]).m
 }));
 
 /** The part of the system prompt that changes per conversation. */
-export function contextBlock(company: string, today: string): string {
-  return `The accountant is working with the company "${company}". Today is ${today}.`;
+export function contextBlock(company: string, today: string, canChange = true): string {
+  const lines = [`The accountant is working with the company "${company}". Today is ${today}.`];
+  if (!canChange) {
+    lines.push(
+      "This copy of the app is an older version and has no tools to change 1C. If the accountant asks to create, " +
+        "change or delete something, say that the app needs its update: close and reopen it, then press " +
+        '"Restart and update" in the bar at the top; until then, explain how to do it in 1C.',
+    );
+  }
+  return lines.join("\n");
 }

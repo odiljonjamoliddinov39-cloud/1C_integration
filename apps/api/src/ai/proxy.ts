@@ -5,7 +5,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageParam, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import type { AiChatInput, AiEvent } from "@platform/shared";
+import { AI_PROPOSAL_TOOLS, type AiChatInput, type AiEvent, LEGACY_AI_TOOLS } from "@platform/shared";
 import { and, eq, gte, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
@@ -61,6 +61,10 @@ export class AiProxy {
   ): Promise<void> {
     if (!this.model)
       return send({ type: "error", code: "AI_NOT_CONFIGURED", message: "No AI on the server" });
+    // Only the tools this app version can run: an older app gets the read tools and is told to update.
+    const offered = new Set<string>(input.tools ?? LEGACY_AI_TOOLS);
+    const tools = TOOLS.filter((tool) => offered.has(tool.name));
+    const canChange = AI_PROPOSAL_TOOLS.some((name) => offered.has(name));
     const params: BetaMessageStreamParams = {
       model: this.config.AI_MODEL,
       max_tokens: MAX_TOKENS,
@@ -69,9 +73,9 @@ export class AiProxy {
       fallbacks: "default",
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-        { type: "text", text: contextBlock(input.company, new Date().toISOString().slice(0, 10)) },
+        { type: "text", text: contextBlock(input.company, new Date().toISOString().slice(0, 10), canChange) },
       ],
-      tools: TOOLS,
+      tools,
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
       messages: input.messages as BetaMessageParam[],
       output_config: { effort: "medium" },

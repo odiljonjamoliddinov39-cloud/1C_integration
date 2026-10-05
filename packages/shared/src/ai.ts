@@ -58,9 +58,17 @@ export const AiMessage = z.object({
 });
 export type AiMessage = z.infer<typeof AiMessage>;
 
+/** Tools of the first app versions, which do not say which tools they have. */
+export const LEGACY_AI_TOOLS = ["list_organizations", "describe_objects", "run_query"] as const;
+
 export const AiChatInput = z.object({
   /** The company the questions are about (its 1C organization name). */
   company: z.string().trim().min(1).max(200),
+  /**
+   * Tools this app version can run. The proxy offers the model only these, so an older app is
+   * never asked to run a tool it does not have. Absent: LEGACY_AI_TOOLS.
+   */
+  tools: z.array(z.string().max(64)).max(50).optional(),
   messages: z.array(AiMessage).min(1).max(200),
 });
 export type AiChatInput = z.infer<typeof AiChatInput>;

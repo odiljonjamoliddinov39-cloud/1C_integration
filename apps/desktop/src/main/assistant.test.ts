@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakePlatform } from "@platform/onec-client/testing";
-import type { AiChatInput, AiEvent } from "@platform/shared";
+import { AI_TOOLS, type AiChatInput, type AiEvent } from "@platform/shared";
 import { describe, expect, it } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
@@ -114,6 +114,7 @@ describe("assistant", () => {
     // The first request carries the question and the company name.
     expect(proxy.requests[0]).toEqual({
       company: company.name,
+      tools: Object.keys(AI_TOOLS),
       messages: [{ role: "user", content: "5110 qoldig'i qancha?" }],
     });
     // The second sends the assistant turn back unchanged (thinking included), then the 1C rows.

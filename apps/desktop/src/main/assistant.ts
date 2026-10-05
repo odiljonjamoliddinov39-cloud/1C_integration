@@ -73,7 +73,7 @@ export class AssistantService {
         const { client, accessToken } = await this.deps.session.authorized();
         const answer = await client.aiTurn(
           accessToken,
-          { company: company.name, messages: history },
+          { company: company.name, tools: Object.keys(AI_TOOLS), messages: history },
           (delta) => emit({ type: "text", text: delta }),
           abort.signal,
         );

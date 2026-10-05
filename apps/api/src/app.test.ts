@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { AiEvent, LicenseClaims } from "@platform/shared";
+import { AI_TOOLS, AiEvent, LEGACY_AI_TOOLS, LicenseClaims } from "@platform/shared";
 import { decodeJwt, importSPKI, jwtVerify } from "jose";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -204,7 +204,11 @@ describe.skipIf(!available)("control system API", () => {
 
   it("relays an assistant turn as a stream and records its tokens", async () => {
     const { accessToken } = (await post("/v1/auth/register", account)).json();
-    const chat = { company: "ООО «Тест»", messages: [{ role: "user", content: "5110 qoldig'i?" }] };
+    const chat = {
+      company: "ООО «Тест»",
+      tools: Object.keys(AI_TOOLS),
+      messages: [{ role: "user", content: "5110 qoldig'i?" }],
+    };
     expect((await post("/v1/ai/chat", chat)).statusCode).toBe(401);
     aiCalls.length = 0;
 
@@ -235,6 +239,14 @@ describe.skipIf(!available)("control system API", () => {
       "propose_invoice_issued",
       "propose_invoice_received",
     ]);
+    expect(JSON.stringify(params.system)).not.toContain("older version");
+
+    // An app from before the change tools sends no list: it gets the read tools and the update note.
+    const legacy = { company: chat.company, messages: chat.messages };
+    expect((await post("/v1/ai/chat", legacy, accessToken)).statusCode).toBe(200);
+    const old = aiCalls[1]!;
+    expect(old.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual([...LEGACY_AI_TOOLS]);
+    expect(JSON.stringify(old.system)).toContain("older version");
 
     const [usage] = await db.db.select().from(aiUsage);
     expect(usage).toMatchObject({ inputTokens: 1000, outputTokens: 200, cacheReadTokens: 3000 });
