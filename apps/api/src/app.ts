@@ -9,6 +9,7 @@ import {
   AdminLoginInput,
   CreateAdminInput,
   ExtendInput,
+  RechargeInput,
   AiChatInput,
   type AiEvent,
   LicenseCheckInput,
@@ -181,6 +182,9 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   });
   app.post("/v1/admin/accounts/:id/extend", async (req) =>
     admin.extend(await adminAuth(req), parse(idParam, req.params).id, parse(ExtendInput, req.body)),
+  );
+  app.post("/v1/admin/accounts/:id/recharge", async (req) =>
+    admin.recharge(await adminAuth(req), parse(idParam, req.params).id, parse(RechargeInput, req.body)),
   );
   app.post("/v1/admin/accounts/:id/block", async (req) =>
     admin.setBlocked(await adminAuth(req), parse(idParam, req.params).id, true),

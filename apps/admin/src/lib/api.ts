@@ -83,6 +83,8 @@ export const api = {
   account: (id: string) => request<AccountDetail>("GET", `/accounts/${id}`),
   extend: (id: string, days: number, reason: string) =>
     request<AccountDetail>("POST", `/accounts/${id}/extend`, { days, reason }),
+  recharge: (id: string, tokens: number, reason: string) =>
+    request<AccountDetail>("POST", `/accounts/${id}/recharge`, { tokens, reason }),
   setBlocked: (id: string, blocked: boolean) =>
     request<AccountDetail>("POST", `/accounts/${id}/${blocked ? "block" : "unblock"}`),
   setDeviceRevoked: (id: string, revoked: boolean) =>

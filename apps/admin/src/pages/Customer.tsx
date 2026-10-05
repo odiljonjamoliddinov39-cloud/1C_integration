@@ -32,6 +32,7 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
   if (!d) return null;
   const a = d.account;
   const quotaShare = d.aiQuota > 0 ? Math.min(1, d.aiUsedTokens / d.aiQuota) : 0;
+  const todayShare = d.aiDailyLimit > 0 ? Math.min(1, d.aiUsedToday / d.aiDailyLimit) : 0;
 
   return (
     <div className="space-y-4">
@@ -63,7 +64,7 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
       </div>
       <ErrorText error={block.error ?? device.error} />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Plan" value={a.plan ?? "—"} note={`ends ${date(a.endsAt)} (${relative(a.endsAt)})`} />
         <Stat
           label="PCs in use"
@@ -73,7 +74,14 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         <Stat
           label="AI quota used"
           value={`${Math.round(quotaShare * 100)}%`}
-          note={`${compact(d.aiUsedTokens)} of ${compact(d.aiQuota)} tokens this period`}
+          note={`${compact(d.aiUsedTokens)} of ${compact(d.aiQuota)} tokens this period${
+            d.aiGranted > 0 ? ` (${compact(d.aiGranted)} recharged)` : ""
+          }`}
+        />
+        <Stat
+          label="AI today"
+          value={`${Math.round(todayShare * 100)}%`}
+          note={`${compact(d.aiUsedToday)} of ${compact(d.aiDailyLimit)} tokens (resets 00:00 UTC)`}
         />
         <Stat
           label="AI cost, 30 days"
@@ -82,7 +90,10 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         />
       </div>
 
-      <ExtendForm id={id} onDone={update} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ExtendForm id={id} onDone={update} />
+        <RechargeForm id={id} detail={d} onDone={update} />
+      </div>
 
       <Section title="PCs">
         {d.devices.length === 0 ? (
@@ -228,6 +239,83 @@ function ExtendForm({ id, onDone }: { id: string; onDone: (d: AccountDetail) => 
       <p className="mt-2 text-xs text-muted-foreground">
         Adds the days to the end date (or to today if it has passed) and reactivates a suspended account. The
         PCs pick it up at their next license check (within 6 hours, or when the app restarts).
+      </p>
+    </Section>
+  );
+}
+
+const RECHARGE_PRESETS = [500_000, 1_000_000, 5_000_000];
+
+/** Adds AI tokens: to this period's quota and to today's cap, so a stopped customer goes on at once. */
+function RechargeForm({
+  id,
+  detail,
+  onDone,
+}: {
+  id: string;
+  detail: AccountDetail;
+  onDone: (d: AccountDetail) => void;
+}) {
+  const [tokens, setTokens] = useState("1000000");
+  const [reason, setReason] = useState("");
+  const recharge = useMutation({
+    mutationFn: () => api.recharge(id, Number(tokens), reason),
+    onSuccess: (data) => {
+      setReason("");
+      onDone(data);
+    },
+  });
+  const amount = Number(tokens);
+  const valid = Number.isInteger(amount) && amount >= 1_000 && amount <= 100_000_000;
+  const stopped =
+    detail.aiUsedToday >= detail.aiDailyLimit
+      ? "Stopped by today's limit."
+      : detail.aiUsedTokens >= detail.aiQuota
+        ? "Stopped by the quota."
+        : null;
+  return (
+    <Section title="Recharge AI tokens">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (window.confirm(`Add ${compact(amount)} AI tokens to this customer?`)) recharge.mutate();
+        }}
+      >
+        {RECHARGE_PRESETS.map((preset) => (
+          <Button
+            key={preset}
+            type="button"
+            variant={amount === preset ? "primary" : "outline"}
+            onClick={() => setTokens(String(preset))}
+          >
+            +{compact(preset)}
+          </Button>
+        ))}
+        <Input
+          className="w-32"
+          type="number"
+          min={1000}
+          max={100_000_000}
+          step={1000}
+          aria-label="Tokens"
+          value={tokens}
+          onChange={(e) => setTokens(e.target.value)}
+        />
+        <Input
+          className="min-w-48 flex-1"
+          placeholder="Reason, e.g. paid 50 000 so'm"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        <Button disabled={recharge.isPending || !valid}>Recharge</Button>
+        {recharge.isSuccess && <span className="text-sm text-success">Done</span>}
+      </form>
+      <ErrorText error={recharge.error} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        {stopped && <b className="text-destructive">{stopped} </b>}
+        Adds the tokens to this period&apos;s quota and to today&apos;s limit, so the assistant works again at
+        once. Cached prompt tokens count a tenth.
       </p>
     </Section>
   );

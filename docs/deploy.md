@@ -58,8 +58,10 @@ The address is printed at the end of the run. Every push to `main` that changes 
    goes into the desktop app.
 
 Limits: each trial account may use 1 000 000 tokens (about $1–3 of Claude usage) and at most
-`AI_DAILY_TOKENS` (default 300 000) per day. Cached prompt tokens (re-read on every step of an
-answer) count a tenth, as they cost a tenth. Usage per request is in the `ai_usage` table:
+`AI_DAILY_TOKENS` (default 1 000 000) per day. Cached prompt tokens (re-read on every step of an
+answer) count a tenth, as they cost a tenth. To give a customer more, open them in the admin
+dashboard and use **Recharge AI tokens**: the tokens are added to this period's quota and to
+today's limit at once, and the recharge is written to the audit log. Usage per request is in the `ai_usage` table:
 
 ```bash
 docker compose exec postgres psql -U platform platform -c \

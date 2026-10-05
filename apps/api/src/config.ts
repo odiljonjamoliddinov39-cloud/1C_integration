@@ -29,7 +29,7 @@ const Env = z.object({
   /** TD §8: default Sonnet 5.5. */
   AI_MODEL: z.string().default("claude-sonnet-5-5"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
-  AI_DAILY_TOKENS: z.coerce.number().int().positive().default(300_000),
+  AI_DAILY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
   /**
    * The first admin (owner) of the admin dashboard. On start the API creates it, or sets this
    * password when it changed, so the password can be reset by changing the secret.

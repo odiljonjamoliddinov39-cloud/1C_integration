@@ -6,7 +6,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageParam, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { AI_PROPOSAL_TOOLS, type AiChatInput, type AiEvent, LEGACY_AI_TOOLS } from "@platform/shared";
-import { and, eq, gte, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -15,7 +14,7 @@ import { HttpError } from "../lib/errors.js";
 import { type Service, effectiveStatus } from "../service.js";
 import { type AiModel, usageOf } from "./model.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock } from "./prompt.js";
-import { QUOTA_TOKENS } from "./quota.js";
+import { aiLimits } from "./quota.js";
 
 const MAX_TOKENS = 16_000;
 
@@ -39,16 +38,20 @@ export class AiProxy {
     if (status === "suspended" || status === "cancelled") {
       throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "Renew the subscription to use the assistant");
     }
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    if ((await this.tokensSince(accountId, startOfDay)) >= this.config.AI_DAILY_TOKENS) {
+    const limits = await aiLimits(
+      this.db,
+      accountId,
+      { startsAt: subscription.startsAt, planQuota: plan.aiTokenQuota },
+      this.config.AI_DAILY_TOKENS,
+    );
+    if (limits.usedToday >= limits.dailyLimit) {
       throw new HttpError(
         429,
         "AI_DAILY_LIMIT",
         "Today's assistant limit is used up; it resets at midnight UTC",
       );
     }
-    if ((await this.tokensSince(accountId, subscription.startsAt)) >= plan.aiTokenQuota) {
+    if (limits.used >= limits.quota) {
       throw new HttpError(429, "AI_QUOTA_EXCEEDED", "The plan's assistant quota is used up");
     }
   }
@@ -101,16 +104,6 @@ export class AiProxy {
 
   private async record(who: { accountId: string; userId: string }, usage: ReturnType<typeof usageOf>) {
     await this.db.insert(aiUsage).values({ accountId: who.accountId, userId: who.userId, ...usage });
-  }
-
-  private async tokensSince(accountId: string, since: Date): Promise<number> {
-    const [row] = await this.db
-      .select({
-        total: sql<string>`coalesce(sum(${QUOTA_TOKENS}), 0)`,
-      })
-      .from(aiUsage)
-      .where(and(eq(aiUsage.accountId, accountId), gte(aiUsage.createdAt, since)));
-    return Number(row?.total ?? 0);
   }
 }
 

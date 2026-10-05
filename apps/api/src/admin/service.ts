@@ -15,6 +15,7 @@ import type {
   CreateAdminInput,
   ExtendInput,
   Overview,
+  RechargeInput,
   SubscriptionStatus,
   UsageDay,
   UsageRow,
@@ -23,10 +24,10 @@ import { desc, eq, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
-import { accounts, adminAudit, admins, devices, subscriptions, users } from "../db/schema.js";
+import { accounts, adminAudit, admins, aiGrants, devices, subscriptions, users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Tokens } from "../lib/tokens.js";
-import { QUOTA_TOKENS } from "../ai/quota.js";
+import { aiLimits } from "../ai/quota.js";
 import { effectiveStatus } from "../service.js";
 
 const DAY = 86_400_000;
@@ -130,8 +131,9 @@ export class AdminService {
       status: SubscriptionStatus;
       starts_at: Date;
       ends_at: Date;
+      ai_token_quota: number;
     }>(sql`
-      select s.id, p.code as plan, s.status, s.starts_at, s.ends_at
+      select s.id, p.code as plan, s.status, s.starts_at, s.ends_at, p.ai_token_quota
       from subscriptions s join plans p on p.id = s.plan_id
       where s.account_id = ${id} order by s.ends_at desc`);
     const deviceRows = await this.db.execute<{
@@ -149,12 +151,12 @@ export class AdminService {
       select inn, name, connected_at from companies where account_id = ${id} order by connected_at`);
 
     const current = subs[0];
-    const quota = await this.db.execute<{ quota: number; used: number }>(sql`
-      select p.ai_token_quota as quota,
-        coalesce((select sum(${QUOTA_TOKENS})
-          from ai_usage where account_id = ${id} and created_at >= ${new Date(current?.starts_at ?? 0).toISOString()}::timestamptz), 0)::float8 as used
-      from subscriptions s join plans p on p.id = s.plan_id
-      where s.account_id = ${id} order by s.ends_at desc limit 1`);
+    const limits = await aiLimits(
+      this.db,
+      id,
+      { startsAt: new Date(current?.starts_at ?? 0), planQuota: Number(current?.ai_token_quota ?? 0) },
+      this.config.AI_DAILY_TOKENS,
+    );
 
     return {
       account,
@@ -185,8 +187,11 @@ export class AdminService {
         name: c.name,
         connectedAt: new Date(c.connected_at).toISOString(),
       })),
-      aiQuota: Number(quota[0]?.quota ?? 0),
-      aiUsedTokens: Number(quota[0]?.used ?? 0),
+      aiQuota: limits.quota,
+      aiUsedTokens: limits.used,
+      aiGranted: limits.granted,
+      aiDailyLimit: limits.dailyLimit,
+      aiUsedToday: limits.usedToday,
       usage: await this.usageByDay(30, id),
       audit: await this.auditEntries(`account:${id}`, 50),
     };
@@ -212,6 +217,26 @@ export class AdminService {
       reason: input.reason,
       from: current.endsAt.toISOString(),
       to: endsAt.toISOString(),
+    });
+    return this.account(accountId);
+  }
+
+  /**
+   * Adds AI tokens to an account ("recharge", e.g. after a payment): they raise this period's quota
+   * and today's cap, so a customer stopped by either can go on at once.
+   */
+  async recharge(admin: AdminIdentity, accountId: string, input: RechargeInput): Promise<AccountDetail> {
+    const account = await this.db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
+    if (!account) throw new HttpError(404, "NOT_FOUND", "No such account");
+    await this.db.insert(aiGrants).values({
+      accountId,
+      tokens: input.tokens,
+      adminId: admin.id,
+      reason: input.reason,
+    });
+    await this.audit(admin.id, "ai.recharge", `account:${accountId}`, {
+      tokens: input.tokens,
+      reason: input.reason,
     });
     return this.account(accountId);
   }

@@ -42,6 +42,14 @@ export const ExtendInput = z.object({
 });
 export type ExtendInput = z.infer<typeof ExtendInput>;
 
+/** Adds AI tokens to an account: to this period's quota, and to today's cap. */
+export const RechargeInput = z.object({
+  tokens: z.number().int().min(1_000).max(100_000_000),
+  /** Why, for the audit log (e.g. "paid 50 000 so'm"). */
+  reason: z.string().trim().max(300).default(""),
+});
+export type RechargeInput = z.infer<typeof RechargeInput>;
+
 export const AccountsQuery = z.object({
   q: z.string().trim().max(100).optional(),
   status: SubscriptionStatus.optional(),
@@ -117,8 +125,14 @@ export const AccountDetail = z.object({
   ),
   devices: z.array(AdminDeviceView),
   companies: z.array(z.object({ inn: z.string(), name: z.string(), connectedAt: z.string() })),
+  /** Plan quota plus the tokens added this period; cached prompt tokens count a tenth. */
   aiQuota: z.number(),
   aiUsedTokens: z.number(),
+  /** Tokens added by admins this period (part of aiQuota). */
+  aiGranted: z.number(),
+  /** The daily cap plus the tokens added today, and today's use (UTC day). */
+  aiDailyLimit: z.number(),
+  aiUsedToday: z.number(),
   usage: z.array(UsageDay),
   audit: z.array(AuditEntry),
 });

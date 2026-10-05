@@ -176,6 +176,25 @@ export const admins = pgTable(
 );
 
 /** Every admin action (TD §10 admin_audit). The target names what it touched, e.g. "account:<id>". */
+/**
+ * AI tokens an admin added to an account ("recharge"). They raise the plan quota for the current
+ * subscription period, and the daily cap on the day they are added, so a blocked account can go on.
+ */
+export const aiGrants = pgTable(
+  "ai_grants",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    tokens: integer("tokens").notNull(),
+    adminId: uuid("admin_id").references(() => admins.id, { onDelete: "set null" }),
+    reason: text("reason").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_grants_account_idx").on(t.accountId, t.createdAt)],
+);
+
 export const adminAudit = pgTable(
   "admin_audit",
   {

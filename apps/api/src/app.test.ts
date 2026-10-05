@@ -10,7 +10,7 @@ import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { aiUsage, subscriptions } from "./db/schema.js";
+import { aiGrants, aiUsage, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -502,6 +502,56 @@ describe.skipIf(!available)("control system API", () => {
       await again.close();
       await buildApp(db.db, config).then((a) => a.close()); // back to the original password
       expect((await post("/v1/admin/login", boss)).statusCode).toBe(200);
+    });
+
+    it("recharges AI tokens: a customer stopped by the daily cap or the quota goes on at once", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      const ids = { accountId: customer.me.account.id, userId: customer.me.user.id };
+      const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
+      const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
+      const ask = async () => {
+        const res = await post("/v1/ai/chat", chat, customer.accessToken);
+        return res.statusCode === 200 ? "answered" : (res.json().code as string);
+      };
+      const token = await adminLogin();
+      const id = customer.me.account.id;
+
+      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
+      expect(await ask()).toBe("AI_DAILY_LIMIT");
+      const before = (await call("GET", `/v1/admin/accounts/${id}`, token)).json();
+      expect(before).toMatchObject({
+        aiUsedToday: config.AI_DAILY_TOKENS,
+        aiDailyLimit: config.AI_DAILY_TOKENS,
+      });
+
+      const res = await call("POST", `/v1/admin/accounts/${id}/recharge`, token, {
+        tokens: 500_000,
+        reason: "paid 50 000 so'm",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        aiGranted: 500_000,
+        aiQuota: before.aiQuota + 500_000,
+        aiDailyLimit: config.AI_DAILY_TOKENS + 500_000,
+      });
+      expect(await ask()).toBe("answered");
+
+      // Recharged tokens also lift the plan quota; yesterday's top-up no longer lifts today's cap.
+      await db.sql`TRUNCATE ai_usage`;
+      await db.db.update(subscriptions).set({ startsAt: new Date(Date.now() - 3 * 86_400_000) });
+      await db.db.update(aiGrants).set({ createdAt: new Date(Date.now() - 86_400_000) });
+      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: before.aiQuota + 400_000 });
+      await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000) });
+      expect(await ask()).toBe("answered");
+      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 200_000 });
+      await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000) });
+      expect(await ask()).toBe("AI_QUOTA_EXCEEDED");
+
+      expect((await call("POST", `/v1/admin/accounts/${id}/recharge`, token, { tokens: 0 })).statusCode).toBe(
+        400,
+      );
+      const audit = (await call("GET", `/v1/admin/accounts/${id}`, token)).json().audit;
+      expect(audit[0]).toMatchObject({ action: "ai.recharge", payload: { tokens: 500_000 } });
     });
   });
 
