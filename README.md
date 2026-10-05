@@ -42,6 +42,11 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
 - Server: `apps/api/src/ai/` (prompt and tools, Claude call, quota). Model `claude-sonnet-5-5` (TD §8),
   `AI_MODEL` to change it; per-account daily cap `AI_DAILY_TOKENS`; plan quota `plans.ai_token_quota`.
 - Desktop: `apps/desktop/src/main/assistant.ts` (the tool loop) and `screens/Assistant.tsx`.
+- Files: PDF and images go to the model as they are (photos scaled to 1568 px); Excel (.xlsx), Word
+  (.docx), CSV and text files are read on the PC and sent as text (`main/attachments.ts`). Up to 5
+  files of 10 MB per question; the server accepts files inline only.
+- Chat history: each chat is saved on the PC, encrypted with Windows DPAPI like the 1C passwords,
+  newest 200 per company (`main/chats.ts`); a reopened chat continues where it stopped.
 - The API key reaches the server from the `ANTHROPIC_API_KEY` repository secret on deploy
   ([`docs/deploy.md`](docs/deploy.md)).
 

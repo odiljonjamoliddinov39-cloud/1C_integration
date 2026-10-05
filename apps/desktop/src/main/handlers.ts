@@ -2,10 +2,14 @@
  * Everything the UI can ask the main process to do. Inputs from the renderer are validated here:
  * the renderer is treated as untrusted.
  */
+import { z } from "zod";
+
 import {
   AddCompanyInput,
   AssistantInput,
   type AppInfo,
+  type ChatSummary,
+  type ChatView,
   type CompanyView,
   ConnectionInput,
   type ConnectionTestResult,
@@ -27,6 +31,9 @@ export interface HandlerDeps {
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
 }
+
+/** Chats are files named by these ids: anything but a UUID is refused before it reaches the disk. */
+const chatIds = z.object({ companyId: z.uuid(), chatId: z.uuid() });
 
 function invalid(error: { issues: { message: string }[] }): Result<never> {
   return { ok: false, code: "VALIDATION", message: error.issues.map((i) => i.message).join("; ") };
@@ -95,7 +102,7 @@ export function createHandlers({ store, session, connector, assistant, info, pic
     },
 
     removeCompany: async (id: unknown): Promise<void> => {
-      assistant.reset(String(id));
+      assistant.removeCompany(String(id));
       store.removeCompany(String(id));
     },
 
@@ -114,6 +121,19 @@ export function createHandlers({ store, session, connector, assistant, info, pic
     assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),
     assistantDecide: async (id: unknown, proposalId: unknown, approve: unknown): Promise<void> =>
       assistant.decide(String(id), String(proposalId), approve === true),
+
+    assistantChats: async (id: unknown): Promise<ChatSummary[]> =>
+      z.uuid().safeParse(id).success ? assistant.chats(String(id)) : [],
+
+    assistantOpenChat: async (id: unknown, chatId: unknown): Promise<Result<ChatView>> => {
+      const ids = chatIds.safeParse({ companyId: id, chatId });
+      return ids.success ? assistant.openChat(ids.data.companyId, ids.data.chatId) : invalid(ids.error);
+    },
+
+    assistantDeleteChat: async (id: unknown, chatId: unknown): Promise<Result<null>> => {
+      const ids = chatIds.safeParse({ companyId: id, chatId });
+      return ids.success ? assistant.deleteChat(ids.data.companyId, ids.data.chatId) : invalid(ids.error);
+    },
   };
 }
 

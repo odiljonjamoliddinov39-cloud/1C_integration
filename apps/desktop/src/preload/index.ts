@@ -27,6 +27,9 @@ const bridge: PlatformBridge = {
     reset: (companyId) => ipcRenderer.invoke(CHANNELS.assistantReset, companyId),
     decide: (companyId, proposalId, approve) =>
       ipcRenderer.invoke(CHANNELS.assistantDecide, companyId, proposalId, approve),
+    chats: (companyId) => ipcRenderer.invoke(CHANNELS.assistantChats, companyId),
+    openChat: (companyId, chatId) => ipcRenderer.invoke(CHANNELS.assistantOpenChat, companyId, chatId),
+    deleteChat: (companyId, chatId) => ipcRenderer.invoke(CHANNELS.assistantDeleteChat, companyId, chatId),
     onEvent: (listener) => {
       const handler = (_e: unknown, event: AssistantEvent) => listener(event);
       ipcRenderer.on(CHANNELS.assistantEvent, handler);

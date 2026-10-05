@@ -22,7 +22,7 @@ import { ZodError, z } from "zod";
 
 import { type AiModel, claudeModel } from "./ai/model.js";
 import { type AdminIdentity, AdminService } from "./admin/service.js";
-import { AiProxy } from "./ai/proxy.js";
+import { AiProxy, assertInlineFiles } from "./ai/proxy.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
@@ -133,10 +133,13 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   // One model turn of the assistant. The answer streams as newline-delimited JSON (AiEvent).
   app.post(
     "/v1/ai/chat",
-    { bodyLimit: 2 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    // The whole chat comes every turn, with the files attached to it (the app keeps it under 24 MB;
+    // the AI service takes at most 32 MB).
+    { bodyLimit: 30 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
     async (req, reply) => {
       const who = await auth(req);
       const input = parse(AiChatInput, req.body);
+      assertInlineFiles(input);
       await ai.ensureAllowed(who.accountId);
 
       reply.hijack();

@@ -113,6 +113,23 @@ export class AiProxy {
   }
 }
 
+/**
+ * Files come inline, as base64 or text, from the user's PC. A file id or a URL would let a request
+ * reach files or addresses that are not this account's, so they are refused.
+ */
+export function assertInlineFiles(input: AiChatInput): void {
+  const check = (blocks: unknown) => {
+    if (!Array.isArray(blocks)) return;
+    for (const block of blocks as { source?: { type?: unknown }; content?: unknown }[]) {
+      if (block.source !== undefined && block.source.type !== "base64" && block.source.type !== "text") {
+        throw new HttpError(400, "VALIDATION", "Files must be sent inline");
+      }
+      check(block.content); // tool results can hold blocks too
+    }
+  };
+  for (const message of input.messages) check(message.content);
+}
+
 function toErrorEvent(error: unknown): AiEvent {
   if (error instanceof Anthropic.APIUserAbortError) {
     return { type: "error", code: "AI_ABORTED", message: "Stopped" };

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ConnectionInput } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
+import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
 import { SessionService } from "./session.js";
@@ -33,6 +34,7 @@ function setup() {
     return bases.get(key)!;
   });
   const store = new LocalStore(file, secrets);
+  const chats = new ChatStore(join(file, "..", "chats"), secrets);
   const session = new SessionService({
     store,
     machineId: async () => "m".repeat(64),
@@ -43,7 +45,7 @@ function setup() {
     store,
     session,
     connector,
-    assistant: new AssistantService({ store, session, connector, emit: () => undefined }),
+    assistant: new AssistantService({ store, chats, session, connector, emit: () => undefined }),
     info: {
       version: "0.0.0",
       platform: "win32",
@@ -53,7 +55,7 @@ function setup() {
     },
     pickFolder: async () => "D:\\Bases\\TEST",
   });
-  return { handlers, file, seen, store };
+  return { handlers, file, seen, store, chats };
 }
 
 const connection = {
@@ -117,6 +119,43 @@ describe("desktop main handlers", () => {
     expect(await handlers.listCompanies()).toEqual([]);
   });
 
+  it("lists, opens and deletes chats by UUID only, and removes them with the company", async () => {
+    const { handlers, chats } = setup();
+    const org = (await handlers.testConnection(connection)).organizations[0]!;
+    const added = await handlers.addCompany({ ...connection, organization: org });
+    if (!added.ok) throw new Error(added.message);
+    const companyId = added.data.id;
+    const chatId = "6f1c1b7e-1d2a-4a51-9a39-0d4c0f0c2a11";
+    const now = new Date().toISOString();
+    chats.save({
+      id: chatId,
+      companyId,
+      title: "Q",
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      entries: [],
+    });
+
+    expect((await handlers.assistantChats(companyId)).map((c) => c.id)).toEqual([chatId]);
+    expect(await handlers.assistantChats("../x")).toEqual([]);
+    expect(await handlers.assistantOpenChat(companyId, chatId)).toMatchObject({
+      ok: true,
+      data: { title: "Q" },
+    });
+    expect(await handlers.assistantOpenChat(companyId, "../../platform")).toMatchObject({
+      ok: false,
+      code: "VALIDATION",
+    });
+    expect(await handlers.assistantDeleteChat(companyId, "..")).toMatchObject({
+      ok: false,
+      code: "VALIDATION",
+    });
+
+    await handlers.removeCompany(companyId);
+    expect(chats.list(companyId)).toEqual([]);
+  });
+
   it("keeps data across restarts", async () => {
     const { handlers, file } = setup();
     const org = (await handlers.testConnection(connection)).organizations[0]!;
@@ -149,7 +188,13 @@ describe("without secure storage", () => {
       store,
       session,
       connector,
-      assistant: new AssistantService({ store, session, connector, emit: () => undefined }),
+      assistant: new AssistantService({
+        store,
+        chats: new ChatStore(join(file, "..", "chats"), noKeyring),
+        session,
+        connector,
+        emit: () => undefined,
+      }),
       info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
     });

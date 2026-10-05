@@ -1,62 +1,80 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type ClipboardEvent, type DragEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { ChangePreview } from "@platform/shared";
 
-import type { AssistantEvent, CompanyView, Proposal, ProposalOutcome } from "../../../shared/ipc";
+import {
+  ATTACHMENTS,
+  type AssistantEvent,
+  type AttachmentInfo,
+  type AttachmentKind,
+  type CompanyView,
+} from "../../../shared/ipc";
+import { type ChatEntry, applyEvent } from "../../../shared/transcript";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-type Entry =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "tool"; name: string; detail: string }
-  | { kind: "proposal"; id: string; proposal: Proposal; outcome: ProposalOutcome | null }
-  | { kind: "error"; code: string; message: string };
+type Entry = ChatEntry;
 
-/** Conversations of this window, per company. The main process keeps the model's copy. */
-type Transcripts = Record<string, { entries: Entry[]; busy: boolean }>;
+/** The open chat of each company in this window. The main process keeps the model's copy and saves it. */
+/** chatId is null until the first question of a new chat: then the window picks the id. */
+type Transcript = { chatId: string | null; entries: Entry[]; busy: boolean };
+type Transcripts = Record<string, Transcript>;
+
+const NEW_CHAT: Transcript = { chatId: null, entries: [], busy: false };
 
 function apply(transcripts: Transcripts, event: AssistantEvent): Transcripts {
-  const current = transcripts[event.companyId] ?? { entries: [], busy: false };
-  const entries = [...current.entries];
-  const last = entries.at(-1);
-  switch (event.type) {
-    case "text":
-      if (last?.kind === "assistant") entries[entries.length - 1] = { ...last, text: last.text + event.text };
-      else entries.push({ kind: "assistant", text: event.text });
-      return { ...transcripts, [event.companyId]: { entries, busy: true } };
-    case "tool":
-      entries.push({ kind: "tool", name: event.name, detail: event.detail });
-      return { ...transcripts, [event.companyId]: { entries, busy: true } };
-    case "error":
-      entries.push({ kind: "error", code: event.code, message: event.message });
-      return { ...transcripts, [event.companyId]: { entries, busy: false } };
-    case "confirm":
-      entries.push({ kind: "proposal", id: event.id, proposal: event.proposal, outcome: null });
-      return { ...transcripts, [event.companyId]: { entries, busy: true } };
-    case "decided": {
-      const updated = entries.map((e) =>
-        e.kind === "proposal" && e.id === event.id ? { ...e, outcome: event.outcome } : e,
-      );
-      return { ...transcripts, [event.companyId]: { entries: updated, busy: true } };
-    }
-    case "done":
-      return { ...transcripts, [event.companyId]: { entries, busy: false } };
-  }
+  const current = transcripts[event.companyId] ?? NEW_CHAT;
+  const busy = event.type !== "done" && event.type !== "error";
+  return {
+    ...transcripts,
+    [event.companyId]: { ...current, entries: applyEvent(current.entries, event), busy },
+  };
 }
+
+/** A file picked for the next question, read in the window and handed to the main process. */
+interface PendingFile {
+  name: string;
+  size: number;
+  data: Uint8Array<ArrayBuffer>;
+}
+
+function kindOf(name: string): AttachmentKind {
+  const extension = name.toLowerCase().slice(name.lastIndexOf("."));
+  if (extension === ".pdf") return "pdf";
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) return "image";
+  if (extension === ".xlsx") return "spreadsheet";
+  if (extension === ".docx") return "document";
+  return "text";
+}
+
+const sizeText = (bytes: number) =>
+  bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export function AssistantScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Transcripts>({});
 
-  useEffect(() => window.platform.assistant.onEvent((e) => setTranscripts((all) => apply(all, e))), []);
+  useEffect(
+    () =>
+      window.platform.assistant.onEvent((e) => {
+        setTranscripts((all) => apply(all, e));
+        // The answer is saved: the chat list shows it (new chats, newest first).
+        if (e.type === "done" || e.type === "error") {
+          void queryClient.invalidateQueries({ queryKey: ["chats", e.companyId] });
+        }
+      }),
+    [queryClient],
+  );
 
   const list = companies.data ?? [];
   const company = list.find((c) => c.id === selectedId) ?? list[0];
@@ -70,8 +88,11 @@ export function AssistantScreen() {
     );
   }
 
+  const transcript = transcripts[company.id] ?? NEW_CHAT;
+  const setTranscript = (next: Transcript) => setTranscripts((all) => ({ ...all, [company.id]: next }));
+
   return (
-    <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col p-6">
+    <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col p-6">
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{t("assistant.title")}</h1>
@@ -91,24 +112,117 @@ export function AssistantScreen() {
         </select>
       </div>
       {company.aiEnabled ? (
-        <Chat
-          company={company}
-          transcript={transcripts[company.id] ?? { entries: [], busy: false }}
-          onUserMessage={(text) =>
-            setTranscripts((all) => ({
-              ...all,
-              [company.id]: {
-                entries: [...(all[company.id]?.entries ?? []), { kind: "user", text }],
-                busy: true,
-              },
-            }))
-          }
-          onReset={() => setTranscripts((all) => ({ ...all, [company.id]: { entries: [], busy: false } }))}
-        />
+        <div className="flex min-h-0 flex-1 gap-4">
+          <ChatList company={company} transcript={transcript} onOpen={setTranscript} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <Chat
+              company={company}
+              transcript={transcript}
+              onUserMessage={(chatId, text, files) =>
+                setTranscripts((all) => {
+                  const current = all[company.id] ?? NEW_CHAT;
+                  const entry: Entry = { kind: "user", text, ...(files.length > 0 ? { files } : {}) };
+                  return {
+                    ...all,
+                    [company.id]: { chatId, entries: [...current.entries, entry], busy: true },
+                  };
+                })
+              }
+              onReset={() => setTranscript(NEW_CHAT)}
+            />
+          </div>
+        </div>
       ) : (
         <Consent company={company} />
       )}
     </div>
+  );
+}
+
+/** Saved chats of the company, newest first; one click reopens a chat to continue it. */
+function ChatList({
+  company,
+  transcript,
+  onOpen,
+}: {
+  company: CompanyView;
+  transcript: Transcript;
+  onOpen: (transcript: Transcript) => void;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const chats = useQuery({
+    queryKey: ["chats", company.id],
+    queryFn: () => window.platform.assistant.chats(company.id),
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  async function open(chatId: string) {
+    if (chatId === transcript.chatId) return;
+    const result = await window.platform.assistant.openChat(company.id, chatId);
+    if (result.ok) {
+      setError(null);
+      onOpen({ chatId, entries: result.data.entries, busy: false });
+    } else {
+      setError(result.message);
+      await queryClient.invalidateQueries({ queryKey: ["chats", company.id] });
+    }
+  }
+
+  async function remove(chatId: string) {
+    if (!window.confirm(t("assistant.deleteConfirm"))) return;
+    const result = await window.platform.assistant.deleteChat(company.id, chatId);
+    if (!result.ok) return setError(result.message);
+    if (chatId === transcript.chatId) onOpen(NEW_CHAT);
+    await queryClient.invalidateQueries({ queryKey: ["chats", company.id] });
+  }
+
+  // dd.mm.yyyy hh:mm in every language, like the rest of the app (Uzbek month names are not in every build).
+  const date = (iso: string) =>
+    new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
+
+  return (
+    <Card className="flex w-60 shrink-0 flex-col p-2">
+      <Button size="sm" variant="outline" disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
+        + {t("assistant.newChat")}
+      </Button>
+      <div className="mt-2 px-1 text-xs font-medium text-muted-foreground">{t("assistant.history")}</div>
+      <nav aria-label={t("assistant.history")} className="mt-1 flex-1 space-y-0.5 overflow-y-auto">
+        {(chats.data ?? []).length === 0 && (
+          <p className="px-1 py-2 text-xs text-muted-foreground">{t("assistant.noChats")}</p>
+        )}
+        {(chats.data ?? []).map((chat) => (
+          <div
+            key={chat.id}
+            className={cn(
+              "group flex items-start gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-muted",
+              chat.id === transcript.chatId && "bg-muted",
+            )}
+          >
+            <button
+              className="min-w-0 flex-1 text-left disabled:opacity-50"
+              disabled={transcript.busy && chat.id !== transcript.chatId}
+              aria-current={chat.id === transcript.chatId ? "true" : undefined}
+              onClick={() => void open(chat.id)}
+            >
+              <div className="truncate">{chat.title}</div>
+              <div className="text-xs text-muted-foreground">{date(chat.updatedAt)}</div>
+            </button>
+            <button
+              className="invisible px-1 text-muted-foreground group-hover:visible hover:text-destructive focus:visible"
+              title={t("assistant.deleteChat")}
+              aria-label={t("assistant.deleteChat")}
+              disabled={transcript.busy && chat.id === transcript.chatId}
+              onClick={() => void remove(chat.id)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </nav>
+      {error && <p className="px-1 text-xs text-destructive">{error}</p>}
+      <p className="px-1 pt-2 text-xs text-muted-foreground">{t("assistant.historyNote")}</p>
+    </Card>
   );
 }
 
@@ -142,13 +256,17 @@ function Chat({
   onReset,
 }: {
   company: CompanyView;
-  transcript: { entries: Entry[]; busy: boolean };
-  onUserMessage: (text: string) => void;
+  transcript: Transcript;
+  onUserMessage: (chatId: string, text: string, files: AttachmentInfo[]) => void;
   onReset: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const examples = t("assistant.examples", { returnObjects: true }) as string[];
 
@@ -156,17 +274,66 @@ function Chat({
     bottom.current?.scrollIntoView({ block: "end" });
   }, [transcript.entries]);
 
+  /** Checks and reads files picked, dropped or pasted; the main process reads their content. */
+  async function addFiles(list: FileList | File[]) {
+    const picked = [...list];
+    if (picked.length === 0) return;
+    if (files.length + picked.length > ATTACHMENTS.maxFiles) return setFileError(t("errors.TOO_MANY_FILES"));
+    const allowed: readonly string[] = ATTACHMENTS.extensions;
+    for (const file of picked) {
+      const extension = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+      // Pasted screenshots have no useful name.
+      if (!allowed.includes(extension) && !file.type.startsWith("image/"))
+        return setFileError(t("errors.FILE_TYPE"));
+      if (file.size > ATTACHMENTS.maxBytes) return setFileError(t("errors.FILE_TOO_LARGE"));
+    }
+    setFileError(null);
+    const read = await Promise.all(
+      picked.map(async (file) => ({
+        name: file.name && file.name !== "image.png" ? file.name : `screenshot-${Date.now()}.png`,
+        size: file.size,
+        data: new Uint8Array(await file.arrayBuffer()),
+      })),
+    );
+    setFiles((current) => [...current, ...read].slice(0, ATTACHMENTS.maxFiles));
+  }
+
   function ask(question: string) {
     const q = question.trim();
-    if (!q || transcript.busy) return;
-    onUserMessage(q);
+    if ((!q && files.length === 0) || transcript.busy) return;
+    const sending = files;
+    const chatId = transcript.chatId ?? crypto.randomUUID();
+    onUserMessage(
+      chatId,
+      q,
+      sending.map((file) => ({ name: file.name, kind: kindOf(file.name), size: file.size })),
+    );
     setText("");
-    void window.platform.assistant.send({ companyId: company.id, text: q });
+    setFiles([]);
+    setFileError(null);
+    void window.platform.assistant.send({
+      companyId: company.id,
+      chatId,
+      text: q,
+      files: sending.map(({ name, data }) => ({ name, data })),
+    });
   }
 
   function submit(e: FormEvent) {
     e.preventDefault();
     ask(text);
+  }
+
+  function drop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (!transcript.busy) void addFiles(e.dataTransfer.files);
+  }
+
+  function paste(e: ClipboardEvent) {
+    if (e.clipboardData.files.length === 0) return;
+    e.preventDefault();
+    void addFiles(e.clipboardData.files);
   }
 
   async function turnOff() {
@@ -177,7 +344,20 @@ function Chat({
 
   return (
     <>
-      <Card className="flex-1 space-y-4 overflow-y-auto p-4">
+      <Card
+        className={cn("relative flex-1 space-y-4 overflow-y-auto p-4", dragging && "ring-2 ring-primary")}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={drop}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-card/80 text-sm font-medium">
+            {t("assistant.dropHere")}
+          </div>
+        )}
         {transcript.entries.length === 0 && (
           <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
             <p>{t("assistant.empty")}</p>
@@ -196,7 +376,52 @@ function Chat({
         {transcript.busy && <div className="text-xs text-muted-foreground">{t("assistant.thinking")}</div>}
         <div ref={bottom} />
       </Card>
+      {(files.length > 0 || fileError) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {files.map((file, i) => (
+            <span
+              key={`${file.name}-${i}`}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1 text-xs"
+            >
+              <FileIcon kind={kindOf(file.name)} />
+              <span className="max-w-48 truncate">{file.name}</span>
+              <span className="text-muted-foreground">{sizeText(file.size)}</span>
+              <button
+                type="button"
+                className="ml-1 text-muted-foreground hover:text-destructive"
+                aria-label={`${t("assistant.removeFile")} ${file.name}`}
+                onClick={() => setFiles((current) => current.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {fileError && <span className="text-xs text-destructive">{fileError}</span>}
+        </div>
+      )}
       <form onSubmit={submit} className="mt-3 flex gap-2">
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          accept={ATTACHMENTS.extensions.join(",")}
+          onChange={(e) => {
+            if (e.target.files) void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-auto px-3"
+          title={`${t("assistant.attach")}: ${t("assistant.attachHint")}`}
+          aria-label={t("assistant.attach")}
+          disabled={transcript.busy || files.length >= ATTACHMENTS.maxFiles}
+          onClick={() => picker.current?.click()}
+        >
+          <PaperclipIcon />
+        </Button>
         <textarea
           className="min-h-11 flex-1 resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm"
           rows={2}
@@ -204,6 +429,7 @@ function Chat({
           placeholder={t("assistant.placeholder")}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={paste}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -220,28 +446,47 @@ function Chat({
             {t("assistant.stop")}
           </Button>
         ) : (
-          <Button type="submit" disabled={!text.trim()}>
+          <Button type="submit" disabled={!text.trim() && files.length === 0}>
             {t("assistant.send")}
           </Button>
         )}
       </form>
       <div className="mt-2 flex gap-3 text-xs text-muted-foreground">
         <span>{t("assistant.readOnlyNote")}</span>
-        <button
-          className="ml-auto underline"
-          disabled={transcript.busy}
-          onClick={() => {
-            void window.platform.assistant.reset(company.id);
-            onReset();
-          }}
-        >
-          {t("assistant.newChat")}
-        </button>
-        <button className="underline" onClick={() => void turnOff()}>
+        <button className="ml-auto underline" onClick={() => void turnOff()}>
           {t("assistant.disable")}
         </button>
       </div>
     </>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path
+        d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FileIcon({ kind }: { kind: AttachmentKind }) {
+  const label = { image: "IMG", pdf: "PDF", spreadsheet: "XLS", document: "DOC", text: "TXT" }[kind];
+  return (
+    <span className="rounded bg-muted px-1 font-mono text-[10px] font-semibold text-muted-foreground">
+      {label}
+    </span>
   );
 }
 
@@ -250,8 +495,26 @@ function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
   switch (entry.kind) {
     case "user":
       return (
-        <div className="ml-auto max-w-[80%] rounded-lg bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
-          {entry.text}
+        <div className="ml-auto flex max-w-[80%] flex-col items-end gap-1">
+          {entry.files && entry.files.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1">
+              {entry.files.map((file, i) => (
+                <span
+                  key={`${file.name}-${i}`}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1 text-xs"
+                >
+                  <FileIcon kind={file.kind} />
+                  <span className="max-w-56 truncate">{file.name}</span>
+                  <span className="text-muted-foreground">{sizeText(file.size)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {entry.text && (
+            <div className="rounded-lg bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
+              {entry.text}
+            </div>
+          )}
         </div>
       );
     case "assistant":

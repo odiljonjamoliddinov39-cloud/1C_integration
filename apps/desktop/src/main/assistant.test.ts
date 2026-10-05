@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
+import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
 import { ControlClient } from "./control-client.js";
 import type { SessionService } from "./session.js";
@@ -37,7 +38,9 @@ function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
 
 function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | "read_only" = "active") {
   const base = new FakePlatform();
-  const store = new LocalStore(join(mkdtempSync(join(tmpdir(), "platform-")), "p.json"), secrets);
+  const dir = mkdtempSync(join(tmpdir(), "platform-"));
+  const store = new LocalStore(join(dir, "p.json"), secrets);
+  const chats = new ChatStore(join(dir, "chats"), secrets);
   const company = store.addCompany(
     {
       infobase: { kind: "file", file: "D:\\Bases\\TEST" },
@@ -58,11 +61,12 @@ function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | 
   const events: AssistantEvent[] = [];
   const assistant = new AssistantService({
     store,
+    chats,
     session,
     connector: new InProcessConnector(() => base),
     emit: (e) => events.push(e),
   });
-  return { assistant, store, company, events, proxy, base };
+  return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
 
 const thinking = { type: "thinking", thinking: "", signature: "opaque-signature" };
@@ -425,6 +429,170 @@ describe("assistant", () => {
       });
       expect(await sending).toMatchObject({ code: "AI_ABORTED" });
       expect(base.issued).toHaveLength(0);
+    });
+  });
+  describe("files and saved chats", () => {
+    const answer = (text: string) => (): AiEvent[] => [
+      { type: "text", text },
+      { type: "message", stopReason: "end_turn", content: [{ type: "text", text }] },
+    ];
+
+    it("sends attached files with the question and shows them by name", async () => {
+      const { assistant, store, company, proxy, chats } = setup([answer("Jami 1 750 000,5 so'm.")]);
+      store.setAiEnabled(company.id, true);
+      const csv = new TextEncoder().encode("Контрагент;Сумма\nООО Тест;1500000");
+      const pdf = new TextEncoder().encode("%PDF-1.7 invoice");
+      const result = await assistant.send({
+        companyId: company.id,
+        text: "Shu fayllarni tekshir",
+        files: [
+          { name: "oborot.csv", data: csv },
+          { name: "invoice.pdf", data: pdf },
+        ],
+      });
+      expect(result).toEqual({ ok: true, data: null });
+      expect(proxy.requests[0]!.messages[0]).toEqual({
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: { type: "text", media_type: "text/plain", data: "Контрагент;Сумма\nООО Тест;1500000" },
+            title: "oborot.csv",
+          },
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: Buffer.from(pdf).toString("base64"),
+            },
+            title: "invoice.pdf",
+          },
+          { type: "text", text: "Shu fayllarni tekshir" },
+        ],
+      });
+      const [saved] = chats.list(company.id);
+      expect(assistant.openChat(company.id, saved!.id)).toMatchObject({
+        ok: true,
+        data: {
+          title: "Shu fayllarni tekshir",
+          entries: [
+            {
+              kind: "user",
+              text: "Shu fayllarni tekshir",
+              files: [
+                { name: "oborot.csv", kind: "text", size: csv.byteLength },
+                { name: "invoice.pdf", kind: "pdf", size: pdf.byteLength },
+              ],
+            },
+            { kind: "assistant", text: "Jami 1 750 000,5 so'm." },
+          ],
+        },
+      });
+    });
+
+    it("refuses a file it cannot read before asking the AI", async () => {
+      const { assistant, store, company, proxy, events } = setup([]);
+      store.setAiEnabled(company.id, true);
+      const result = await assistant.send({
+        companyId: company.id,
+        text: "",
+        files: [{ name: "old.xls", data: new Uint8Array([1, 2, 3]) }],
+      });
+      expect(result).toMatchObject({ ok: false, code: "FILE_TYPE" });
+      expect(events.at(-1)).toMatchObject({ type: "error", code: "FILE_TYPE" });
+      expect(proxy.requests).toHaveLength(0);
+    });
+
+    it("saves chats on this PC through SecretBox, and continues a reopened one after a restart", async () => {
+      const first = setup([answer("125 mln so'm."), answer("Yangi suhbat."), answer("Ha, 5110 bo'yicha.")]);
+      const { store, company, proxy, chats, dir } = first;
+      store.setAiEnabled(company.id, true);
+      const chatId = "0b7f5b8e-6a0e-4a8f-8a3c-3f0d9c2d1e55";
+      await first.assistant.send({ companyId: company.id, chatId, text: "5110 qoldig'i?" });
+      await first.assistant.send({
+        companyId: company.id,
+        chatId: "9a1d3c5e-7b2f-4c6a-8e0d-1f3b5d7a9c2e",
+        text: "Boshqa savol",
+      });
+      // A new chat starts from nothing.
+      expect(proxy.requests[1]!.messages).toHaveLength(1);
+      expect(chats.list(company.id).map((c) => c.title)).toEqual(["Boshqa savol", "5110 qoldig'i?"]);
+      // Through SecretBox, like the 1C passwords (here the stand-in only marks it).
+      for (const file of readdirSync(join(dir, "chats", company.id))) {
+        expect(readFileSync(join(dir, "chats", company.id, file), "utf8")).toMatch(/^enc:/);
+      }
+
+      // After a restart: a new service over the same files.
+      const events: AssistantEvent[] = [];
+      const reopened = new AssistantService({
+        store,
+        chats: new ChatStore(join(dir, "chats"), secrets),
+        session: first.session,
+        connector: new InProcessConnector(() => first.base),
+        emit: (e) => events.push(e),
+      });
+      expect(reopened.openChat(company.id, chatId)).toMatchObject({
+        ok: true,
+        data: { entries: [{ kind: "user" }, { kind: "assistant", text: "125 mln so'm." }] },
+      });
+      await reopened.send({ companyId: company.id, text: "Aniqroq?" });
+      expect(proxy.requests[2]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+      expect(proxy.requests[2]!.messages[0]!.content).toBe("5110 qoldig'i?");
+
+      expect(reopened.deleteChat(company.id, chatId)).toEqual({ ok: true, data: null });
+      expect(chats.list(company.id).map((c) => c.title)).toEqual(["Boshqa savol"]);
+      expect(reopened.openChat(company.id, chatId)).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    });
+
+    it("reopens a chat cut off by closing the app: the card is cancelled and the tool call answered", async () => {
+      const { assistant, store, company, proxy, chats } = setup([answer("Mayli.")]);
+      store.setAiEnabled(company.id, true);
+      const chatId = "3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99";
+      const now = new Date().toISOString();
+      const sale = {
+        ref: "r",
+        number: "1",
+        date: "2026-10-01",
+        organization: null,
+        counterparty: null,
+        amount: 1,
+        posted: true,
+      };
+      chats.save({
+        id: chatId,
+        companyId: company.id,
+        title: "Schyot-faktura",
+        createdAt: now,
+        updatedAt: now,
+        messages: [
+          { role: "user", content: "Schyot-faktura yoz" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_9",
+                name: "propose_invoice_issued",
+                input: { sale: { number: "1" } },
+              },
+            ],
+          },
+        ],
+        entries: [
+          { kind: "user", text: "Schyot-faktura yoz" },
+          { kind: "proposal", id: "p1", proposal: { kind: "invoice_issued", sale }, outcome: null },
+        ],
+      });
+      const opened = assistant.openChat(company.id, chatId);
+      expect(opened.ok && opened.data.entries[1]).toMatchObject({ outcome: { status: "declined" } });
+      await assistant.send({ companyId: company.id, chatId, text: "Keyinroq" });
+      const sent = proxy.requests[0]!.messages;
+      expect(sent[2]).toMatchObject({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu_9", is_error: true }],
+      });
+      expect(sent[3]).toEqual({ role: "user", content: "Keyinroq" });
     });
   });
 });

@@ -14,6 +14,8 @@ import type {
 } from "@platform/shared";
 import { z } from "zod";
 
+import type { ChatEntry } from "./transcript.js";
+
 export const InfobaseInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file"), file: z.string().trim().min(1) }),
   z.object({ kind: z.literal("server"), server: z.string().trim().min(1), ref: z.string().trim().min(1) }),
@@ -99,11 +101,68 @@ export interface AppInfo {
   demo1C: boolean;
 }
 
-export const AssistantInput = z.object({
-  companyId: z.string().min(1),
-  text: z.string().trim().min(1).max(4000),
+/** Files the user can attach to a question, and how many and how large. */
+export const ATTACHMENTS = {
+  /** Extensions the assistant reads; the window offers only these. */
+  extensions: [
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".xlsx",
+    ".docx",
+    ".csv",
+    ".txt",
+    ".xml",
+    ".json",
+  ],
+  maxFiles: 5,
+  maxBytes: 10 * 1024 * 1024,
+} as const;
+
+export const AssistantFile = z.object({
+  name: z.string().trim().min(1).max(200),
+  data: z.instanceof(Uint8Array).refine((d) => d.byteLength <= ATTACHMENTS.maxBytes, {
+    message: "The file is larger than 10 MB",
+  }),
 });
-export type AssistantInput = z.infer<typeof AssistantInput>;
+export type AssistantFile = z.infer<typeof AssistantFile>;
+
+export const AssistantInput = z
+  .object({
+    companyId: z.string().min(1),
+    /** The chat this question belongs to; a new id starts a new chat. Absent: the open chat. */
+    chatId: z.uuid().optional(),
+    text: z.string().trim().max(4000),
+    files: z.array(AssistantFile).max(ATTACHMENTS.maxFiles).optional(),
+  })
+  .refine((input) => input.text.length > 0 || (input.files?.length ?? 0) > 0, {
+    message: "Write a question or attach a file",
+  });
+export type AssistantInput = z.input<typeof AssistantInput>;
+
+export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text";
+
+/** An attached file as the chat shows it; its content goes to the model, not to the screen. */
+export interface AttachmentInfo {
+  name: string;
+  kind: AttachmentKind;
+  size: number;
+}
+
+/** A saved chat in the list. */
+export interface ChatSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatView extends ChatSummary {
+  entries: ChatEntry[];
+}
 
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
@@ -165,8 +224,13 @@ export interface PlatformBridge {
     /** Sends a question; the answer arrives through onEvent. Resolves when the answer is complete. */
     send(input: AssistantInput): Promise<Result<null>>;
     stop(companyId: string): Promise<void>;
-    /** Forgets the conversation of a company. */
+    /** Stops the assistant and closes the open chat of a company (saved chats stay). */
     reset(companyId: string): Promise<void>;
+    /** Saved chats of a company, newest first. */
+    chats(companyId: string): Promise<ChatSummary[]>;
+    /** Opens a saved chat: the next question continues it. */
+    openChat(companyId: string, chatId: string): Promise<Result<ChatView>>;
+    deleteChat(companyId: string, chatId: string): Promise<Result<null>>;
     /** The user's answer to a "confirm" event: create the document in 1C, or not. */
     decide(companyId: string, proposalId: string, approve: boolean): Promise<void>;
     onEvent(listener: (event: AssistantEvent) => void): () => void;

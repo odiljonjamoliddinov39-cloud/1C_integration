@@ -58,7 +58,7 @@ const en = {
     consentRead:
       "To answer, the assistant reads data of this company's 1C base on this PC (balances, documents, directories).",
     consentSend:
-      "Your questions and the data it reads are sent through our server to the Claude AI service (Anthropic, USA). They are not used to train AI models.",
+      "Your questions, the files you attach and the data it reads are sent through our server to the Claude AI service (Anthropic, USA). They are not used to train AI models.",
     consentWrite:
       "It can prepare new documents, changes and deletion marks, but writes nothing to 1C until you confirm each one on its card. You can turn it off at any time.",
     enable: "I agree, turn it on",
@@ -73,6 +73,15 @@ const en = {
     send: "Send",
     stop: "Stop",
     thinking: "Working…",
+    attach: "Attach files",
+    attachHint: "PDF, photos, Excel, Word, CSV or text; up to 5 files of 10 MB",
+    dropHere: "Drop files here",
+    removeFile: "Remove",
+    history: "Chats",
+    noChats: "No saved chats yet.",
+    deleteChat: "Delete chat",
+    deleteConfirm: "Delete this chat? It cannot be restored.",
+    historyNote: "Chats are saved on this PC only.",
     newChat: "New conversation",
     readOnlyNote:
       "The assistant can be wrong: check important figures in 1C. Documents are created only when you confirm.",
@@ -198,6 +207,13 @@ const en = {
     AI_REFUSED: "The assistant declined to answer this question.",
     AI_TRUNCATED: "The answer was too long and was cut off; ask for less at once.",
     AI_ABORTED: "Stopped.",
+    FILE_TYPE:
+      "This kind of file is not supported: attach PDF, photos, Excel (.xlsx), Word (.docx) or text files.",
+    FILE_TOO_LARGE: "The file is too large (at most 10 MB, images 5 MB).",
+    FILE_UNREADABLE: "The file could not be read; it may be damaged.",
+    TOO_MANY_FILES: "At most 5 files per question.",
+    CHAT_TOO_LARGE: "This chat is too large; start a new chat.",
+    BUSY: "The assistant is still answering.",
     UNAUTHORIZED: "Sign in again.",
   },
 };
@@ -263,7 +279,7 @@ const ru: Dict = {
     consentRead:
       "Чтобы ответить, ассистент читает данные базы 1С этой компании на этом ПК (остатки, документы, справочники).",
     consentSend:
-      "Ваши вопросы и прочитанные данные передаются через наш сервер в ИИ-сервис Claude (Anthropic, США). Они не используются для обучения моделей.",
+      "Ваши вопросы, прикреплённые файлы и прочитанные данные передаются через наш сервер в ИИ-сервис Claude (Anthropic, США). Они не используются для обучения моделей.",
     consentWrite:
       "Он может подготовить новые документы, изменения и пометки удаления, но ничего не записывает в 1С, пока вы не подтвердите каждое на его карточке. Отключить можно в любой момент.",
     enable: "Согласен, включить",
@@ -278,6 +294,15 @@ const ru: Dict = {
     send: "Отправить",
     stop: "Остановить",
     thinking: "Работаю…",
+    attach: "Прикрепить файлы",
+    attachHint: "PDF, фото, Excel, Word, CSV или текст; до 5 файлов по 10 МБ",
+    dropHere: "Перетащите файлы сюда",
+    removeFile: "Убрать",
+    history: "Чаты",
+    noChats: "Сохранённых чатов пока нет.",
+    deleteChat: "Удалить чат",
+    deleteConfirm: "Удалить этот чат? Восстановить его будет нельзя.",
+    historyNote: "Чаты хранятся только на этом ПК.",
     newChat: "Новый разговор",
     readOnlyNote:
       "Ассистент может ошибаться: важные цифры проверяйте в 1С. Документы создаются только после вашего подтверждения.",
@@ -403,6 +428,13 @@ const ru: Dict = {
     AI_REFUSED: "Ассистент отказался отвечать на этот вопрос.",
     AI_TRUNCATED: "Ответ получился слишком длинным и был обрезан; спросите меньше за раз.",
     AI_ABORTED: "Остановлено.",
+    FILE_TYPE:
+      "Такой файл не поддерживается: прикрепите PDF, фото, Excel (.xlsx), Word (.docx) или текстовый файл.",
+    FILE_TOO_LARGE: "Файл слишком большой (не более 10 МБ, изображения — 5 МБ).",
+    FILE_UNREADABLE: "Файл не удалось прочитать; возможно, он повреждён.",
+    TOO_MANY_FILES: "Не более 5 файлов к одному вопросу.",
+    CHAT_TOO_LARGE: "Чат стал слишком большим; начните новый.",
+    BUSY: "Ассистент ещё отвечает.",
     UNAUTHORIZED: "Войдите заново.",
   },
 };
@@ -466,7 +498,7 @@ const uz: Dict = {
     consentRead:
       "Javob berish uchun yordamchi shu kompyuterdagi kompaniya 1C bazasi maʼlumotlarini oʻqiydi (qoldiqlar, hujjatlar, maʼlumotnomalar).",
     consentSend:
-      "Savollaringiz va oʻqilgan maʼlumotlar serverimiz orqali Claude AI xizmatiga (Anthropic, AQSh) yuboriladi. Ular modellarni oʻqitishda ishlatilmaydi.",
+      "Savollaringiz, biriktirgan fayllaringiz va oʻqilgan maʼlumotlar serverimiz orqali Claude AI xizmatiga (Anthropic, AQSh) yuboriladi. Ular modellarni oʻqitishda ishlatilmaydi.",
     consentWrite:
       "U yangi hujjatlar, oʻzgarishlar va oʻchirish belgilarini tayyorlay oladi, lekin har birini kartochkasida tasdiqlamaguningizcha 1C ga hech narsa yozmaydi. Istalgan vaqtda oʻchirishingiz mumkin.",
     enable: "Roziman, yoqish",
@@ -481,6 +513,15 @@ const uz: Dict = {
     send: "Yuborish",
     stop: "Toʻxtatish",
     thinking: "Ishlayapman…",
+    attach: "Fayl biriktirish",
+    attachHint: "PDF, rasm, Excel, Word, CSV yoki matn; 10 MB gacha 5 ta fayl",
+    dropHere: "Fayllarni shu yerga tashlang",
+    removeFile: "Olib tashlash",
+    history: "Suhbatlar",
+    noChats: "Saqlangan suhbatlar hali yoʻq.",
+    deleteChat: "Suhbatni oʻchirish",
+    deleteConfirm: "Bu suhbat oʻchirilsinmi? Uni qaytarib boʻlmaydi.",
+    historyNote: "Suhbatlar faqat shu kompyuterda saqlanadi.",
     newChat: "Yangi suhbat",
     readOnlyNote:
       "Yordamchi xato qilishi mumkin: muhim raqamlarni 1C da tekshiring. Hujjatlar faqat sizning tasdigʻingizdan keyin yaratiladi.",
@@ -606,6 +647,13 @@ const uz: Dict = {
     AI_REFUSED: "Yordamchi bu savolga javob berishdan bosh tortdi.",
     AI_TRUNCATED: "Javob juda uzun boʻlib, kesildi; bir martada kamroq soʻrang.",
     AI_ABORTED: "Toʻxtatildi.",
+    FILE_TYPE:
+      "Bu turdagi fayl qoʻllab-quvvatlanmaydi: PDF, rasm, Excel (.xlsx), Word (.docx) yoki matn faylini biriktiring.",
+    FILE_TOO_LARGE: "Fayl juda katta (koʻpi bilan 10 MB, rasmlar 5 MB).",
+    FILE_UNREADABLE: "Faylni oʻqib boʻlmadi; u buzilgan boʻlishi mumkin.",
+    TOO_MANY_FILES: "Bitta savolga koʻpi bilan 5 ta fayl.",
+    CHAT_TOO_LARGE: "Suhbat juda kattalashdi; yangi suhbat boshlang.",
+    BUSY: "Yordamchi hali javob bermoqda.",
     UNAUTHORIZED: "Qaytadan kiring.",
   },
 };

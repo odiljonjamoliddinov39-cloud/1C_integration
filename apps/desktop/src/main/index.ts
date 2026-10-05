@@ -3,11 +3,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LICENSE_CHECK_HOURS } from "@platform/shared";
-import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, safeStorage, shell } from "electron";
 
 import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
+import type { ShrinkImage } from "./attachments.js";
+import { ChatStore } from "./chats.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
@@ -77,6 +79,23 @@ async function updater(): Promise<Updater | null> {
   }
 }
 
+/** Scales a photo so its longer side is at most `maxSide` and re-encodes it as JPEG. */
+const shrinkImage: ShrinkImage = (data, maxSide) => {
+  const image = nativeImage.createFromBuffer(Buffer.from(data));
+  if (image.isEmpty()) return null;
+  const { width, height } = image.getSize();
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const sized =
+    scale < 1
+      ? image.resize({
+          width: Math.round(width * scale),
+          height: Math.round(height * scale),
+          quality: "best",
+        })
+      : image;
+  return new Uint8Array(sized.toJPEG(85));
+};
+
 function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
 }
@@ -93,9 +112,11 @@ void app.whenReady().then(async () => {
   });
   const assistant = new AssistantService({
     store,
+    chats: new ChatStore(join(app.getPath("userData"), "chats"), secrets),
     session,
     connector,
     emit: (event) => broadcast(CHANNELS.assistantEvent, event),
+    shrinkImage,
   });
   const updates = new UpdateService({
     updater: await updater(),
@@ -142,6 +163,13 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.assistantReset, (_e, id: unknown) => handlers.assistantReset(id));
   ipcMain.handle(CHANNELS.assistantDecide, (_e, id: unknown, proposalId: unknown, approve: unknown) =>
     handlers.assistantDecide(id, proposalId, approve),
+  );
+  ipcMain.handle(CHANNELS.assistantChats, (_e, id: unknown) => handlers.assistantChats(id));
+  ipcMain.handle(CHANNELS.assistantOpenChat, (_e, id: unknown, chatId: unknown) =>
+    handlers.assistantOpenChat(id, chatId),
+  );
+  ipcMain.handle(CHANNELS.assistantDeleteChat, (_e, id: unknown, chatId: unknown) =>
+    handlers.assistantDeleteChat(id, chatId),
   );
   ipcMain.handle(CHANNELS.updateState, () => updates.current());
   ipcMain.handle(CHANNELS.updateCheck, () => updates.check());

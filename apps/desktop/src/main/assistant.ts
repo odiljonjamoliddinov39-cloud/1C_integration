@@ -1,8 +1,8 @@
 /**
  * The AI assistant's loop (TD §7). Each model turn goes through the control system's AI proxy; the
  * tools it asks for run here, against the company's 1C, and only their results go back. The
- * conversation lives in memory and is sent back unchanged every turn (thinking blocks included, as
- * the API requires).
+ * conversation is sent back unchanged every turn (thinking blocks included, as the API requires)
+ * and is saved on this PC, so a chat can be reopened and continued later.
  *
  * Reads run at once. A document the assistant prepares (propose_* tools) is shown to the user as a
  * card and the loop waits: only the user's click writes it to 1C, unposted, and the model is told
@@ -26,7 +26,18 @@ import {
   isProposalTool,
 } from "@platform/shared";
 
-import type { AssistantEvent, AssistantInput, Proposal, ProposalOutcome, Result } from "../shared/ipc.js";
+import type {
+  AssistantEvent,
+  AssistantInput,
+  ChatSummary,
+  ChatView,
+  Proposal,
+  ProposalOutcome,
+  Result,
+} from "../shared/ipc.js";
+import { applyEvent } from "../shared/transcript.js";
+import { AttachmentError, type ShrinkImage, readAttachments } from "./attachments.js";
+import type { ChatStore, StoredChat } from "./chats.js";
 import type { ConnectorRunner } from "./connector.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
@@ -37,37 +48,71 @@ import type { LocalStore } from "./store.js";
 const MAX_TURNS = 10;
 /** Tool results are cut to this many characters before they go to the model. */
 const MAX_RESULT_CHARS = 40_000;
+/**
+ * A chat is sent whole every turn and the AI service takes at most 32 MB per request; past this
+ * size (mostly attached files) the user starts a new chat.
+ */
+const MAX_CHAT_CHARS = 24_000_000;
 
 export interface AssistantDeps {
   store: LocalStore;
+  chats: ChatStore;
   session: SessionService;
   connector: ConnectorRunner;
   emit: (event: AssistantEvent) => void;
+  /** Scales photos down before they are sent (Electron's nativeImage); absent in tests. */
+  shrinkImage?: ShrinkImage;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 export class AssistantService {
-  private readonly conversations = new Map<string, AiMessage[]>();
+  /** Per company: the open chat. */
+  private readonly open = new Map<string, StoredChat>();
   private readonly running = new Map<string, AbortController>();
   /** Per company: the card waiting for the user's answer. */
   private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
 
   constructor(private readonly deps: AssistantDeps) {}
 
-  async send({ companyId, text }: AssistantInput): Promise<Result<null>> {
-    const emit: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+  async send({ companyId, chatId, text, files = [] }: AssistantInput): Promise<Result<null>> {
+    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
-      return this.fail(emit, "AI_DISABLED", "Turn the assistant on for this company first");
-    if (this.running.has(companyId)) return this.fail(emit, "BUSY", "The assistant is still answering");
+      return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
+    if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
+
+    const chat = this.chat(companyId, chatId ?? this.open.get(companyId)?.id ?? randomUUID());
+    // Everything shown in the window is also kept in the chat, so it reopens as it was.
+    const emit: Emit = (event) => {
+      chat.entries = applyEvent(chat.entries, event);
+      notify(event);
+    };
+    let attached;
+    try {
+      attached = await readAttachments(files, this.deps.shrinkImage);
+    } catch (e) {
+      if (e instanceof AttachmentError) return this.fail(notify, e.code, e.message);
+      throw e;
+    }
+    const question = text.trim() || attached.info.map((file) => file.name).join(", ");
+    const content: AiMessage["content"] =
+      attached.blocks.length > 0 ? [...attached.blocks, { type: "text", text: question }] : question;
+    if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
+      return this.fail(notify, "CHAT_TOO_LARGE", "This chat is too large; start a new chat");
+    }
 
     const abort = new AbortController();
     this.running.set(companyId, abort);
-    const history = this.conversations.get(companyId) ?? [];
-    this.conversations.set(companyId, history);
-    history.push({ role: "user", content: text });
+    const history = chat.messages;
+    history.push({ role: "user", content });
+    chat.entries = [
+      ...chat.entries,
+      { kind: "user", text: text.trim(), ...(attached.info.length > 0 ? { files: attached.info } : {}) },
+    ];
+    if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
+    this.save(chat);
     try {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         const { client, accessToken } = await this.deps.session.authorized();
@@ -108,6 +153,7 @@ export class AssistantService {
           results.push(toToolResult(use.id, result));
         }
         history.push({ role: "user", content: results });
+        this.save(chat);
         if (abort.signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");
       }
       return this.fail(
@@ -120,6 +166,7 @@ export class AssistantService {
       return this.fail(emit, "INTERNAL", e instanceof Error ? e.message : String(e));
     } finally {
       this.running.delete(companyId);
+      this.save(chat);
     }
   }
 
@@ -133,9 +180,65 @@ export class AssistantService {
     if (waiting?.id === proposalId) waiting.answer(approve);
   }
 
+  /** Stops the assistant and closes the open chat; the next question starts a new one. */
   reset(companyId: string): void {
     this.stop(companyId);
-    this.conversations.delete(companyId);
+    this.open.delete(companyId);
+  }
+
+  chats(companyId: string): ChatSummary[] {
+    return this.deps.chats.list(companyId);
+  }
+
+  openChat(companyId: string, chatId: string): Result<ChatView> {
+    if (this.running.has(companyId) && this.open.get(companyId)?.id !== chatId) {
+      return { ok: false, code: "BUSY", message: "The assistant is still answering" };
+    }
+    if (!this.deps.chats.load(companyId, chatId) && this.open.get(companyId)?.id !== chatId) {
+      return { ok: false, code: "NOT_FOUND", message: "This chat was deleted" };
+    }
+    const { id, title, createdAt, updatedAt, entries } = this.chat(companyId, chatId);
+    return { ok: true, data: { id, title, createdAt, updatedAt, entries } };
+  }
+
+  deleteChat(companyId: string, chatId: string): Result<null> {
+    if (this.open.get(companyId)?.id === chatId) {
+      if (this.running.has(companyId)) {
+        return { ok: false, code: "BUSY", message: "The assistant is still answering" };
+      }
+      this.open.delete(companyId);
+    }
+    this.deps.chats.delete(companyId, chatId);
+    return { ok: true, data: null };
+  }
+
+  /** The company is removed from the app: its chats go too. */
+  removeCompany(companyId: string): void {
+    this.reset(companyId);
+    this.deps.chats.deleteCompany(companyId);
+  }
+
+  /** The chat with this id, made the open one: in memory, saved, or a new one. */
+  private chat(companyId: string, chatId: string): StoredChat {
+    const current = this.open.get(companyId);
+    if (current?.id === chatId) return current;
+    const saved = this.deps.chats.load(companyId, chatId);
+    const now = new Date().toISOString();
+    const chat = saved
+      ? repair(saved)
+      : { id: chatId, companyId, title: "", createdAt: now, updatedAt: now, messages: [], entries: [] };
+    this.open.set(companyId, chat);
+    return chat;
+  }
+
+  private save(chat: StoredChat): void {
+    chat.updatedAt = new Date().toISOString();
+    try {
+      this.deps.chats.save(chat);
+    } catch (e) {
+      // The answer still reaches the window; only reopening this chat later is lost.
+      console.error("The chat was not saved:", e);
+    }
   }
 
   private async runTool(
@@ -250,6 +353,29 @@ export class AssistantService {
     emit({ type: "error", code, message });
     return { ok: false, code, message };
   }
+}
+
+/**
+ * A chat saved while the app was closed mid-answer: a card nobody answered was never written to
+ * 1C, and a tool call without a result would make the API refuse the next question.
+ */
+function repair(chat: StoredChat): StoredChat {
+  const entries = chat.entries.map((e) =>
+    e.kind === "proposal" && e.outcome === null ? { ...e, outcome: { status: "declined" as const } } : e,
+  );
+  const messages = [...chat.messages];
+  const last = messages.at(-1);
+  if (last?.role === "assistant" && Array.isArray(last.content)) {
+    const unanswered = last.content.flatMap((block) => {
+      const use = AiToolUse.safeParse(block);
+      return use.success ? [use.data] : [];
+    });
+    if (unanswered.length > 0) {
+      const notRun = { ok: false, code: "NOT_RUN", message: "The app was closed" } as const;
+      messages.push({ role: "user", content: unanswered.map((use) => toToolResult(use.id, notRun)) });
+    }
+  }
+  return { ...chat, entries, messages };
 }
 
 function toToolResult(toolUseId: string, result: ToolResult): AiContentBlock {
