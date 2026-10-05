@@ -44,8 +44,15 @@ import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
 import type { LocalStore } from "./store.js";
 
-/** Model turns per question: enough to look up metadata, fix a query and answer. */
-const MAX_TURNS = 10;
+/**
+ * Model turns per question: enough to compare a bank statement with 1C (a few structure lookups and
+ * a dozen queries). Before the last turn the model is told to answer with what it has found.
+ */
+const MAX_TURNS = 25;
+/** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
+const LAST_STEP_NOTE =
+  "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
+  "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
 const MAX_RESULT_CHARS = 40_000;
 /**
@@ -152,6 +159,7 @@ export class AssistantService {
             : await this.runTool(companyId, use, emit, abort.signal);
           results.push(toToolResult(use.id, result));
         }
+        if (turn === MAX_TURNS - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
         history.push({ role: "user", content: results });
         this.save(chat);
         if (abort.signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");

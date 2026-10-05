@@ -431,6 +431,35 @@ describe("assistant", () => {
       expect(base.issued).toHaveLength(0);
     });
   });
+  it("tells the model before its last step to answer with what it found, instead of failing", async () => {
+    const query = (i: number) => (): AiEvent[] => [
+      {
+        type: "message",
+        stopReason: "tool_use",
+        content: [{ type: "tool_use", id: `tu_${i}`, name: "list_organizations", input: {} }],
+      },
+    ];
+    const answer = (): AiEvent[] => [
+      { type: "text", text: "Topilganlari: …; tekshirilmagan: …" },
+      { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "Topilganlari" }] },
+    ];
+    const { assistant, store, company, proxy } = setup([
+      ...Array.from({ length: 24 }, (_, i) => query(i)),
+      answer,
+    ]);
+    store.setAiEnabled(company.id, true);
+    expect(await assistant.send({ companyId: company.id, text: "Bank vypiskasini solishtir" })).toEqual({
+      ok: true,
+      data: null,
+    });
+    expect(proxy.requests).toHaveLength(25);
+    const lastStep = proxy.requests[24]!.messages.at(-1)!.content as { type: string; text?: string }[];
+    expect(lastStep.at(-1)).toMatchObject({ type: "text", text: expect.stringContaining("last step") });
+    // Earlier steps carry no such note.
+    const earlier = proxy.requests[23]!.messages.at(-1)!.content as { type: string }[];
+    expect(earlier.every((block) => block.type === "tool_result")).toBe(true);
+  });
+
   describe("files and saved chats", () => {
     const answer = (text: string) => (): AiEvent[] => [
       { type: "text", text },

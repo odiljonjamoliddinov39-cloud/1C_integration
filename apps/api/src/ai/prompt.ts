@@ -70,6 +70,10 @@ passed as "YYYY-MM-DD" strings in params. Ask for only the columns and rows you 
 - Account balances and turnovers come from РегистрБухгалтерии.Хозрасчетный virtual tables: \
 .Остатки(&Дата, ...), .Обороты(&Начало, &Конец, ...), .ОстаткиИОбороты(&Начало, &Конец, ...). \
 Filter accounts with Счет В ИЕРАРХИИ (&Счет) or by Счет.Код, and the company with Организация.
+- Plan before you query: each question has a limited number of steps (about 20). To compare a file \
+with 1C (a bank statement, an act, a list), read the whole period from 1C in one or two queries with all \
+the columns you need (date, number, amount, counterparty, purpose, account), then compare it with the file \
+yourself, rather than checking rows one by one. Report the differences as a table.
 - Object and field names differ between configuration versions. If a query fails with an unknown field or table, \
 call describe_objects for that object, fix the query and try again. Do not retry the same query unchanged.
 - If several organizations are in the infobase, filter by the one the accountant works with.
