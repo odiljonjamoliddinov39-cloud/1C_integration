@@ -16,7 +16,8 @@ import { type AiModel, usageOf } from "./model.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock } from "./prompt.js";
 import { aiLimits } from "./quota.js";
 
-const MAX_TOKENS = 16_000;
+// A card for a whole bank statement is a long tool call (up to 100 documents).
+const MAX_TOKENS = 32_000;
 
 export class AiProxy {
   constructor(

@@ -52,6 +52,17 @@ export const ReadAttachmentInput = z.object({
 export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
 
 /**
+ * Several changes on one card with one confirmation: a bank statement's documents, a list of
+ * invoices. Each is checked by 1C first; those 1C refuses are shown and left out.
+ */
+export const ChangeBatchInput = z.object({
+  /** What the batch does, for the card's title, e.g. "Bank statement 01–15.09: 42 documents". */
+  title: z.string().trim().min(1).max(200),
+  changes: z.array(ChangeInput).min(1).max(100),
+});
+export type ChangeBatchInput = z.infer<typeof ChangeBatchInput>;
+
+/**
  * Tools the assistant may call; the desktop runs them through PlatformAPI. The read tools run at
  * once. The propose_* tools never write: the desktop shows the document to the user, and only the
  * user's click creates it in 1C (unposted). The tool result says what the user decided.
@@ -66,6 +77,7 @@ export const AI_TOOLS = {
   get_object: GetObjectInput,
   read_attachment: ReadAttachmentInput,
   propose_change: ChangeInput,
+  propose_changes: ChangeBatchInput,
   propose_invoice_issued: z.object({ sale: SaleLookup }),
   propose_invoice_received: InvoiceReceivedDraft,
 } as const;
@@ -73,6 +85,7 @@ export type AiToolName = keyof typeof AI_TOOLS;
 
 export const AI_PROPOSAL_TOOLS = [
   "propose_change",
+  "propose_changes",
   "propose_invoice_issued",
   "propose_invoice_received",
 ] as const;

@@ -164,9 +164,22 @@ export interface ChatView extends ChatSummary {
   entries: ChatEntry[];
 }
 
+/** One change of a batch: 1C's preview of it, or why 1C refused it (then it is left out). */
+export interface BatchItem {
+  action: string;
+  object: string;
+  preview: ChangePreview | null;
+  error: { code: string; message: string } | null;
+}
+
+/** What happened to one change of a batch; null for one 1C refused before (not applied). */
+export type BatchItemResult =
+  { ok: true; state: ObjectState } | { ok: false; code: string; message: string } | null;
+
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
   | { kind: "change"; preview: ChangePreview }
+  | { kind: "batch"; title: string; items: BatchItem[] }
   | { kind: "invoice_issued"; sale: SaleSummary }
   | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
 
@@ -174,6 +187,7 @@ export type ProposalOutcome =
   | { status: "declined" }
   | { status: "created"; document: CreateInvoiceResult }
   | { status: "applied"; state: ObjectState }
+  | { status: "batch"; results: BatchItemResult[] }
   | { status: "failed"; code: string; message: string };
 
 /** What the assistant is doing, pushed from the main process while it answers. */

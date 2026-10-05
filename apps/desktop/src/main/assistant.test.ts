@@ -400,6 +400,82 @@ describe("assistant", () => {
       expect(base.objects.get("22222222-2222-2222-2222-222222222222")?.fields).toEqual({ Наименование: "A" });
     });
 
+    it("prepares many changes on one card: 1C's refusals are left out, the rest written on one confirmation", async () => {
+      const batch = {
+        title: "Bank vypiskasi: 3 hujjat",
+        changes: [
+          {
+            action: "create",
+            object: "Справочник.Контрагенты",
+            fields: { Наименование: "ООО «Бир»", ИНН: "305000001" },
+          },
+          {
+            action: "update",
+            object: "Справочник.Контрагенты",
+            ref: "99999999-9999-9999-9999-999999999999",
+            fields: { Наименование: "X" },
+          },
+          {
+            action: "create",
+            object: "Справочник.Контрагенты",
+            fields: { Наименование: "ООО «Икки»", ИНН: "305000002" },
+          },
+        ],
+      };
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_changes", batch),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani 1C ga kirit" });
+      await answerCards(events, assistant, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+
+      const card = events.find((e) => e.type === "confirm");
+      expect(card).toMatchObject({
+        proposal: {
+          kind: "batch",
+          title: "Bank vypiskasi: 3 hujjat",
+          items: [
+            { action: "create", preview: { action: "create" }, error: null },
+            { action: "update", preview: null, error: { code: "NOT_FOUND" } },
+            { action: "create", preview: { action: "create" }, error: null },
+          ],
+        },
+      });
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      const names = [...base.objects.values()].map((o) => o.fields.Наименование);
+      expect(names).toEqual(expect.arrayContaining(["ООО «Бир»", "ООО «Икки»"]));
+      expect(events.find((e) => e.type === "decided")).toMatchObject({
+        outcome: { status: "batch", results: [{ ok: true }, null, { ok: true }] },
+      });
+      expect(resultOf(proxy.requests)).toMatchObject({
+        status: "done",
+        applied: [{ n: 1 }, { n: 3 }],
+        failed: [],
+        refusedBefore: [{ n: 2, error: "NOT_FOUND" }],
+      });
+    });
+
+    it("writes nothing from a batch the user cancels", async () => {
+      const batch = {
+        title: "2 ta kontragent",
+        changes: [
+          { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "A" } },
+          { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "B" } },
+        ],
+      };
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_changes", batch),
+      );
+      store.setAiEnabled(company.id, true);
+      const before = base.objects.size;
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await answerCards(events, assistant, false);
+      await sending;
+      expect(base.objects.size).toBe(before);
+      expect(resultOf(proxy.requests)).toEqual({ status: "declined_by_user" });
+    });
+
     it("prepares nothing while the license is read-only", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),

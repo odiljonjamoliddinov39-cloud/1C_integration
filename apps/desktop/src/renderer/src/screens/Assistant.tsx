@@ -11,7 +11,10 @@ import {
   type AssistantEvent,
   type AttachmentInfo,
   type AttachmentKind,
+  type BatchItem,
   type CompanyView,
+  type Proposal,
+  type ProposalOutcome,
 } from "../../../shared/ipc";
 import { type ChatEntry, applyEvent } from "../../../shared/transcript";
 import { Button } from "@/components/ui/button";
@@ -604,7 +607,9 @@ function ProposalCard({
 
   return (
     <Card className="space-y-3 border-primary/40 p-4 text-sm">
-      {proposal.kind === "change" ? (
+      {proposal.kind === "batch" ? (
+        <BatchBody proposal={proposal} outcome={outcome} />
+      ) : proposal.kind === "change" ? (
         <ChangeBody preview={proposal.preview} />
       ) : proposal.kind === "invoice_issued" ? (
         <>
@@ -671,7 +676,7 @@ function ProposalCard({
           </table>
         </>
       )}
-      {proposal.kind !== "change" && (
+      {proposal.kind !== "change" && proposal.kind !== "batch" && (
         <p className="text-xs text-muted-foreground">
           {t(
             proposal.kind === "invoice_issued"
@@ -683,7 +688,13 @@ function ProposalCard({
       {outcome === null ? (
         <div className="flex gap-2">
           <Button size="sm" disabled={sent} onClick={() => decide(true)}>
-            {t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
+            {sent && proposal.kind === "batch"
+              ? t("assistant.proposal.batchApplying")
+              : proposal.kind === "batch"
+                ? t("assistant.proposal.batchApply", {
+                    count: proposal.items.filter((item) => item.preview).length,
+                  })
+                : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -694,6 +705,13 @@ function ProposalCard({
           {t(outcome.document.duplicate ? "assistant.proposal.existed" : "assistant.proposal.created", {
             number: outcome.document.number,
             date: day(outcome.document.date),
+          })}
+        </div>
+      ) : outcome.status === "batch" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.batchDone", {
+            ok: outcome.results.filter((r) => r?.ok).length,
+            count: outcome.results.length,
           })}
         </div>
       ) : outcome.status === "applied" ? (
@@ -708,6 +726,87 @@ function ProposalCard({
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
       )}
     </Card>
+  );
+}
+
+/** A batch: one row per change, what 1C checked, and after confirmation what happened to each. */
+function BatchBody({
+  proposal,
+  outcome,
+}: {
+  proposal: Extract<Proposal, { kind: "batch" }>;
+  outcome: ProposalOutcome | null;
+}) {
+  const { t } = useTranslation();
+  const results = outcome?.status === "batch" ? outcome.results : null;
+  const refused = proposal.items.filter((item) => item.error).length;
+  const summary = (item: BatchItem) =>
+    item.preview
+      ? item.preview.changes
+          .slice(0, 3)
+          .map((c) => `${c.field}: ${show(c.after, t)}`)
+          .join(" · ")
+      : "";
+  return (
+    <>
+      <div>
+        <div className="font-semibold">{proposal.title}</div>
+        <div className="text-muted-foreground">
+          {t("assistant.proposal.batchCount", { count: proposal.items.length })}
+          {refused > 0 && ` · ${t("assistant.proposal.batchRefused", { count: refused })}`}
+        </div>
+      </div>
+      <div className="max-h-96 overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-card text-muted-foreground">
+            <tr className="text-left">
+              <th className="py-1 pr-2 font-medium">#</th>
+              <th className="py-1 pr-2 font-medium">{t("assistant.proposal.batchWhat")}</th>
+              <th className="py-1 pr-2 font-medium">{t("assistant.proposal.batchDetails")}</th>
+              <th className="py-1 font-medium">{t("assistant.proposal.batchStatus")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {proposal.items.map((item, i) => {
+              const result = results?.[i];
+              return (
+                <tr key={i} className="border-t border-border align-top">
+                  <td className="py-1 pr-2 text-muted-foreground">{i + 1}</td>
+                  <td className="py-1 pr-2">
+                    <div className="font-medium">
+                      {t(`assistant.proposal.action.${item.action}`)} · {item.object.split(".").at(-1)}
+                    </div>
+                    <div className="text-muted-foreground">{item.preview?.presentation}</div>
+                  </td>
+                  <td className="py-1 pr-2">
+                    {summary(item)}
+                    {item.preview && item.preview.warnings.length > 0 && (
+                      <div className="text-warning">{item.preview.warnings.join("; ")}</div>
+                    )}
+                  </td>
+                  <td className="py-1">
+                    {item.error ? (
+                      <span className="text-destructive" title={item.error.message}>
+                        {t("assistant.proposal.batchSkipped")}: {item.error.message}
+                      </span>
+                    ) : result?.ok ? (
+                      <span className="text-success">✓ {result.state.presentation}</span>
+                    ) : result ? (
+                      <span className="text-destructive">✗ {result.message}</span>
+                    ) : (
+                      <span className="text-muted-foreground">{t("assistant.proposal.batchReady")}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {proposal.items.some((item) => item.preview?.willPost) && (
+        <div className="text-xs font-medium">{t("assistant.proposal.batchPosting")}</div>
+      )}
+    </>
   );
 }
 

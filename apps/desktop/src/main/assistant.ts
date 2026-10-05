@@ -16,6 +16,7 @@ import {
   type AiMessage,
   type AiProposalTool,
   AiToolUse,
+  type ChangeBatchInput,
   type ChangeInput,
   type ChangePreview,
   type CreateInvoiceResult,
@@ -30,6 +31,8 @@ import {
 import type {
   AssistantEvent,
   AssistantInput,
+  BatchItem,
+  BatchItemResult,
   ChatSummary,
   ChatView,
   Proposal,
@@ -297,7 +300,54 @@ export class AssistantService {
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
-    if (tool === "propose_change") {
+    if (tool === "propose_changes") {
+      const batch = input as ChangeBatchInput;
+      emit({ type: "tool", name: tool, detail: describe(tool, batch) });
+      // 1C checks every change first; the ones it refuses are shown and left out.
+      const items: BatchItem[] = [];
+      for (const change of batch.changes) {
+        if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+        const preview = await this.deps.connector.tool(connection, "previewChange", change);
+        items.push({
+          action: change.action,
+          object: change.object,
+          preview: preview.ok ? (preview.data as ChangePreview) : null,
+          error: preview.ok ? null : { code: preview.code, message: preview.message },
+        });
+      }
+      if (items.every((item) => item.preview === null)) {
+        return {
+          ok: false,
+          code: "ALL_REFUSED",
+          message: `1C refused every change: ${items
+            .map((item, i) => `#${i + 1} ${item.error?.code}: ${item.error?.message}`)
+            .join("; ")}`,
+        };
+      }
+      proposal = { kind: "batch", title: batch.title, items };
+      create = async () => {
+        const results: BatchItemResult[] = [];
+        for (const [i, change] of batch.changes.entries()) {
+          const shown = items[i]?.preview;
+          if (!shown) {
+            results.push(null);
+          } else if (signal.aborted) {
+            results.push({ ok: false, code: "STOPPED", message: "Stopped by the user" });
+          } else {
+            const applied = await this.deps.connector.tool(connection, "applyChange", {
+              ...change,
+              version: shown.version,
+            });
+            results.push(
+              applied.ok
+                ? { ok: true, state: applied.data as ObjectState }
+                : { ok: false, code: applied.code, message: applied.message },
+            );
+          }
+        }
+        return { ok: true, data: results };
+      };
+    } else if (tool === "propose_change") {
       const change = input as ChangeInput;
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
@@ -352,6 +402,23 @@ export class AssistantService {
     if (!result.ok) {
       decided({ status: "failed", code: result.code, message: result.message });
       return result;
+    }
+    if (proposal.kind === "batch") {
+      const results = result.data as BatchItemResult[];
+      decided({ status: "batch", results });
+      return {
+        ok: true,
+        data: {
+          status: "done",
+          applied: results.flatMap((r, i) => (r?.ok ? [{ n: i + 1, object: r.state }] : [])),
+          failed: results.flatMap((r, i) =>
+            r && !r.ok ? [{ n: i + 1, error: r.code, message: r.message }] : [],
+          ),
+          refusedBefore: proposal.items.flatMap((item, i) =>
+            item.error ? [{ n: i + 1, error: item.error.code, message: item.error.message }] : [],
+          ),
+        },
+      };
     }
     if (proposal.kind === "change") {
       const state = result.data as ObjectState;
@@ -416,6 +483,10 @@ function describe(name: string, input: unknown): string {
     if (read.sum) parts.push(`sum ${read.sum.join(", ")}`);
     if (read.from || read.to) parts.push(`rows ${read.from ?? 1}–${read.to ?? "end"}`);
     return parts.join(" · ");
+  }
+  if (name === "propose_changes") {
+    const batch = input as { title: string; changes: unknown[] };
+    return `${batch.changes.length} · ${batch.title}`;
   }
   if (name === "propose_change") {
     const change = input as { action: string; object: string };

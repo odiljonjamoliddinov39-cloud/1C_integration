@@ -237,6 +237,7 @@ describe.skipIf(!available)("control system API", () => {
       "get_object",
       "read_attachment",
       "propose_change",
+      "propose_changes",
       "propose_invoice_issued",
       "propose_invoice_received",
     ]);
