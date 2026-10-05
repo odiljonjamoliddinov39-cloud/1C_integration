@@ -1,10 +1,9 @@
 import { Worker } from "node:worker_threads";
 
-import type { AiToolName } from "@platform/shared";
-
 import type { ConnectionInput, ConnectionTestResult } from "../shared/ipc.js";
 import {
   type OneCJob,
+  type OneCOperation,
   type ToolResult,
   type TransportFactory,
   failure,
@@ -15,8 +14,8 @@ import {
 
 export interface ConnectorRunner {
   check(connection: ConnectionInput): Promise<ConnectionTestResult>;
-  /** One read-only assistant tool against the company's infobase. */
-  tool(connection: ConnectionInput, name: AiToolName, input: unknown): Promise<ToolResult>;
+  /** One assistant operation against the company's infobase (a read, or a write the user confirmed). */
+  tool(connection: ConnectionInput, name: OneCOperation, input: unknown): Promise<ToolResult>;
   dispose(): Promise<void>;
 }
 
@@ -36,7 +35,7 @@ export class WorkerConnector implements ConnectorRunner {
     return this.run(connection, { kind: "check" }) as Promise<ConnectionTestResult>;
   }
 
-  tool(connection: ConnectionInput, name: AiToolName, input: unknown): Promise<ToolResult> {
+  tool(connection: ConnectionInput, name: OneCOperation, input: unknown): Promise<ToolResult> {
     return this.run(connection, { kind: "tool", name, input }) as Promise<ToolResult>;
   }
 
@@ -86,7 +85,7 @@ export class InProcessConnector implements ConnectorRunner {
     return this.run(connection, { kind: "check" }) as Promise<ConnectionTestResult>;
   }
 
-  tool(connection: ConnectionInput, name: AiToolName, input: unknown): Promise<ToolResult> {
+  tool(connection: ConnectionInput, name: OneCOperation, input: unknown): Promise<ToolResult> {
     return this.run(connection, { kind: "tool", name, input }) as Promise<ToolResult>;
   }
 

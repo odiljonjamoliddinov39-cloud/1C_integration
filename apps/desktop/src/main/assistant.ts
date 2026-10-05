@@ -1,12 +1,28 @@
 /**
- * The AI assistant's loop (TD §7, phase 1, read-only). Each model turn goes through the control
- * system's AI proxy; the tools it asks for run here, against the company's 1C, and only their
- * results go back. The conversation lives in memory and is sent back unchanged every turn
- * (thinking blocks included, as the API requires).
+ * The AI assistant's loop (TD §7). Each model turn goes through the control system's AI proxy; the
+ * tools it asks for run here, against the company's 1C, and only their results go back. The
+ * conversation lives in memory and is sent back unchanged every turn (thinking blocks included, as
+ * the API requires).
+ *
+ * Reads run at once. A document the assistant prepares (propose_* tools) is shown to the user as a
+ * card and the loop waits: only the user's click writes it to 1C, unposted, and the model is told
+ * what happened. Nothing is written while the license is read-only.
  */
-import { AI_TOOLS, type AiContentBlock, type AiMessage, AiToolUse, isAiToolName } from "@platform/shared";
+import { randomUUID } from "node:crypto";
 
-import type { AssistantEvent, AssistantInput, Result } from "../shared/ipc.js";
+import {
+  AI_TOOLS,
+  type AiContentBlock,
+  type AiMessage,
+  type AiProposalTool,
+  AiToolUse,
+  type InvoiceIssuedPreview,
+  type InvoiceReceivedDraft,
+  isAiToolName,
+  isProposalTool,
+} from "@platform/shared";
+
+import type { AssistantEvent, AssistantInput, Proposal, ProposalOutcome, Result } from "../shared/ipc.js";
 import type { ConnectorRunner } from "./connector.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
@@ -31,6 +47,8 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export class AssistantService {
   private readonly conversations = new Map<string, AiMessage[]>();
   private readonly running = new Map<string, AbortController>();
+  /** Per company: the card waiting for the user's answer. */
+  private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
 
   constructor(private readonly deps: AssistantDeps) {}
 
@@ -82,7 +100,7 @@ export class AssistantService {
         for (const use of toolUses) {
           const result = abort.signal.aborted
             ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-            : await this.runTool(companyId, use, emit);
+            : await this.runTool(companyId, use, emit, abort.signal);
           results.push(toToolResult(use.id, result));
         }
         history.push({ role: "user", content: results });
@@ -105,19 +123,108 @@ export class AssistantService {
     this.running.get(companyId)?.abort();
   }
 
+  /** The user's answer to the card on screen; an answer to an older card is ignored. */
+  decide(companyId: string, proposalId: string, approve: boolean): void {
+    const waiting = this.waiting.get(companyId);
+    if (waiting?.id === proposalId) waiting.answer(approve);
+  }
+
   reset(companyId: string): void {
     this.stop(companyId);
     this.conversations.delete(companyId);
   }
 
-  private async runTool(companyId: string, use: AiToolUse, emit: Emit): Promise<ToolResult> {
+  private async runTool(
+    companyId: string,
+    use: AiToolUse,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
     if (!isAiToolName(use.name)) return { ok: false, code: "UNKNOWN_TOOL", message: `No tool ${use.name}` };
     const input = AI_TOOLS[use.name].safeParse(use.input);
     if (!input.success) {
-      return { ok: false, code: "VALIDATION", message: input.error.issues.map((i) => i.message).join("; ") };
+      return {
+        ok: false,
+        code: "VALIDATION",
+        message: input.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      };
     }
+    if (isProposalTool(use.name)) return this.propose(companyId, use.name, input.data, emit, signal);
     emit({ type: "tool", name: use.name, detail: describe(use.name, input.data) });
     return this.deps.connector.tool(this.deps.store.connection(companyId), use.name, input.data);
+  }
+
+  /**
+   * Shows the prepared document and waits for the user. Approved: written to 1C, unposted. The
+   * result tells the model what the user decided, so it never claims a document it did not create.
+   */
+  private async propose(
+    companyId: string,
+    tool: AiProposalTool,
+    input: unknown,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const session = await this.deps.session.view();
+    if (session?.license?.mode !== "active") {
+      return {
+        ok: false,
+        code: "READ_ONLY",
+        message: "The license is read-only: no documents can be created",
+      };
+    }
+    const connection = this.deps.store.connection(companyId);
+    let proposal: Proposal;
+    let create: () => Promise<ToolResult>;
+    if (tool === "propose_invoice_issued") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const preview = await this.deps.connector.tool(connection, "previewInvoiceIssued", input);
+      if (!preview.ok) return preview;
+      const { sale, existing } = preview.data as InvoiceIssuedPreview;
+      // Already invoiced (by the app or by hand): nothing to confirm.
+      if (existing) return { ok: true, data: { status: "already_exists", invoice: existing, sale } };
+      proposal = { kind: "invoice_issued", sale };
+      create = () => this.deps.connector.tool(connection, "createInvoiceIssued", { sale: { ref: sale.ref } });
+    } else {
+      const invoice = input as InvoiceReceivedDraft;
+      // One id per confirmed card: a second confirmation of the same card cannot happen, and a new
+      // card for the same paper invoice is the user's explicit choice.
+      const externalId = `chat-${randomUUID()}`;
+      proposal = { kind: "invoice_received", invoice };
+      create = () =>
+        this.deps.connector.tool(connection, "createInvoiceReceived", {
+          ...invoice,
+          source: "manual",
+          externalId,
+        });
+    }
+
+    const id = randomUUID();
+    emit({ type: "confirm", id, proposal });
+    const approved = await new Promise<boolean>((resolve) => {
+      const answer = (approve: boolean) => {
+        this.waiting.delete(companyId);
+        signal.removeEventListener("abort", onAbort);
+        resolve(approve);
+      };
+      const onAbort = () => answer(false);
+      this.waiting.set(companyId, { id, answer });
+      if (signal.aborted) answer(false);
+      else signal.addEventListener("abort", onAbort);
+    });
+    const decided = (outcome: ProposalOutcome) => emit({ type: "decided", id, outcome });
+    if (!approved) {
+      decided({ status: "declined" });
+      return { ok: true, data: { status: "declined_by_user" } };
+    }
+    const result = await create();
+    if (!result.ok) {
+      decided({ status: "failed", code: result.code, message: result.message });
+      return result;
+    }
+    const document = result.data as Extract<ProposalOutcome, { status: "created" }>["document"];
+    decided({ status: "created", document });
+    return { ok: true, data: { status: document.duplicate ? "already_exists" : "created", document } };
   }
 
   private fail(emit: Emit, code: string, message: string): Result<null> {
@@ -142,5 +249,9 @@ function describe(name: string, input: unknown): string {
       .replace(/\s+/g, " ")
       .slice(0, 160);
   if (name === "describe_objects") return (input as { objects: string[] }).objects.join(", ");
+  if (name === "propose_invoice_issued") {
+    const { sale } = input as { sale: { number?: string; date?: string } };
+    return [sale.number, sale.date].filter(Boolean).join(" · ");
+  }
   return "";
 }

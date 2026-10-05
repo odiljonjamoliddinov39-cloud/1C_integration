@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  InvoiceIssuedInput,
   InvoiceReceivedInput,
   Organization,
   PlatformFunction,
@@ -106,6 +107,25 @@ export class FakePlatform implements PlatformTransport {
       }),
     },
   ];
+  /** Sales (Реализация товаров и услуг) and the invoices issued on them. */
+  sales: {
+    ref: string;
+    number: string;
+    date: string;
+    counterparty: string;
+    amount: number;
+    posted: boolean;
+  }[] = [
+    {
+      ref: randomUUID(),
+      number: "0000-000123",
+      date: "2026-10-01T15:20:00",
+      counterparty: "ООО «Покупатель»",
+      amount: 11_200_000,
+      posted: true,
+    },
+  ];
+  issued: { ref: string; number: string; date: string; saleRef: string }[] = [];
   calls: { fn: PlatformFunction; arg?: string }[] = [];
   closed = false;
 
@@ -135,7 +155,7 @@ export class FakePlatform implements PlatformTransport {
             version: "3.0.0.0",
           },
           platformVersion: "8.3.24.1342",
-          extensionVersion: "0.2.0",
+          extensionVersion: "0.3.0",
           infobase: 'File="FAKE";',
         };
       case "GetOrganizations":
@@ -146,7 +166,51 @@ export class FakePlatform implements PlatformTransport {
         return this.runQuery(parse(arg) as RunQueryInput);
       case "CreateInvoiceReceived":
         return this.createInvoiceReceived(parse(arg) as InvoiceReceivedInput);
+      case "PreviewInvoiceIssued": {
+        const sale = this.findSale(parse(arg) as InvoiceIssuedInput);
+        const existing = this.issued.find((i) => i.saleRef === sale.ref);
+        return {
+          sale: { ...sale, organization: this.organizations[0]?.name ?? null },
+          existing: existing ? { ref: existing.ref, number: existing.number, date: existing.date } : null,
+        };
+      }
+      case "CreateInvoiceIssued": {
+        const sale = this.findSale(parse(arg) as InvoiceIssuedInput);
+        const existing = this.issued.find((i) => i.saleRef === sale.ref);
+        if (existing) return { ...existing, saleRef: undefined, posted: false, duplicate: true };
+        if (this.closedUntil && sale.date.slice(0, 10) <= this.closedUntil) {
+          throw new Failure("CLOSED_PERIOD", `Period is closed until ${this.closedUntil}`);
+        }
+        const doc = {
+          ref: randomUUID(),
+          number: String(this.issued.length + 1).padStart(10, "0"),
+          date: sale.date,
+          saleRef: sale.ref,
+        };
+        this.issued.push(doc);
+        return { ref: doc.ref, number: doc.number, date: doc.date, posted: false, duplicate: false };
+      }
     }
+  }
+
+  /** Like the extension: by ref, or by number (also its last digits) and day. */
+  private findSale(input: InvoiceIssuedInput) {
+    const sale = input?.sale;
+    if (!sale) throw new Failure("VALIDATION", "sale is required");
+    const found = sale.ref
+      ? this.sales.filter((s) => s.ref === sale.ref)
+      : this.sales.filter(
+          (s) =>
+            s.date.startsWith(sale.date ?? "-") &&
+            (s.number === sale.number || s.number.endsWith(sale.number ?? "-")),
+        );
+    if (found.length !== 1 || !found[0]) {
+      throw new Failure("SALE_NOT_FOUND", `Sale ${sale.number ?? sale.ref} not found`, {
+        number: sale.number ?? null,
+        date: sale.date ?? null,
+      });
+    }
+    return found[0];
   }
 
   private runQuery(input: RunQueryInput): QueryResult {

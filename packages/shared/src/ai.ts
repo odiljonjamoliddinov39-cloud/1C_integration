@@ -5,9 +5,13 @@
  */
 import { z } from "zod";
 
-import { RunQueryInput } from "./platform-api.js";
+import { InvoiceReceivedDraft, RunQueryInput, SaleLookup } from "./platform-api.js";
 
-/** Read-only tools the assistant may call; the desktop runs them through PlatformAPI. */
+/**
+ * Tools the assistant may call; the desktop runs them through PlatformAPI. The read tools run at
+ * once. The propose_* tools never write: the desktop shows the document to the user, and only the
+ * user's click creates it in 1C (unposted). The tool result says what the user decided.
+ */
 export const AI_TOOLS = {
   list_organizations: z.object({}),
   describe_objects: z.object({
@@ -15,8 +19,18 @@ export const AI_TOOLS = {
     objects: z.array(z.string().min(1)).min(1).max(20),
   }),
   run_query: RunQueryInput,
+  propose_invoice_issued: z.object({ sale: SaleLookup }),
+  propose_invoice_received: InvoiceReceivedDraft,
 } as const;
 export type AiToolName = keyof typeof AI_TOOLS;
+
+export const AI_PROPOSAL_TOOLS = ["propose_invoice_issued", "propose_invoice_received"] as const;
+export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
+export type AiReadTool = Exclude<AiToolName, AiProposalTool>;
+
+export function isProposalTool(name: AiToolName): name is AiProposalTool {
+  return (AI_PROPOSAL_TOOLS as readonly string[]).includes(name);
+}
 
 export function isAiToolName(name: string): name is AiToolName {
   return Object.hasOwn(AI_TOOLS, name);

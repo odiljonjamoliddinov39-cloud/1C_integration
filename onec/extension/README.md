@@ -7,7 +7,8 @@ updates.
 
 ```
 src/CommonModules/
-  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived (JSON in, JSON out)
+  PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, CreateInvoiceReceived,
+                         PreviewInvoiceIssued, CreateInvoiceIssued (JSON in, JSON out)
   PlatformAPI_Map.bsl    configuration names, one module per configuration version; extension version
   PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index
 build-xml.mjs            src/ -> xml/: the whole extension as Configurator files
@@ -31,7 +32,7 @@ The extension borrows nothing from the configuration, so the same files load int
 5. In the list of extensions, untick **Безопасный режим** and **Защита от опасных действий** for
    PlatformAPI: the extension writes documents, and its log switches to privileged mode while it
    writes (1C does not allow privileged modules in extensions).
-6. The app's **Ulanishni tekshirish** shows the extension version (`0.2.0`).
+6. The app's **Ulanishni tekshirish** shows the extension version (`0.3.0`).
 
 What is inside:
 
@@ -41,6 +42,11 @@ What is inside:
 | Common module `PlatformAPI_Map` | Сервер, Внешнее соединение                                                                                                                                 |
 | Common module `PlatformAPI_Log` | Сервер, Внешнее соединение; turns privileged mode on in its own procedures                                                                                 |
 | Catalog `PlatformLog`           | one element per write: `Source`, `ExternalID` (indexed), `DocumentType`, `DocumentID` (UUID), `DocumentPresentation`, `Operation`, `UserName`, `CreatedAt` |
+
+**Issued invoices** (`CreateInvoiceIssued`) are made on the basis of a sale (Реализация товаров и
+услуг) with the configuration's own filling, as its «Выписать счет-фактуру» button does, and saved
+unposted. A sale that already has an invoice (made by the app, found in PlatformLog, or by hand,
+found by its basis) gets no second one. `PreviewInvoiceIssued` returns the same without writing.
 
 Duplicates are found by source + `ExternalID` in PlatformLog, written in the same transaction as the
 document, so no attribute is added to the configuration's documents. A document deleted or marked

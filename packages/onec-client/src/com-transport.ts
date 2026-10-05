@@ -109,7 +109,7 @@ export class ComTransport implements PlatformTransport {
     if (member == null) {
       throw new OneCError(
         "NOT_FOUND",
-        `The PlatformAPI module in this base has no ${fn}: paste the module's code in the Configurator and update the base (F7)`,
+        `The PlatformAPI module in this base has no ${fn}: load the latest PlatformAPI extension files in the Configurator and update the base (F7)`,
       );
     }
     if (typeof member !== "function") {

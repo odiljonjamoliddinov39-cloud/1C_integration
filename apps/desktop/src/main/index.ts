@@ -140,6 +140,9 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.assistantSend, (_e, input: unknown) => handlers.assistantSend(input));
   ipcMain.handle(CHANNELS.assistantStop, (_e, id: unknown) => handlers.assistantStop(id));
   ipcMain.handle(CHANNELS.assistantReset, (_e, id: unknown) => handlers.assistantReset(id));
+  ipcMain.handle(CHANNELS.assistantDecide, (_e, id: unknown, proposalId: unknown, approve: unknown) =>
+    handlers.assistantDecide(id, proposalId, approve),
+  );
   ipcMain.handle(CHANNELS.updateState, () => updates.current());
   ipcMain.handle(CHANNELS.updateCheck, () => updates.check());
   ipcMain.handle(CHANNELS.updateInstall, () => updates.install());

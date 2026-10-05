@@ -1,6 +1,8 @@
 import {
   CreateInvoiceResult,
   Envelope,
+  InvoiceIssuedInput,
+  InvoiceIssuedPreview,
   InvoiceReceivedInput,
   MetadataObject,
   Organization,
@@ -49,8 +51,26 @@ export class PlatformApiClient {
     return this.invoke("CreateInvoiceReceived", CreateInvoiceResult, parsed.data);
   }
 
+  /** The sale an issued invoice would be made from, and an invoice already made for it. Writes nothing. */
+  async previewInvoiceIssued(input: InvoiceIssuedInput): Promise<InvoiceIssuedPreview> {
+    return this.invoke("PreviewInvoiceIssued", InvoiceIssuedPreview, this.valid(InvoiceIssuedInput, input));
+  }
+
+  /** Writes one unposted Счет-фактура выданный on the basis of a sale; an existing one is returned instead. */
+  async createInvoiceIssued(input: InvoiceIssuedInput): Promise<CreateInvoiceResult> {
+    return this.invoke("CreateInvoiceIssued", CreateInvoiceResult, this.valid(InvoiceIssuedInput, input));
+  }
+
   close(): Promise<void> {
     return this.transport.close();
+  }
+
+  private valid<T>(schema: z.ZodType<T>, input: unknown): T {
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) {
+      throw new OneCError("VALIDATION", "Input does not pass validation", { issues: parsed.error.issues });
+    }
+    return parsed.data;
   }
 
   private async invoke<T>(fn: PlatformFunction, schema: z.ZodType<T>, arg?: unknown): Promise<T> {

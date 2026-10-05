@@ -112,6 +112,8 @@ export function createHandlers({ store, session, connector, assistant, info, pic
     assistantStop: async (id: unknown): Promise<void> => assistant.stop(String(id)),
 
     assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),
+    assistantDecide: async (id: unknown, proposalId: unknown, approve: unknown): Promise<void> =>
+      assistant.decide(String(id), String(proposalId), approve === true),
   };
 }
 

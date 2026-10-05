@@ -3,7 +3,13 @@
  * no nodeIntegration). The renderer only sees `window.platform`; everything that touches 1C,
  * files or secrets runs in the main process.
  */
-import type { Organization, PingResult } from "@platform/shared";
+import type {
+  CreateInvoiceResult,
+  InvoiceReceivedDraft,
+  Organization,
+  PingResult,
+  SaleSummary,
+} from "@platform/shared";
 import { z } from "zod";
 
 export const InfobaseInput = z.discriminatedUnion("kind", [
@@ -97,10 +103,22 @@ export const AssistantInput = z.object({
 });
 export type AssistantInput = z.infer<typeof AssistantInput>;
 
+/** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
+export type Proposal =
+  { kind: "invoice_issued"; sale: SaleSummary } | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
+
+export type ProposalOutcome =
+  | { status: "declined" }
+  | { status: "created"; document: CreateInvoiceResult }
+  | { status: "failed"; code: string; message: string };
+
 /** What the assistant is doing, pushed from the main process while it answers. */
 export type AssistantEvent = { companyId: string } & (
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail: string }
+  /** Waits for assistant.decide(companyId, id, …). */
+  | { type: "confirm"; id: string; proposal: Proposal }
+  | { type: "decided"; id: string; outcome: ProposalOutcome }
   | { type: "done" }
   | { type: "error"; code: string; message: string }
 );
@@ -144,6 +162,8 @@ export interface PlatformBridge {
     stop(companyId: string): Promise<void>;
     /** Forgets the conversation of a company. */
     reset(companyId: string): Promise<void>;
+    /** The user's answer to a "confirm" event: create the document in 1C, or not. */
+    decide(companyId: string, proposalId: string, approve: boolean): Promise<void>;
     onEvent(listener: (event: AssistantEvent) => void): () => void;
   };
   update: {

@@ -8,12 +8,26 @@ import { z } from "zod";
 
 export const SYSTEM_PROMPT = `You are the assistant inside an accounting automation app used by accountants in Uzbekistan. \
 The accountant works in 1C:Бухгалтерия для Узбекистана 3.0 (national accounting standards, НСБУ chart of accounts, amounts in UZS). \
-You answer questions about one company's books by reading its 1C infobase through tools. You can only read: \
-you cannot create, change, post or delete anything, so never claim you did.
+You answer questions about one company's books by reading its 1C infobase through tools.
+
+Documents. Besides reading, you may prepare exactly two kinds of documents, and only when the accountant asks:
+- propose_invoice_issued: an issued invoice (счёт-фактура выданный) on the basis of an existing sale \
+(Документ.РеализацияТоваровУслуг). Find the sale with run_query first and pass its number and date exactly as 1C \
+shows them. 1C fills the invoice from the sale itself.
+- propose_invoice_received: a supplier's invoice (счёт-фактура полученный) from details the accountant gives you: \
+supplier INN, the supplier's invoice number and date, and per line the item (IKPU code, or the exact name from \
+Справочник.Номенклатура, which you can look up), quantity, price, VAT rate and amounts. Never invent a figure or \
+a code: ask for what is missing.
+A proposal writes nothing: the app shows the document to the accountant, and it is created in 1C, unposted, only \
+when they press "Create in 1C". The tool result says what happened: "created" with its number and date, \
+"already_exists", "declined_by_user", or an error. Report exactly that, and never say a document was created unless \
+the result says so. You cannot change, post or delete documents or create any other kind; when asked, say so and \
+explain how to do it in 1C.
 
 Scope. The firm pays for this assistant as an accounting tool, and every answer is billed to its plan, so you only \
 help with the accountant's work:
 - this company's figures, documents, counterparties, items and accounts in 1C;
+- preparing the two documents above;
 - accounting, tax, payroll and financial questions in Uzbekistan (НСБУ, VAT, profit tax, reports and their deadlines), \
 explained in general terms;
 - how to do or find something in 1C:Бухгалтерия;
@@ -52,6 +66,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
   run_query:
     "Run a read-only query in the 1C query language and get columns and rows back (at most `limit` rows, default 200). " +
     "References come back as their names, dates as YYYY-MM-DDTHH:mm:ss. Errors come back with the 1C message.",
+  propose_invoice_issued:
+    "Prepare an issued invoice (счёт-фактура выданный) on the basis of one sale (РеализацияТоваровУслуг), given by its " +
+    "number and date (YYYY-MM-DD) as 1C shows them. The accountant confirms or cancels it in the app; the result says " +
+    "which, or that an invoice for this sale already exists. Call it once per sale.",
+  propose_invoice_received:
+    "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
+    "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
+    "rate in percent; VAT amount; total = amount + VAT). The accountant confirms or cancels it in the app.",
 };
 
 function inputSchema(schema: z.ZodType): Anthropic.Tool.InputSchema {

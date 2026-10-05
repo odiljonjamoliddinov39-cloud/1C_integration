@@ -13,6 +13,8 @@ export const PLATFORM_FUNCTIONS = [
   "GetMetadata",
   "RunQuery",
   "CreateInvoiceReceived",
+  "PreviewInvoiceIssued",
+  "CreateInvoiceIssued",
 ] as const;
 export type PlatformFunction = (typeof PLATFORM_FUNCTIONS)[number];
 
@@ -24,6 +26,7 @@ export const ERROR_CODES = [
   "ORGANIZATION_NOT_FOUND",
   "COUNTERPARTY_NOT_FOUND",
   "CONTRACT_NOT_FOUND",
+  "SALE_NOT_FOUND",
   "ITEM_NOT_FOUND",
   "VAT_RATE_NOT_FOUND",
   "CLOSED_PERIOD",
@@ -137,34 +140,44 @@ export type InvoiceLine = z.infer<typeof InvoiceLine>;
 
 const CENT = 0.01;
 
-export const InvoiceReceivedInput = z
-  .object({
-    /** Id at the source (Didox document id ...); 1C refuses to create a second document with it. */
-    externalId: z.string().min(1).max(100),
-    source: z.enum(["didox", "soliq-service", "soliq-file", "manual"]),
-    /** Our organization in 1C; defaults to the only one if the base has one. */
-    organization: z.object({ ref: Uuid.optional(), inn: Inn.optional() }).optional(),
-    /** Supplier's invoice number and date. */
-    number: z.string().min(1).max(50),
-    date: IsoDate,
-    counterparty: z
-      .object({ ref: Uuid.optional(), inn: Inn.optional() })
-      .refine((c) => c.ref || c.inn, "counterparty needs ref or inn"),
-    contract: z.object({ ref: Uuid }).optional(),
-    lines: z.array(InvoiceLine).min(1),
-    comment: z.string().max(500).optional(),
-  })
-  .superRefine((invoice, ctx) => {
-    invoice.lines.forEach((line, i) => {
-      if (Math.abs(line.quantity * line.price - line.amount) > CENT * Math.max(1, line.quantity)) {
-        ctx.addIssue({ code: "custom", path: ["lines", i, "amount"], message: "amount ≠ quantity × price" });
-      }
-      if (Math.abs(line.amount + line.vatAmount - line.total) > CENT) {
-        ctx.addIssue({ code: "custom", path: ["lines", i, "total"], message: "total ≠ amount + vatAmount" });
-      }
-    });
+/** The fields of a received invoice; InvoiceReceivedInput adds the amount checks. */
+export const InvoiceReceivedFields = z.object({
+  /** Id at the source (Didox document id ...); 1C refuses to create a second document with it. */
+  externalId: z.string().min(1).max(100),
+  source: z.enum(["didox", "soliq-service", "soliq-file", "manual"]),
+  /** Our organization in 1C; defaults to the only one if the base has one. */
+  organization: z.object({ ref: Uuid.optional(), inn: Inn.optional() }).optional(),
+  /** Supplier's invoice number and date. */
+  number: z.string().min(1).max(50),
+  date: IsoDate,
+  counterparty: z
+    .object({ ref: Uuid.optional(), inn: Inn.optional() })
+    .refine((c) => c.ref || c.inn, "counterparty needs ref or inn"),
+  contract: z.object({ ref: Uuid }).optional(),
+  lines: z.array(InvoiceLine).min(1),
+  comment: z.string().max(500).optional(),
+});
+
+function checkLines(invoice: { lines: InvoiceLine[] }, ctx: z.RefinementCtx) {
+  invoice.lines.forEach((line, i) => {
+    if (Math.abs(line.quantity * line.price - line.amount) > CENT * Math.max(1, line.quantity)) {
+      ctx.addIssue({ code: "custom", path: ["lines", i, "amount"], message: "amount ≠ quantity × price" });
+    }
+    if (Math.abs(line.amount + line.vatAmount - line.total) > CENT) {
+      ctx.addIssue({ code: "custom", path: ["lines", i, "total"], message: "total ≠ amount + vatAmount" });
+    }
   });
+}
+
+export const InvoiceReceivedInput = InvoiceReceivedFields.superRefine(checkLines);
 export type InvoiceReceivedInput = z.infer<typeof InvoiceReceivedInput>;
+
+/** A received invoice without where it came from: what the assistant drafts from the chat. */
+export const InvoiceReceivedDraft = InvoiceReceivedFields.omit({
+  externalId: true,
+  source: true,
+}).superRefine(checkLines);
+export type InvoiceReceivedDraft = z.infer<typeof InvoiceReceivedDraft>;
 
 export const CreateInvoiceResult = z.object({
   ref: Uuid,
@@ -175,3 +188,37 @@ export const CreateInvoiceResult = z.object({
   duplicate: z.boolean(),
 });
 export type CreateInvoiceResult = z.infer<typeof CreateInvoiceResult>;
+
+// --- PreviewInvoiceIssued / CreateInvoiceIssued ------------------------------------------------
+
+/** A sale (Реализация товаров и услуг): by 1C ref, or by its number and date as 1C shows them. */
+export const SaleLookup = z
+  .object({
+    ref: Uuid.optional(),
+    number: z.string().trim().min(1).max(50).optional(),
+    date: IsoDate.optional(),
+  })
+  .refine((s) => s.ref || (s.number && s.date), "sale needs ref, or number and date");
+export type SaleLookup = z.infer<typeof SaleLookup>;
+
+/** Счет-фактура выданный on the basis of a sale, filled by 1C as its own «Выписать счет-фактуру» does. */
+export const InvoiceIssuedInput = z.object({ sale: SaleLookup });
+export type InvoiceIssuedInput = z.infer<typeof InvoiceIssuedInput>;
+
+export const SaleSummary = z.object({
+  ref: Uuid,
+  number: z.string(),
+  date: z.string(),
+  organization: z.string().nullable(),
+  counterparty: z.string().nullable(),
+  amount: z.number().nullable(),
+  posted: z.boolean(),
+});
+export type SaleSummary = z.infer<typeof SaleSummary>;
+
+/** What would be written, for the user to confirm; `existing` is an invoice already made for the sale. */
+export const InvoiceIssuedPreview = z.object({
+  sale: SaleSummary,
+  existing: z.object({ ref: Uuid, number: z.string(), date: z.string() }).nullable(),
+});
+export type InvoiceIssuedPreview = z.infer<typeof InvoiceIssuedPreview>;

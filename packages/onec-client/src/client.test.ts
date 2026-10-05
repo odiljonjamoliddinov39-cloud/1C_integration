@@ -71,6 +71,30 @@ describe("PlatformApiClient", () => {
     await expect(client.runQuery({ query: "  " })).rejects.toMatchObject({ code: "VALIDATION" });
   });
 
+  it("previews and issues an invoice on the basis of a sale, once per sale", async () => {
+    const { client, fake } = setup();
+    const sale = { number: "123", date: "2026-10-01" }; // short number: matched by its ending
+    const preview = await client.previewInvoiceIssued({ sale });
+    expect(preview).toMatchObject({
+      sale: { number: "0000-000123", counterparty: "ООО «Покупатель»", amount: 11_200_000, posted: true },
+      existing: null,
+    });
+    const first = await client.createInvoiceIssued({ sale: { ref: preview.sale.ref } });
+    expect(first).toMatchObject({ posted: false, duplicate: false });
+    expect(await client.createInvoiceIssued({ sale })).toMatchObject({ ref: first.ref, duplicate: true });
+    expect((await client.previewInvoiceIssued({ sale })).existing?.ref).toBe(first.ref);
+    expect(fake.issued).toHaveLength(1);
+
+    await expect(
+      client.previewInvoiceIssued({ sale: { number: "999", date: "2026-10-01" } }),
+    ).rejects.toMatchObject({
+      code: "SALE_NOT_FOUND",
+    });
+    await expect(client.createInvoiceIssued({ sale: { number: "123" } })).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+  });
+
   it("validates before calling 1C", async () => {
     const { client, fake } = setup();
     const bad = { ...invoice, lines: [{ ...invoice.lines[0]!, total: 1 }] };

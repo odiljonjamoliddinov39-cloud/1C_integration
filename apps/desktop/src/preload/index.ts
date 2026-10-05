@@ -25,6 +25,8 @@ const bridge: PlatformBridge = {
     send: (input) => ipcRenderer.invoke(CHANNELS.assistantSend, input),
     stop: (companyId) => ipcRenderer.invoke(CHANNELS.assistantStop, companyId),
     reset: (companyId) => ipcRenderer.invoke(CHANNELS.assistantReset, companyId),
+    decide: (companyId, proposalId, approve) =>
+      ipcRenderer.invoke(CHANNELS.assistantDecide, companyId, proposalId, approve),
     onEvent: (listener) => {
       const handler = (_e: unknown, event: AssistantEvent) => listener(event);
       ipcRenderer.on(CHANNELS.assistantEvent, handler);

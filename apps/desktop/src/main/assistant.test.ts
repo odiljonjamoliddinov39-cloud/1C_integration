@@ -35,7 +35,7 @@ function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
   return { requests, fetchImpl };
 }
 
-function setup(script: Parameters<typeof fakeProxy>[0]) {
+function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | "read_only" = "active") {
   const base = new FakePlatform();
   const store = new LocalStore(join(mkdtempSync(join(tmpdir(), "platform-")), "p.json"), secrets);
   const company = store.addCompany(
@@ -53,6 +53,7 @@ function setup(script: Parameters<typeof fakeProxy>[0]) {
       client: new ControlClient("https://control.test", proxy.fetchImpl),
       accessToken: "access",
     }),
+    view: async () => ({ license: { mode: licenseMode } }),
   } as unknown as SessionService;
   const events: AssistantEvent[] = [];
   const assistant = new AssistantService({
@@ -196,5 +197,144 @@ describe("assistant", () => {
     });
     expect(await assistant.send({ companyId: company.id, text: "?" })).toMatchObject({ code: "AI_BUSY" });
     expect(events.filter((e) => e.type === "error")).toHaveLength(2);
+  });
+
+  describe("documents it prepares", () => {
+    /** The model asks for a card, then answers after hearing the result. */
+    const proposeThenAnswer = (tool: string, input: unknown) => [
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "p1", name: tool, input }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ];
+    const resultOf = (requests: AiChatInput[]) =>
+      JSON.parse((requests[1]!.messages[2]!.content as unknown as { content: string }[])[0]!.content);
+
+    /** Answers the card as soon as it appears. */
+    function answerCards(
+      events: AssistantEvent[],
+      assistant: AssistantService,
+      approve: boolean,
+    ): Promise<void> {
+      return new Promise((resolve) => {
+        const timer = setInterval(() => {
+          const card = events.find((e) => e.type === "confirm");
+          if (card?.type === "confirm") {
+            clearInterval(timer);
+            assistant.decide(card.companyId, card.id, approve);
+            resolve();
+          }
+        }, 1);
+      });
+    }
+
+    it("issues an invoice for a sale only after the user confirms the card", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "123-sotuvga schyot-faktura yoz" });
+      await answerCards(events, assistant, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+
+      const card = events.find((e) => e.type === "confirm");
+      expect(card).toMatchObject({ proposal: { kind: "invoice_issued", sale: { number: "0000-000123" } } });
+      expect(base.issued).toHaveLength(1);
+      expect(events.find((e) => e.type === "decided")).toMatchObject({ outcome: { status: "created" } });
+      expect(resultOf(proxy.requests)).toMatchObject({ status: "created", document: { posted: false } });
+    });
+
+    it("writes nothing when the user cancels, and tells the model so", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await answerCards(events, assistant, false);
+      await sending;
+      expect(base.issued).toHaveLength(0);
+      expect(resultOf(proxy.requests)).toEqual({ status: "declined_by_user" });
+    });
+
+    it("needs no card when the sale already has an invoice", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),
+      );
+      base.issued.push({
+        ref: "11111111-1111-1111-1111-111111111111",
+        number: "7",
+        date: "2026-10-01T00:00:00",
+        saleRef: base.sales[0]!.ref,
+      });
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "?" });
+      expect(events.some((e) => e.type === "confirm")).toBe(false);
+      expect(resultOf(proxy.requests)).toMatchObject({ status: "already_exists", invoice: { number: "7" } });
+    });
+
+    it("records a supplier's invoice the user confirms, as manual input", async () => {
+      const invoice = {
+        number: "45",
+        date: "2026-10-01",
+        counterparty: { inn: "123456789" },
+        lines: [
+          {
+            item: { ikpu: "10202001001000000" },
+            quantity: 2,
+            price: 10000,
+            amount: 20000,
+            vatRate: 12,
+            vatAmount: 2400,
+            total: 22400,
+          },
+        ],
+      };
+      const { assistant, store, company, events, base } = setup(
+        proposeThenAnswer("propose_invoice_received", invoice),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await answerCards(events, assistant, true);
+      await sending;
+      expect(base.documents).toEqual([
+        expect.objectContaining({ source: "manual", supplierNumber: "45", posted: false }),
+      ]);
+      expect(base.documents[0]!.externalId).toMatch(/^chat-/);
+    });
+
+    it("prepares nothing while the license is read-only", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),
+        "read_only",
+      );
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "?" });
+      expect(events.some((e) => e.type === "confirm")).toBe(false);
+      expect(base.issued).toHaveLength(0);
+      expect(resultOf(proxy.requests)).toMatchObject({ error: "READ_ONLY" });
+    });
+
+    it("cancels a waiting card when the user presses Stop", async () => {
+      const { assistant, store, company, events, base } = setup(
+        proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (events.some((e) => e.type === "confirm")) {
+            clearInterval(timer);
+            assistant.stop(company.id);
+            resolve();
+          }
+        }, 1);
+      });
+      expect(await sending).toMatchObject({ code: "AI_ABORTED" });
+      expect(base.issued).toHaveLength(0);
+    });
   });
 });

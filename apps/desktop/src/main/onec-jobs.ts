@@ -1,6 +1,6 @@
 /**
- * What the app asks of 1C: the connection check (Ping, GetOrganizations) and the assistant's
- * read-only tools. Runs inside a worker thread (onec-worker.ts) in the app, and in-process in
+ * What the app asks of 1C: the connection check (Ping, GetOrganizations), the assistant's read-only
+ * tools, and the writes the user confirmed (an issued invoice from a sale, a received invoice). Runs inside a worker thread (onec-worker.ts) in the app, and in-process in
  * tests. Never throws: failures become a status or a failed ToolResult.
  */
 import {
@@ -10,7 +10,7 @@ import {
   type PlatformTransport,
 } from "@platform/onec-client";
 
-import { AI_TOOLS, type AiToolName } from "@platform/shared";
+import { AI_TOOLS, type AiReadTool, InvoiceIssuedInput, InvoiceReceivedInput } from "@platform/shared";
 
 import type { ConnectionInput, ConnectionTestResult, InfobaseInput } from "../shared/ipc.js";
 
@@ -46,13 +46,17 @@ export async function checkConnection(transport: PlatformTransport): Promise<Con
 
 export type ToolResult = { ok: true; data: unknown } | { ok: false; code: string; message: string };
 
-/** A job for the worker of one infobase. */
-export type OneCJob = { kind: "check" } | { kind: "tool"; name: AiToolName; input: unknown };
+/** 1C operations behind the assistant: its reads, and the writes the user confirmed in the app. */
+export type OneCOperation =
+  AiReadTool | "previewInvoiceIssued" | "createInvoiceIssued" | "createInvoiceReceived";
 
-/** Runs one assistant tool. The input was validated by the caller; it is parsed again here. */
+/** A job for the worker of one infobase. */
+export type OneCJob = { kind: "check" } | { kind: "tool"; name: OneCOperation; input: unknown };
+
+/** Runs one operation. The input was validated by the caller; it is parsed again here. */
 export async function runTool(
   transport: PlatformTransport,
-  name: AiToolName,
+  name: OneCOperation,
   input: unknown,
 ): Promise<ToolResult> {
   const client = new PlatformApiClient(transport);
@@ -64,6 +68,12 @@ export async function runTool(
         return { ok: true, data: await client.getMetadata(AI_TOOLS.describe_objects.parse(input).objects) };
       case "run_query":
         return { ok: true, data: await client.runQuery(AI_TOOLS.run_query.parse(input)) };
+      case "previewInvoiceIssued":
+        return { ok: true, data: await client.previewInvoiceIssued(InvoiceIssuedInput.parse(input)) };
+      case "createInvoiceIssued":
+        return { ok: true, data: await client.createInvoiceIssued(InvoiceIssuedInput.parse(input)) };
+      case "createInvoiceReceived":
+        return { ok: true, data: await client.createInvoiceReceived(InvoiceReceivedInput.parse(input)) };
     }
   } catch (e) {
     return toolFailure(e);

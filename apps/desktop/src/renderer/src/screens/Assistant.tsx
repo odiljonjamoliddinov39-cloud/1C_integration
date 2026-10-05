@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { AssistantEvent, CompanyView } from "../../../shared/ipc";
+import type { AssistantEvent, CompanyView, Proposal, ProposalOutcome } from "../../../shared/ipc";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,7 @@ type Entry =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "tool"; name: string; detail: string }
+  | { kind: "proposal"; id: string; proposal: Proposal; outcome: ProposalOutcome | null }
   | { kind: "error"; code: string; message: string };
 
 /** Conversations of this window, per company. The main process keeps the model's copy. */
@@ -33,6 +34,15 @@ function apply(transcripts: Transcripts, event: AssistantEvent): Transcripts {
     case "error":
       entries.push({ kind: "error", code: event.code, message: event.message });
       return { ...transcripts, [event.companyId]: { entries, busy: false } };
+    case "confirm":
+      entries.push({ kind: "proposal", id: event.id, proposal: event.proposal, outcome: null });
+      return { ...transcripts, [event.companyId]: { entries, busy: true } };
+    case "decided": {
+      const updated = entries.map((e) =>
+        e.kind === "proposal" && e.id === event.id ? { ...e, outcome: event.outcome } : e,
+      );
+      return { ...transcripts, [event.companyId]: { entries: updated, busy: true } };
+    }
     case "done":
       return { ...transcripts, [event.companyId]: { entries, busy: false } };
   }
@@ -179,7 +189,7 @@ function Chat({
           </div>
         )}
         {transcript.entries.map((entry, i) => (
-          <EntryView key={i} entry={entry} />
+          <EntryView key={i} entry={entry} companyId={company.id} />
         ))}
         {transcript.busy && <div className="text-xs text-muted-foreground">{t("assistant.thinking")}</div>}
         <div ref={bottom} />
@@ -233,7 +243,7 @@ function Chat({
   );
 }
 
-function EntryView({ entry }: { entry: Entry }) {
+function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
   const { t } = useTranslation();
   switch (entry.kind) {
     case "user":
@@ -254,6 +264,8 @@ function EntryView({ entry }: { entry: Entry }) {
           {t(`assistant.tools.${entry.name}`)} {entry.detail}
         </div>
       );
+    case "proposal":
+      return <ProposalCard companyId={companyId} entry={entry} />;
     case "error": {
       const known = t(`errors.${entry.code}`);
       return (
@@ -263,4 +275,129 @@ function EntryView({ entry }: { entry: Entry }) {
       );
     }
   }
+}
+
+const money = (value: number | null | undefined) =>
+  value === null || value === undefined
+    ? "—"
+    : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value);
+const day = (iso: string) => iso.slice(0, 10).split("-").reverse().join(".");
+
+/** A document the assistant prepared. Nothing is written to 1C until "Create in 1C" is pressed. */
+function ProposalCard({
+  companyId,
+  entry,
+}: {
+  companyId: string;
+  entry: Extract<Entry, { kind: "proposal" }>;
+}) {
+  const { t } = useTranslation();
+  const [sent, setSent] = useState(false);
+  const { proposal, outcome } = entry;
+  const decide = (approve: boolean) => {
+    setSent(true);
+    void window.platform.assistant.decide(companyId, entry.id, approve);
+  };
+  const row = (label: string, value: string) => (
+    <div className="flex gap-2">
+      <span className="w-48 shrink-0 text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+
+  return (
+    <Card className="space-y-3 border-primary/40 p-4 text-sm">
+      {proposal.kind === "invoice_issued" ? (
+        <>
+          <div>
+            <div className="font-semibold">{t("assistant.proposal.issuedTitle")}</div>
+            <div className="text-muted-foreground">
+              {t("assistant.proposal.issuedBasis", {
+                number: proposal.sale.number,
+                date: day(proposal.sale.date),
+              })}
+            </div>
+          </div>
+          <div className="space-y-1">
+            {row(t("assistant.proposal.organization"), proposal.sale.organization ?? "—")}
+            {row(t("assistant.proposal.counterparty"), proposal.sale.counterparty ?? "—")}
+            {row(t("assistant.proposal.amount"), money(proposal.sale.amount))}
+            {row(
+              t("assistant.proposal.salePosted"),
+              t(proposal.sale.posted ? "assistant.proposal.yes" : "assistant.proposal.no"),
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <div className="font-semibold">{t("assistant.proposal.receivedTitle")}</div>
+            <div className="text-muted-foreground">
+              {t("assistant.proposal.receivedBasis", {
+                number: proposal.invoice.number,
+                date: day(proposal.invoice.date),
+              })}
+            </div>
+          </div>
+          {row(t("assistant.proposal.counterpartyInn"), proposal.invoice.counterparty.inn ?? "—")}
+          <table className="w-full text-xs tabular-nums">
+            <thead className="text-muted-foreground">
+              <tr className="text-left">
+                <th className="py-1 font-medium">{t("assistant.proposal.item")}</th>
+                <th className="py-1 text-right font-medium">{t("assistant.proposal.quantity")}</th>
+                <th className="py-1 text-right font-medium">{t("assistant.proposal.price")}</th>
+                <th className="py-1 text-right font-medium">{t("assistant.proposal.vat")}</th>
+                <th className="py-1 text-right font-medium">{t("assistant.proposal.total")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposal.invoice.lines.map((line, i) => (
+                <tr key={i} className="border-t border-border">
+                  <td className="py-1">{line.item.name ?? line.item.ikpu ?? line.item.ref}</td>
+                  <td className="py-1 text-right">{money(line.quantity)}</td>
+                  <td className="py-1 text-right">{money(line.price)}</td>
+                  <td className="py-1 text-right">{line.vatRate}%</td>
+                  <td className="py-1 text-right">{money(line.total)}</td>
+                </tr>
+              ))}
+              <tr className="border-t border-border font-semibold">
+                <td className="py-1" colSpan={4}>
+                  {t("assistant.proposal.total")}
+                </td>
+                <td className="py-1 text-right">
+                  {money(proposal.invoice.lines.reduce((sum, line) => sum + line.total, 0))}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {t(
+          proposal.kind === "invoice_issued" ? "assistant.proposal.note" : "assistant.proposal.noteReceived",
+        )}
+      </p>
+      {outcome === null ? (
+        <div className="flex gap-2">
+          <Button size="sm" disabled={sent} onClick={() => decide(true)}>
+            {t("assistant.proposal.create")}
+          </Button>
+          <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
+            {t("assistant.proposal.cancel")}
+          </Button>
+        </div>
+      ) : outcome.status === "created" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t(outcome.document.duplicate ? "assistant.proposal.existed" : "assistant.proposal.created", {
+            number: outcome.document.number,
+            date: day(outcome.document.date),
+          })}
+        </div>
+      ) : outcome.status === "declined" ? (
+        <div className="text-muted-foreground">{t("assistant.proposal.declined")}</div>
+      ) : (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
+      )}
+    </Card>
+  );
 }
