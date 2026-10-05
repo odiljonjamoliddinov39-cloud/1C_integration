@@ -16,6 +16,8 @@ export interface ConnectorRunner {
   check(connection: ConnectionInput): Promise<ConnectionTestResult>;
   /** One assistant operation against the company's infobase (a read, or a write the user confirmed). */
   tool(connection: ConnectionInput, name: OneCOperation, input: unknown): Promise<ToolResult>;
+  /** Closes the app's connection to this infobase (before its extension is replaced); the next call reconnects. */
+  release(connection: ConnectionInput): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -71,6 +73,14 @@ export class WorkerConnector implements ConnectorRunner {
     return entry;
   }
 
+  async release(connection: ConnectionInput): Promise<void> {
+    const key = infobaseKey(connection.infobase);
+    const entry = this.workers.get(key);
+    if (!entry) return;
+    this.workers.delete(key);
+    await entry.worker.terminate();
+  }
+
   async dispose(): Promise<void> {
     await Promise.all([...this.workers.values()].map((e) => e.worker.terminate()));
     this.workers.clear();
@@ -101,6 +111,8 @@ export class InProcessConnector implements ConnectorRunner {
       return job.kind === "check" ? failure(e) : toolFailure(e);
     }
   }
+
+  async release(): Promise<void> {}
 
   async dispose(): Promise<void> {}
 }

@@ -2,6 +2,7 @@
  * Everything the UI can ask the main process to do. Inputs from the renderer are validated here:
  * the renderer is treated as untrusted.
  */
+import { isOlderExtension } from "@platform/shared";
 import { z } from "zod";
 
 import {
@@ -30,6 +31,8 @@ export interface HandlerDeps {
   assistant: AssistantService;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
+  /** Loads the app's PlatformAPI extension into a base (1C Designer, batch mode). */
+  installExtension: (connection: ConnectionInput) => Promise<Result<unknown>>;
 }
 
 /** Chats are files named by these ids: anything but a UUID is refused before it reaches the disk. */
@@ -39,7 +42,15 @@ function invalid(error: { issues: { message: string }[] }): Result<never> {
   return { ok: false, code: "VALIDATION", message: error.issues.map((i) => i.message).join("; ") };
 }
 
-export function createHandlers({ store, session, connector, assistant, info, pickFolder }: HandlerDeps) {
+export function createHandlers({
+  store,
+  session,
+  connector,
+  assistant,
+  info,
+  pickFolder,
+  installExtension,
+}: HandlerDeps) {
   return {
     appInfo: async (): Promise<AppInfo> => info,
 
@@ -99,6 +110,29 @@ export function createHandlers({ store, session, connector, assistant, info, pic
     checkStatus: async (id: unknown): Promise<CompanyView> => {
       const check = await connector.check(store.connection(String(id)));
       return store.setStatus(String(id), check.status);
+    },
+
+    /**
+     * Updates the company's 1C base to the PlatformAPI extension this app ships, then checks it again.
+     * The app's own connection is closed first, so 1C is not held open by us while it updates.
+     */
+    updateExtension: async (id: unknown): Promise<Result<CompanyView>> => {
+      const companyId = String(id);
+      const connection = store.connection(companyId);
+      await connector.release(connection);
+      const installed = await installExtension(connection);
+      const check = await connector.check(connection);
+      const company = store.setStatus(companyId, check.status);
+      if (!installed.ok) return installed;
+      if (!check.status.ok) return { ok: false, code: check.status.code, message: check.status.message };
+      if (isOlderExtension(check.status.ping.extensionVersion)) {
+        return {
+          ok: false,
+          code: "EXTENSION_NOT_UPDATED",
+          message: `1C still reports PlatformAPI ${check.status.ping.extensionVersion} after the update`,
+        };
+      }
+      return { ok: true, data: company };
     },
 
     removeCompany: async (id: unknown): Promise<void> => {

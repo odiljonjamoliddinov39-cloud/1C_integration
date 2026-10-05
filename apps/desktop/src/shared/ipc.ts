@@ -231,6 +231,8 @@ export interface PlatformBridge {
     add(input: AddCompanyInput): Promise<Result<CompanyView>>;
     checkStatus(id: string): Promise<CompanyView>;
     remove(id: string): Promise<void>;
+    /** Loads this app's PlatformAPI extension into the company's 1C base (1C Designer, batch mode). */
+    updateExtension(id: string): Promise<Result<CompanyView>>;
   };
   assistant: {
     /** Turns the assistant on or off for a company (on only after the user agreed). */

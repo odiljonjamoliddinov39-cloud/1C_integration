@@ -85,7 +85,15 @@ const en = {
     oldExtension:
       "The PlatformAPI extension in this 1C base is version {{version}}; the assistant needs {{needed}} to create or change documents.",
     oldExtensionHow:
-      "Questions still work. To update: back up the base, then in the Configurator open the extension, choose «Загрузить конфигурацию из файлов» with the new PlatformAPI files and press F7. Then check again here.",
+      "Questions still work. Press «Update in 1C»: the app loads the new extension into this base itself (up to a minute). Close the Configurator for this base first.",
+    extensionUpdate: "Update in 1C",
+    extensionUpdatingShort: "Updating…",
+    extensionUpdating:
+      "1C is loading the new PlatformAPI into the base. This takes up to a minute; do not close the app.",
+    extensionConfirm:
+      "Load PlatformAPI into the 1C base of {{name}}? Only the app's extension changes; your configuration and data stay as they are. Close the Configurator for this base first.",
+    extensionUpdated:
+      "PlatformAPI {{version}} is loaded into this base: the assistant can now create and change documents.",
     recheck: "Check again",
     rechecking: "Checking…",
     newChat: "New conversation",
@@ -226,6 +234,14 @@ const en = {
     AI_REFUSED: "The assistant declined to answer this question.",
     AI_TRUNCATED: "The answer was too long and was cut off; ask for less at once.",
     AI_ABORTED: "Stopped.",
+    NOT_WINDOWS: "The extension can be updated from the app on Windows only.",
+    DESIGNER_NOT_FOUND: "1C:Enterprise (1cv8.exe) was not found on this PC.",
+    EXTENSION_FILES_MISSING: "The app's PlatformAPI files are missing; reinstall the app.",
+    EXTENSION_BASE_BUSY:
+      "1C could not lock the base: close 1C and the Configurator on every PC that has this base open, then press «Update in 1C» again.",
+    EXTENSION_NO_RIGHTS: "The 1C user in the app needs administrator rights to update the extension.",
+    EXTENSION_UPDATE_FAILED: "1C could not update the extension.",
+    EXTENSION_NOT_UPDATED: "1C still reports the old PlatformAPI.",
     FILE_TYPE:
       "This kind of file is not supported: attach PDF, photos, Excel (.xlsx), Word (.docx) or text files.",
     FILE_TOO_LARGE: "The file is too large (at most 10 MB, images 5 MB).",
@@ -325,7 +341,15 @@ const ru: Dict = {
     oldExtension:
       "В этой базе 1С расширение PlatformAPI версии {{version}}; чтобы создавать и изменять документы, ассистенту нужна {{needed}}.",
     oldExtensionHow:
-      "Вопросы работают и так. Как обновить: сделайте копию базы, в Конфигураторе откройте расширение, выберите «Загрузить конфигурацию из файлов» с новыми файлами PlatformAPI и нажмите F7. Затем проверьте здесь ещё раз.",
+      "Вопросы работают и так. Нажмите «Обновить в 1С»: приложение само загрузит новое расширение в эту базу (до минуты). Сначала закройте Конфигуратор этой базы.",
+    extensionUpdate: "Обновить в 1С",
+    extensionUpdatingShort: "Обновляем…",
+    extensionUpdating:
+      "1С загружает новый PlatformAPI в базу. Это займёт до минуты; не закрывайте приложение.",
+    extensionConfirm:
+      "Загрузить PlatformAPI в базу 1С компании {{name}}? Меняется только расширение приложения; ваша конфигурация и данные остаются как есть. Сначала закройте Конфигуратор этой базы.",
+    extensionUpdated:
+      "PlatformAPI {{version}} загружен в базу: ассистент теперь может создавать и изменять документы.",
     recheck: "Проверить ещё раз",
     rechecking: "Проверяем…",
     newChat: "Новый разговор",
@@ -466,6 +490,15 @@ const ru: Dict = {
     AI_REFUSED: "Ассистент отказался отвечать на этот вопрос.",
     AI_TRUNCATED: "Ответ получился слишком длинным и был обрезан; спросите меньше за раз.",
     AI_ABORTED: "Остановлено.",
+    NOT_WINDOWS: "Расширение обновляется из приложения только в Windows.",
+    DESIGNER_NOT_FOUND: "На этом ПК не найдена 1С:Предприятие (1cv8.exe).",
+    EXTENSION_FILES_MISSING: "Нет файлов PlatformAPI приложения; переустановите приложение.",
+    EXTENSION_BASE_BUSY:
+      "1С не смогла заблокировать базу: закройте 1С и Конфигуратор на всех ПК, где открыта эта база, и снова нажмите «Обновить в 1С».",
+    EXTENSION_NO_RIGHTS:
+      "Пользователю 1С в приложении нужны права администратора, чтобы обновить расширение.",
+    EXTENSION_UPDATE_FAILED: "1С не смогла обновить расширение.",
+    EXTENSION_NOT_UPDATED: "1С всё ещё сообщает старую версию PlatformAPI.",
     FILE_TYPE:
       "Такой файл не поддерживается: прикрепите PDF, фото, Excel (.xlsx), Word (.docx) или текстовый файл.",
     FILE_TOO_LARGE: "Файл слишком большой (не более 10 МБ, изображения — 5 МБ).",
@@ -563,7 +596,15 @@ const uz: Dict = {
     oldExtension:
       "Bu 1C bazasida PlatformAPI kengaytmasi {{version}} versiyada; hujjat yaratish va oʻzgartirish uchun yordamchiga {{needed}} kerak.",
     oldExtensionHow:
-      "Savollar baribir ishlaydi. Yangilash: bazaning nusxasini oling, Konfiguratorda kengaytmani oching, yangi PlatformAPI fayllari bilan «Загрузить конфигурацию из файлов» ni tanlang va F7 ni bosing. Soʻng shu yerda qayta tekshiring.",
+      "Savollar baribir ishlaydi. «1C da yangilash» tugmasini bosing: dastur yangi kengaytmani bu bazaga oʻzi yuklaydi (bir daqiqagacha). Avval bu bazaning Konfiguratorini yoping.",
+    extensionUpdate: "1C da yangilash",
+    extensionUpdatingShort: "Yangilanmoqda…",
+    extensionUpdating:
+      "1C yangi PlatformAPI ni bazaga yuklamoqda. Bu bir daqiqagacha davom etadi; dasturni yopmang.",
+    extensionConfirm:
+      "{{name}} ning 1C bazasiga PlatformAPI yuklansinmi? Faqat dastur kengaytmasi oʻzgaradi; konfiguratsiya va maʼlumotlaringiz oʻzgarmaydi. Avval bu bazaning Konfiguratorini yoping.",
+    extensionUpdated:
+      "PlatformAPI {{version}} bazaga yuklandi: endi yordamchi hujjat yarata va oʻzgartira oladi.",
     recheck: "Qayta tekshirish",
     rechecking: "Tekshirilmoqda…",
     newChat: "Yangi suhbat",
@@ -704,6 +745,15 @@ const uz: Dict = {
     AI_REFUSED: "Yordamchi bu savolga javob berishdan bosh tortdi.",
     AI_TRUNCATED: "Javob juda uzun boʻlib, kesildi; bir martada kamroq soʻrang.",
     AI_ABORTED: "Toʻxtatildi.",
+    NOT_WINDOWS: "Kengaytmani dasturdan faqat Windowsda yangilash mumkin.",
+    DESIGNER_NOT_FOUND: "Bu kompyuterda 1C:Enterprise (1cv8.exe) topilmadi.",
+    EXTENSION_FILES_MISSING: "Dasturning PlatformAPI fayllari yoʻq; dasturni qayta oʻrnating.",
+    EXTENSION_BASE_BUSY:
+      "1C bazani band qila olmadi: bu baza ochiq boʻlgan barcha kompyuterlarda 1C va Konfiguratorni yoping, soʻng «1C da yangilash» ni yana bosing.",
+    EXTENSION_NO_RIGHTS:
+      "Kengaytmani yangilash uchun dasturdagi 1C foydalanuvchisiga administrator huquqi kerak.",
+    EXTENSION_UPDATE_FAILED: "1C kengaytmani yangilay olmadi.",
+    EXTENSION_NOT_UPDATED: "1C hali ham eski PlatformAPI versiyasini koʻrsatmoqda.",
     FILE_TYPE:
       "Bu turdagi fayl qoʻllab-quvvatlanmaydi: PDF, rasm, Excel (.xlsx), Word (.docx) yoki matn faylini biriktiring.",
     FILE_TOO_LARGE: "Fayl juda katta (koʻpi bilan 10 MB, rasmlar 5 MB).",

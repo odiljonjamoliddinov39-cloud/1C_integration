@@ -10,6 +10,7 @@ import { CHANNELS } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
 import type { ShrinkImage } from "./attachments.js";
 import { ChatStore } from "./chats.js";
+import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
@@ -134,6 +135,16 @@ void app.whenReady().then(async () => {
       demo1C,
       defaultServerUrl,
     },
+    installExtension: (connection) =>
+      installExtension(connection, {
+        platform: process.platform,
+        // Packaged: resources/platformapi; development: the repository's onec/extension/xml.
+        sourceDir: app.isPackaged
+          ? join(process.resourcesPath, "platformapi")
+          : join(app.getAppPath(), "../../onec/extension/xml"),
+        findDesigner: () => findDesigner(),
+        run: runDesigner,
+      }),
     pickFolder: async () => {
       const result = await dialog.showOpenDialog({
         title: "1C infobase folder",
@@ -155,6 +166,7 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
+  ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
   ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
     handlers.assistantEnable(id, enabled),
   );

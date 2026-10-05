@@ -22,6 +22,11 @@ const secrets: SecretBox = {
 };
 
 function setup() {
+  const installs: ConnectionInput[] = [];
+  let installResult: { ok: true; data: unknown } | { ok: false; code: string; message: string } = {
+    ok: true,
+    data: null,
+  };
   const file = join(mkdtempSync(join(tmpdir(), "platform-")), "platform.json");
   const bases = new Map<string, FakePlatform>();
   const seen: ConnectionInput[] = [];
@@ -54,8 +59,20 @@ function setup() {
       defaultServerUrl: "http://localhost:3000",
     },
     pickFolder: async () => "D:\\Bases\\TEST",
+    installExtension: async (connection) => {
+      installs.push(connection);
+      return installResult;
+    },
   });
-  return { handlers, file, seen, store, chats };
+  return {
+    handlers,
+    file,
+    seen,
+    store,
+    chats,
+    installs,
+    setInstallResult: (r: typeof installResult) => (installResult = r),
+  };
 }
 
 const connection = {
@@ -156,6 +173,24 @@ describe("desktop main handlers", () => {
     expect(chats.list(companyId)).toEqual([]);
   });
 
+  it("updates the base's PlatformAPI extension, then checks the base again", async () => {
+    const { handlers, installs, setInstallResult } = setup();
+    const org = (await handlers.testConnection(connection)).organizations[0]!;
+    const added = await handlers.addCompany({ ...connection, organization: org });
+    if (!added.ok) throw new Error(added.message);
+
+    const updated = await handlers.updateExtension(added.data.id);
+    expect(updated).toMatchObject({ ok: true, data: { lastStatus: { ok: true } } });
+    expect(installs[0]).toMatchObject({ infobase: connection.infobase, password: "secret-1C" });
+
+    setInstallResult({ ok: false, code: "EXTENSION_BASE_BUSY", message: "close 1C" });
+    expect(await handlers.updateExtension(added.data.id)).toEqual({
+      ok: false,
+      code: "EXTENSION_BASE_BUSY",
+      message: "close 1C",
+    });
+  });
+
   it("keeps data across restarts", async () => {
     const { handlers, file } = setup();
     const org = (await handlers.testConnection(connection)).organizations[0]!;
@@ -197,6 +232,7 @@ describe("without secure storage", () => {
       }),
       info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
+      installExtension: async () => ({ ok: true, data: null }),
     });
     const org = (await handlers.testConnection(connection)).organizations[0]!;
     expect(await handlers.addCompany({ ...connection, organization: org })).toMatchObject({

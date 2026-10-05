@@ -152,24 +152,68 @@ export function AssistantScreen() {
 function ExtensionNotice({ company }: { company: CompanyView }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["companies"] });
   const recheck = useMutation({
     mutationFn: () => window.platform.companies.checkStatus(company.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["companies"] }),
+    onSuccess: refresh,
+  });
+  const update = useMutation({
+    mutationFn: () => window.platform.companies.updateExtension(company.id),
+    onSettled: refresh,
   });
   const status = company.lastStatus;
   const version = status?.ok ? status.ping.extensionVersion : null;
-  if (!version || !isOlderExtension(version)) return null;
-  return (
-    <div className="mb-3 flex flex-wrap items-start gap-3 rounded-lg border border-warning/50 bg-warning/15 px-4 py-3 text-sm">
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="font-medium">
-          {t("assistant.oldExtension", { version, needed: EXTENSION_VERSION })}
-        </div>
-        <div className="text-muted-foreground">{t("assistant.oldExtensionHow")}</div>
+  if (update.data?.ok) {
+    return (
+      <div className="mb-3 rounded-lg bg-success/15 px-4 py-3 text-sm font-medium text-success">
+        {t("assistant.extensionUpdated", { version: EXTENSION_VERSION })}
       </div>
-      <Button size="sm" variant="outline" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
-        {recheck.isPending ? t("assistant.rechecking") : t("assistant.recheck")}
-      </Button>
+    );
+  }
+  if (!version || !isOlderExtension(version)) return null;
+  const failed = update.data && !update.data.ok ? update.data : null;
+  const known = failed ? t(`errors.${failed.code}`) : "";
+  return (
+    <div className="mb-3 space-y-2 rounded-lg border border-warning/50 bg-warning/15 px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="font-medium">
+            {t("assistant.oldExtension", { version, needed: EXTENSION_VERSION })}
+          </div>
+          <div className="text-muted-foreground">
+            {update.isPending ? t("assistant.extensionUpdating") : t("assistant.oldExtensionHow")}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          disabled={update.isPending}
+          onClick={() => {
+            if (window.confirm(t("assistant.extensionConfirm", { name: company.name }))) update.mutate();
+          }}
+        >
+          {update.isPending ? t("assistant.extensionUpdatingShort") : t("assistant.extensionUpdate")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={recheck.isPending || update.isPending}
+          onClick={() => recheck.mutate()}
+        >
+          {recheck.isPending ? t("assistant.rechecking") : t("assistant.recheck")}
+        </Button>
+      </div>
+      {failed && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">
+          {known === `errors.${failed.code}`
+            ? failed.message
+            : // 1C's own words help when it refused for a reason we cannot name.
+              ["EXTENSION_UPDATE_FAILED", "EXTENSION_NO_RIGHTS", "EXTENSION_NOT_UPDATED"].includes(
+                  failed.code,
+                )
+              ? `${known} ${failed.message}`
+              : known}
+        </div>
+      )}
     </div>
   );
 }

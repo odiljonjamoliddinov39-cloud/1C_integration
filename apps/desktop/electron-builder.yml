@@ -12,6 +12,10 @@ files:
 npmRebuild: true
 asarUnpack:
   - "**/node_modules/winax/**"
+# The PlatformAPI extension's files: the app loads them into a 1C base when the base's copy is older.
+extraResources:
+  - from: ../../onec/extension/xml
+    to: platformapi
 win:
   target:
     - target: nsis
