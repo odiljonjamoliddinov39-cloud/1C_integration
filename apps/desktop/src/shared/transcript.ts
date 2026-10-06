@@ -11,7 +11,9 @@ export type ChatEntry =
   | { kind: "note"; text: string }
   | { kind: "tool"; name: string; detail: string }
   | { kind: "proposal"; id: string; proposal: Proposal; outcome: ProposalOutcome | null }
-  | { kind: "error"; code: string; message: string };
+  | { kind: "error"; code: string; message: string }
+  /** How long the assistant worked on the task, not counting cards waiting for the user. */
+  | { kind: "elapsed"; ms: number };
 
 type EntryEvent = AssistantEvent extends infer E ? (E extends unknown ? Omit<E, "companyId"> : never) : never;
 
@@ -44,6 +46,8 @@ export function applyEvent(entries: ChatEntry[], event: EntryEvent): ChatEntry[]
       return entries.map((e) =>
         e.kind === "proposal" && e.id === event.id ? { ...e, outcome: event.outcome } : e,
       );
+    case "elapsed":
+      return [...entries, { kind: "elapsed", ms: event.ms }];
     case "done":
       return entries;
   }

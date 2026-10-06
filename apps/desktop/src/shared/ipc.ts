@@ -203,6 +203,8 @@ export type AssistantEvent = { companyId: string } & (
   | { type: "decided"; id: string; outcome: ProposalOutcome }
   | { type: "done" }
   | { type: "error"; code: string; message: string }
+  /** After a task (answered, failed or stopped): how long the assistant worked on it. */
+  | { type: "elapsed"; ms: number }
 );
 
 /** The app's own updates (electron-updater), pushed from the main process as they change. */

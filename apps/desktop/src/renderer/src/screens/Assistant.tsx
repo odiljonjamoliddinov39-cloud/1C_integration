@@ -32,7 +32,8 @@ const NEW_CHAT: Transcript = { chatId: null, entries: [], busy: false };
 
 function apply(transcripts: Transcripts, event: AssistantEvent): Transcripts {
   const current = transcripts[event.companyId] ?? NEW_CHAT;
-  const busy = event.type !== "done" && event.type !== "error";
+  // "elapsed" comes after the task's "done" or "error": it does not make the chat busy again.
+  const busy = event.type === "elapsed" ? current.busy : event.type !== "done" && event.type !== "error";
   return {
     ...transcripts,
     [event.companyId]: { ...current, entries: applyEvent(current.entries, event), busy },
@@ -569,6 +570,18 @@ function FileIcon({ kind }: { kind: AttachmentKind }) {
   );
 }
 
+/** 2h 5m · 1m 42s · 12s, in the window's language. */
+function durationText(ms: number, t: (key: string) => string): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const part = (n: number, unit: string) => `${n} ${t(`assistant.units.${unit}`)}`;
+  if (h > 0) return [part(h, "h"), m > 0 ? part(m, "m") : ""].filter(Boolean).join(" ");
+  if (m > 0) return [part(m, "m"), s > 0 ? part(s, "s") : ""].filter(Boolean).join(" ");
+  return part(s, "s");
+}
+
 function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
   const { t } = useTranslation();
   switch (entry.kind) {
@@ -610,6 +623,12 @@ function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
       return (
         <div className="truncate font-mono text-xs text-muted-foreground" title={entry.detail}>
           {t(`assistant.tools.${entry.name}`)} {entry.detail}
+        </div>
+      );
+    case "elapsed":
+      return (
+        <div className="text-xs text-muted-foreground">
+          {t("assistant.elapsed", { time: durationText(entry.ms, t) })}
         </div>
       );
     case "proposal":

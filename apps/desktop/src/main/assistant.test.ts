@@ -138,7 +138,7 @@ describe("assistant", () => {
     expect(toolResult.is_error).toBeUndefined();
     expect(JSON.parse(toolResult.content).rows[0]).toEqual(["5110 Расчетный счет", 125_000_000, 0]);
 
-    expect(events.map((e) => e.type)).toEqual(["text", "tool", "text", "done"]);
+    expect(events.map((e) => e.type)).toEqual(["text", "tool", "text", "done", "elapsed"]);
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
   });
 
@@ -628,6 +628,45 @@ describe("assistant", () => {
     expect(earlier.every((block) => block.type === "tool_result")).toBe(true);
   });
 
+  it("says how long it worked on a task, leaving out the time a card waited for the user", async () => {
+    const { assistant, store, company, events } = setup([
+      () => [
+        {
+          type: "message",
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "p1",
+              name: "propose_change",
+              input: { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "A" } },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    store.setAiEnabled(company.id, true);
+    const sending = assistant.send({ companyId: company.id, text: "A ni qo'sh" });
+    // The accountant takes 300 ms to answer the card.
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = events.find((e) => e.type === "confirm");
+        if (card?.type !== "confirm") return;
+        clearInterval(timer);
+        setTimeout(() => {
+          assistant.decide(card.companyId, card.id, false);
+          resolve();
+        }, 300);
+      }, 1);
+    });
+    await sending;
+    const types = events.map((e) => e.type);
+    expect(types.slice(-2)).toEqual(["done", "elapsed"]);
+    const elapsed = events.at(-1);
+    expect(elapsed?.type === "elapsed" && elapsed.ms).toBeLessThan(250);
+  });
+
   describe("speed and reliability", () => {
     const answer = (text: string) => (): AiEvent[] => [
       { type: "text", text },
@@ -668,7 +707,7 @@ describe("assistant", () => {
       // The chat shows the answer once, without the cut-off "Bal".
       const [saved] = assistant.chats(company.id);
       const opened = assistant.openChat(company.id, saved!.id);
-      expect(opened.ok && opened.data.entries.map((e) => e.kind)).toEqual(["user", "assistant"]);
+      expect(opened.ok && opened.data.entries.map((e) => e.kind)).toEqual(["user", "assistant", "elapsed"]);
       expect(opened.ok && opened.data.entries[1]).toEqual({ kind: "assistant", text: "Balans: 125 mln" });
     });
 
@@ -715,6 +754,7 @@ describe("assistant", () => {
         { kind: "user", text: "Tekshir" },
         { kind: "note", text: "Sentyabr bank hujjatlarini tekshiryapman" },
         { kind: "assistant", text: "Hammasi mos." },
+        { kind: "elapsed", ms: expect.any(Number) },
       ]);
     });
 
@@ -796,6 +836,7 @@ describe("assistant", () => {
               ],
             },
             { kind: "assistant", text: "Jami 1 750 000,5 so'm." },
+            { kind: "elapsed" },
           ],
         },
       });
@@ -896,7 +937,9 @@ describe("assistant", () => {
       });
       expect(reopened.openChat(company.id, chatId)).toMatchObject({
         ok: true,
-        data: { entries: [{ kind: "user" }, { kind: "assistant", text: "125 mln so'm." }] },
+        data: {
+          entries: [{ kind: "user" }, { kind: "assistant", text: "125 mln so'm." }, { kind: "elapsed" }],
+        },
       });
       await reopened.send({ companyId: company.id, text: "Aniqroq?" });
       expect(proxy.requests[2]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);

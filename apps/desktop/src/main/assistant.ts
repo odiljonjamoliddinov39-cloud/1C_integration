@@ -125,6 +125,8 @@ export class AssistantService {
    * again unchanged could not be fixed, and is shown with its warnings.
    */
   private readonly checked = new Map<string, Set<string>>();
+  /** Per company: time the current task's cards waited for the user, left out of its work time. */
+  private readonly cardWaitMs = new Map<string, number>();
 
   constructor(private readonly deps: AssistantDeps) {}
 
@@ -166,6 +168,8 @@ export class AssistantService {
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
+    const started = Date.now();
+    this.cardWaitMs.set(companyId, 0);
     try {
       const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
       for (let turn = 0; turn < maxTurns; turn++) {
@@ -232,6 +236,9 @@ export class AssistantService {
       if (e instanceof ControlError) return this.fail(emit, e.code, e.message);
       return this.fail(emit, "INTERNAL", e instanceof Error ? e.message : String(e));
     } finally {
+      const waited = this.cardWaitMs.get(companyId) ?? 0;
+      this.cardWaitMs.delete(companyId);
+      emit({ type: "elapsed", ms: Math.max(0, Date.now() - started - waited) });
       this.running.delete(companyId);
       this.save(chat);
     }
@@ -484,6 +491,7 @@ export class AssistantService {
 
     const id = randomUUID();
     emit({ type: "confirm", id, proposal });
+    const shownAt = Date.now();
     const approved = await new Promise<boolean>((resolve) => {
       const answer = (approve: boolean) => {
         this.waiting.delete(companyId);
@@ -495,6 +503,7 @@ export class AssistantService {
       if (signal.aborted) answer(false);
       else signal.addEventListener("abort", onAbort);
     });
+    this.cardWaitMs.set(companyId, (this.cardWaitMs.get(companyId) ?? 0) + Date.now() - shownAt);
     const decided = (outcome: ProposalOutcome) => emit({ type: "decided", id, outcome });
     if (!approved) {
       decided({ status: "declined" });
