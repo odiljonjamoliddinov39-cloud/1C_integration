@@ -110,6 +110,9 @@ const en = {
       read_attachment: "Reading the file:",
       propose_change: "Preparing:",
       propose_changes: "Preparing for 1C:",
+      check_changes: "Checking in 1C:",
+      propose_invoices_issued: "Finding the sales:",
+      propose_invoices_received: "Preparing invoices:",
     },
     proposal: {
       issuedTitle: "Issue an invoice (счёт-фактура выданный)",
@@ -398,6 +401,9 @@ const ru: Dict = {
       read_attachment: "Читаю файл:",
       propose_change: "Готовлю:",
       propose_changes: "Готовлю для 1С:",
+      check_changes: "Проверяю в 1С:",
+      propose_invoices_issued: "Ищу реализации:",
+      propose_invoices_received: "Готовлю счета-фактуры:",
     },
     proposal: {
       issuedTitle: "Выписать счёт-фактуру",
@@ -685,6 +691,9 @@ const uz: Dict = {
       read_attachment: "Faylni oʻqiyapman:",
       propose_change: "Tayyorlayapman:",
       propose_changes: "1C uchun tayyorlayapman:",
+      check_changes: "1C da tekshiryapman:",
+      propose_invoices_issued: "Sotuvlarni topyapman:",
+      propose_invoices_received: "Hisob-fakturalarni tayyorlayapman:",
     },
     proposal: {
       issuedTitle: "Schyot-faktura yozish",

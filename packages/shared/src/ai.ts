@@ -51,6 +51,31 @@ export const ReadAttachmentInput = z.object({
 });
 export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
 
+/** One change of a batch: what it does not share with the others (the rest comes from `defaults`). */
+const BatchChange = z.object({
+  action: z.enum(["create", "update", "delete", "undelete"]).optional(),
+  object: z.string().trim().min(1).max(200).optional(),
+  ref: z.string().optional(),
+  fields: z.record(z.string(), z.unknown()).optional(),
+  tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).optional(),
+  post: z.boolean().optional(),
+});
+
+/**
+ * What every change of a batch shares, written once instead of in each: the object and action, the
+ * fields (organization, bank account, operation type, accounts…), posting, and per tabular section
+ * the columns every row has (e.g. the settlement accounts of РасшифровкаПлатежа). A change's own
+ * values win.
+ */
+const BatchDefaults = z.object({
+  action: z.enum(["create", "update", "delete", "undelete"]).optional(),
+  object: z.string().trim().min(1).max(200).optional(),
+  fields: z.record(z.string(), z.unknown()).optional(),
+  rows: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  post: z.boolean().optional(),
+});
+export type BatchDefaults = z.infer<typeof BatchDefaults>;
+
 /**
  * Several changes on one card with one confirmation: a bank statement's documents, a list of
  * invoices. Each is checked by 1C first; those 1C refuses are shown and left out.
@@ -58,9 +83,66 @@ export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
 export const ChangeBatchInput = z.object({
   /** What the batch does, for the card's title, e.g. "Bank statement 01–15.09: 42 documents". */
   title: z.string().trim().min(1).max(200),
-  changes: z.array(ChangeInput).min(1).max(1000),
+  defaults: BatchDefaults.optional(),
+  changes: z.array(BatchChange).min(1).max(1000),
 });
 export type ChangeBatchInput = z.infer<typeof ChangeBatchInput>;
+
+/** Dry run: 1C checks a few changes as it would before a card, and nothing is shown or written. */
+export const CheckChangesInput = z.object({
+  defaults: BatchDefaults.optional(),
+  changes: z.array(BatchChange).min(1).max(20),
+});
+export type CheckChangesInput = z.infer<typeof CheckChangesInput>;
+
+/** Each change of a batch with its defaults filled in, or why it is not a valid change. */
+export function expandBatch(input: {
+  defaults?: BatchDefaults | undefined;
+  changes: z.infer<typeof BatchChange>[];
+}): ({ ok: true; change: ChangeInput } | { ok: false; message: string })[] {
+  const d = input.defaults ?? {};
+  return input.changes.map((c) => {
+    const fields = d.fields || c.fields ? { ...d.fields, ...c.fields } : undefined;
+    const tables = c.tables
+      ? Object.fromEntries(
+          Object.entries(c.tables).map(([name, rows]) => [
+            name,
+            rows.map((row) => ({ ...d.rows?.[name], ...row })),
+          ]),
+        )
+      : undefined;
+    const post = c.post ?? d.post;
+    const merged = ChangeInput.safeParse({
+      action: c.action ?? d.action,
+      object: c.object ?? d.object,
+      ...(c.ref !== undefined ? { ref: c.ref } : {}),
+      ...(fields ? { fields } : {}),
+      ...(tables ? { tables } : {}),
+      ...(post !== undefined ? { post } : {}),
+    });
+    return merged.success
+      ? { ok: true as const, change: merged.data }
+      : {
+          ok: false as const,
+          message: merged.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        };
+  });
+}
+
+/** Issued invoices for many sales on one card: each sale's invoice is filled by 1C from the sale. */
+export const InvoicesIssuedInput = z.object({
+  /** For the card's title, in the accountant's language, e.g. "Счета-фактуры за сентябрь: 78". */
+  title: z.string().trim().min(1).max(200),
+  sales: z.array(SaleLookup).min(1).max(1000),
+});
+export type InvoicesIssuedInput = z.infer<typeof InvoicesIssuedInput>;
+
+/** Many suppliers' invoices on one card. */
+export const InvoicesReceivedInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  invoices: z.array(InvoiceReceivedDraft).min(1).max(500),
+});
+export type InvoicesReceivedInput = z.infer<typeof InvoicesReceivedInput>;
 
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
@@ -100,10 +182,13 @@ export const AI_TOOLS = {
   run_query: RunQueryInput,
   get_object: GetObjectInput,
   read_attachment: ReadAttachmentInput,
+  check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
   propose_invoice_issued: z.object({ sale: SaleLookup }),
+  propose_invoices_issued: InvoicesIssuedInput,
   propose_invoice_received: InvoiceReceivedDraft,
+  propose_invoices_received: InvoicesReceivedInput,
   report_findings: ReportFindingsInput,
 } as const;
 export type AiToolName = keyof typeof AI_TOOLS;
@@ -112,11 +197,13 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_change",
   "propose_changes",
   "propose_invoice_issued",
+  "propose_invoices_issued",
   "propose_invoice_received",
+  "propose_invoices_received",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
-/** Tools that run in the app itself, over the chat's attached files, not in 1C. */
-export const AI_LOCAL_TOOLS = ["read_attachment", "report_findings"] as const;
+/** Tools the app runs itself (over attached files, or several 1C calls), not one 1C function. */
+export const AI_LOCAL_TOOLS = ["read_attachment", "report_findings", "check_changes"] as const;
 export type AiLocalTool = (typeof AI_LOCAL_TOOLS)[number];
 /** Tools that read 1C. */
 export type AiReadTool = Exclude<AiToolName, AiProposalTool | AiLocalTool>;

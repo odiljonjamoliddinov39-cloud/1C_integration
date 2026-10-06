@@ -21,6 +21,10 @@ import {
   type AiReadTool,
   AiToolUse,
   type ChangeBatchInput,
+  type CheckChangesInput,
+  type InvoicesIssuedInput,
+  type InvoicesReceivedInput,
+  expandBatch,
   type ChangeInput,
   type ChangePreview,
   type CreateInvoiceResult,
@@ -613,6 +617,13 @@ export class AssistantService {
     if (use.name === "read_attachment") {
       return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
     }
+    if (use.name === "check_changes") {
+      return this.checkChanges(
+        this.deps.store.connection(chat.companyId),
+        input.data as CheckChangesInput,
+        signal,
+      );
+    }
     return this.deps.connector.tool(this.deps.store.connection(chat.companyId), use.name, input.data);
   }
 
@@ -639,59 +650,23 @@ export class AssistantService {
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
-    if (tool === "propose_changes") {
-      const batch = input as ChangeBatchInput;
-      emit({ type: "tool", name: tool, detail: describe(tool, batch) });
-      // 1C checks every change first; the ones it refuses are shown and left out.
-      const items: BatchItem[] = [];
-      for (const change of batch.changes) {
-        if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
-        const preview = await this.deps.connector.tool(connection, "previewChange", change);
-        items.push({
-          action: change.action,
-          object: change.object,
-          preview: preview.ok ? (preview.data as ChangePreview) : null,
-          error: preview.ok ? null : { code: preview.code, message: preview.message },
-        });
-      }
-      if (items.every((item) => item.preview === null)) {
-        return {
-          ok: false,
-          code: "ALL_REFUSED",
-          message: `1C refused every change: ${items
-            .map((item, i) => `#${i + 1} ${item.error?.code}: ${item.error?.message}`)
-            .join("; ")}`,
-        };
-      }
-      const unfixed = this.fillCheck(
-        chat.id,
-        batch.changes.map((change, i) => ({
-          n: i + 1,
-          change,
-          warnings: items[i]?.preview?.warnings ?? [],
-        })),
-      );
-      if (unfixed) return unfixed;
-      proposal = { kind: "batch", title: batch.title, items };
+    if (
+      tool === "propose_changes" ||
+      tool === "propose_invoices_issued" ||
+      tool === "propose_invoices_received"
+    ) {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const prepared = await this.prepareBatch(chat.id, tool, input, connection, signal);
+      if (!("entries" in prepared)) return prepared;
+      const { title, entries } = prepared;
+      proposal = { kind: "batch", title, items: entries.map((entry) => entry.item) };
       create = async () => {
         const results: BatchItemResult[] = [];
-        for (const [i, change] of batch.changes.entries()) {
-          const shown = items[i]?.preview;
-          if (!shown) {
-            results.push(null);
-          } else if (signal.aborted) {
+        for (const entry of entries) {
+          if (!entry.apply) results.push(null);
+          else if (signal.aborted)
             results.push({ ok: false, code: "STOPPED", message: "Stopped by the user" });
-          } else {
-            const applied = await this.deps.connector.tool(connection, "applyChange", {
-              ...change,
-              version: shown.version,
-            });
-            results.push(
-              applied.ok
-                ? { ok: true, state: applied.data as ObjectState }
-                : { ok: false, code: applied.code, message: applied.message },
-            );
-          }
+          else results.push(await entry.apply());
         }
         return { ok: true, data: results };
       };
@@ -783,6 +758,191 @@ export class AssistantService {
   }
 
   /**
+   * The items of a batch card, each checked by 1C first (the ones it refuses are shown and left
+   * out), with how to write each once the accountant confirms: documents and directory items,
+   * issued invoices for many sales, or many suppliers' invoices.
+   */
+  private async prepareBatch(
+    chatId: string,
+    tool: "propose_changes" | "propose_invoices_issued" | "propose_invoices_received",
+    input: unknown,
+    connection: ReturnType<LocalStore["connection"]>,
+    signal: AbortSignal,
+  ): Promise<{ title: string; entries: BatchEntry[] } | ToolResult> {
+    const stopped = { ok: false, code: "STOPPED", message: "Stopped by the user" } as const;
+    const entries: BatchEntry[] = [];
+
+    if (tool === "propose_changes") {
+      const batch = input as ChangeBatchInput;
+      const expanded = expandBatch(batch);
+      for (const [i, item] of expanded.entries()) {
+        if (signal.aborted) return stopped;
+        const raw = batch.changes[i];
+        if (!item.ok) {
+          entries.push({
+            item: {
+              action: raw?.action ?? batch.defaults?.action ?? "create",
+              object: raw?.object ?? batch.defaults?.object ?? "?",
+              preview: null,
+              error: { code: "VALIDATION", message: item.message },
+            },
+            apply: null,
+          });
+          continue;
+        }
+        const change = item.change;
+        const preview = await this.deps.connector.tool(connection, "previewChange", change);
+        const shown = preview.ok ? (preview.data as ChangePreview) : null;
+        entries.push({
+          item: {
+            action: change.action,
+            object: change.object,
+            preview: shown,
+            error: preview.ok ? null : { code: preview.code, message: preview.message },
+          },
+          change,
+          // The version seen on the card: if someone changes the object meanwhile, 1C refuses.
+          apply: shown
+            ? async () => {
+                const applied = await this.deps.connector.tool(connection, "applyChange", {
+                  ...change,
+                  version: shown.version,
+                });
+                return applied.ok
+                  ? { ok: true, state: applied.data as ObjectState }
+                  : { ok: false, code: applied.code, message: applied.message };
+              }
+            : null,
+        });
+      }
+      const unfixed = this.fillCheck(
+        chatId,
+        entries.flatMap((entry, i) =>
+          entry.change
+            ? [{ n: i + 1, change: entry.change, warnings: entry.item.preview?.warnings ?? [] }]
+            : [],
+        ),
+      );
+      if (unfixed) return unfixed;
+    } else if (tool === "propose_invoices_issued") {
+      for (const sale of (input as InvoicesIssuedInput).sales) {
+        if (signal.aborted) return stopped;
+        const preview = await this.deps.connector.tool(connection, "previewInvoiceIssued", { sale });
+        const object = "Документ.СчетФактураВыданный";
+        if (!preview.ok) {
+          entries.push({
+            item: {
+              action: "create",
+              object,
+              preview: null,
+              error: { code: preview.code, message: preview.message },
+            },
+            apply: null,
+          });
+          continue;
+        }
+        const { sale: found, existing } = preview.data as InvoiceIssuedPreview;
+        const basis = `${found.number} · ${found.date.slice(0, 10)}`;
+        entries.push({
+          item: {
+            action: "create",
+            object,
+            preview: existing
+              ? null
+              : draftPreview(object, basis, [
+                  ["Основание", basis],
+                  ["Контрагент", found.counterparty],
+                  ["Сумма", found.amount],
+                ]),
+            // Already invoiced (by the app or by hand): left out, nothing to write.
+            error: existing
+              ? { code: "ALREADY_EXISTS", message: `${existing.number} · ${existing.date.slice(0, 10)}` }
+              : null,
+          },
+          apply: existing
+            ? null
+            : async () =>
+                createdState(
+                  object,
+                  await this.deps.connector.tool(connection, "createInvoiceIssued", {
+                    sale: { ref: found.ref },
+                  }),
+                ),
+        });
+      }
+    } else {
+      for (const invoice of (input as InvoicesReceivedInput).invoices) {
+        const object = "Документ.СчетФактураПолученный";
+        const total = invoice.lines.reduce((sum, line) => sum + line.total, 0);
+        // One id per invoice of a confirmed card, as for a single one.
+        const externalId = `chat-${randomUUID()}`;
+        entries.push({
+          item: {
+            action: "create",
+            object,
+            preview: draftPreview(object, `${invoice.number} · ${invoice.date}`, [
+              ["Номер", invoice.number],
+              ["Контрагент", invoice.counterparty.inn ?? invoice.counterparty.ref ?? null],
+              ["Сумма", Math.round(total * 100) / 100],
+            ]),
+            error: null,
+          },
+          apply: async () =>
+            createdState(
+              object,
+              await this.deps.connector.tool(connection, "createInvoiceReceived", {
+                ...invoice,
+                source: "manual",
+                externalId,
+              }),
+            ),
+        });
+      }
+    }
+
+    if (entries.every((entry) => !entry.apply)) {
+      const reasons = entries.map(
+        (entry, i) => `#${i + 1} ${entry.item.error?.code}: ${entry.item.error?.message}`,
+      );
+      return entries.every((entry) => entry.item.error?.code === "ALREADY_EXISTS")
+        ? { ok: true, data: { status: "already_exists", count: entries.length } }
+        : { ok: false, code: "ALL_REFUSED", message: `1C refused every item: ${reasons.join("; ")}` };
+    }
+    const title = (input as { title: string }).title;
+    return { title, entries };
+  }
+
+  /** check_changes: what 1C would say about a few changes, without a card and without writing. */
+  private async checkChanges(
+    connection: ReturnType<LocalStore["connection"]>,
+    input: CheckChangesInput,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const results: unknown[] = [];
+    for (const [i, item] of expandBatch(input).entries()) {
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      if (!item.ok) {
+        results.push({ n: i + 1, ok: false, error: "VALIDATION", message: item.message });
+        continue;
+      }
+      const preview = await this.deps.connector.tool(connection, "previewChange", item.change);
+      if (!preview.ok) {
+        results.push({ n: i + 1, ok: false, error: preview.code, message: preview.message });
+        continue;
+      }
+      const shown = preview.data as ChangePreview;
+      results.push({
+        n: i + 1,
+        ok: shown.warnings.length === 0,
+        presentation: shown.presentation,
+        warnings: shown.warnings,
+        fieldsSet: shown.changes.map((c) => c.field),
+      });
+    }
+    return { ok: true, data: { results, note: "Nothing was shown or written." } };
+  }
+
+  /**
    * 1C's filling check (ПроверитьЗаполнение) found empty required fields: the model fixes them
    * before the accountant sees a card, as a colleague would. A change sent back once and sent again
    * unchanged could not be fixed, and goes on the card with its warnings.
@@ -808,7 +968,8 @@ export class AssistantService {
         "Nothing was shown to the accountant yet: 1C's filling check found empty fields. " +
         fresh.map(({ n, warnings }) => `#${n}: ${warnings.join("; ")}`).join(" | ") +
         ". Fill them (get_object on a posted document of the same kind shows how this company fills " +
-        "them, tabular sections included) and send the whole proposal again. A change you cannot fix " +
+        "them, tabular sections included) and send the whole proposal again; a field every document " +
+        "lacks goes once into defaults (fields, or rows for a tabular section). A change you cannot fix " +
         "from 1C or the files: send it again unchanged, and it is shown with its warning.",
     };
   }
@@ -871,6 +1032,15 @@ function describe(name: string, input: unknown): string {
     const batch = input as { title: string; changes: unknown[] };
     return `${batch.changes.length} · ${batch.title}`;
   }
+  if (name === "propose_invoices_issued") {
+    const batch = input as { title: string; sales: unknown[] };
+    return `${batch.sales.length} · ${batch.title}`;
+  }
+  if (name === "propose_invoices_received") {
+    const batch = input as { title: string; invoices: unknown[] };
+    return `${batch.invoices.length} · ${batch.title}`;
+  }
+  if (name === "check_changes") return String((input as { changes: unknown[] }).changes.length);
   if (name === "propose_change") {
     const change = input as { action: string; object: string };
     return `${change.action} ${change.object}`;
@@ -1034,4 +1204,46 @@ export function auditToCsv(view: AuditView): string {
     }
   }
   return `\uFEFF${rows.map((row) => row.map(cell).join(";")).join("\r\n")}\r\n`;
+}
+
+/** One item of a batch card and how to write it; apply is null when it is left out. */
+interface BatchEntry {
+  item: BatchItem;
+  change?: ChangeInput;
+  apply: (() => Promise<BatchItemResult>) | null;
+}
+
+/** What a batch card shows for a document 1C fills itself (an invoice), in the shape of a preview. */
+function draftPreview(object: string, presentation: string, fields: [string, unknown][]): ChangePreview {
+  return {
+    object,
+    ref: null,
+    presentation,
+    posted: false,
+    deletionMark: false,
+    version: "",
+    action: "create",
+    willPost: false,
+    changes: fields
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([field, after]) => ({ field, before: null, after })),
+    tables: [],
+    warnings: [],
+  };
+}
+
+function createdState(object: string, result: ToolResult): BatchItemResult {
+  if (!result.ok) return { ok: false, code: result.code, message: result.message };
+  const document = result.data as CreateInvoiceResult;
+  return {
+    ok: true,
+    state: {
+      object,
+      ref: document.ref,
+      presentation: `${document.number} · ${document.date.slice(0, 10)}${document.duplicate ? " (already existed)" : ""}`,
+      posted: false,
+      deletionMark: false,
+      version: "",
+    },
+  };
 }

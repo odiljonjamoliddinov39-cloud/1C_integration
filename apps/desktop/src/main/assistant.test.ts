@@ -586,6 +586,143 @@ describe("assistant", () => {
       });
     });
 
+    it("fills what a batch's documents share from its defaults, written once", async () => {
+      const batch = {
+        title: "Vypiska: 2 ta kirim",
+        defaults: {
+          action: "create",
+          object: "Документ.ПоступлениеНаРасчетныйСчет",
+          fields: { Организация: { name: "Org" }, ВидОперации: "ОплатаПокупателя" },
+          rows: { РасшифровкаПлатежа: { КурсВзаиморасчетов: 1, КратностьВзаиморасчетов: 1 } },
+          post: true,
+        },
+        changes: [
+          { fields: { СуммаДокумента: 1000 }, tables: { РасшифровкаПлатежа: [{ СуммаПлатежа: 1000 }] } },
+          { fields: { СуммаДокумента: 2000, ВидОперации: "Прочее" } },
+          { action: "update", object: "Справочник.Контрагенты" }, // no ref: left out
+        ],
+      };
+      const { assistant, store, company, events, base } = setup(proposeThenAnswer("propose_changes", batch));
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani kirit" });
+      await answerCards(events, assistant, true);
+      await sending;
+      const card = events.find((e) => e.type === "confirm");
+      expect(card).toMatchObject({
+        proposal: {
+          kind: "batch",
+          items: [
+            { object: "Документ.ПоступлениеНаРасчетныйСчет", error: null },
+            { object: "Документ.ПоступлениеНаРасчетныйСчет", error: null },
+            { object: "Справочник.Контрагенты", error: { code: "VALIDATION" } },
+          ],
+        },
+      });
+      const written = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.ПоступлениеНаРасчетныйСчет",
+      );
+      expect(written.map((o) => o.fields)).toEqual([
+        { Организация: { name: "Org" }, ВидОперации: "ОплатаПокупателя", СуммаДокумента: 1000 },
+        { Организация: { name: "Org" }, ВидОперации: "Прочее", СуммаДокумента: 2000 },
+      ]);
+      expect(written.every((o) => o.posted)).toBe(true);
+    });
+
+    it("issues invoices for many sales on one card, leaving out sales already invoiced", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_invoices_issued", {
+          title: "Hisob-fakturalar: 3",
+          sales: [
+            { number: "0000-000123", date: "2026-10-01" },
+            { number: "0000-000124", date: "2026-10-02" },
+            { number: "0000-000125", date: "2026-10-03" },
+          ],
+        }),
+      );
+      const sale = (number: string, date: string) => ({
+        ref: crypto.randomUUID(),
+        number,
+        date: `${date}T10:00:00`,
+        counterparty: "ООО «Б»",
+        amount: 500_000,
+        posted: true,
+      });
+      base.sales.push(sale("0000-000124", "2026-10-02"), sale("0000-000125", "2026-10-03"));
+      base.issued.push({
+        ref: crypto.randomUUID(),
+        number: "0000000099",
+        date: "2026-10-04",
+        saleRef: base.sales[2]!.ref,
+      });
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Hammasiga schyot-faktura yoz" });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      expect(events.find((e) => e.type === "confirm")).toMatchObject({
+        proposal: {
+          kind: "batch",
+          title: "Hisob-fakturalar: 3",
+          items: [{ error: null }, { error: null }, { error: { code: "ALREADY_EXISTS" } }],
+        },
+      });
+      expect(base.issued).toHaveLength(3);
+      expect(resultOf(proxy.requests)).toMatchObject({
+        status: "done",
+        applied: [{ n: 1 }, { n: 2 }],
+        refusedBefore: [{ n: 3, error: "ALREADY_EXISTS" }],
+      });
+    });
+
+    it("records many suppliers' invoices on one card", async () => {
+      const line = {
+        item: { ikpu: "10202001001000000" },
+        quantity: 1,
+        price: 1000,
+        amount: 1000,
+        vatRate: 12,
+        vatAmount: 120,
+        total: 1120,
+      };
+      const invoices = ["45", "46"].map((number) => ({
+        number,
+        date: "2026-10-01",
+        counterparty: { inn: "123456789" },
+        lines: [line],
+      }));
+      const { assistant, store, company, events, base } = setup(
+        proposeThenAnswer("propose_invoices_received", { title: "2 ta faktura", invoices }),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "?" });
+      await answerCards(events, assistant, true);
+      await sending;
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      expect(base.documents.map((d) => d.supplierNumber)).toEqual(["45", "46"]);
+      expect(new Set(base.documents.map((d) => d.externalId)).size).toBe(2);
+    });
+
+    it("checks changes in 1C without a card when asked for a dry run", async () => {
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("check_changes", {
+          defaults: { action: "create", object: "Справочник.Контрагенты" },
+          changes: [{ fields: { Наименование: "A" } }, { fields: { Наименование: "B", ИНН: "305000001" } }],
+        }),
+      );
+      base.required["Справочник.Контрагенты"] = ["ИНН"];
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "?" });
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(0);
+      expect(base.objects.size).toBe(0);
+      expect(resultOf(proxy.requests)).toMatchObject({
+        results: [
+          { n: 1, ok: false, warnings: ['Поле "ИНН" не заполнено'] },
+          { n: 2, ok: true, warnings: [] },
+        ],
+      });
+    });
+
     it("prepares nothing while the license is read-only", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("propose_invoice_issued", { sale: { number: "0000-000123", date: "2026-10-01" } }),

@@ -256,17 +256,7 @@ describe.skipIf(!available)("control system API", () => {
     aiCalls.splice(1);
     expect(JSON.stringify(params.system)).toContain(SYSTEM_PROMPT.slice(0, 40));
     expect(JSON.stringify(params.system)).toContain("ООО «Тест»");
-    expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual([
-      "list_organizations",
-      "describe_objects",
-      "run_query",
-      "get_object",
-      "read_attachment",
-      "propose_change",
-      "propose_changes",
-      "propose_invoice_issued",
-      "propose_invoice_received",
-    ]);
+    expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(CHAT_TOOLS);
     expect(JSON.stringify(params.system)).not.toContain("older version");
 
     // An app from before the change tools sends no list: it gets the read tools and the update note.

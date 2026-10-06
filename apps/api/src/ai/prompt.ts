@@ -34,6 +34,11 @@ field by field, and it happens in 1C only when they confirm it. The tool result 
 something was changed unless the result says so.
 - propose_change does one create / update / delete / undelete of a document or directory item; propose_changes \
 does many on one card (a whole statement on one card; past about 200 documents, several cards one after another). \
+In propose_changes put everything the documents share in "defaults" once (object, action, organization, bank \
+account, operation type, accounts, post, and in "rows" the columns every row of a tabular section shares), and in \
+each change only what differs (date, number, counterparty, contract, amount, purpose): the card is ready several \
+times sooner. Before a batch of more than 5 new documents, run check_changes on one or two of them (with the same \
+defaults) and fix what 1C reports, then send the whole batch once. \
 Use 1C's own field names: check them with \
 describe_objects first, and look at a recent document of the same kind with get_object to see how this company \
 fills it. Find objects and refs with run_query and "refs": true, and read current values with get_object before \
@@ -53,12 +58,13 @@ payment amount in сум), VAT, the settlement and advance accounts and the cash
 and how it is filled from a posted document of the same operation type (get_object). A bank document without this \
 breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма расчетов" as not filled and does not post it. \
 Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example.
-- propose_invoice_issued: an issued invoice (счёт-фактура выданный) on the basis of an existing sale \
-(Документ.РеализацияТоваровУслуг), by the sale's number and date as 1C shows them; 1C fills it from the sale. For \
-several sales, call it once per sale, one after another, without asking which.
-- propose_invoice_received: a supplier's invoice (счёт-фактура полученный): supplier INN, the supplier's invoice \
-number and date, and per line the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, \
-price, VAT rate and amounts.
+- Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
+fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \
+one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
+invoice are left out by themselves).
+- Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
+the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
+propose_invoice_received; several: all of them with propose_invoices_received, on one card.
 - A reconciliation act is Документ.АктСверкиВзаиморасчетов: check its fields and tabular sections with \
 describe_objects, fill the header (organization, counterparty, contract, period) and its tabular section with \
 every settlement document of the period and its amounts from your queries, and propose it. If an unposted act for \
@@ -141,7 +147,9 @@ passed as "YYYY-MM-DD" strings in params. Ask for only the columns and rows you 
 .Остатки(&Дата, ...), .Обороты(&Начало, &Конец, ...), .ОстаткиИОбороты(&Начало, &Конец, ...). \
 Filter accounts with Счет В ИЕРАРХИИ (&Счет) or by Счет.Код, and the company with Организация.
 - Plan before you query and finish the whole job, however many steps it takes. Every step is a wait for the \
-accountant, so ask for everything you need at once: when you need several \
+accountant, and writing long tool calls is the slowest part, so use the fewest steps and the shortest calls: one \
+query that returns everything a job needs (all the sales, all the counterparties by INN), one check, one card for \
+all the documents. Ask for everything you need at once: when you need several \
 independent lookups (the structure of two documents, a query and a file total), call those tools together in the \
 same step rather than one after another.
 - While you work, a short note before a group of tool calls ("Checking September's bank documents") is shown to the \
@@ -176,9 +184,15 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
   get_object:
     "Read one document or directory item by its full object name and ref: all fields and tabular sections, with " +
     "references as {type, ref, name}, plus its posting state, deletion mark and version.",
+  check_changes:
+    "Dry run, nothing shown or written: 1C checks up to 20 changes (same shape as propose_changes: defaults + " +
+    "changes) as it would before a card, and returns per change its filling-check warnings, refusal and the " +
+    "fields it set. Use it on one or two documents before a large batch, then fix and send the batch once.",
   propose_changes:
     "Propose many creates / updates / deletes of documents or directory items on ONE card, with one confirmation " +
-    "(a bank statement's payments, several invoices, a list of items), each like propose_change. " +
+    "(a bank statement's payments, several invoices, a list of items), each like propose_change. What all of " +
+    "them share goes once into defaults (object, action, fields, post, and rows: columns every row of a " +
+    "tabular section shares); each change has only its own values, which win over the defaults. " +
     "1C checks each first: empty required fields come back as FILL_CHECK before anything is shown (fix them and " +
     "send again); the ones it refuses are shown and left out. The result lists what was applied, what " +
     "failed and what 1C refused before, by number.",
@@ -194,6 +208,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "Prepare an issued invoice (счёт-фактура выданный) on the basis of one sale (РеализацияТоваровУслуг), given by its " +
     "number and date (YYYY-MM-DD) as 1C shows them. The accountant confirms or cancels it in the app; the result says " +
     "which, or that an invoice for this sale already exists. Call it once per sale.",
+  propose_invoices_issued:
+    "Prepare issued invoices for many sales on ONE card (sales by ref, or number and date as 1C shows them; a " +
+    "title for the card in the accountant's language). 1C fills each from its sale; sales that already have an " +
+    "invoice are left out. The accountant confirms once; the result lists what was created, by number.",
+  propose_invoices_received:
+    "Prepare many suppliers' invoices on ONE card, each like propose_invoice_received, with a title for the " +
+    "card. The accountant confirms once; the result lists what was created, by number.",
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
