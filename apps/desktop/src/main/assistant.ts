@@ -51,16 +51,25 @@ import type { SessionService } from "./session.js";
 import type { LocalStore } from "./store.js";
 
 /**
- * Model turns per question: enough to compare a bank statement with 1C (a few structure lookups and
- * a dozen queries). Before the last turn the model is told to answer with what it has found.
+ * Model turns per question: a safety stop for a model going in circles, far above what real work
+ * takes (a whole bank statement with checks and cards). The user can stop it at any time. Before
+ * the last turn the model is told to answer with what it has found.
  */
-const MAX_TURNS = 25;
+const MAX_TURNS = 300;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
-const MAX_RESULT_CHARS = 40_000;
+const MAX_RESULT_CHARS = 150_000;
+/** Sent when a turn reached the model's output limit with an unfinished answer. */
+const CONTINUE_NOTE =
+  "Your answer reached the output limit and was cut off. Continue exactly where it stopped, without " +
+  "repeating what you already wrote.";
+/** Sent with the results when a turn reached the output limit inside a tool call, which was not run. */
+const CUT_TOOL_NOTE =
+  "Your last tool call reached the output limit and was cut off, so it was not run. Send it again in " +
+  "smaller parts (for example propose_changes with at most 50 changes per card, one card after another).";
 /**
  * A chat is sent whole every turn and the AI service takes at most 32 MB per request; past this
  * size (mostly attached files) the user starts a new chat.
@@ -75,8 +84,8 @@ const RETRYABLE = new Set([
   "AI_UNAVAILABLE",
   "RATE_LIMITED",
 ]);
-/** Waits before the 2nd, 3rd and 4th attempt. */
-const RETRY_DELAYS_MS = [2_000, 6_000, 15_000];
+/** Waits before each further attempt: a server restart or a busy AI service rides through. */
+const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000];
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -98,6 +107,8 @@ export interface AssistantDeps {
   shrinkImage?: ShrinkImage;
   /** Waits between retries of a failed model turn (tests make them short). */
   retryDelaysMs?: readonly number[];
+  /** Model turns per question (tests make it small). */
+  maxTurns?: number;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -109,6 +120,11 @@ export class AssistantService {
   private readonly running = new Map<string, AbortController>();
   /** Per company: the card waiting for the user's answer. */
   private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
+  /**
+   * Per chat: changes already sent back once for 1C's filling-check warnings. The same change sent
+   * again unchanged could not be fixed, and is shown with its warnings.
+   */
+  private readonly checked = new Map<string, Set<string>>();
 
   constructor(private readonly deps: AssistantDeps) {}
 
@@ -151,30 +167,45 @@ export class AssistantService {
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
     try {
-      for (let turn = 0; turn < MAX_TURNS; turn++) {
+      const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
+      for (let turn = 0; turn < maxTurns; turn++) {
         const answer = await this.turnWithRetries(
           { company: company.name, tools: Object.keys(AI_TOOLS), messages: history },
           emit,
           abort.signal,
         );
-        history.push({ role: "assistant", content: answer.content });
+        if (answer.content.length > 0) history.push({ role: "assistant", content: answer.content });
 
         const toolUses = answer.content.flatMap((block) => {
           const use = AiToolUse.safeParse(block);
           return use.success ? [use.data] : [];
         });
+        if (answer.stopReason === "max_tokens") {
+          // Never an error for the user: the model goes on where it stopped. A tool call that was
+          // cut off may be incomplete, so it is not run; it still needs a result.
+          const notRun = { ok: false, code: "NOT_RUN", message: "Cut off at the output limit" } as const;
+          history.push({
+            role: "user",
+            content:
+              toolUses.length > 0
+                ? [
+                    ...toolUses.map((use) => toToolResult(use.id, notRun)),
+                    { type: "text", text: CUT_TOOL_NOTE },
+                  ]
+                : [{ type: "text", text: CONTINUE_NOTE }],
+          });
+          this.save(chat);
+          continue;
+        }
         if (answer.stopReason !== "tool_use" || toolUses.length === 0) {
-          // A turn cut off by max_tokens or a refusal may hold a tool call that must not run (its
-          // input can be incomplete); it still needs a result, or the next question is rejected.
+          // A refusal may hold a tool call that must not run; it still needs a result, or the next
+          // question is rejected.
           if (toolUses.length > 0) {
             const notRun = { ok: false, code: "NOT_RUN", message: "The turn was cut off" } as const;
             history.push({ role: "user", content: toolUses.map((use) => toToolResult(use.id, notRun)) });
           }
           if (answer.stopReason === "refusal") {
             return this.fail(emit, "AI_REFUSED", "The assistant declined to answer this question");
-          }
-          if (answer.stopReason === "max_tokens") {
-            return this.fail(emit, "AI_TRUNCATED", "The answer was too long and was cut off");
           }
           emit({ type: "done" });
           return { ok: true, data: null };
@@ -187,7 +218,7 @@ export class AssistantService {
             : await this.runTool(chat, use, emit, abort.signal);
           results.push(toToolResult(use.id, result));
         }
-        if (turn === MAX_TURNS - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
+        if (turn === maxTurns - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
         history.push({ role: "user", content: results });
         this.save(chat);
         if (abort.signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");
@@ -329,7 +360,7 @@ export class AssistantService {
         message: input.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
       };
     }
-    if (isProposalTool(use.name)) return this.propose(chat.companyId, use.name, input.data, emit, signal);
+    if (isProposalTool(use.name)) return this.propose(chat, use.name, input.data, emit, signal);
     emit({ type: "tool", name: use.name, detail: describe(use.name, input.data) });
     if (use.name === "read_attachment") {
       return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
@@ -342,12 +373,13 @@ export class AssistantService {
    * result tells the model what the user decided, so it never claims a document it did not create.
    */
   private async propose(
-    companyId: string,
+    chat: StoredChat,
     tool: AiProposalTool,
     input: unknown,
     emit: Emit,
     signal: AbortSignal,
   ): Promise<ToolResult> {
+    const companyId = chat.companyId;
     const session = await this.deps.session.view();
     if (session?.license?.mode !== "active") {
       return {
@@ -383,6 +415,15 @@ export class AssistantService {
             .join("; ")}`,
         };
       }
+      const unfixed = this.fillCheck(
+        chat.id,
+        batch.changes.map((change, i) => ({
+          n: i + 1,
+          change,
+          warnings: items[i]?.preview?.warnings ?? [],
+        })),
+      );
+      if (unfixed) return unfixed;
       proposal = { kind: "batch", title: batch.title, items };
       create = async () => {
         const results: BatchItemResult[] = [];
@@ -412,6 +453,8 @@ export class AssistantService {
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
       if (!preview.ok) return preview;
       const shown = preview.data as ChangePreview;
+      const unfixed = this.fillCheck(chat.id, [{ n: 1, change, warnings: shown.warnings }]);
+      if (unfixed) return unfixed;
       proposal = { kind: "change", preview: shown };
       // The version seen on the card: if someone changes the object meanwhile, 1C refuses.
       create = () =>
@@ -487,6 +530,37 @@ export class AssistantService {
     const document = result.data as CreateInvoiceResult;
     decided({ status: "created", document });
     return { ok: true, data: { status: document.duplicate ? "already_exists" : "created", document } };
+  }
+
+  /**
+   * 1C's filling check (ПроверитьЗаполнение) found empty required fields: the model fixes them
+   * before the accountant sees a card, as a colleague would. A change sent back once and sent again
+   * unchanged could not be fixed, and goes on the card with its warnings.
+   */
+  private fillCheck(
+    chatId: string,
+    changes: { n: number; change: ChangeInput; warnings: string[] }[],
+  ): ToolResult | null {
+    const seen = this.checked.get(chatId) ?? new Set<string>();
+    this.checked.set(chatId, seen);
+    const fresh = changes.filter(({ change, warnings }) => {
+      if (warnings.length === 0) return false;
+      const key = JSON.stringify(change);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (fresh.length === 0) return null;
+    return {
+      ok: false,
+      code: "FILL_CHECK",
+      message:
+        "Nothing was shown to the accountant yet: 1C's filling check found empty fields. " +
+        fresh.map(({ n, warnings }) => `#${n}: ${warnings.join("; ")}`).join(" | ") +
+        ". Fill them (get_object on a posted document of the same kind shows how this company fills " +
+        "them, tabular sections included) and send the whole proposal again. A change you cannot fix " +
+        "from 1C or the files: send it again unchanged, and it is shown with its warning.",
+    };
   }
 
   private fail(emit: Emit, code: string, message: string): Result<null> {

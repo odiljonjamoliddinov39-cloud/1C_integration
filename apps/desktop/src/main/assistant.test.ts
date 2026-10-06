@@ -71,6 +71,7 @@ function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | 
     connector: new InProcessConnector(() => base),
     emit: (e) => events.push(e),
     retryDelaysMs: [1, 1, 1],
+    maxTurns: 25,
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -169,8 +170,8 @@ describe("assistant", () => {
     ]);
   });
 
-  it("never runs a tool call from a cut-off turn, and keeps the conversation valid", async () => {
-    const { assistant, store, company, base, proxy } = setup([
+  it("never runs a tool call cut off at the output limit: the model sends it again in parts", async () => {
+    const { assistant, store, company, base, proxy, events } = setup([
       () => [
         {
           type: "message",
@@ -181,16 +182,40 @@ describe("assistant", () => {
       () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
     ]);
     store.setAiEnabled(company.id, true);
-    expect(await assistant.send({ companyId: company.id, text: "?" })).toMatchObject({
-      code: "AI_TRUNCATED",
-    });
+    expect(await assistant.send({ companyId: company.id, text: "?" })).toEqual({ ok: true, data: null });
     expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0);
 
-    await assistant.send({ companyId: company.id, text: "Again" });
     const messages = proxy.requests[1]!.messages;
-    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "user"]);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
     expect(messages[2]!.content).toEqual([
       expect.objectContaining({ type: "tool_result", tool_use_id: "cut", is_error: true }),
+      { type: "text", text: expect.stringContaining("smaller parts") },
+    ]);
+  });
+
+  it("continues an answer cut off at the output limit, as one answer on screen", async () => {
+    const { assistant, store, company, proxy, events, chats } = setup([
+      () => [
+        { type: "text", text: "Part one, " },
+        { type: "message", stopReason: "max_tokens", content: [{ type: "text", text: "Part one, " }] },
+      ],
+      () => [
+        { type: "text", text: "part two." },
+        { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "part two." }] },
+      ],
+    ]);
+    store.setAiEnabled(company.id, true);
+    expect(await assistant.send({ companyId: company.id, text: "?" })).toEqual({ ok: true, data: null });
+    expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+    expect(proxy.requests[1]!.messages.at(-1)).toEqual({
+      role: "user",
+      content: [{ type: "text", text: expect.stringContaining("Continue exactly where it stopped") }],
+    });
+    const [summary] = chats.list(company.id);
+    const entries = chats.load(company.id, summary!.id)!.entries;
+    expect(entries.filter((e) => e.kind === "assistant")).toEqual([
+      { kind: "assistant", text: "Part one, part two." },
     ]);
   });
 
@@ -483,6 +508,64 @@ describe("assistant", () => {
       await sending;
       expect(base.objects.size).toBe(before);
       expect(resultOf(proxy.requests)).toEqual({ status: "declined_by_user" });
+    });
+
+    it("sends 1C's filling-check warnings back to the model to fix before the card is shown", async () => {
+      const receipt = (fields: Record<string, unknown>) => ({
+        title: "Vypiska",
+        changes: [{ action: "create", object: "Документ.ПоступлениеНаРасчетныйСчет", fields }],
+      });
+      const propose = (id: string, input: unknown) => (): AiEvent[] => [
+        {
+          type: "message",
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id, name: "propose_changes", input }],
+        },
+      ];
+      const { assistant, store, company, events, proxy, base } = setup([
+        propose("p1", receipt({ СуммаДокумента: 1000 })),
+        propose("p2", receipt({ СуммаДокумента: 1000, СуммаВзаиморасчетов: 1000 })),
+        () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      base.required["Документ.ПоступлениеНаРасчетныйСчет"] = ["СуммаВзаиморасчетов"];
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani kirit" });
+      await answerCards(events, assistant, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+
+      const first = (proxy.requests[1]!.messages.at(-1)!.content as unknown as { content: string }[])[0]!;
+      expect(JSON.parse(first.content)).toMatchObject({
+        error: "FILL_CHECK",
+        message: expect.stringContaining('#1: Поле "СуммаВзаиморасчетов" не заполнено'),
+      });
+      // Only the fixed proposal reached the accountant.
+      const cards = events.filter((e) => e.type === "confirm");
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({ proposal: { items: [{ preview: { warnings: [] } }] } });
+    });
+
+    it("shows a change with its warning when the model sends it again unchanged", async () => {
+      const change = { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "A" } };
+      const propose = (id: string) => (): AiEvent[] => [
+        {
+          type: "message",
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id, name: "propose_change", input: change }],
+        },
+      ];
+      const { assistant, store, company, events, base } = setup([
+        propose("p1"),
+        propose("p2"),
+        () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      base.required["Справочник.Контрагенты"] = ["ИНН"];
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "A ni qo'sh" });
+      await answerCards(events, assistant, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+      expect(events.find((e) => e.type === "confirm")).toMatchObject({
+        proposal: { kind: "change", preview: { warnings: ['Поле "ИНН" не заполнено'] } },
+      });
     });
 
     it("prepares nothing while the license is read-only", async () => {

@@ -46,8 +46,8 @@ export const ReadAttachmentInput = z.object({
   sum: z.array(Column).max(10).optional(),
   /** Columns to return when listing rows; all when absent. */
   columns: z.array(Column).max(30).optional(),
-  /** Rows (or groups) to return, at most 500; 200 by default. */
-  limit: z.number().int().min(1).max(500).optional(),
+  /** Rows (or groups) to return, at most 5000; 200 by default. */
+  limit: z.number().int().min(1).max(5000).optional(),
 });
 export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
 
@@ -58,7 +58,7 @@ export type ReadAttachmentInput = z.infer<typeof ReadAttachmentInput>;
 export const ChangeBatchInput = z.object({
   /** What the batch does, for the card's title, e.g. "Bank statement 01–15.09: 42 documents". */
   title: z.string().trim().min(1).max(200),
-  changes: z.array(ChangeInput).min(1).max(100),
+  changes: z.array(ChangeInput).min(1).max(1000),
 });
 export type ChangeBatchInput = z.infer<typeof ChangeBatchInput>;
 
@@ -125,7 +125,7 @@ export const AiChatInput = z.object({
    * never asked to run a tool it does not have. Absent: LEGACY_AI_TOOLS.
    */
   tools: z.array(z.string().max(64)).max(50).optional(),
-  messages: z.array(AiMessage).min(1).max(200),
+  messages: z.array(AiMessage).min(1).max(20_000),
 });
 export type AiChatInput = z.infer<typeof AiChatInput>;
 

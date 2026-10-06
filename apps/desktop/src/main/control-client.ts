@@ -27,11 +27,11 @@ export class ControlError extends Error {
 const SignedIn = TokenPair.extend({ me: Me });
 export type AiTurn = Extract<AiEvent, { type: "message" }>;
 /**
- * An assistant turn may run for many minutes (a card for a whole bank statement), so it is cut off
- * only when nothing at all arrives for a while: the server sends a ping every 15 s while it works.
+ * An assistant turn may run for many minutes (a card for a whole bank statement), so it has no time
+ * limit: it is cut off only when nothing at all arrives for a while, and the server sends a ping
+ * every 15 s while it works.
  */
 const AI_IDLE_MS = 2 * 60_000;
-const AI_TURN_MAX_MS = 30 * 60_000;
 /** Chats larger than this go gzipped: 1C rows and text shrink several times. */
 const GZIP_FROM_BYTES = 16 * 1024;
 const gzipAsync = promisify(gzip);
@@ -106,7 +106,7 @@ export class ControlClient {
         "/v1/ai/chat",
         undefined,
         accessToken,
-        AbortSignal.any([signal, idle.signal, AbortSignal.timeout(AI_TURN_MAX_MS)]),
+        AbortSignal.any([signal, idle.signal]),
         body,
       );
       if (!response.body) throw new ControlError("BAD_RESPONSE", "The server sent no answer");

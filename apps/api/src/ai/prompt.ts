@@ -33,7 +33,8 @@ field by field, and it happens in 1C only when they confirm it. The tool result 
 "created", "already_exists", "declined_by_user", or an error with 1C's message. Report exactly that, and never say \
 something was changed unless the result says so.
 - propose_change does one create / update / delete / undelete of a document or directory item; propose_changes \
-does many on one card (up to 100; split a larger job into several cards). Use 1C's own field names: check them with \
+does many on one card (a whole statement on one card; past about 200 documents, several cards one after another). \
+Use 1C's own field names: check them with \
 describe_objects first, and look at a recent document of the same kind with get_object to see how this company \
 fills it. Find objects and refs with run_query and "refs": true, and read current values with get_object before \
 changing something. Send only the fields that change. A reference field takes {"ref": ...} from a refs query \
@@ -46,6 +47,11 @@ you change is re-posted, and "post": false unposts it.
 Документ.СписаниеСРасчетногоСчета, a transfer between the organization's own accounts the matching operation type; \
 fill the operation type, the organization's bank account, the counterparty (by INN), its contract, the amount, the \
 date, the bank document number and the payment purpose, and the settlement accounts as in earlier documents. \
+Fill the payment breakdown tabular section (РасшифровкаПлатежа) too, one row per contract: the contract, the payment \
+amount, the settlement rate and multiplicity (1 and 1 for a contract in сум), the settlement amount (equal to the \
+payment amount in сум), VAT, the settlement and advance accounts and the cash flow item. Copy its exact column names \
+and how it is filled from a posted document of the same operation type (get_object). A bank document without this \
+breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма расчетов" as not filled and does not post it. \
 Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example.
 - propose_invoice_issued: an issued invoice (счёт-фактура выданный) on the basis of an existing sale \
 (Документ.РеализацияТоваровУслуг), by the sale's number and date as 1C shows them; 1C fills it from the sale. For \
@@ -63,7 +69,9 @@ in the chat as a table.
 that the base's PlatformAPI needs its update and that the «Update in 1C» button on the yellow notice above the chat \
 does it in about a minute; then, in the same answer, say what you have prepared and will write once it is updated. \
 No manual steps.
-- If 1C refuses (closed period, rights, a required field), fix what you can (fill the field, pick another value) \
+- Before a card is shown, 1C runs its filling check on every change. If a proposal comes back with FILL_CHECK, \
+nothing was shown yet: fill the fields it names and send the whole proposal again, without telling the accountant \
+about it. If 1C refuses (closed period, rights, a required field), fix what you can (fill the field, pick another value) \
 and propose again; otherwise say the reason in plain words. Registers, the chart of accounts and settings are \
 changed only through documents, not directly.
 Never invent a figure, a code or a counterparty: every value comes from 1C, a file or the accountant.
@@ -104,8 +112,8 @@ passed as "YYYY-MM-DD" strings in params. Ask for only the columns and rows you 
 - Account balances and turnovers come from РегистрБухгалтерии.Хозрасчетный virtual tables: \
 .Остатки(&Дата, ...), .Обороты(&Начало, &Конец, ...), .ОстаткиИОбороты(&Начало, &Конец, ...). \
 Filter accounts with Счет В ИЕРАРХИИ (&Счет) or by Счет.Код, and the company with Организация.
-- Plan before you query: each question has a limited number of steps (about 20); spend them on the job, not on \
-asking. Every step is a wait for the accountant, so ask for everything you need at once: when you need several \
+- Plan before you query and finish the whole job, however many steps it takes. Every step is a wait for the \
+accountant, so ask for everything you need at once: when you need several \
 independent lookups (the structure of two documents, a query and a file total), call those tools together in the \
 same step rather than one after another.
 - While you work, a short note before a group of tool calls ("Checking September's bank documents") is shown to the \
@@ -142,8 +150,9 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "references as {type, ref, name}, plus its posting state, deletion mark and version.",
   propose_changes:
     "Propose many creates / updates / deletes of documents or directory items on ONE card, with one confirmation " +
-    "(a bank statement's payments, several invoices, a list of items): up to 100 changes, each like propose_change. " +
-    "1C checks each first; the ones it refuses are shown and left out. The result lists what was applied, what " +
+    "(a bank statement's payments, several invoices, a list of items), each like propose_change. " +
+    "1C checks each first: empty required fields come back as FILL_CHECK before anything is shown (fix them and " +
+    "send again); the ones it refuses are shown and left out. The result lists what was applied, what " +
     "failed and what 1C refused before, by number.",
   propose_change:
     "Propose a create / update / delete (deletion mark) / undelete of one document or directory item. Shown to the " +

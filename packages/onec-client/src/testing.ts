@@ -145,6 +145,8 @@ export class FakePlatform implements PlatformTransport {
     }
   >();
   calls: { fn: PlatformFunction; arg?: string }[] = [];
+  /** Fields 1C's filling check wants, per object: empty ones come back as warnings in a preview. */
+  required: Record<string, string[]> = {};
   closed = false;
 
   async call(fn: PlatformFunction, arg?: string): Promise<string> {
@@ -273,7 +275,12 @@ export class FakePlatform implements PlatformTransport {
       willPost,
       changes,
       tables: [],
-      warnings: [],
+      warnings:
+        input.action === "create" || input.action === "update"
+          ? (this.required[input.object] ?? [])
+              .filter((field) => fields[field] === undefined || fields[field] === "")
+              .map((field) => `Поле "${field}" не заполнено`)
+          : [],
     };
     const apply = () => {
       const ref = input.ref ?? randomUUID();
