@@ -74,7 +74,7 @@ const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
-const MAX_RESULT_CHARS = 150_000;
+const MAX_RESULT_CHARS = 60_000;
 /** Sent when a turn reached the model's output limit with an unfinished answer. */
 const CONTINUE_NOTE =
   "Your answer reached the output limit and was cut off. Continue exactly where it stopped, without " +

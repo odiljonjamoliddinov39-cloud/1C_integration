@@ -20,8 +20,15 @@ import { type ModelChoice, aiChoiceFor } from "./settings.js";
 // The model's own maximum: a card for a whole bank statement is one long tool call, and a turn is
 // never cut short by us. (A turn that still reaches it is continued by the app.)
 const MAX_TOKENS = 128_000;
+/** A chat larger than this has its older 1C results cleared, keeping the latest few. */
+const CLEAR_FROM_TOKENS = 40_000;
+const KEEP_TOOL_USES = 6;
+/** Clearing rewrites the cached prompt from that point, so only when it saves a good amount. */
+const CLEAR_AT_LEAST_TOKENS = 10_000;
 
 export class AiProxy {
+  /** Off after the API refused it once, until the server restarts. */
+  private contextEditing = true;
   constructor(
     private readonly db: Db,
     private readonly service: Service,
@@ -84,7 +91,11 @@ export class AiProxy {
       max_tokens: MAX_TOKENS,
       // On a policy decline, the API retries on a fallback model it picks by refusal category.
       // "updates": thinking blocks carry the model's short progress notes, which the app shows.
-      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
+      betas: [
+        "server-side-fallback-2026-07-01",
+        "thinking-display-updates-2026-08-18",
+        "context-management-2025-06-27",
+      ],
       fallbacks: "default",
       thinking: { type: "adaptive", display: "updates" },
       system: [
@@ -98,18 +109,50 @@ export class AiProxy {
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
       messages: input.messages as BetaMessageParam[],
       output_config: { effort: choice.effort },
+      // A long chat would send every old 1C result again on every step. Once the chat is large,
+      // the API clears all but the latest results (the model reads 1C again if it needs one);
+      // what was proposed and decided is kept.
+      context_management: {
+        edits: [
+          {
+            type: "clear_tool_uses_20250919",
+            trigger: { type: "input_tokens", value: CLEAR_FROM_TOKENS },
+            keep: { type: "tool_uses", value: KEEP_TOOL_USES },
+            clear_at_least: { type: "input_tokens", value: CLEAR_AT_LEAST_TOKENS },
+            exclude_tools: [...AI_PROPOSAL_TOOLS, "report_findings"],
+          },
+        ],
+      },
       cache_control: { type: "ephemeral" },
     };
+    const handlers = {
+      onText: (text: string) => send({ type: "text", text }),
+      onProgress: (text: string) => send({ type: "progress", text }),
+    };
+    if (!this.contextEditing) {
+      delete params.context_management;
+      params.betas = params.betas?.filter((beta) => beta !== "context-management-2025-06-27");
+    }
     let message;
     try {
-      message = await this.model.turn(
-        params,
-        {
-          onText: (text) => send({ type: "text", text }),
-          onProgress: (text) => send({ type: "progress", text }),
-        },
-        signal,
-      );
+      try {
+        message = await this.model.turn(params, handlers, signal);
+      } catch (error) {
+        // Clearing old results saves tokens but must never cost an answer: if the API refuses
+        // it, the turn runs without it, and later turns do too.
+        if (
+          !(error instanceof Anthropic.BadRequestError) ||
+          !/context.?management|clear_tool_uses/i.test(error.message) ||
+          !params.context_management
+        ) {
+          throw error;
+        }
+        this.log.error(error, "Context editing refused; turning it off");
+        this.contextEditing = false;
+        delete params.context_management;
+        params.betas = params.betas?.filter((beta) => beta !== "context-management-2025-06-27");
+        message = await this.model.turn(params, handlers, signal);
+      }
     } catch (error) {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
       return send(toErrorEvent(error));

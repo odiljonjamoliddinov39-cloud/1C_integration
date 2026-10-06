@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { generateKeyPairSync } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
@@ -257,6 +258,12 @@ describe.skipIf(!available)("control system API", () => {
     expect(JSON.stringify(params.system)).toContain(SYSTEM_PROMPT.slice(0, 40));
     expect(JSON.stringify(params.system)).toContain("ООО «Тест»");
     expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(CHAT_TOOLS);
+    // Old 1C results are cleared from a large chat; what was proposed and decided is kept.
+    expect(params.betas).toContain("context-management-2025-06-27");
+    expect(params.context_management?.edits?.[0]).toMatchObject({
+      type: "clear_tool_uses_20250919",
+      exclude_tools: expect.arrayContaining(["propose_changes", "propose_invoices_issued"]),
+    });
     expect(JSON.stringify(params.system)).not.toContain("older version");
 
     // An app from before the change tools sends no list: it gets the read tools and the update note.
@@ -658,6 +665,45 @@ describe.skipIf(!available)("control system API", () => {
         await db.sql`DELETE FROM app_settings`;
       }
     });
+  });
+
+  it("answers without clearing old results when the API refuses it, and stops asking", async () => {
+    const refusing = {
+      calls: [] as BetaMessageStreamParams[],
+      async turn(params: BetaMessageStreamParams, handlers: { onText: (text: string) => void }) {
+        refusing.calls.push(structuredClone(params));
+        if (params.context_management) {
+          throw new Anthropic.BadRequestError(
+            400,
+            {
+              type: "error",
+              error: { type: "invalid_request_error", message: "context_management: not supported" },
+            },
+            "context_management: not supported",
+            new Headers(),
+          );
+        }
+        return fakeModel.turn(params, handlers);
+      },
+    };
+    const other = await buildApp(db.db, config, { aiModel: refusing });
+    try {
+      const { accessToken } = (await post("/v1/auth/register", account)).json();
+      const ask = () =>
+        other.inject({
+          method: "POST",
+          url: "/v1/ai/chat",
+          payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+      const first = await ask();
+      expect(first.body).toContain('"type":"message"');
+      expect(refusing.calls.map((c) => Boolean(c.context_management))).toEqual([true, false]);
+      await ask();
+      expect(refusing.calls.map((c) => Boolean(c.context_management))).toEqual([true, false, false]);
+    } finally {
+      await other.close();
+    }
   });
 
   it("validates input", async () => {

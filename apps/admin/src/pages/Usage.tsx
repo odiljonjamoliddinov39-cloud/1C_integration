@@ -21,11 +21,27 @@ export function UsagePage() {
         </Select>
         <span className="tabular ml-auto text-sm text-muted-foreground">Total {usd(total)}</span>
       </div>
+      <p className="border-b border-border px-3 py-2 text-xs text-muted-foreground">
+        Cached reads are the chat sent again on each step: they cost a tenth of input. Output is the dearest
+        (5× input), and grows with the effort setting.
+      </p>
       <ErrorText error={usage.error} />
       {usage.data?.length === 0 ? (
         <Empty>No AI use in this period.</Empty>
       ) : (
-        <Table head={["Customer", "Requests", "Tokens", "Cost", "Share"]}>
+        <Table
+          head={[
+            "Customer",
+            "Requests",
+            "Tokens",
+            "Input",
+            "Output (thinking incl.)",
+            "Cached reads",
+            "Cache writes",
+            "Cost",
+            "Share",
+          ]}
+        >
           {usage.data?.map((r) => (
             <tr key={r.accountId}>
               <Td>
@@ -35,6 +51,10 @@ export function UsagePage() {
               </Td>
               <Td>{r.requests}</Td>
               <Td>{compact(r.tokens)}</Td>
+              <Td>{compact(r.inputTokens)}</Td>
+              <Td>{compact(r.outputTokens)}</Td>
+              <Td>{compact(r.cacheReadTokens)}</Td>
+              <Td>{compact(r.cacheWriteTokens)}</Td>
               <Td>{usd(r.costUsd)}</Td>
               <Td>{total > 0 ? `${Math.round((r.costUsd / total) * 100)}%` : "—"}</Td>
             </tr>

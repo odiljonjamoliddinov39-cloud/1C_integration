@@ -196,6 +196,11 @@ export const UsageRow = z.object({
   accountName: z.string(),
   requests: z.number(),
   tokens: z.number(),
+  /** The parts of tokens: fresh input, output (thinking included), cached reads, cache writes. */
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheWriteTokens: z.number(),
   costUsd: z.number(),
 });
 export type UsageRow = z.infer<typeof UsageRow>;

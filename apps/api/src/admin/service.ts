@@ -378,10 +378,16 @@ export class AdminService {
       name: string;
       requests: number;
       tokens: number;
+      input: number;
+      output: number;
+      cache_read: number;
+      cache_write: number;
       cost: number;
     }>(sql`
       select a.id as account_id, a.name, count(*)::int as requests,
         sum(u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens)::float8 as tokens,
+        sum(u.input_tokens)::float8 as input, sum(u.output_tokens)::float8 as output,
+        sum(u.cache_read_tokens)::float8 as cache_read, sum(u.cache_write_tokens)::float8 as cache_write,
         sum(u.cost_usd)::float8 as cost
       from ai_usage u join accounts a on a.id = u.account_id
       where u.created_at > now() - make_interval(days => ${days})
@@ -391,6 +397,10 @@ export class AdminService {
       accountName: r.name,
       requests: r.requests,
       tokens: r.tokens,
+      inputTokens: r.input,
+      outputTokens: r.output,
+      cacheReadTokens: r.cache_read,
+      cacheWriteTokens: r.cache_write,
       costUsd: round(r.cost),
     }));
   }
