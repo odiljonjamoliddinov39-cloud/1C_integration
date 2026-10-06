@@ -15,6 +15,7 @@ import { type Service, effectiveStatus } from "../service.js";
 import { type AiModel, usageOf } from "./model.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock } from "./prompt.js";
 import { aiLimits } from "./quota.js";
+import { type ModelChoice, aiChoiceFor } from "./settings.js";
 
 // The model's own maximum: a card for a whole bank statement is one long tool call, and a turn is
 // never cut short by us. (A turn that still reaches it is continued by the app.)
@@ -73,8 +74,13 @@ export class AiProxy {
     const tools = TOOLS.filter((tool) => offered.has(tool.name));
     const canChange = AI_PROPOSAL_TOOLS.some((name) => offered.has(name));
     const audit = offered.has("report_findings");
-    const params: BetaMessageStreamParams = {
+    // The account's own model and effort, else the dashboard's, else the server's default.
+    const choice: ModelChoice = await aiChoiceFor(this.db, this.config, who.accountId).catch(() => ({
       model: this.config.AI_MODEL,
+      effort: this.config.AI_EFFORT,
+    }));
+    const params: BetaMessageStreamParams = {
+      model: choice.model,
       max_tokens: MAX_TOKENS,
       // On a policy decline, the API retries on a fallback model it picks by refusal category.
       // "updates": thinking blocks carry the model's short progress notes, which the app shows.
@@ -91,7 +97,7 @@ export class AiProxy {
       tools,
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
       messages: input.messages as BetaMessageParam[],
-      output_config: { effort: this.config.AI_EFFORT },
+      output_config: { effort: choice.effort },
       cache_control: { type: "ephemeral" },
     };
     let message;

@@ -32,7 +32,7 @@ const Env = z.object({
    * How much the model thinks before each step: "high" (default) thinks the job through, for the
    * best quality on multi-step work in 1C; "low" answers and works fastest.
    */
-  AI_EFFORT: z.enum(["low", "medium", "high"]).default("high"),
+  AI_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
   /**
    * "off" (default, until the tariffs are set): the plans' limits are not enforced: no daily AI cap,
    * no AI quota, no limit on PCs per account, and a high ceiling on assistant requests per minute.

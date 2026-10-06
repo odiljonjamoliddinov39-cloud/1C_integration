@@ -3,10 +3,13 @@
  * the tab closes, and an expired or revoked one sends the admin back to the sign-in screen.
  */
 import type {
+  AccountAiInput,
   AccountDetail,
   AccountRow,
   AdminSession,
   AdminView,
+  AiSettingsInput,
+  AiSettingsView,
   AuditEntry,
   CreateAdminInput,
   Overview,
@@ -85,6 +88,10 @@ export const api = {
     request<AccountDetail>("POST", `/accounts/${id}/extend`, { days, reason }),
   recharge: (id: string, tokens: number, reason: string) =>
     request<AccountDetail>("POST", `/accounts/${id}/recharge`, { tokens, reason }),
+  setAccountAi: (id: string, input: AccountAiInput) =>
+    request<AccountDetail>("POST", `/accounts/${id}/ai`, input),
+  aiSettings: () => request<AiSettingsView>("GET", "/ai-settings"),
+  setAiSettings: (input: AiSettingsInput) => request<AiSettingsView>("POST", "/ai-settings", input),
   setBlocked: (id: string, blocked: boolean) =>
     request<AccountDetail>("POST", `/accounts/${id}/${blocked ? "block" : "unblock"}`),
   setDeviceRevoked: (id: string, revoked: boolean) =>

@@ -43,6 +43,13 @@
       "when": 1791182921434,
       "tag": "0005_ai_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791279287453,
+      "tag": "0006_ai_settings",
+      "breakpoints": true
     }
   ]
 }

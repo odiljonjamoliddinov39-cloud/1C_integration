@@ -50,6 +50,38 @@ export const RechargeInput = z.object({
 });
 export type RechargeInput = z.infer<typeof RechargeInput>;
 
+/**
+ * Models the assistant can run on. Both take adaptive thinking with progress notes, all five effort
+ * levels and 128K output, so switching between them needs nothing else.
+ */
+export const AI_MODELS = [
+  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", price: "$2 / $10 per million tokens (in / out)" },
+  { id: "claude-opus-5-5", name: "Claude Opus 5.5", price: "$4 / $20 per million tokens (in / out)" },
+] as const;
+export const AiModelId = z.enum(["claude-sonnet-5-5", "claude-opus-5-5"]);
+export type AiModelId = z.infer<typeof AiModelId>;
+/** How much the model thinks before each step: low is fastest and cheapest, max the most thorough. */
+export const AiEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type AiEffort = z.infer<typeof AiEffort>;
+
+/** The model and effort every account gets unless it has its own. Owner only. */
+export const AiSettingsInput = z.object({ model: AiModelId, effort: AiEffort });
+export type AiSettingsInput = z.infer<typeof AiSettingsInput>;
+
+export const AiSettingsView = z.object({
+  model: z.string(),
+  effort: z.string(),
+  /** "admin": set in this dashboard; "server": the server's default (AI_MODEL / AI_EFFORT). */
+  source: z.enum(["admin", "server"]),
+  updatedAt: z.string().nullable(),
+  updatedBy: z.string().nullable(),
+});
+export type AiSettingsView = z.infer<typeof AiSettingsView>;
+
+/** One account's own model and effort; null keeps the global one. Owner only. */
+export const AccountAiInput = z.object({ model: AiModelId.nullable(), effort: AiEffort.nullable() });
+export type AccountAiInput = z.infer<typeof AccountAiInput>;
+
 export const AccountsQuery = z.object({
   q: z.string().trim().max(100).optional(),
   status: SubscriptionStatus.optional(),
@@ -133,6 +165,12 @@ export const AccountDetail = z.object({
   /** The daily cap plus the tokens added today, and today's use (UTC day). */
   aiDailyLimit: z.number(),
   aiUsedToday: z.number(),
+  /** The account's own model and effort (null: the global one), and what it runs on now. */
+  ai: z.object({
+    model: z.string().nullable(),
+    effort: z.string().nullable(),
+    effective: z.object({ model: z.string(), effort: z.string() }),
+  }),
   usage: z.array(UsageDay),
   audit: z.array(AuditEntry),
 });

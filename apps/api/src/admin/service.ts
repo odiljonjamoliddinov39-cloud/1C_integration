@@ -5,12 +5,15 @@
  */
 import { hash, verify } from "@node-rs/argon2";
 import type {
+  AccountAiInput,
   AccountDetail,
   AccountRow,
   AccountsQuery,
   AdminRole,
   AdminSession,
   AdminView,
+  AiSettingsInput,
+  AiSettingsView,
   AuditEntry,
   CreateAdminInput,
   ExtendInput,
@@ -24,10 +27,20 @@ import { desc, eq, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
-import { accounts, adminAudit, admins, aiGrants, devices, subscriptions, users } from "../db/schema.js";
+import {
+  accounts,
+  adminAudit,
+  admins,
+  aiGrants,
+  appSettings,
+  devices,
+  subscriptions,
+  users,
+} from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Tokens } from "../lib/tokens.js";
 import { aiLimits } from "../ai/quota.js";
+import { AI_SETTINGS_KEY, aiChoiceFor, globalAiChoice, savedAiSettings } from "../ai/settings.js";
 import { effectiveStatus } from "../service.js";
 
 const DAY = 86_400_000;
@@ -150,6 +163,10 @@ export class AdminService {
     const companyRows = await this.db.execute<{ inn: string; name: string; connected_at: Date }>(sql`
       select inn, name, connected_at from companies where account_id = ${id} order by connected_at`);
 
+    const own = await this.db.query.accounts.findFirst({
+      where: eq(accounts.id, id),
+      columns: { aiModel: true, aiEffort: true },
+    });
     const current = subs[0];
     const limits = await aiLimits(
       this.db,
@@ -192,6 +209,11 @@ export class AdminService {
       aiGranted: limits.granted,
       aiDailyLimit: limits.dailyLimit,
       aiUsedToday: limits.usedToday,
+      ai: {
+        model: own?.aiModel ?? null,
+        effort: own?.aiEffort ?? null,
+        effective: await aiChoiceFor(this.db, this.config, id),
+      },
       usage: await this.usageByDay(30, id),
       audit: await this.auditEntries(`account:${id}`, 50),
     };
@@ -238,6 +260,53 @@ export class AdminService {
       tokens: input.tokens,
       reason: input.reason,
     });
+    return this.account(accountId);
+  }
+
+  /** The model and effort every account gets unless it has its own. */
+  async aiSettings(): Promise<AiSettingsView> {
+    const saved = await savedAiSettings(this.db);
+    const choice = await globalAiChoice(this.db, this.config);
+    const by = saved?.updatedBy
+      ? await this.db.query.admins.findFirst({
+          where: eq(admins.id, saved.updatedBy),
+          columns: { email: true },
+        })
+      : undefined;
+    return {
+      ...choice,
+      source: saved ? "admin" : "server",
+      updatedAt: saved ? saved.updatedAt.toISOString() : null,
+      updatedBy: by?.email ?? null,
+    };
+  }
+
+  /** Sets the global model and effort; it applies from the next step of every answer. Owner only. */
+  async setAiSettings(admin: AdminIdentity, input: AiSettingsInput): Promise<AiSettingsView> {
+    requireOwner(admin);
+    const before = await globalAiChoice(this.db, this.config);
+    const value = { model: input.model, effort: input.effort };
+    await this.db
+      .insert(appSettings)
+      .values({ key: AI_SETTINGS_KEY, value, updatedBy: admin.id })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value, updatedBy: admin.id, updatedAt: new Date() },
+      });
+    await this.audit(admin.id, "ai.settings", "settings:ai", { from: before, to: value });
+    return this.aiSettings();
+  }
+
+  /** Gives one account its own model and effort (null: back to the global one). Owner only. */
+  async setAccountAi(admin: AdminIdentity, accountId: string, input: AccountAiInput): Promise<AccountDetail> {
+    requireOwner(admin);
+    const [row] = await this.db
+      .update(accounts)
+      .set({ aiModel: input.model, aiEffort: input.effort })
+      .where(eq(accounts.id, accountId))
+      .returning({ id: accounts.id });
+    if (!row) throw new HttpError(404, "NOT_FOUND", "No such account");
+    await this.audit(admin.id, "ai.account_settings", `account:${accountId}`, { ...input });
     return this.account(accountId);
   }
 

@@ -31,6 +31,9 @@ export const accounts = pgTable("accounts", {
   status: text("status", { enum: ["active", "blocked"] })
     .notNull()
     .default("active"),
+  /** The assistant's model and effort for this account; null: the global setting. */
+  aiModel: text("ai_model"),
+  aiEffort: text("ai_effort"),
   createdAt: createdAt(),
 });
 
@@ -207,3 +210,11 @@ export const adminAudit = pgTable(
   },
   (t) => [index("admin_audit_target_idx").on(t.target, t.createdAt)],
 );
+
+/** Settings the admin dashboard changes, by key (e.g. "ai": the assistant's model and effort). */
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
+});

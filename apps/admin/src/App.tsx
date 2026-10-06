@@ -5,6 +5,7 @@ import { api, getToken, onTokenChange, setToken } from "@/lib/api";
 import { href, useRoute } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { AdminsPage } from "@/pages/Admins";
+import { AiModelPage } from "@/pages/AiModel";
 import { AuditPage } from "@/pages/Audit";
 import { CustomerPage } from "@/pages/Customer";
 import { CustomersPage } from "@/pages/Customers";
@@ -16,6 +17,7 @@ const NAV = [
   { path: "", label: "Overview" },
   { path: "customers", label: "Customers" },
   { path: "usage", label: "AI usage" },
+  { path: "ai", label: "AI model" },
   { path: "audit", label: "Audit log" },
 ] as const;
 
@@ -72,6 +74,8 @@ function Shell() {
           <CustomersPage />
         ) : section === "usage" ? (
           <UsagePage />
+        ) : section === "ai" ? (
+          <AiModelPage me={me.data} />
         ) : section === "audit" ? (
           <AuditPage />
         ) : section === "admins" && me.data.role === "owner" ? (

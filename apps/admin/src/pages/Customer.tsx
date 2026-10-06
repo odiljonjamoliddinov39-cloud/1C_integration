@@ -1,10 +1,17 @@
-import type { AccountDetail, AdminView } from "@platform/shared";
+import {
+  AI_MODELS,
+  type AccountDetail,
+  type AdminView,
+  type AiEffort,
+  type AiModelId,
+} from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { CostChart } from "@/components/CostChart";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Badge, Button, Empty, ErrorText, Input, Section, Stat, Table, Td } from "@/components/ui";
+import { Badge, Button, Empty, ErrorText, Input, Section, Select, Stat, Table, Td } from "@/components/ui";
+import { EFFORTS, effortName, modelName } from "@/lib/ai";
 import { api } from "@/lib/api";
 import { compact, date, dateTime, relative, usd } from "@/lib/format";
 import { href } from "@/lib/router";
@@ -94,6 +101,14 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         <ExtendForm id={id} onDone={update} />
         <RechargeForm id={id} detail={d} onDone={update} />
       </div>
+      {/* Remounted when the saved setting changes, so the form starts from it. */}
+      <AiModelForm
+        key={`${d.ai.model}-${d.ai.effort}`}
+        id={id}
+        detail={d}
+        owner={me.role === "owner"}
+        onDone={update}
+      />
 
       <Section title="PCs">
         {d.devices.length === 0 ? (
@@ -321,9 +336,83 @@ function RechargeForm({
   );
 }
 
+/** The assistant's model and effort for this customer only; "default" follows the AI model page. */
+function AiModelForm({
+  id,
+  detail,
+  owner,
+  onDone,
+}: {
+  id: string;
+  detail: AccountDetail;
+  owner: boolean;
+  onDone: (d: AccountDetail) => void;
+}) {
+  const [model, setModel] = useState(detail.ai.model ?? "");
+  const [effort, setEffort] = useState(detail.ai.effort ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAccountAi(id, {
+        model: (model || null) as AiModelId | null,
+        effort: (effort || null) as AiEffort | null,
+      }),
+    onSuccess: onDone,
+  });
+  const changed = model !== (detail.ai.model ?? "") || effort !== (detail.ai.effort ?? "");
+  return (
+    <Section title="Assistant model for this customer">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate();
+        }}
+      >
+        <Select aria-label="Model" value={model} disabled={!owner} onChange={(e) => setModel(e.target.value)}>
+          <option value="">Model: default</option>
+          {AI_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label="Effort"
+          value={effort}
+          disabled={!owner}
+          onChange={(e) => setEffort(e.target.value)}
+        >
+          <option value="">Effort: default</option>
+          {EFFORTS.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name}
+            </option>
+          ))}
+        </Select>
+        {owner && <Button disabled={!changed || save.isPending}>Save</Button>}
+        <span className="text-sm text-muted-foreground">
+          Runs on <b>{modelName(detail.ai.effective.model)}</b> ·{" "}
+          <b>{effortName(detail.ai.effective.effort)}</b> effort
+          {!detail.ai.model && !detail.ai.effort && " (the default from the AI model page)"}
+        </span>
+      </form>
+      <ErrorText error={save.error} />
+      {!owner && <p className="mt-2 text-xs text-muted-foreground">Only an owner can change it.</p>}
+    </Section>
+  );
+}
+
 function describe(payload: Record<string, unknown>): string {
+  const text = (v: unknown): string =>
+    typeof v === "string" && /^\d{4}-\d\d-\d\dT/.test(v)
+      ? date(v)
+      : v !== null && typeof v === "object"
+        ? Object.values(v as Record<string, unknown>)
+            .map(String)
+            .join(" · ")
+        : String(v);
   return Object.entries(payload)
     .filter(([, v]) => v !== "" && v !== null && v !== undefined)
-    .map(([k, v]) => `${k}: ${typeof v === "string" && /^\d{4}-\d\d-\d\dT/.test(v) ? date(v) : String(v)}`)
+    .map(([k, v]) => `${k}: ${text(v)}`)
     .join(" · ");
 }

@@ -11,6 +11,8 @@ import {
   CreateAdminInput,
   ExtendInput,
   RechargeInput,
+  AccountAiInput,
+  AiSettingsInput,
   AiChatInput,
   type AiEvent,
   LicenseCheckInput,
@@ -209,6 +211,16 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   );
   app.post("/v1/admin/accounts/:id/recharge", async (req) =>
     admin.recharge(await adminAuth(req), parse(idParam, req.params).id, parse(RechargeInput, req.body)),
+  );
+  app.post("/v1/admin/accounts/:id/ai", async (req) =>
+    admin.setAccountAi(await adminAuth(req), parse(idParam, req.params).id, parse(AccountAiInput, req.body)),
+  );
+  app.get("/v1/admin/ai-settings", async (req) => {
+    await adminAuth(req);
+    return admin.aiSettings();
+  });
+  app.post("/v1/admin/ai-settings", async (req) =>
+    admin.setAiSettings(await adminAuth(req), parse(AiSettingsInput, req.body)),
   );
   app.post("/v1/admin/accounts/:id/block", async (req) =>
     admin.setBlocked(await adminAuth(req), parse(idParam, req.params).id, true),

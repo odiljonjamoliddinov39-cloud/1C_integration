@@ -608,6 +608,66 @@ describe.skipIf(!available)("control system API", () => {
       const audit = (await call("GET", `/v1/admin/accounts/${id}`, token)).json().audit;
       expect(audit[0]).toMatchObject({ action: "ai.recharge", payload: { tokens: 500_000 } });
     });
+
+    it("sets the assistant's model and effort, for every customer and for one", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      const id = customer.me.account.id;
+      const owner = await adminLogin();
+      const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
+      const nextTurn = async () => {
+        aiCalls.length = 0;
+        expect((await post("/v1/ai/chat", chat, customer.accessToken)).statusCode).toBe(200);
+        return aiCalls[0]!;
+      };
+      try {
+        expect((await call("GET", "/v1/admin/ai-settings", owner)).json()).toMatchObject({
+          model: config.AI_MODEL,
+          effort: config.AI_EFFORT,
+          source: "server",
+        });
+
+        const set = await call("POST", "/v1/admin/ai-settings", owner, {
+          model: "claude-opus-5-5",
+          effort: "xhigh",
+        });
+        expect(set.json()).toMatchObject({ model: "claude-opus-5-5", effort: "xhigh", source: "admin" });
+        let turn = await nextTurn();
+        expect(turn.model).toBe("claude-opus-5-5");
+        expect(turn.output_config).toMatchObject({ effort: "xhigh" });
+
+        // One customer keeps Sonnet; the effort still follows the global setting.
+        const own = await call("POST", `/v1/admin/accounts/${id}/ai`, owner, {
+          model: "claude-sonnet-5-5",
+          effort: null,
+        });
+        expect(own.json().ai).toEqual({
+          model: "claude-sonnet-5-5",
+          effort: null,
+          effective: { model: "claude-sonnet-5-5", effort: "xhigh" },
+        });
+        turn = await nextTurn();
+        expect(turn.model).toBe("claude-sonnet-5-5");
+        expect(turn.output_config).toMatchObject({ effort: "xhigh" });
+
+        // Only the models we offer, and only owners.
+        const bad = { model: "claude-fable-5-1", effort: "high" };
+        expect((await call("POST", "/v1/admin/ai-settings", owner, bad)).statusCode).toBe(400);
+        const support = { email: "models@platform.uz", password: "support-password-2" };
+        await call("POST", "/v1/admin/admins", owner, { ...support, name: "Models", role: "support" });
+        const helper = await adminLogin(support);
+        expect((await call("GET", "/v1/admin/ai-settings", helper)).statusCode).toBe(200);
+        const low = { model: "claude-sonnet-5-5", effort: "low" };
+        expect((await call("POST", "/v1/admin/ai-settings", helper, low)).statusCode).toBe(403);
+        expect((await call("POST", `/v1/admin/accounts/${id}/ai`, helper, low)).statusCode).toBe(403);
+
+        const audit = (await call("GET", "/v1/admin/audit", owner)).json() as { action: string }[];
+        expect(audit.map((a) => a.action)).toEqual(
+          expect.arrayContaining(["ai.settings", "ai.account_settings"]),
+        );
+      } finally {
+        await db.sql`DELETE FROM app_settings`;
+      }
+    });
   });
 
   it("validates input", async () => {
