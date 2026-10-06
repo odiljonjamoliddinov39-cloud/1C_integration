@@ -29,7 +29,7 @@ services:
       AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
-      AI_EFFORT: ${AI_EFFORT:-low}
+      AI_EFFORT: ${AI_EFFORT:-high}
       # The admin dashboard's first owner (https://<site>/admin/); set from repository secrets.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

@@ -236,7 +236,7 @@ describe.skipIf(!available)("control system API", () => {
     const params = aiCalls[0]!;
     expect(params.model).toBe("claude-sonnet-5-5");
     expect(params.thinking).toEqual({ type: "adaptive", display: "updates" });
-    expect(params.output_config).toMatchObject({ effort: "low" });
+    expect(params.output_config).toMatchObject({ effort: "high" });
     expect(params.betas).toContain("thinking-display-updates-2026-08-18");
 
     // The app may send the chat gzipped: the same turn, a fraction of the upload.
