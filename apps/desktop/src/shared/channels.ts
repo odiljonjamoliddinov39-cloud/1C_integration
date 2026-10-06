@@ -21,6 +21,8 @@ export const CHANNELS = {
   assistantChats: "assistant:chats",
   assistantOpenChat: "assistant:open-chat",
   assistantDeleteChat: "assistant:delete-chat",
+  assistantAudit: "assistant:audit",
+  assistantExportAudit: "assistant:export-audit",
   updateState: "update:state",
   updateCheck: "update:check",
   updateInstall: "update:install",

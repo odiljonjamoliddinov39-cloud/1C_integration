@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,6 +146,15 @@ void app.whenReady().then(async () => {
         findDesigner: () => findDesigner(),
         run: runDesigner,
       }),
+    saveFile: async (defaultName, content) => {
+      const result = await dialog.showSaveDialog({
+        defaultPath: join(app.getPath("documents"), defaultName),
+        filters: [{ name: "CSV (Excel)", extensions: ["csv"] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      await writeFile(result.filePath, content, "utf8");
+      return true;
+    },
     pickFolder: async () => {
       const result = await dialog.showOpenDialog({
         title: "1C infobase folder",
@@ -172,6 +182,10 @@ void app.whenReady().then(async () => {
   );
   ipcMain.handle(CHANNELS.assistantSend, (_e, input: unknown) => handlers.assistantSend(input));
   ipcMain.handle(CHANNELS.assistantStop, (_e, id: unknown) => handlers.assistantStop(id));
+  ipcMain.handle(CHANNELS.assistantAudit, (_e, input: unknown) => handlers.assistantAudit(input));
+  ipcMain.handle(CHANNELS.assistantExportAudit, (_e, id: unknown, chatId: unknown) =>
+    handlers.assistantExportAudit(id, chatId),
+  );
   ipcMain.handle(CHANNELS.assistantReset, (_e, id: unknown) => handlers.assistantReset(id));
   ipcMain.handle(CHANNELS.assistantDecide, (_e, id: unknown, proposalId: unknown, approve: unknown) =>
     handlers.assistantDecide(id, proposalId, approve),

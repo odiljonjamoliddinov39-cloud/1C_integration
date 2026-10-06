@@ -12,10 +12,13 @@ import { randomUUID } from "node:crypto";
 
 import {
   AI_TOOLS,
+  AUDIT_TOOLS,
+  CHAT_TOOLS,
   type AiChatInput,
   type AiContentBlock,
   type AiMessage,
   type AiProposalTool,
+  type AiReadTool,
   AiToolUse,
   type ChangeBatchInput,
   type ChangeInput,
@@ -25,6 +28,7 @@ import {
   type InvoiceReceivedDraft,
   type ObjectState,
   type ReadAttachmentInput,
+  ReportFindingsInput,
   isAiToolName,
   isProposalTool,
 } from "@platform/shared";
@@ -32,6 +36,9 @@ import {
 import type {
   AssistantEvent,
   AssistantInput,
+  AuditCheckView,
+  AuditInput,
+  AuditView,
   BatchItem,
   BatchItemResult,
   ChatSummary,
@@ -39,8 +46,10 @@ import type {
   Proposal,
   ProposalOutcome,
   Result,
+  UiLanguage,
 } from "../shared/ipc.js";
 import { applyEvent } from "../shared/transcript.js";
+import { AUDIT_CHECKS, AUDIT_SECTIONS, type AuditCheck } from "./audit-checks.js";
 import { AttachmentError, type ShrinkImage, readAttachments } from "./attachments.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
@@ -75,6 +84,21 @@ const CUT_TOOL_NOTE =
  * size (mostly attached files) the user starts a new chat.
  */
 const MAX_CHAT_CHARS = 24_000_000;
+/** Steps of one audit check: it reads with totals, so a few queries are usually enough. */
+const CHECK_MAX_TURNS = 30;
+/** Audit checks that run at the same time. */
+const AUDIT_CONCURRENCY = 3;
+/** Sent to a check that answered without reporting, or is near its last step. */
+const REPORT_NOW =
+  "Finish this check now: call report_findings with what you have found (say in the summary what you " +
+  "could not check).";
+const LANGUAGE_NAMES: Record<UiLanguage, string> = {
+  en: "English",
+  ru: "Russian",
+  uz: "Uzbek (Latin script)",
+};
+const AUDIT_TITLE: Record<UiLanguage, string> = { en: "Audit", ru: "Аудит", uz: "Audit" };
+
 /** Failures worth trying again: the connection, the web server in front of ours, a busy AI service. */
 const RETRYABLE = new Set([
   "OFFLINE",
@@ -109,6 +133,9 @@ export interface AssistantDeps {
   retryDelaysMs?: readonly number[];
   /** Model turns per question (tests make it small). */
   maxTurns?: number;
+  /** The audit's checklist and how many checks run at once (tests use their own). */
+  auditChecks?: AuditCheck[];
+  auditConcurrency?: number;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -159,8 +186,7 @@ export class AssistantService {
 
     const abort = new AbortController();
     this.running.set(companyId, abort);
-    const history = chat.messages;
-    history.push({ role: "user", content });
+    chat.messages.push({ role: "user", content });
     chat.entries = [
       ...chat.entries,
       { kind: "user", text: text.trim(), ...(attached.info.length > 0 ? { files: attached.info } : {}) },
@@ -168,70 +194,20 @@ export class AssistantService {
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
+    return this.task(companyId, chat, emit, () => this.converse(chat, company.name, emit, abort.signal));
+  }
+
+  /** A task of the company's chat: busy until it ends, then its working time, and the chat is saved. */
+  private async task(
+    companyId: string,
+    chat: StoredChat,
+    emit: Emit,
+    work: () => Promise<Result<null>>,
+  ): Promise<Result<null>> {
     const started = Date.now();
     this.cardWaitMs.set(companyId, 0);
     try {
-      const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
-      for (let turn = 0; turn < maxTurns; turn++) {
-        const answer = await this.turnWithRetries(
-          { company: company.name, tools: Object.keys(AI_TOOLS), messages: history },
-          emit,
-          abort.signal,
-        );
-        if (answer.content.length > 0) history.push({ role: "assistant", content: answer.content });
-
-        const toolUses = answer.content.flatMap((block) => {
-          const use = AiToolUse.safeParse(block);
-          return use.success ? [use.data] : [];
-        });
-        if (answer.stopReason === "max_tokens") {
-          // Never an error for the user: the model goes on where it stopped. A tool call that was
-          // cut off may be incomplete, so it is not run; it still needs a result.
-          const notRun = { ok: false, code: "NOT_RUN", message: "Cut off at the output limit" } as const;
-          history.push({
-            role: "user",
-            content:
-              toolUses.length > 0
-                ? [
-                    ...toolUses.map((use) => toToolResult(use.id, notRun)),
-                    { type: "text", text: CUT_TOOL_NOTE },
-                  ]
-                : [{ type: "text", text: CONTINUE_NOTE }],
-          });
-          this.save(chat);
-          continue;
-        }
-        if (answer.stopReason !== "tool_use" || toolUses.length === 0) {
-          // A refusal may hold a tool call that must not run; it still needs a result, or the next
-          // question is rejected.
-          if (toolUses.length > 0) {
-            const notRun = { ok: false, code: "NOT_RUN", message: "The turn was cut off" } as const;
-            history.push({ role: "user", content: toolUses.map((use) => toToolResult(use.id, notRun)) });
-          }
-          if (answer.stopReason === "refusal") {
-            return this.fail(emit, "AI_REFUSED", "The assistant declined to answer this question");
-          }
-          emit({ type: "done" });
-          return { ok: true, data: null };
-        }
-        // Every tool_use gets a tool_result, even when stopped, so the conversation stays valid.
-        const results: AiContentBlock[] = [];
-        for (const use of toolUses) {
-          const result = abort.signal.aborted
-            ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-            : await this.runTool(chat, use, emit, abort.signal);
-          results.push(toToolResult(use.id, result));
-        }
-        if (turn === maxTurns - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
-        history.push({ role: "user", content: results });
-        this.save(chat);
-        if (abort.signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");
-      }
-      return this.fail(
-        emit,
-        "AI_TOO_MANY_STEPS",
-        "The question needed too many steps; try to narrow it down",
-      );
+      return await work();
     } catch (e) {
       if (e instanceof ControlError) return this.fail(emit, e.code, e.message);
       return this.fail(emit, "INTERNAL", e instanceof Error ? e.message : String(e));
@@ -242,6 +218,268 @@ export class AssistantService {
       this.running.delete(companyId);
       this.save(chat);
     }
+  }
+
+  /** The model works on the chat until it answers: its 1C lookups run here, its changes go on cards. */
+  private async converse(
+    chat: StoredChat,
+    companyName: string,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<Result<null>> {
+    const history = chat.messages;
+    const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
+    for (let turn = 0; turn < maxTurns; turn++) {
+      const answer = await this.turnWithRetries(
+        { company: companyName, tools: CHAT_TOOLS, messages: history },
+        emit,
+        signal,
+      );
+      if (answer.content.length > 0) history.push({ role: "assistant", content: answer.content });
+
+      const toolUses = answer.content.flatMap((block) => {
+        const use = AiToolUse.safeParse(block);
+        return use.success ? [use.data] : [];
+      });
+      if (answer.stopReason === "max_tokens") {
+        // Never an error for the user: the model goes on where it stopped. A tool call that was
+        // cut off may be incomplete, so it is not run; it still needs a result.
+        const notRun = { ok: false, code: "NOT_RUN", message: "Cut off at the output limit" } as const;
+        history.push({
+          role: "user",
+          content:
+            toolUses.length > 0
+              ? [
+                  ...toolUses.map((use) => toToolResult(use.id, notRun)),
+                  { type: "text", text: CUT_TOOL_NOTE },
+                ]
+              : [{ type: "text", text: CONTINUE_NOTE }],
+        });
+        this.save(chat);
+        continue;
+      }
+      if (answer.stopReason !== "tool_use" || toolUses.length === 0) {
+        // A refusal may hold a tool call that must not run; it still needs a result, or the next
+        // question is rejected.
+        if (toolUses.length > 0) {
+          const notRun = { ok: false, code: "NOT_RUN", message: "The turn was cut off" } as const;
+          history.push({ role: "user", content: toolUses.map((use) => toToolResult(use.id, notRun)) });
+        }
+        if (answer.stopReason === "refusal") {
+          return this.fail(emit, "AI_REFUSED", "The assistant declined to answer this question");
+        }
+        emit({ type: "done" });
+        return { ok: true, data: null };
+      }
+      // Every tool_use gets a tool_result, even when stopped, so the conversation stays valid.
+      const results: AiContentBlock[] = [];
+      for (const use of toolUses) {
+        const result = signal.aborted
+          ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
+          : await this.runTool(chat, use, emit, signal);
+        results.push(toToolResult(use.id, result));
+      }
+      if (turn === maxTurns - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
+      history.push({ role: "user", content: results });
+      this.save(chat);
+      if (signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");
+    }
+    return this.fail(emit, "AI_TOO_MANY_STEPS", "The question needed too many steps; try to narrow it down");
+  }
+
+  /**
+   * An audit of the company's base over a period: the same checklist every time, each check its own
+   * short conversation with the model (it only reads 1C and ends with report_findings), a few at a
+   * time, so a whole base is covered without one huge chat. The results then go into the chat, where
+   * the model writes the report, and the accountant can ask about it or have problems fixed.
+   */
+  async audit({ companyId, chatId, from, to, language }: AuditInput): Promise<Result<null>> {
+    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+    const company = this.deps.store.company(companyId);
+    if (!company.aiEnabled)
+      return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
+    if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
+
+    const abort = new AbortController();
+    this.running.set(companyId, abort);
+    const chat = this.chat(companyId, chatId);
+    const emit: Emit = (event) => {
+      chat.entries = applyEvent(chat.entries, event);
+      notify(event);
+    };
+    const checks = this.deps.auditChecks ?? AUDIT_CHECKS;
+    const view: AuditView = {
+      from,
+      to,
+      language,
+      finished: false,
+      checks: checks.map((check) => ({
+        id: check.id,
+        section: AUDIT_SECTIONS[check.section][language],
+        title: check.title[language],
+        status: "pending",
+      })),
+    };
+    const show = () => emit({ type: "audit", audit: structuredClone(view) });
+    if (!chat.title) chat.title = `${AUDIT_TITLE[language]} ${dayMonthYear(from)}–${dayMonthYear(to)}`;
+    show();
+    this.save(chat);
+
+    return this.task(companyId, chat, emit, async () => {
+      const connection = this.deps.store.connection(companyId);
+      const queue = checks.map((check, i) => ({ check, state: view.checks[i] as AuditCheckView }));
+      const worker = async () => {
+        for (let next = queue.shift(); next && !abort.signal.aborted; next = queue.shift()) {
+          const { check, state } = next;
+          state.status = "running";
+          show();
+          const started = Date.now();
+          const result = await this.runCheck(
+            company.name,
+            connection,
+            check,
+            view,
+            (activity) => {
+              state.activity = activity;
+              show();
+            },
+            abort.signal,
+          );
+          Object.assign(state, result, { ms: Date.now() - started });
+          delete state.activity;
+          show();
+          this.save(chat);
+        }
+      };
+      const workers = Math.min(this.deps.auditConcurrency ?? AUDIT_CONCURRENCY, queue.length);
+      await Promise.all(Array.from({ length: workers }, worker));
+      for (const state of view.checks) {
+        if (state.status === "pending" || state.status === "running") {
+          Object.assign(state, { status: "failed", summary: "Stopped" });
+          delete state.activity;
+        }
+      }
+      view.finished = true;
+      show();
+      if (abort.signal.aborted) return this.fail(emit, "AI_ABORTED", "Stopped");
+
+      chat.messages.push({ role: "user", content: auditReportRequest(view) });
+      this.save(chat);
+      return this.converse(chat, company.name, emit, abort.signal);
+    });
+  }
+
+  /** One audit check: the model reads 1C until it reports what it found. */
+  private async runCheck(
+    companyName: string,
+    connection: ReturnType<LocalStore["connection"]>,
+    check: AuditCheck,
+    view: AuditView,
+    onActivity: (activity: string) => void,
+    signal: AbortSignal,
+  ): Promise<Pick<AuditCheckView, "status" | "summary" | "findings">> {
+    const messages: AiMessage[] = [{ role: "user", content: auditCheckPrompt(check, view) }];
+    // What the model writes inside a check is not shown: only its result is.
+    const quiet: Emit = () => undefined;
+    let nudged = false;
+    for (let turn = 0; turn < CHECK_MAX_TURNS; turn++) {
+      let answer;
+      try {
+        answer = await this.turnWithRetries(
+          { company: companyName, tools: AUDIT_TOOLS, messages },
+          quiet,
+          signal,
+        );
+      } catch (e) {
+        return { status: "failed", summary: e instanceof Error ? e.message : String(e) };
+      }
+      if (answer.content.length > 0) messages.push({ role: "assistant", content: answer.content });
+      const uses = answer.content.flatMap((block) => {
+        const use = AiToolUse.safeParse(block);
+        return use.success ? [use.data] : [];
+      });
+      const report = uses.find((use) => use.name === "report_findings");
+      const reported = report && ReportFindingsInput.safeParse(report.input);
+      if (reported?.success && answer.stopReason !== "max_tokens") {
+        const { status, summary, findings } = reported.data;
+        return { status, summary, findings };
+      }
+
+      const results: AiContentBlock[] = [];
+      for (const use of uses) {
+        results.push(
+          toToolResult(
+            use.id,
+            await this.runCheckTool(connection, use, answer.stopReason, onActivity, signal),
+          ),
+        );
+      }
+      if (answer.stopReason === "max_tokens") {
+        results.push({
+          type: "text",
+          text: "Your output was cut off. Report again with at most the 50 most important findings and shorter details.",
+        });
+      } else if (uses.length === 0) {
+        // Answered in words instead of reporting: asked once, then the words are the result.
+        const text = answer.content
+          .flatMap((block) => (block.type === "text" && typeof block.text === "string" ? [block.text] : []))
+          .join("\n")
+          .trim();
+        if (nudged) return { status: "failed", summary: text.slice(0, 1000) || "No result" };
+        nudged = true;
+        results.push({ type: "text", text: REPORT_NOW });
+      } else if (turn === CHECK_MAX_TURNS - 3) {
+        results.push({ type: "text", text: REPORT_NOW });
+      }
+      messages.push({ role: "user", content: results });
+      if (signal.aborted) return { status: "failed", summary: "Stopped" };
+    }
+    return { status: "failed", summary: "The check did not finish in its steps" };
+  }
+
+  /** A tool call inside an audit check: reads only. */
+  private async runCheckTool(
+    connection: ReturnType<LocalStore["connection"]>,
+    use: AiToolUse,
+    stopReason: string | null,
+    onActivity: (activity: string) => void,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    if (stopReason === "max_tokens")
+      return { ok: false, code: "NOT_RUN", message: "Cut off at the output limit" };
+    if (!isAiToolName(use.name) || !AUDIT_TOOLS.includes(use.name) || use.name === "report_findings") {
+      return { ok: false, code: "UNKNOWN_TOOL", message: `No tool ${use.name} in an audit check` };
+    }
+    const input = AI_TOOLS[use.name].safeParse(use.input);
+    if (!input.success) {
+      return {
+        ok: false,
+        code: "VALIDATION",
+        message: input.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      };
+    }
+    onActivity(`${use.name}: ${describe(use.name, input.data)}`);
+    // An audit check's tools other than report_findings all read 1C.
+    return this.deps.connector.tool(connection, use.name as AiReadTool, input.data);
+  }
+
+  /** An audit's findings as CSV (semicolons, UTF-8 with BOM), the way Excel opens it. */
+  auditCsv(companyId: string, chatId: string): Result<{ name: string; csv: string }> {
+    const chat =
+      this.open.get(companyId)?.id === chatId
+        ? this.open.get(companyId)
+        : this.deps.chats.load(companyId, chatId);
+    const entry = chat?.entries.findLast((e) => e.kind === "audit");
+    if (!chat || entry?.kind !== "audit")
+      return { ok: false, code: "NOT_FOUND", message: "This chat has no audit" };
+    return {
+      ok: true,
+      data: {
+        name: `${chat.title.replace(/[\\/:*?"<>|]+/g, "_")}.csv`,
+        csv: auditToCsv(entry.audit),
+      },
+    };
   }
 
   /**
@@ -368,6 +606,9 @@ export class AssistantService {
       };
     }
     if (isProposalTool(use.name)) return this.propose(chat, use.name, input.data, emit, signal);
+    if (use.name === "report_findings") {
+      return { ok: false, code: "UNKNOWN_TOOL", message: "report_findings is only for audit checks" };
+    }
     emit({ type: "tool", name: use.name, detail: describe(use.name, input.data) });
     if (use.name === "read_attachment") {
       return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
@@ -639,4 +880,158 @@ function describe(name: string, input: unknown): string {
     return [sale.number, sale.date].filter(Boolean).join(" · ");
   }
   return "";
+}
+
+function dayMonthYear(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+/** What one audit check asks of the model. */
+function auditCheckPrompt(check: AuditCheck, view: AuditView): string {
+  return [
+    `Automated audit check, part of a full audit of this company's 1C base for the period ${view.from} to ${view.to} (both days included).`,
+    `Check: ${check.title.en}.`,
+    `What to check: ${check.instructions}`,
+    "",
+    "How:",
+    "- Only read 1C (run_query, get_object, describe_objects). Change nothing.",
+    "- Work with totals and grouped queries over the whole period; read single documents only where the totals " +
+      "show a problem. Keep to about 15 steps, and run independent queries in the same step.",
+    "- When the base has several organizations, check only this company's.",
+    "- The account numbers above are the usual НСБУ ones: if they do not fit, look the accounts up in " +
+      "ПланСчетов.Хозрасчетный (Код, Наименование). If an object or field is missing, find the right one in " +
+      "Справочник.ИдентификаторыОбъектовМетаданных (ПолноеИмя, Синоним) or with describe_objects.",
+    "- Finish with report_findings, once: ok when nothing is wrong; issues with one finding per problem (most " +
+      "important first, at most 50, grouping small similar ones; the amount in UZS, date, counterparty and " +
+      "document when known); not_applicable when the area does not exist in this company. If 1C did not let " +
+      "you check something, say so in the summary.",
+    `- Write the summary, titles and details in ${LANGUAGE_NAMES[view.language]}, short and concrete.`,
+  ].join("\n");
+}
+
+/** After the checks: the model writes the report from their results, in the chat. */
+function auditReportRequest(view: AuditView): string {
+  const results = view.checks.map((check) => ({
+    section: check.section,
+    check: check.title,
+    status: check.status,
+    summary: check.summary,
+    findings: check.findings?.slice(0, 20),
+    ...(check.findings && check.findings.length > 20 ? { moreFindings: check.findings.length - 20 } : {}),
+  }));
+  return [
+    `The audit of this company's base for ${view.from} – ${view.to} is finished. The result of each check (JSON):`,
+    JSON.stringify(results),
+    "",
+    `Write the audit report for the accountant in ${LANGUAGE_NAMES[view.language]}: one or two sentences with ` +
+      "the overall verdict; then the main problems as a table (problem, amount, what to do), most important " +
+      "first, at most 15 rows; then one line on what is in order. Every finding is listed on the screen above " +
+      "the report and can be downloaded, so do not repeat them all. Change nothing now; end by saying which " +
+      "problems you can fix with cards if the accountant asks.",
+  ].join("\n");
+}
+
+const CSV_TEXT: Record<
+  UiLanguage,
+  { header: string[]; status: Record<AuditCheckView["status"], string>; severity: Record<string, string> }
+> = {
+  en: {
+    header: [
+      "Section",
+      "Check",
+      "Result",
+      "Importance",
+      "Problem",
+      "Details",
+      "Amount",
+      "Date",
+      "Counterparty",
+      "Document",
+    ],
+    status: {
+      pending: "Not run",
+      running: "Not finished",
+      ok: "In order",
+      issues: "Problems",
+      not_applicable: "Not applicable",
+      failed: "Not checked",
+    },
+    severity: { high: "High", medium: "Medium", low: "Low" },
+  },
+  ru: {
+    header: [
+      "Раздел",
+      "Проверка",
+      "Итог",
+      "Важность",
+      "Проблема",
+      "Подробности",
+      "Сумма",
+      "Дата",
+      "Контрагент",
+      "Документ",
+    ],
+    status: {
+      pending: "Не запускалась",
+      running: "Не завершена",
+      ok: "В порядке",
+      issues: "Есть проблемы",
+      not_applicable: "Не применимо",
+      failed: "Не проверено",
+    },
+    severity: { high: "Высокая", medium: "Средняя", low: "Низкая" },
+  },
+  uz: {
+    header: [
+      "Boʻlim",
+      "Tekshiruv",
+      "Natija",
+      "Muhimlik",
+      "Muammo",
+      "Tafsilotlar",
+      "Summa",
+      "Sana",
+      "Kontragent",
+      "Hujjat",
+    ],
+    status: {
+      pending: "Ishga tushmagan",
+      running: "Tugamagan",
+      ok: "Joyida",
+      issues: "Muammolar bor",
+      not_applicable: "Taalluqli emas",
+      failed: "Tekshirilmagan",
+    },
+    severity: { high: "Yuqori", medium: "Oʻrta", low: "Past" },
+  },
+};
+
+export function auditToCsv(view: AuditView): string {
+  const text = CSV_TEXT[view.language];
+  const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  // Excel with a Russian or Uzbek locale reads "1234,5" as a number, not "1234.5".
+  const amount = (n: number | undefined) =>
+    n === undefined ? "" : view.language === "en" ? String(n) : String(n).replace(".", ",");
+  const rows: unknown[][] = [text.header];
+  for (const check of view.checks) {
+    const base = [check.section, check.title, text.status[check.status]];
+    if (!check.findings || check.findings.length === 0) {
+      rows.push([...base, "", check.summary ?? "", "", "", "", "", ""]);
+      continue;
+    }
+    for (const f of check.findings) {
+      rows.push([
+        ...base,
+        text.severity[f.severity] ?? f.severity,
+        f.title,
+        f.detail,
+        amount(f.amount),
+        f.date ?? "",
+        f.counterparty ?? "",
+        f.document ?? "",
+      ]);
+    }
+  }
+  return `\uFEFF${rows.map((row) => row.map(cell).join(";")).join("\r\n")}\r\n`;
 }

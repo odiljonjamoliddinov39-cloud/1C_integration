@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   AddCompanyInput,
   AssistantInput,
+  AuditInput,
   type AppInfo,
   type ChatSummary,
   type ChatView,
@@ -31,6 +32,8 @@ export interface HandlerDeps {
   assistant: AssistantService;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
+  /** Asks where to save a file and writes it there; false when the user cancelled. */
+  saveFile: (defaultName: string, content: string) => Promise<boolean>;
   /** Loads the app's PlatformAPI extension into a base (1C Designer, batch mode). */
   installExtension: (connection: ConnectionInput) => Promise<Result<unknown>>;
 }
@@ -49,6 +52,7 @@ export function createHandlers({
   assistant,
   info,
   pickFolder,
+  saveFile,
   installExtension,
 }: HandlerDeps) {
   return {
@@ -151,6 +155,19 @@ export function createHandlers({
     },
 
     assistantStop: async (id: unknown): Promise<void> => assistant.stop(String(id)),
+
+    assistantAudit: async (raw: unknown): Promise<Result<null>> => {
+      const input = AuditInput.safeParse(raw);
+      return input.success ? assistant.audit(input.data) : invalid(input.error);
+    },
+
+    assistantExportAudit: async (id: unknown, chatId: unknown): Promise<Result<{ saved: boolean }>> => {
+      const ids = chatIds.safeParse({ companyId: id, chatId });
+      if (!ids.success) return invalid(ids.error);
+      const file = assistant.auditCsv(ids.data.companyId, ids.data.chatId);
+      if (!file.ok) return file;
+      return { ok: true, data: { saved: await saveFile(file.data.name, file.data.csv) } };
+    },
 
     assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),
     assistantDecide: async (id: unknown, proposalId: unknown, approve: unknown): Promise<void> =>

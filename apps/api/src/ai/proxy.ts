@@ -72,6 +72,7 @@ export class AiProxy {
     const offered = new Set<string>(input.tools ?? LEGACY_AI_TOOLS);
     const tools = TOOLS.filter((tool) => offered.has(tool.name));
     const canChange = AI_PROPOSAL_TOOLS.some((name) => offered.has(name));
+    const audit = offered.has("report_findings");
     const params: BetaMessageStreamParams = {
       model: this.config.AI_MODEL,
       max_tokens: MAX_TOKENS,
@@ -82,7 +83,10 @@ export class AiProxy {
       thinking: { type: "adaptive", display: "updates" },
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-        { type: "text", text: contextBlock(input.company, new Date().toISOString().slice(0, 10), canChange) },
+        {
+          type: "text",
+          text: contextBlock(input.company, new Date().toISOString().slice(0, 10), canChange, audit),
+        },
       ],
       tools,
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.

@@ -4,6 +4,7 @@
  * files or secrets runs in the main process.
  */
 import type {
+  AuditFinding,
   ChangePreview,
   CreateInvoiceResult,
   InvoiceReceivedDraft,
@@ -143,6 +144,47 @@ export const AssistantInput = z
   });
 export type AssistantInput = z.input<typeof AssistantInput>;
 
+export const UiLanguage = z.enum(["en", "ru", "uz"]);
+export type UiLanguage = z.infer<typeof UiLanguage>;
+
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date as YYYY-MM-DD");
+
+/** Starts an audit of a company's base: a fixed checklist over a period, in a new chat. */
+export const AuditInput = z
+  .object({
+    companyId: z.uuid(),
+    /** The new chat the audit is kept in; the window picks it, as for a new question. */
+    chatId: z.uuid(),
+    from: IsoDate,
+    to: IsoDate,
+    /** The window's language: the findings are written in it. */
+    language: UiLanguage,
+  })
+  .refine((input) => input.from <= input.to, { message: "The period starts after it ends", path: ["from"] });
+export type AuditInput = z.infer<typeof AuditInput>;
+
+export type AuditStatus = "pending" | "running" | "ok" | "issues" | "not_applicable" | "failed";
+
+export interface AuditCheckView {
+  id: string;
+  section: string;
+  title: string;
+  status: AuditStatus;
+  /** What the check is doing now (the last 1C lookup), while it runs. */
+  activity?: string;
+  summary?: string;
+  findings?: AuditFinding[];
+  ms?: number;
+}
+
+export interface AuditView {
+  from: string;
+  to: string;
+  language: UiLanguage;
+  checks: AuditCheckView[];
+  finished: boolean;
+}
+
 export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text";
 
 /** An attached file as the chat shows it; its content goes to the model, not to the screen. */
@@ -203,6 +245,8 @@ export type AssistantEvent = { companyId: string } & (
   | { type: "decided"; id: string; outcome: ProposalOutcome }
   | { type: "done" }
   | { type: "error"; code: string; message: string }
+  /** The audit's state, whole, each time a check starts, moves on or finishes. */
+  | { type: "audit"; audit: AuditView }
   /** After a task (answered, failed or stopped): how long the assistant worked on it. */
   | { type: "elapsed"; ms: number }
 );
@@ -253,6 +297,10 @@ export interface PlatformBridge {
     /** Opens a saved chat: the next question continues it. */
     openChat(companyId: string, chatId: string): Promise<Result<ChatView>>;
     deleteChat(companyId: string, chatId: string): Promise<Result<null>>;
+    /** Runs an audit of the company's base in a new chat; its progress comes as "audit" events. */
+    audit(input: AuditInput): Promise<Result<null>>;
+    /** Saves an audit's findings as a CSV file that Excel opens; false when the user cancelled. */
+    exportAudit(companyId: string, chatId: string): Promise<Result<{ saved: boolean }>>;
     /** The user's answer to a "confirm" event: create the document in 1C, or not. */
     decide(companyId: string, proposalId: string, approve: boolean): Promise<void>;
     onEvent(listener: (event: AssistantEvent) => void): () => void;

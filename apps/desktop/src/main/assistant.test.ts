@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakePlatform } from "@platform/onec-client/testing";
-import { AI_TOOLS, type AiChatInput, type AiEvent } from "@platform/shared";
+import { AUDIT_TOOLS, CHAT_TOOLS, type AiChatInput, type AiEvent } from "@platform/shared";
 import { describe, expect, it } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
-import { AssistantService } from "./assistant.js";
+import { AssistantService, auditToCsv } from "./assistant.js";
+import type { AuditCheck } from "./audit-checks.js";
 import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
 import { ControlClient } from "./control-client.js";
@@ -41,6 +42,21 @@ function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
   return { requests, fetchImpl, encodings };
 }
 
+const TEST_CHECKS: AuditCheck[] = [
+  {
+    id: "cash_negative",
+    section: "cash",
+    title: { en: "Negative cash", ru: "Отрицательный остаток кассы", uz: "Kassada manfiy qoldiq" },
+    instructions: "Find days with a negative balance on 50xx.",
+  },
+  {
+    id: "import_customs",
+    section: "import",
+    title: { en: "Imports with ГТД", ru: "Импорт и ГТД", uz: "Import va BYD" },
+    instructions: "Find import receipts without a customs declaration.",
+  },
+];
+
 function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | "read_only" = "active") {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
@@ -72,6 +88,8 @@ function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | 
     emit: (e) => events.push(e),
     retryDelaysMs: [1, 1, 1],
     maxTurns: 25,
+    auditChecks: TEST_CHECKS,
+    auditConcurrency: 1,
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -125,7 +143,7 @@ describe("assistant", () => {
     // The first request carries the question and the company name.
     expect(proxy.requests[0]).toEqual({
       company: company.name,
-      tools: Object.keys(AI_TOOLS),
+      tools: CHAT_TOOLS,
       messages: [{ role: "user", content: "5110 qoldig'i qancha?" }],
     });
     // The second sends the assistant turn back unchanged (thinking included), then the 1C rows.
@@ -665,6 +683,138 @@ describe("assistant", () => {
     expect(types.slice(-2)).toEqual(["done", "elapsed"]);
     const elapsed = events.at(-1);
     expect(elapsed?.type === "elapsed" && elapsed.ms).toBeLessThan(250);
+  });
+
+  describe("audit", () => {
+    const toolTurn = (id: string, name: string, input: unknown) => (): AiEvent[] => [
+      { type: "message", stopReason: "tool_use", content: [{ type: "tool_use", id, name, input }] },
+    ];
+    const answer = (text: string) => (): AiEvent[] => [
+      { type: "text", text },
+      { type: "message", stopReason: "end_turn", content: [{ type: "text", text }] },
+    ];
+    const AUDIT = {
+      companyId: "",
+      chatId: "0b8e3a52-1d3c-4a8e-9f5e-2b1c3d4e5f60",
+      from: "2026-01-01",
+      to: "2026-10-06",
+      language: "ru" as const,
+    };
+
+    it("runs every check on its own, reads 1C only, then writes the report in a new chat", async () => {
+      const { assistant, store, company, events, proxy, base, chats } = setup([
+        toolTurn("q1", "run_query", { query: "ВЫБРАТЬ 1" }),
+        toolTurn("r1", "report_findings", {
+          status: "issues",
+          summary: "Касса уходила в минус 2 дня",
+          findings: [
+            { severity: "high", title: "Минус в кассе 12.03.2026", amount: -1500000.5, date: "2026-03-12" },
+          ],
+        }),
+        toolTurn("r2", "report_findings", { status: "not_applicable", summary: "Импорта не было" }),
+        answer("Итог аудита: главное — минус в кассе."),
+      ]);
+      store.setAiEnabled(company.id, true);
+      expect(await assistant.audit({ ...AUDIT, companyId: company.id })).toEqual({ ok: true, data: null });
+
+      // Each check is its own short conversation, with the read tools and report_findings only.
+      expect(proxy.requests.slice(0, 3).map((r) => r.tools)).toEqual([AUDIT_TOOLS, AUDIT_TOOLS, AUDIT_TOOLS]);
+      expect(proxy.requests[0]!.messages).toHaveLength(1);
+      expect(proxy.requests[0]!.messages[0]!.content).toContain("Find days with a negative balance on 50xx.");
+      expect(proxy.requests[0]!.messages[0]!.content).toContain("in Russian");
+      expect(proxy.requests[2]!.messages).toHaveLength(1);
+      expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(1);
+
+      // The report is written in the chat from the checks' results, with the chat's tools.
+      const report = proxy.requests[3]!;
+      expect(report.tools).toEqual(CHAT_TOOLS);
+      expect(report.messages[0]!.content).toContain("Минус в кассе 12.03.2026");
+
+      const last = events.filter((e) => e.type === "audit").at(-1);
+      expect(last).toMatchObject({
+        audit: {
+          finished: true,
+          checks: [
+            {
+              title: "Отрицательный остаток кассы",
+              section: "Касса и банк",
+              status: "issues",
+              findings: [{ severity: "high" }],
+            },
+            { title: "Импорт и ГТД", status: "not_applicable", findings: [] },
+          ],
+        },
+      });
+      expect(events.map((e) => e.type).slice(-2)).toEqual(["done", "elapsed"]);
+
+      const saved = chats.load(company.id, AUDIT.chatId)!;
+      expect(saved.title).toBe("Аудит 01.01.2026–06.10.2026");
+      expect(saved.entries.map((e) => e.kind)).toEqual(["audit", "assistant", "elapsed"]);
+
+      const csv = assistant.auditCsv(company.id, AUDIT.chatId);
+      expect(csv).toMatchObject({ ok: true, data: { name: "Аудит 01.01.2026–06.10.2026.csv" } });
+    });
+
+    it("asks a check that answers in words to report, then keeps its words as the result", async () => {
+      const { assistant, store, company, events } = setup([
+        answer("Всё хорошо, наверное."),
+        answer("Я уже сказал."),
+        toolTurn("r2", "report_findings", { status: "ok", summary: "Всё в порядке" }),
+        answer("Итог."),
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.audit({ ...AUDIT, companyId: company.id });
+      const last = events.filter((e) => e.type === "audit").at(-1);
+      expect(last).toMatchObject({
+        audit: { checks: [{ status: "failed", summary: "Я уже сказал." }, { status: "ok" }] },
+      });
+    });
+
+    it("never lets a chat call report_findings, and never lets a check change 1C", async () => {
+      const { assistant, store, company, proxy } = setup([
+        toolTurn("x", "propose_change", {
+          action: "delete",
+          object: "Справочник.Контрагенты",
+          ref: "22222222-2222-2222-2222-222222222222",
+        }),
+        toolTurn("r1", "report_findings", { status: "ok", summary: "OK" }),
+        toolTurn("r2", "report_findings", { status: "ok", summary: "OK" }),
+        answer("Итог."),
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.audit({ ...AUDIT, companyId: company.id });
+      const refused = proxy.requests[1]!.messages[2]!.content as unknown as { content: string }[];
+      expect(JSON.parse(refused[0]!.content)).toMatchObject({ error: "UNKNOWN_TOOL" });
+    });
+
+    it("saves the findings as a CSV that Excel opens", () => {
+      const csv = auditToCsv({
+        from: "2026-01-01",
+        to: "2026-10-06",
+        language: "ru",
+        finished: true,
+        checks: [
+          {
+            id: "a",
+            section: "Касса и банк",
+            title: "Минус в кассе",
+            status: "issues",
+            summary: "2 дня",
+            findings: [{ severity: "high", title: 'Минус "12.03"', detail: "", amount: -1500000.5 }],
+          },
+          { id: "b", section: "Импорт", title: "ГТД", status: "ok", summary: "В порядке" },
+        ],
+      });
+      expect(csv.startsWith("\uFEFF")).toBe(true);
+      const lines = csv.slice(1).trimEnd().split("\r\n");
+      expect(lines[0]).toBe(
+        '"Раздел";"Проверка";"Итог";"Важность";"Проблема";"Подробности";"Сумма";"Дата";"Контрагент";"Документ"',
+      );
+      expect(lines[1]).toBe(
+        '"Касса и банк";"Минус в кассе";"Есть проблемы";"Высокая";"Минус ""12.03""";"";"-1500000,5";"";"";""',
+      );
+      expect(lines[2]).toBe('"Импорт";"ГТД";"В порядке";"";"В порядке";"";"";"";"";""');
+    });
   });
 
   describe("speed and reliability", () => {

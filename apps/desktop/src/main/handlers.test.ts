@@ -59,6 +59,7 @@ function setup() {
       defaultServerUrl: "http://localhost:3000",
     },
     pickFolder: async () => "D:\\Bases\\TEST",
+    saveFile: async () => true,
     installExtension: async (connection) => {
       installs.push(connection);
       return installResult;
@@ -232,6 +233,7 @@ describe("without secure storage", () => {
       }),
       info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
+      saveFile: async () => true,
       installExtension: async () => ({ ok: true, data: null }),
     });
     const org = (await handlers.testConnection(connection)).organizations[0]!;

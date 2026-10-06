@@ -11,10 +11,13 @@ import {
   type AssistantEvent,
   type AttachmentInfo,
   type AttachmentKind,
+  type AuditCheckView,
+  type AuditView,
   type BatchItem,
   type CompanyView,
   type Proposal,
   type ProposalOutcome,
+  UiLanguage,
 } from "../../../shared/ipc";
 import { type ChatEntry, applyEvent } from "../../../shared/transcript";
 import { Button } from "@/components/ui/button";
@@ -62,7 +65,7 @@ const sizeText = (bytes: number) =>
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export function AssistantScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -119,7 +122,19 @@ export function AssistantScreen() {
         <div className="flex min-h-0 flex-1 flex-col">
           <ExtensionNotice company={company} />
           <div className="flex min-h-0 flex-1 gap-4">
-            <ChatList company={company} transcript={transcript} onOpen={setTranscript} />
+            <ChatList
+              company={company}
+              transcript={transcript}
+              onOpen={setTranscript}
+              onAudit={(from, to) => {
+                const chatId = crypto.randomUUID();
+                setTranscript({ chatId, entries: [], busy: true });
+                const language = UiLanguage.catch("ru").parse(i18n.language);
+                void window.platform.assistant
+                  .audit({ companyId: company.id, chatId, from, to, language })
+                  .then(() => queryClient.invalidateQueries({ queryKey: ["chats", company.id] }));
+              }}
+            />
             <div className="flex min-w-0 flex-1 flex-col">
               <Chat
                 company={company}
@@ -224,10 +239,12 @@ function ChatList({
   company,
   transcript,
   onOpen,
+  onAudit,
 }: {
   company: CompanyView;
   transcript: Transcript;
   onOpen: (transcript: Transcript) => void;
+  onAudit: (from: string, to: string) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -266,6 +283,7 @@ function ChatList({
       <Button size="sm" variant="outline" disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
         + {t("assistant.newChat")}
       </Button>
+      <AuditStart busy={transcript.busy} onStart={onAudit} />
       <div className="mt-2 px-1 text-xs font-medium text-muted-foreground">{t("assistant.history")}</div>
       <nav aria-label={t("assistant.history")} className="mt-1 flex-1 space-y-0.5 overflow-y-auto">
         {(chats.data ?? []).length === 0 && (
@@ -303,6 +321,223 @@ function ChatList({
       {error && <p className="px-1 text-xs text-destructive">{error}</p>}
       <p className="px-1 pt-2 text-xs text-muted-foreground">{t("assistant.historyNote")}</p>
     </Card>
+  );
+}
+
+/** Today as YYYY-MM-DD on this PC's calendar. */
+function localIsoDate(date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** The audit button: asks for the period (the year so far by default), then starts it. */
+function AuditStart({ busy, onStart }: { busy: boolean; onStart: (from: string, to: string) => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const today = localIsoDate();
+  const [from, setFrom] = useState(`${today.slice(0, 4)}-01-01`);
+  const [to, setTo] = useState(today);
+  if (!open) {
+    return (
+      <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => setOpen(true)}>
+        {t("audit.start")}
+      </Button>
+    );
+  }
+  const valid = from !== "" && to !== "" && from <= to;
+  return (
+    <form
+      className="mt-2 space-y-2 rounded-lg border border-border p-2 text-xs"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!valid || busy) return;
+        setOpen(false);
+        onStart(from, to);
+      }}
+    >
+      <div className="font-medium">{t("audit.period")}</div>
+      <label className="flex items-center gap-2">
+        <span className="w-8 text-muted-foreground">{t("audit.from")}</span>
+        <input
+          type="date"
+          className="h-8 min-w-0 flex-1 rounded border border-border bg-card px-1"
+          value={from}
+          max={to}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="w-8 text-muted-foreground">{t("audit.to")}</span>
+        <input
+          type="date"
+          className="h-8 min-w-0 flex-1 rounded border border-border bg-card px-1"
+          value={to}
+          min={from}
+          onChange={(e) => setTo(e.target.value)}
+        />
+      </label>
+      <p className="text-muted-foreground">{t("audit.hint")}</p>
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" className="flex-1" disabled={!valid || busy}>
+          {t("audit.run")}
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => setOpen(false)}>
+          {t("audit.cancel")}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+const STATUS_ICON: Record<AuditCheckView["status"], { icon: string; className: string }> = {
+  pending: { icon: "○", className: "text-muted-foreground" },
+  running: { icon: "◐", className: "animate-pulse text-primary" },
+  ok: { icon: "✓", className: "text-success" },
+  issues: { icon: "!", className: "font-bold text-warning" },
+  not_applicable: { icon: "–", className: "text-muted-foreground" },
+  failed: { icon: "✕", className: "text-destructive" },
+};
+
+const dmy = (iso: string) => iso.split("-").reverse().join(".");
+
+/** An audit's checks as they run, and what each found; downloadable when finished. */
+function AuditCard({
+  audit,
+  companyId,
+  chatId,
+}: {
+  audit: AuditView;
+  companyId: string;
+  chatId: string | null;
+}) {
+  const { t } = useTranslation();
+  const [saved, setSaved] = useState<string | null>(null);
+  const done = audit.checks.filter((c) => !["pending", "running"].includes(c.status)).length;
+  const problems = audit.checks.reduce((n, c) => n + (c.findings?.length ?? 0), 0);
+  const withIssues = audit.checks.filter((c) => c.status === "issues").length;
+  const sections = [...new Set(audit.checks.map((c) => c.section))];
+
+  async function download() {
+    if (!chatId) return;
+    const result = await window.platform.assistant.exportAudit(companyId, chatId);
+    setSaved(result.ok ? (result.data.saved ? t("audit.saved") : null) : result.message);
+  }
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold">
+            {t("audit.title", { from: dmy(audit.from), to: dmy(audit.to) })}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t("audit.progress", { done, total: audit.checks.length })}
+            {done > 0 && ` · ${t("audit.summary", { checks: withIssues, problems })}`}
+          </div>
+        </div>
+        {audit.finished && chatId && (
+          <Button size="sm" variant="outline" onClick={() => void download()}>
+            {t("audit.download")}
+          </Button>
+        )}
+      </div>
+      {saved && <div className="text-xs text-muted-foreground">{saved}</div>}
+      <div className="h-1.5 overflow-hidden rounded bg-muted">
+        <div
+          className="h-full bg-primary transition-all"
+          style={{ width: `${(done / Math.max(1, audit.checks.length)) * 100}%` }}
+        />
+      </div>
+      {sections.map((section) => (
+        <div key={section} className="space-y-1">
+          <div className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{section}</div>
+          {audit.checks
+            .filter((c) => c.section === section)
+            .map((check) => (
+              <AuditCheckRow key={check.id} check={check} />
+            ))}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+function AuditCheckRow({ check }: { check: AuditCheckView }) {
+  const { t } = useTranslation();
+  const status = STATUS_ICON[check.status];
+  const findings = check.findings ?? [];
+  const head = (
+    <div className="flex items-start gap-2 text-sm">
+      <span
+        className={cn("w-4 shrink-0 text-center", status.className)}
+        title={t(`audit.status.${check.status}`)}
+      >
+        {status.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <span className="font-medium">{check.title}</span>
+        {findings.length > 0 && (
+          <span className="ml-2 rounded bg-warning/20 px-1.5 text-xs">
+            {t("audit.findings", { count: findings.length })}
+          </span>
+        )}
+        {check.status === "running" && check.activity && (
+          <div className="truncate font-mono text-xs text-muted-foreground">{check.activity}</div>
+        )}
+        {check.summary && <div className="text-xs text-muted-foreground">{check.summary}</div>}
+      </div>
+      {check.ms !== undefined && (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {Math.max(1, Math.round(check.ms / 1000))} s
+        </span>
+      )}
+    </div>
+  );
+  if (findings.length === 0) return head;
+  return (
+    <details className="rounded-lg hover:bg-muted/40">
+      <summary className="cursor-pointer list-none">{head}</summary>
+      <div className="overflow-x-auto pb-2 pl-6">
+        <table className="w-full text-xs">
+          <thead className="text-left text-muted-foreground">
+            <tr>
+              <th className="py-1 pr-2 font-medium">{t("audit.columns.severity")}</th>
+              <th className="py-1 pr-2 font-medium">{t("audit.columns.problem")}</th>
+              <th className="py-1 pr-2 text-right font-medium">{t("audit.columns.amount")}</th>
+              <th className="py-1 pr-2 font-medium">{t("audit.columns.where")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {findings.map((f, i) => (
+              <tr key={i} className="border-t border-border align-top">
+                <td className="py-1 pr-2">
+                  <span
+                    className={cn(
+                      "rounded px-1.5",
+                      f.severity === "high" && "bg-destructive/15 text-destructive",
+                      f.severity === "medium" && "bg-warning/20",
+                      f.severity === "low" && "bg-muted",
+                    )}
+                  >
+                    {t(`audit.severity.${f.severity}`)}
+                  </span>
+                </td>
+                <td className="py-1 pr-2">
+                  <div className="font-medium">{f.title}</div>
+                  {f.detail && <div className="text-muted-foreground">{f.detail}</div>}
+                </td>
+                <td className="py-1 pr-2 text-right whitespace-nowrap">
+                  {f.amount !== undefined ? money(f.amount) : ""}
+                </td>
+                <td className="py-1 pr-2 text-muted-foreground">
+                  {[f.date, f.counterparty, f.document].filter(Boolean).join(" · ")}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
@@ -451,7 +686,7 @@ function Chat({
           </div>
         )}
         {transcript.entries.map((entry, i) => (
-          <EntryView key={i} entry={entry} companyId={company.id} />
+          <EntryView key={i} entry={entry} companyId={company.id} chatId={transcript.chatId} />
         ))}
         {transcript.busy && <div className="text-xs text-muted-foreground">{t("assistant.thinking")}</div>}
         <div ref={bottom} />
@@ -582,7 +817,7 @@ function durationText(ms: number, t: (key: string) => string): string {
   return part(s, "s");
 }
 
-function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
+function EntryView({ entry, companyId, chatId }: { entry: Entry; companyId: string; chatId: string | null }) {
   const { t } = useTranslation();
   switch (entry.kind) {
     case "user":
@@ -625,6 +860,8 @@ function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
           {t(`assistant.tools.${entry.name}`)} {entry.detail}
         </div>
       );
+    case "audit":
+      return <AuditCard audit={entry.audit} companyId={companyId} chatId={chatId} />;
     case "elapsed":
       return (
         <div className="text-xs text-muted-foreground">
