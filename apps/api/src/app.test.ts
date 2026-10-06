@@ -74,6 +74,7 @@ describe.skipIf(!available)("control system API", () => {
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
       LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
+      PLAN_LIMITS: "on",
       ADMIN_EMAIL: "Boss@Platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
     });
@@ -324,6 +325,26 @@ describe.skipIf(!available)("control system API", () => {
     };
     expect((await post("/v1/ai/chat", nested, accessToken)).statusCode).toBe(400);
     expect(aiCalls).toHaveLength(1);
+  });
+
+  it("enforces no plan limits while they are off: PCs and AI use are unlimited", async () => {
+    const open = await buildApp(db.db, { ...config, PLAN_LIMITS: "off" }, { aiModel: fakeModel });
+    try {
+      const send = (url: string, payload: Record<string, unknown>, token: string) =>
+        open.inject({ method: "POST", url, payload, headers: { authorization: `Bearer ${token}` } });
+      const reg = (await post("/v1/auth/register", account)).json();
+      for (const n of [1, 2, 3, 4]) {
+        const pc = { machineId: String(n).repeat(64), name: `PC${n}` };
+        expect((await send("/v1/devices/activate", pc, reg.accessToken)).statusCode).toBe(200);
+      }
+      const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
+      const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
+      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 1_000_000_000 });
+      const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
+      expect((await send("/v1/ai/chat", chat, reg.accessToken)).statusCode).toBe(200);
+    } finally {
+      await open.close();
+    }
   });
 
   it("stops the assistant at the daily cap, the plan quota and an inactive subscription", async () => {

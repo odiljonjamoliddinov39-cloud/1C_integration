@@ -170,7 +170,7 @@ export class Service {
         .from(devices)
         .where(and(eq(devices.userId, userId), eq(devices.revoked, false)));
       const limit = plan.seats * (plan.features.maxDevicesPerSeat ?? 2);
-      if (active >= limit) {
+      if (this.config.PLAN_LIMITS === "on" && active >= limit) {
         throw new HttpError(
           409,
           "DEVICE_LIMIT",

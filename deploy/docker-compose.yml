@@ -27,6 +27,8 @@ services:
       # The AI proxy: without a key the assistant answers AI_NOT_CONFIGURED.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
+      # "off" until the tariffs are set: no AI caps or quotas, no PC limit (see apps/api/src/config.ts).
+      PLAN_LIMITS: ${PLAN_LIMITS:-off}
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
       AI_EFFORT: ${AI_EFFORT:-high}

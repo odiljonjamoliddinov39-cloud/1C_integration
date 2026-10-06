@@ -33,6 +33,13 @@ const Env = z.object({
    * best quality on multi-step work in 1C; "low" answers and works fastest.
    */
   AI_EFFORT: z.enum(["low", "medium", "high"]).default("high"),
+  /**
+   * "off" (default, until the tariffs are set): the plans' limits are not enforced: no daily AI cap,
+   * no AI quota, no limit on PCs per account, and a high ceiling on assistant requests per minute.
+   * Use is still recorded and shown in the admin dashboard. "on": the plans' limits apply.
+   * Blocked accounts, inactive subscriptions and the sign-in rate limit apply either way.
+   */
+  PLAN_LIMITS: z.enum(["on", "off"]).default("off"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
   AI_DAILY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
   /**

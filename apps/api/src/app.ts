@@ -140,10 +140,11 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     "/v1/ai/chat",
     // The whole chat comes every turn, with the files attached to it (the app keeps it under 24 MB;
     // the AI service takes at most 32 MB).
-    // One question can take 25 quick steps, and an office's PCs share one address: 120 a minute.
+    // One question can take many quick steps, and an office's PCs share one address: 120 a minute
+    // under the plans' limits; without them, only a ceiling against runaway clients.
     {
       bodyLimit: 30 * 1024 * 1024,
-      config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+      config: { rateLimit: { max: config.PLAN_LIMITS === "on" ? 120 : 1000, timeWindow: "1 minute" } },
       // The app gzips the chat (1C rows and text shrink several times): less to upload every step.
       preParsing: async (req, _reply, payload) => {
         if (req.headers["content-encoding"] !== "gzip") return payload;

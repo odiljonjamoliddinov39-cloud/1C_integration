@@ -40,6 +40,7 @@ export class AiProxy {
     if (status === "suspended" || status === "cancelled") {
       throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "Renew the subscription to use the assistant");
     }
+    if (this.config.PLAN_LIMITS === "off") return;
     const limits = await aiLimits(
       this.db,
       accountId,
