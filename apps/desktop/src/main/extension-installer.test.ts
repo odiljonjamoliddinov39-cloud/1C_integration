@@ -4,7 +4,7 @@ import { join, win32 } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { designerArgs, explainLog, findDesigner, installExtension } from "./extension-installer.js";
+import { explainLog, findDesigner, installExtension, loadArgs, updateArgs } from "./extension-installer.js";
 
 const fileBase = {
   infobase: { kind: "file" as const, file: "D:\\Bases\\Crystal Water" },
@@ -19,8 +19,8 @@ function sourceDir(): string {
 }
 
 describe("PlatformAPI installer", () => {
-  it("builds the Designer command for a file base and a server base", () => {
-    expect(designerArgs(fileBase, "C:\\app\\platformapi", "C:\\t\\log.txt")).toEqual([
+  it("builds the two Designer runs: load the files, then update the database", () => {
+    const head = [
       "DESIGNER",
       "/F",
       "D:\\Bases\\Crystal Water",
@@ -32,15 +32,22 @@ describe("PlatformAPI installer", () => {
       "/DisableStartupMessages",
       "/Out",
       "C:\\t\\log.txt",
+    ];
+    expect(loadArgs(fileBase, "C:\\app\\platformapi", "C:\\t\\log.txt")).toEqual([
+      ...head,
       "/LoadConfigFromFiles",
       "C:\\app\\platformapi",
       "-Extension",
       "PlatformAPI",
+    ]);
+    expect(updateArgs(fileBase, "C:\\t\\log.txt")).toEqual([
+      ...head,
       "/UpdateDBCfg",
       "-Extension",
       "PlatformAPI",
     ]);
-    const server = designerArgs(
+    expect(updateArgs(fileBase, "C:\\t\\log.txt", false)).toEqual([...head, "/UpdateDBCfg"]);
+    const server = loadArgs(
       { infobase: { kind: "server", server: "srv1c", ref: "buh" }, user: "", password: "" },
       "x",
       "l",
@@ -50,20 +57,48 @@ describe("PlatformAPI installer", () => {
     expect(server).not.toContain("/P");
   });
 
-  it("runs the Designer and reports 1C's own reason when it fails", async () => {
+  it("loads, then updates; retries the update without -Extension on a platform that refuses it", async () => {
     const runs: string[][] = [];
+    const designer = "C:\\Program Files\\1cv8\\8.3.18.1208\\bin\\1cv8.exe";
     const ok = await installExtension(fileBase, {
       platform: "win32",
       sourceDir: sourceDir(),
-      findDesigner: async () => "C:\\Program Files\\1cv8\\8.3.24.1548\\bin\\1cv8.exe",
+      findDesigner: async () => designer,
       run: async (_exe, args) => {
         runs.push(args);
+        if (args.includes("/UpdateDBCfg") && args.includes("-Extension")) {
+          writeFileSync(args[args.indexOf("/Out") + 1]!, "Ошибка в параметрах командной строки.");
+          return { code: 1 };
+        }
         return { code: 0 };
       },
     });
-    expect(ok).toMatchObject({ ok: true, data: { designer: expect.stringContaining("1cv8.exe") } });
-    expect(runs[0]).toContain("/LoadConfigFromFiles");
+    expect(ok).toMatchObject({ ok: true });
+    expect(runs.map((args) => args.slice(args.indexOf("/Out") + 2))).toEqual([
+      ["/LoadConfigFromFiles", expect.any(String), "-Extension", "PlatformAPI"],
+      ["/UpdateDBCfg", "-Extension", "PlatformAPI"],
+      ["/UpdateDBCfg"],
+    ]);
 
+    const loadFails = await installExtension(fileBase, {
+      platform: "win32",
+      sourceDir: sourceDir(),
+      findDesigner: async () => designer,
+      run: async (_exe, args) => {
+        writeFileSync(args[args.indexOf("/Out") + 1]!, "Ошибка в параметрах командной строки.");
+        return { code: 1 };
+      },
+    });
+    expect(loadFails).toMatchObject({
+      ok: false,
+      code: "EXTENSION_UPDATE_FAILED",
+      message: expect.stringMatching(
+        /параметрах командной строки.*loading the extension files; 1C 8\.3\.18\.1208/,
+      ),
+    });
+  });
+
+  it("reports 1C's own reason when it fails", async () => {
     const busy = await installExtension(fileBase, {
       platform: "win32",
       sourceDir: sourceDir(),

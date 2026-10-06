@@ -1,8 +1,10 @@
 /**
  * Puts the PlatformAPI extension that ships with this app into the company's 1C base, the way the
  * accountant would in the Configurator («Загрузить конфигурацию из файлов», then F7), but in 1C's
- * own batch mode: 1cv8.exe DESIGNER /LoadConfigFromFiles … -Extension PlatformAPI /UpdateDBCfg.
- * Only that extension changes; the configuration and the data stay as they are.
+ * own batch mode, in two runs of 1cv8.exe DESIGNER: /LoadConfigFromFiles … -Extension PlatformAPI,
+ * then /UpdateDBCfg -Extension PlatformAPI (one run with both commands is refused by 1C as
+ * "Ошибка в параметрах командной строки"). Only that extension changes; the configuration and the
+ * data stay as they are.
  *
  * The 1C platform is the one whose COM connector the app already uses (found in the registry), so a
  * server base gets a client of the server's version.
@@ -27,8 +29,8 @@ export interface InstallerDeps {
   run: (exe: string, args: string[]) => Promise<{ code: number | null }>;
 }
 
-/** The Designer command line: the base, the user, a log file, load the extension, update it. */
-export function designerArgs(connection: ConnectionInput, sourceDir: string, logFile: string): string[] {
+/** Opens the base in the Designer, quietly, writing 1C's messages to a log file. */
+function baseArgs(connection: ConnectionInput, logFile: string): string[] {
   const base =
     connection.infobase.kind === "file"
       ? ["/F", connection.infobase.file]
@@ -42,15 +44,24 @@ export function designerArgs(connection: ConnectionInput, sourceDir: string, log
     "/DisableStartupMessages",
     "/Out",
     logFile,
-    "/LoadConfigFromFiles",
-    sourceDir,
-    "-Extension",
-    EXTENSION_NAME,
-    "/UpdateDBCfg",
-    "-Extension",
-    EXTENSION_NAME,
   ];
 }
+
+/** Step 1: load the extension's files into the base (as «Загрузить конфигурацию из файлов»). */
+export function loadArgs(connection: ConnectionInput, sourceDir: string, logFile: string): string[] {
+  return [...baseArgs(connection, logFile), "/LoadConfigFromFiles", sourceDir, "-Extension", EXTENSION_NAME];
+}
+
+/** Step 2: update the database for it (as F7); without -Extension on platforms that do not take it. */
+export function updateArgs(connection: ConnectionInput, logFile: string, withExtension = true): string[] {
+  return [
+    ...baseArgs(connection, logFile),
+    "/UpdateDBCfg",
+    ...(withExtension ? ["-Extension", EXTENSION_NAME] : []),
+  ];
+}
+
+const COMMAND_LINE_ERROR = /параметрах командной строки|command line/i;
 
 /** What went wrong, in words the accountant can act on, from the Designer's log. */
 export function explainLog(log: string): { code: string; message: string } {
@@ -98,13 +109,34 @@ export async function installExtension(
       message: "1C:Enterprise (1cv8.exe) was not found on this PC; install the 1C platform with the Designer",
     };
   }
+  // The platform's version, from its folder (…\1cv8\8.3.24.1548\bin\1cv8.exe), helps when 1C refuses.
+  const version = /\\(\d+\.\d+\.\d+\.\d+)\\/.exec(designer)?.[1] ?? "unknown version";
   const work = mkdtempSync(join(tmpdir(), "platformapi-"));
-  const logFile = join(work, "designer.log");
+  let step = 0;
+  const run = async (args: (logFile: string) => string[]) => {
+    const logFile = join(work, `step-${++step}.log`);
+    const { code } = await deps.run(designer, args(logFile));
+    return { code, log: existsSync(logFile) ? decodeText(readFileSync(logFile)) : "" };
+  };
+  const failed = (what: string, log: string) => {
+    const explained = explainLog(log);
+    return {
+      ok: false as const,
+      code: explained.code,
+      message: `${explained.message} (${what}; 1C ${version})`,
+    };
+  };
   try {
-    const { code } = await deps.run(designer, designerArgs(connection, deps.sourceDir, logFile));
-    const log = existsSync(logFile) ? decodeText(readFileSync(logFile)) : "";
-    if (code !== 0) return { ok: false, ...explainLog(log) };
-    return { ok: true, data: { designer, log } };
+    const load = await run((logFile) => loadArgs(connection, deps.sourceDir, logFile));
+    if (load.code !== 0) return failed("loading the extension files", load.log);
+
+    let update = await run((logFile) => updateArgs(connection, logFile));
+    if (update.code !== 0 && COMMAND_LINE_ERROR.test(update.log)) {
+      // A platform that does not know /UpdateDBCfg -Extension updates all of the base's extensions.
+      update = await run((logFile) => updateArgs(connection, logFile, false));
+    }
+    if (update.code !== 0) return failed("updating the database", update.log);
+    return { ok: true, data: { designer, log: [load.log, update.log].filter(Boolean).join("\n") } };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
