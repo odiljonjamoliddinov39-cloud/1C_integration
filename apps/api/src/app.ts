@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createGunzip } from "node:zlib";
 
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -40,6 +41,9 @@ export interface AppDeps {
   /** The built admin dashboard (apps/admin/dist), served at /admin/ when present. */
   adminUiDir?: string;
 }
+
+/** How often a running assistant step tells the app it is alive. */
+const PING_MS = 15_000;
 
 export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const app = Fastify({
@@ -136,7 +140,19 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     "/v1/ai/chat",
     // The whole chat comes every turn, with the files attached to it (the app keeps it under 24 MB;
     // the AI service takes at most 32 MB).
-    { bodyLimit: 30 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    // One question can take 25 quick steps, and an office's PCs share one address: 120 a minute.
+    {
+      bodyLimit: 30 * 1024 * 1024,
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+      // The app gzips the chat (1C rows and text shrink several times): less to upload every step.
+      preParsing: async (req, _reply, payload) => {
+        if (req.headers["content-encoding"] !== "gzip") return payload;
+        const gunzip = createGunzip() as ReturnType<typeof createGunzip> & { receivedEncodedLength: number };
+        gunzip.receivedEncodedLength = 0;
+        payload.on("data", (chunk: Buffer) => (gunzip.receivedEncodedLength += chunk.length));
+        return payload.pipe(gunzip);
+      },
+    },
     async (req, reply) => {
       const who = await auth(req);
       const input = parse(AiChatInput, req.body);
@@ -155,8 +171,15 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       const send = (event: AiEvent) => {
         if (!reply.raw.writableEnded) reply.raw.write(`${JSON.stringify(event)}\n`);
       };
-      await ai.turn(who, input, send, aborted.signal);
-      reply.raw.end();
+      // A long step (a card for a whole statement) can stream nothing for minutes; a ping keeps
+      // proxies and the app from taking the quiet connection for a dead one.
+      const heartbeat = setInterval(() => send({ type: "ping" }), PING_MS);
+      try {
+        await ai.turn(who, input, send, aborted.signal);
+      } finally {
+        clearInterval(heartbeat);
+        reply.raw.end();
+      }
     },
   );
 

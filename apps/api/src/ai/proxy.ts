@@ -74,8 +74,10 @@ export class AiProxy {
       model: this.config.AI_MODEL,
       max_tokens: MAX_TOKENS,
       // On a policy decline, the API retries on a fallback model it picks by refusal category.
-      betas: ["server-side-fallback-2026-07-01"],
+      // "updates": thinking blocks carry the model's short progress notes, which the app shows.
+      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
       fallbacks: "default",
+      thinking: { type: "adaptive", display: "updates" },
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
         { type: "text", text: contextBlock(input.company, new Date().toISOString().slice(0, 10), canChange) },
@@ -83,12 +85,19 @@ export class AiProxy {
       tools,
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
       messages: input.messages as BetaMessageParam[],
-      output_config: { effort: "medium" },
+      output_config: { effort: this.config.AI_EFFORT },
       cache_control: { type: "ephemeral" },
     };
     let message;
     try {
-      message = await this.model.turn(params, (text) => send({ type: "text", text }), signal);
+      message = await this.model.turn(
+        params,
+        {
+          onText: (text) => send({ type: "text", text }),
+          onProgress: (text) => send({ type: "progress", text }),
+        },
+        signal,
+      );
     } catch (error) {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
       return send(toErrorEvent(error));

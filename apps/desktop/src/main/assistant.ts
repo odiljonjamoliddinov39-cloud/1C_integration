@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   AI_TOOLS,
+  type AiChatInput,
   type AiContentBlock,
   type AiMessage,
   type AiProposalTool,
@@ -65,6 +66,27 @@ const MAX_RESULT_CHARS = 40_000;
  * size (mostly attached files) the user starts a new chat.
  */
 const MAX_CHAT_CHARS = 24_000_000;
+/** Failures worth trying again: the connection, the web server in front of ours, a busy AI service. */
+const RETRYABLE = new Set([
+  "OFFLINE",
+  "SERVER_ERROR",
+  "BAD_RESPONSE",
+  "AI_BUSY",
+  "AI_UNAVAILABLE",
+  "RATE_LIMITED",
+]);
+/** Waits before the 2nd, 3rd and 4th attempt. */
+const RETRY_DELAYS_MS = [2_000, 6_000, 15_000];
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 
 export interface AssistantDeps {
   store: LocalStore;
@@ -74,6 +96,8 @@ export interface AssistantDeps {
   emit: (event: AssistantEvent) => void;
   /** Scales photos down before they are sent (Electron's nativeImage); absent in tests. */
   shrinkImage?: ShrinkImage;
+  /** Waits between retries of a failed model turn (tests make them short). */
+  retryDelaysMs?: readonly number[];
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -128,11 +152,9 @@ export class AssistantService {
     this.save(chat);
     try {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
-        const { client, accessToken } = await this.deps.session.authorized();
-        const answer = await client.aiTurn(
-          accessToken,
+        const answer = await this.turnWithRetries(
           { company: company.name, tools: Object.keys(AI_TOOLS), messages: history },
-          (delta) => emit({ type: "text", text: delta }),
+          emit,
           abort.signal,
         );
         history.push({ role: "assistant", content: answer.content });
@@ -181,6 +203,43 @@ export class AssistantService {
     } finally {
       this.running.delete(companyId);
       this.save(chat);
+    }
+  }
+
+  /**
+   * One model turn. A dropped connection, a server restart (a 5xx from the web server in front of
+   * it) or a busy AI service is retried a few times, after a short wait, before it reaches the
+   * user: the conversation is unchanged until a turn completes, so a retry repeats nothing that
+   * was done in 1C. What a failed attempt had already shown is taken back first.
+   */
+  private async turnWithRetries(input: AiChatInput, emit: Emit, signal: AbortSignal) {
+    for (let attempt = 1; ; attempt++) {
+      let shown = false;
+      try {
+        const { client, accessToken } = await this.deps.session.authorized();
+        return await client.aiTurn(
+          accessToken,
+          input,
+          {
+            onText: (delta) => {
+              shown = true;
+              emit({ type: "text", text: delta });
+            },
+            onProgress: (delta) => {
+              shown = true;
+              emit({ type: "progress", text: delta });
+            },
+          },
+          signal,
+        );
+      } catch (e) {
+        const retryable = e instanceof ControlError && RETRYABLE.has(e.code);
+        const delays = this.deps.retryDelaysMs ?? RETRY_DELAYS_MS;
+        if (!retryable || signal.aborted || attempt > delays.length) throw e;
+        if (shown) emit({ type: "retry", attempt });
+        await sleep(delays[attempt - 1] ?? 0, signal);
+        if (signal.aborted) throw new ControlError("AI_ABORTED", "Stopped");
+      }
     }
   }
 

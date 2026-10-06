@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,8 +23,12 @@ const secrets: SecretBox = { encrypt: (p) => `enc:${p}`, decrypt: (e) => e.slice
  */
 function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
   const requests: AiChatInput[] = [];
+  const encodings: (string | undefined)[] = [];
   const fetchImpl: typeof fetch = async (_url, init) => {
-    const input = JSON.parse(String(init?.body)) as AiChatInput;
+    const encoding = (init?.headers as Record<string, string> | undefined)?.["content-encoding"];
+    encodings.push(encoding);
+    const raw = encoding === "gzip" ? gunzipSync(init?.body as Buffer).toString() : String(init?.body);
+    const input = JSON.parse(raw) as AiChatInput;
     requests.push(structuredClone(input));
     const turn = script[requests.length - 1];
     if (!turn) throw new Error("no more scripted turns");
@@ -33,7 +38,7 @@ function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
       headers: { "content-type": "application/x-ndjson" },
     });
   };
-  return { requests, fetchImpl };
+  return { requests, fetchImpl, encodings };
 }
 
 function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | "read_only" = "active") {
@@ -65,6 +70,7 @@ function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | 
     session,
     connector: new InProcessConnector(() => base),
     emit: (e) => events.push(e),
+    retryDelaysMs: [1, 1, 1],
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -194,7 +200,10 @@ describe("assistant", () => {
         new Response(JSON.stringify({ code: "AI_QUOTA_EXCEEDED", message: "Quota is used up" }), {
           status: 429,
         }),
-      () => [{ type: "error", code: "AI_BUSY", message: "Busy" }],
+      // A busy AI service is tried again three times before the user sees it.
+      ...Array.from({ length: 4 }, () => (): AiEvent[] => [
+        { type: "error", code: "AI_BUSY", message: "Busy" },
+      ]),
     ]);
     store.setAiEnabled(company.id, true);
     expect(await assistant.send({ companyId: company.id, text: "?" })).toMatchObject({
@@ -534,6 +543,115 @@ describe("assistant", () => {
     // Earlier steps carry no such note.
     const earlier = proxy.requests[23]!.messages.at(-1)!.content as { type: string }[];
     expect(earlier.every((block) => block.type === "tool_result")).toBe(true);
+  });
+
+  describe("speed and reliability", () => {
+    const answer = (text: string) => (): AiEvent[] => [
+      { type: "text", text },
+      { type: "message", stopReason: "end_turn", content: [{ type: "text", text }] },
+    ];
+    const serverDown = () => new Response("<html>502 Bad Gateway</html>", { status: 502 });
+
+    it("tries a step again when the server is restarting, and takes back what the failed try showed", async () => {
+      // The connection drops after the answer has begun: the "Bal" it showed must be taken back.
+      const cutOff = (): Response => {
+        let sent = false;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent) return controller.error(new Error("socket hang up"));
+              sent = true;
+              controller.enqueue(
+                new TextEncoder().encode(`${JSON.stringify({ type: "text", text: "Bal" })}\n`),
+              );
+            },
+          }),
+          { headers: { "content-type": "application/x-ndjson" } },
+        );
+      };
+      const { assistant, store, company, events, proxy } = setup([
+        serverDown,
+        cutOff,
+        answer("Balans: 125 mln"),
+      ]);
+      store.setAiEnabled(company.id, true);
+      expect(await assistant.send({ companyId: company.id, text: "5110?" })).toEqual({
+        ok: true,
+        data: null,
+      });
+      expect(proxy.requests).toHaveLength(3);
+      expect(events.some((e) => e.type === "error")).toBe(false);
+      expect(events.filter((e) => e.type === "retry")).toHaveLength(1);
+      // The chat shows the answer once, without the cut-off "Bal".
+      const [saved] = assistant.chats(company.id);
+      const opened = assistant.openChat(company.id, saved!.id);
+      expect(opened.ok && opened.data.entries.map((e) => e.kind)).toEqual(["user", "assistant"]);
+      expect(opened.ok && opened.data.entries[1]).toEqual({ kind: "assistant", text: "Balans: 125 mln" });
+    });
+
+    it("gives up after a few tries and says so", async () => {
+      const { assistant, store, company, proxy } = setup([serverDown, serverDown, serverDown, serverDown]);
+      store.setAiEnabled(company.id, true);
+      expect(await assistant.send({ companyId: company.id, text: "?" })).toMatchObject({
+        ok: false,
+        code: "SERVER_ERROR",
+      });
+      expect(proxy.requests).toHaveLength(4);
+    });
+
+    it("does not retry what a retry cannot fix", async () => {
+      const limit = () =>
+        new Response(JSON.stringify({ code: "AI_DAILY_LIMIT", message: "limit" }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      const { assistant, store, company, proxy } = setup([limit]);
+      store.setAiEnabled(company.id, true);
+      expect(await assistant.send({ companyId: company.id, text: "?" })).toMatchObject({
+        code: "AI_DAILY_LIMIT",
+      });
+      expect(proxy.requests).toHaveLength(1);
+    });
+
+    it("shows the model's progress notes, and ignores the server's pings", async () => {
+      const { assistant, store, company, events } = setup([
+        () => [
+          { type: "progress", text: "Sentyabr bank " },
+          { type: "ping" },
+          { type: "progress", text: "hujjatlarini tekshiryapman" },
+          { type: "text", text: "Hammasi mos." },
+          { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "Hammasi mos." }] },
+        ],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "Tekshir" });
+      expect(events.filter((e) => e.type === "progress")).toHaveLength(2);
+      const [saved] = assistant.chats(company.id);
+      const opened = assistant.openChat(company.id, saved!.id);
+      expect(opened.ok && opened.data.entries).toEqual([
+        { kind: "user", text: "Tekshir" },
+        { kind: "note", text: "Sentyabr bank hujjatlarini tekshiryapman" },
+        { kind: "assistant", text: "Hammasi mos." },
+      ]);
+    });
+
+    it("sends a large chat gzipped", async () => {
+      const { assistant, store, company, proxy } = setup([answer("ok"), answer("ok")]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "qisqa" });
+      await assistant.send({ companyId: company.id, text: "x".repeat(3000) });
+      expect(proxy.encodings).toEqual([undefined, undefined]);
+      const big = new TextEncoder().encode("Сумма;".repeat(5000));
+      const more = setup([answer("ok")]);
+      more.store.setAiEnabled(more.company.id, true);
+      await more.assistant.send({
+        companyId: more.company.id,
+        text: "?",
+        files: [{ name: "a.txt", data: big }],
+      });
+      expect(more.proxy.encodings).toEqual(["gzip"]);
+      expect(JSON.stringify(more.proxy.requests[0])).toContain("Сумма;Сумма;");
+    });
   });
 
   describe("files and saved chats", () => {

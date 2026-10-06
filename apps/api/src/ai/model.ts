@@ -4,21 +4,38 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 
+export interface TurnCallbacks {
+  /** The answer text, as it is written. */
+  onText: (text: string) => void;
+  /** The model's short notes between tool calls ("checking September's payments…"), as written. */
+  onProgress?: (text: string) => void;
+}
+
 export interface AiModel {
-  /** Streams one turn: text deltas go to `onText`, the finished message is returned. */
-  turn(
-    params: BetaMessageStreamParams,
-    onText: (text: string) => void,
-    signal: AbortSignal,
-  ): Promise<BetaMessage>;
+  /** Streams one turn through the callbacks; the finished message is returned. */
+  turn(params: BetaMessageStreamParams, callbacks: TurnCallbacks, signal: AbortSignal): Promise<BetaMessage>;
 }
 
 export function claudeModel(apiKey: string): AiModel {
   const client = new Anthropic({ apiKey });
   return {
-    async turn(params, onText, signal) {
+    async turn(params, { onText, onProgress }, signal) {
       const stream = client.beta.messages.stream(params, { signal });
       stream.on("text", onText);
+      // With display "updates", thinking blocks carry only the model's progress notes; a new note
+      // starts on a new line.
+      if (onProgress) {
+        let wrote = false;
+        stream.on("streamEvent", (event) => {
+          if (wrote && event.type === "content_block_start" && event.content_block.type === "thinking") {
+            onProgress("\n");
+          }
+        });
+        stream.on("thinking", (delta) => {
+          if (delta) wrote = true;
+          onProgress(delta);
+        });
+      }
       return stream.finalMessage();
     },
   };

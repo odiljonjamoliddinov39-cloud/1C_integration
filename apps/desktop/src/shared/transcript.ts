@@ -7,6 +7,8 @@ import type { AssistantEvent, AttachmentInfo, Proposal, ProposalOutcome } from "
 export type ChatEntry =
   | { kind: "user"; text: string; files?: AttachmentInfo[] }
   | { kind: "assistant"; text: string }
+  /** What the assistant said it is doing between steps. */
+  | { kind: "note"; text: string }
   | { kind: "tool"; name: string; detail: string }
   | { kind: "proposal"; id: string; proposal: Proposal; outcome: ProposalOutcome | null }
   | { kind: "error"; code: string; message: string };
@@ -21,6 +23,17 @@ export function applyEvent(entries: ChatEntry[], event: EntryEvent): ChatEntry[]
       return last?.kind === "assistant"
         ? [...entries.slice(0, -1), { ...last, text: last.text + event.text }]
         : [...entries, { kind: "assistant", text: event.text }];
+    case "progress":
+      return last?.kind === "note"
+        ? [...entries.slice(0, -1), { ...last, text: last.text + event.text }]
+        : [...entries, { kind: "note", text: event.text }];
+    case "retry": {
+      // Take back what the failed attempt had written: the answer and notes after the last step.
+      let keep = entries.length;
+      while (keep > 0 && (entries[keep - 1]?.kind === "assistant" || entries[keep - 1]?.kind === "note"))
+        keep--;
+      return entries.slice(0, keep);
+    }
     case "tool":
       return [...entries, { kind: "tool", name: event.name, detail: event.detail }];
     case "error":

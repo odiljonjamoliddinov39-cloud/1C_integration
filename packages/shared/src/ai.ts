@@ -141,6 +141,10 @@ export type AiToolUse = z.infer<typeof AiToolUse>;
 export const AiEvent = z.discriminatedUnion("type", [
   /** A piece of the answer text, as it is generated. */
   z.object({ type: z.literal("text"), text: z.string() }),
+  /** A piece of the model's progress note between tool calls ("checking September's payments…"). */
+  z.object({ type: z.literal("progress"), text: z.string() }),
+  /** Sent every few seconds while the model works, so a quiet connection is not taken for a dead one. */
+  z.object({ type: z.literal("ping") }),
   /** The finished turn: append `content` to the conversation as the assistant message. */
   z.object({
     type: z.literal("message"),

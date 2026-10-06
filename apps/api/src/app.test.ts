@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { AI_TOOLS, AiEvent, LEGACY_AI_TOOLS, LicenseClaims } from "@platform/shared";
@@ -31,8 +32,12 @@ const account = {
 /** Stands in for Claude: streams "Balans: " + "125 mln", then returns the finished message. */
 const aiCalls: BetaMessageStreamParams[] = [];
 const fakeModel = {
-  async turn(params: BetaMessageStreamParams, onText: (text: string) => void) {
+  async turn(
+    params: BetaMessageStreamParams,
+    { onText, onProgress }: { onText: (text: string) => void; onProgress?: (text: string) => void },
+  ) {
     aiCalls.push(params);
+    onProgress?.("5110 ni tekshiryapman");
     onText("Balans: ");
     onText("125 mln");
     return {
@@ -220,6 +225,8 @@ describe.skipIf(!available)("control system API", () => {
       .split("\n")
       .map((line) => AiEvent.parse(JSON.parse(line)));
     expect(events.filter((e) => e.type === "text").map((e) => e.text)).toEqual(["Balans: ", "125 mln"]);
+    // The model's progress notes stream too, so the app shows what it is doing.
+    expect(events[0]).toEqual({ type: "progress", text: "5110 ni tekshiryapman" });
     const done = events.at(-1);
     expect(done).toMatchObject({ type: "message", stopReason: "end_turn" });
     // Thinking blocks come back too: the desktop must send them back unchanged.
@@ -228,6 +235,24 @@ describe.skipIf(!available)("control system API", () => {
     // The proxy, not the app, adds the prompt, the tools and the model.
     const params = aiCalls[0]!;
     expect(params.model).toBe("claude-sonnet-5-5");
+    expect(params.thinking).toEqual({ type: "adaptive", display: "updates" });
+    expect(params.output_config).toMatchObject({ effort: "low" });
+    expect(params.betas).toContain("thinking-display-updates-2026-08-18");
+
+    // The app may send the chat gzipped: the same turn, a fraction of the upload.
+    const zipped = await app.inject({
+      method: "POST",
+      url: "/v1/ai/chat",
+      payload: gzipSync(JSON.stringify(chat)),
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+      },
+    });
+    expect(zipped.statusCode).toBe(200);
+    expect(aiCalls[1]!.messages).toEqual(params.messages);
+    aiCalls.splice(1);
     expect(JSON.stringify(params.system)).toContain(SYSTEM_PROMPT.slice(0, 40));
     expect(JSON.stringify(params.system)).toContain("ООО «Тест»");
     expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual([

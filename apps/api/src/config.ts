@@ -28,6 +28,11 @@ const Env = z.object({
     .transform((v) => v?.trim() || undefined),
   /** TD §8: default Sonnet 5.5. */
   AI_MODEL: z.string().default("claude-sonnet-5-5"),
+  /**
+   * How much the model thinks before each step: "low" answers and works fastest; "medium" thinks
+   * before almost every reply. Raise it only if answers on hard tasks get worse.
+   */
+  AI_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
   AI_DAILY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
   /**

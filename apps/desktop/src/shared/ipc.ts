@@ -193,6 +193,10 @@ export type ProposalOutcome =
 /** What the assistant is doing, pushed from the main process while it answers. */
 export type AssistantEvent = { companyId: string } & (
   | { type: "text"; text: string }
+  /** The model's short progress note between tool calls, as it is written. */
+  | { type: "progress"; text: string }
+  /** The connection dropped and the step is being tried again: take back what it had shown. */
+  | { type: "retry"; attempt: number }
   | { type: "tool"; name: string; detail: string }
   /** Waits for assistant.decide(companyId, id, …). */
   | { type: "confirm"; id: string; proposal: Proposal }

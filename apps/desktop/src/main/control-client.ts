@@ -1,4 +1,7 @@
 /** HTTP client for the control system (apps/api). Runs in the main process, never in the UI. */
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
+
 import {
   AiEvent,
   type AiChatInput,
@@ -23,8 +26,22 @@ export class ControlError extends Error {
 
 const SignedIn = TokenPair.extend({ me: Me });
 export type AiTurn = Extract<AiEvent, { type: "message" }>;
-/** An assistant turn may take a few minutes when it thinks or the answer is long. */
-const AI_TURN_TIMEOUT_MS = 5 * 60_000;
+/**
+ * An assistant turn may run for many minutes (a card for a whole bank statement), so it is cut off
+ * only when nothing at all arrives for a while: the server sends a ping every 15 s while it works.
+ */
+const AI_IDLE_MS = 2 * 60_000;
+const AI_TURN_MAX_MS = 30 * 60_000;
+/** Chats larger than this go gzipped: 1C rows and text shrink several times. */
+const GZIP_FROM_BYTES = 16 * 1024;
+const gzipAsync = promisify(gzip);
+
+export interface TurnHandlers {
+  /** The answer text, as it is written. */
+  onText: (text: string) => void;
+  /** The model's short progress notes between tool calls. */
+  onProgress?: (text: string) => void;
+}
 export type SignedIn = z.infer<typeof SignedIn>;
 
 export class ControlClient {
@@ -62,49 +79,69 @@ export class ControlClient {
   }
 
   /**
-   * One assistant turn through the AI proxy. Text arrives through `onText` as it is written; the
-   * finished turn is returned. An error event from the proxy becomes a ControlError.
+   * One assistant turn through the AI proxy. Text and progress notes arrive through the handlers
+   * as they are written; the finished turn is returned. An error event becomes a ControlError.
    */
   async aiTurn(
     accessToken: string,
     input: AiChatInput,
-    onText: (text: string) => void,
+    handlers: TurnHandlers,
     signal: AbortSignal,
   ): Promise<AiTurn> {
-    const response = await this.request(
-      "POST",
-      "/v1/ai/chat",
-      input,
-      accessToken,
-      AbortSignal.any([signal, AbortSignal.timeout(AI_TURN_TIMEOUT_MS)]),
-    );
-    if (!response.body) throw new ControlError("BAD_RESPONSE", "The server sent no answer");
-    const decoder = new TextDecoder();
-    let buffer = "";
+    // Cut off only a connection that has gone quiet; every line (pings included) resets the clock.
+    const idle = new AbortController();
+    let idleTimer = setTimeout(() => idle.abort(new DOMException("No answer", "TimeoutError")), AI_IDLE_MS);
+    const alive = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => idle.abort(new DOMException("No answer", "TimeoutError")), AI_IDLE_MS);
+    };
     try {
-      for await (const chunk of response.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let newline: number;
-        while ((newline = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (!line) continue;
-          const event = AiEvent.safeParse(JSON.parse(line));
-          if (!event.success) continue; // a newer server may send event types this app does not know
-          if (event.data.type === "text") onText(event.data.text);
-          else if (event.data.type === "error") throw new ControlError(event.data.code, event.data.message);
-          else return event.data;
-        }
-      }
-    } catch (e) {
-      if (e instanceof ControlError) throw e;
-      if (signal.aborted) throw new ControlError("AI_ABORTED", "Stopped");
-      throw new ControlError(
-        "OFFLINE",
-        `The answer was cut off: ${e instanceof Error ? e.message : String(e)}`,
+      const json = JSON.stringify(input);
+      const body =
+        json.length > GZIP_FROM_BYTES
+          ? { data: await gzipAsync(Buffer.from(json)), encoding: "gzip" as const }
+          : { data: json };
+      const response = await this.request(
+        "POST",
+        "/v1/ai/chat",
+        undefined,
+        accessToken,
+        AbortSignal.any([signal, idle.signal, AbortSignal.timeout(AI_TURN_MAX_MS)]),
+        body,
       );
+      if (!response.body) throw new ControlError("BAD_RESPONSE", "The server sent no answer");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        for await (const chunk of response.body) {
+          alive();
+          buffer += decoder.decode(chunk, { stream: true });
+          let newline: number;
+          while ((newline = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line) continue;
+            const event = AiEvent.safeParse(JSON.parse(line));
+            if (!event.success) continue; // a newer server may send event types this app does not know
+            if (event.data.type === "text") handlers.onText(event.data.text);
+            else if (event.data.type === "progress") handlers.onProgress?.(event.data.text);
+            else if (event.data.type === "ping") continue;
+            else if (event.data.type === "error") throw new ControlError(event.data.code, event.data.message);
+            else return event.data;
+          }
+        }
+      } catch (e) {
+        if (e instanceof ControlError) throw e;
+        if (signal.aborted) throw new ControlError("AI_ABORTED", "Stopped");
+        throw new ControlError(
+          "OFFLINE",
+          `The answer was cut off: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      throw new ControlError("BAD_RESPONSE", "The answer ended before it was complete");
+    } finally {
+      clearTimeout(idleTimer);
     }
-    throw new ControlError("BAD_RESPONSE", "The answer ended before it was complete");
   }
 
   async publicKey(): Promise<string> {
@@ -126,16 +163,20 @@ export class ControlClient {
     body?: unknown,
     accessToken?: string,
     signal: AbortSignal = AbortSignal.timeout(15_000),
+    /** A body already serialized (and maybe gzipped), sent instead of `body`. */
+    raw?: { data: string | Buffer; encoding?: "gzip" },
   ): Promise<Response> {
     let response: Response;
     try {
+      const encoded = raw ?? (body === undefined ? undefined : { data: JSON.stringify(body) });
       response = await this.fetchImpl(this.base + path, {
         method,
         headers: {
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(encoded === undefined ? {} : { "content-type": "application/json" }),
+          ...(encoded?.encoding ? { "content-encoding": encoded.encoding } : {}),
           ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: encoded?.data,
         signal,
       });
     } catch (e) {

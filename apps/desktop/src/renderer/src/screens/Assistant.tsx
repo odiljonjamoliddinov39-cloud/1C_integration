@@ -95,7 +95,7 @@ export function AssistantScreen() {
   const setTranscript = (next: Transcript) => setTranscripts((all) => ({ ...all, [company.id]: next }));
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col p-6">
+    <div className="flex h-[calc(100vh-4rem)] w-full flex-col px-6 py-4">
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{t("assistant.title")}</h1>
@@ -602,6 +602,10 @@ function EntryView({ entry, companyId }: { entry: Entry; companyId: string }) {
           <Markdown remarkPlugins={[remarkGfm]}>{entry.text}</Markdown>
         </div>
       );
+    case "note":
+      return entry.text.trim() ? (
+        <div className="text-xs whitespace-pre-wrap text-muted-foreground italic">{entry.text.trim()}</div>
+      ) : null;
     case "tool":
       return (
         <div className="truncate font-mono text-xs text-muted-foreground" title={entry.detail}>
