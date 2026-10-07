@@ -60,12 +60,26 @@ export interface TurnUsage {
 
 export function usageOf(message: BetaMessage): TurnUsage {
   const u = message.usage;
+  // A turn that summarized a long chat (compaction) reports that work as extra iterations, which
+  // the top-level counts leave out; it is billed, so it is counted.
+  type Iteration = {
+    type: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+  };
+  const extra = ((u as { iterations?: Iteration[] | null }).iterations ?? []).filter(
+    (i) => i.type !== "message",
+  );
+  const sum = (pick: (i: Iteration) => number | null | undefined) =>
+    extra.reduce((n, i) => n + (pick(i) ?? 0), 0);
   const usage = {
     model: message.model,
-    inputTokens: u.input_tokens,
-    outputTokens: u.output_tokens,
-    cacheReadTokens: u.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+    inputTokens: u.input_tokens + sum((i) => i.input_tokens),
+    outputTokens: u.output_tokens + sum((i) => i.output_tokens),
+    cacheReadTokens: (u.cache_read_input_tokens ?? 0) + sum((i) => i.cache_read_input_tokens),
+    cacheWriteTokens: (u.cache_creation_input_tokens ?? 0) + sum((i) => i.cache_creation_input_tokens),
   };
   const price = PRICES[message.model] ?? SONNET;
   const costUsd =

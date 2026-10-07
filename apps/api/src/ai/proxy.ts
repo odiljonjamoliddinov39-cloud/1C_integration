@@ -25,10 +25,21 @@ const CLEAR_FROM_TOKENS = 40_000;
 const KEEP_TOOL_USES = 6;
 /** Clearing rewrites the cached prompt from that point, so only when it saves a good amount. */
 const CLEAR_AT_LEAST_TOKENS = 10_000;
+/**
+ * A chat larger than this is summarized by the API (the model's limit is 1M tokens): the older
+ * part becomes a summary at the start of the answer, and later steps continue from it.
+ */
+const COMPACT_FROM_TOKENS = 200_000;
+const CLEARING_BETA = "context-management-2025-06-27";
+const COMPACTION_BETA = "compact-2026-01-12";
+
+/** What the API says when a chat no longer fits the model. */
+const TOO_LONG = /prompt is too long|too many (input )?tokens|context (window|length)/i;
 
 export class AiProxy {
-  /** Off after the API refused it once, until the server restarts. */
-  private contextEditing = true;
+  /** Each is off after the API refused it once, until the server restarts. */
+  private clearing = true;
+  private compaction = true;
   constructor(
     private readonly db: Db,
     private readonly service: Service,
@@ -91,11 +102,7 @@ export class AiProxy {
       max_tokens: MAX_TOKENS,
       // On a policy decline, the API retries on a fallback model it picks by refusal category.
       // "updates": thinking blocks carry the model's short progress notes, which the app shows.
-      betas: [
-        "server-side-fallback-2026-07-01",
-        "thinking-display-updates-2026-08-18",
-        "context-management-2025-06-27",
-      ],
+      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
       fallbacks: "default",
       thinking: { type: "adaptive", display: "updates" },
       system: [
@@ -109,49 +116,35 @@ export class AiProxy {
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
       messages: input.messages as BetaMessageParam[],
       output_config: { effort: choice.effort },
-      // A long chat would send every old 1C result again on every step. Once the chat is large,
-      // the API clears all but the latest results (the model reads 1C again if it needs one);
-      // what was proposed and decided is kept.
-      context_management: {
-        edits: [
-          {
-            type: "clear_tool_uses_20250919",
-            trigger: { type: "input_tokens", value: CLEAR_FROM_TOKENS },
-            keep: { type: "tool_uses", value: KEEP_TOOL_USES },
-            clear_at_least: { type: "input_tokens", value: CLEAR_AT_LEAST_TOKENS },
-            exclude_tools: [...AI_PROPOSAL_TOOLS, "report_findings"],
-          },
-        ],
-      },
       cache_control: { type: "ephemeral" },
     };
     const handlers = {
       onText: (text: string) => send({ type: "text", text }),
       onProgress: (text: string) => send({ type: "progress", text }),
     };
-    if (!this.contextEditing) {
-      delete params.context_management;
-      params.betas = params.betas?.filter((beta) => beta !== "context-management-2025-06-27");
-    }
     let message;
     try {
-      try {
-        message = await this.model.turn(params, handlers, signal);
-      } catch (error) {
-        // Clearing old results saves tokens but must never cost an answer: if the API refuses
-        // it, the turn runs without it, and later turns do too.
-        if (
-          !(error instanceof Anthropic.BadRequestError) ||
-          !/context.?management|clear_tool_uses/i.test(error.message) ||
-          !params.context_management
-        ) {
-          throw error;
+      // Saving tokens must never cost an answer: a setting the API refuses is dropped, the turn
+      // runs again without it, and later turns do too.
+      for (;;) {
+        try {
+          message = await this.model.turn(this.withContextManagement(params), handlers, signal);
+          break;
+        } catch (error) {
+          const refused = error instanceof Anthropic.BadRequestError ? error.message : "";
+          if (!/compact|context.?management|clear_tool_uses/i.test(refused) || TOO_LONG.test(refused)) {
+            throw error;
+          }
+          if (this.compaction && (/compact/i.test(refused) || !this.clearing)) {
+            this.log.error(error, "Compaction refused; turning it off");
+            this.compaction = false;
+          } else if (this.clearing) {
+            this.log.error(error, "Context editing refused; turning it off");
+            this.clearing = false;
+          } else {
+            throw error;
+          }
         }
-        this.log.error(error, "Context editing refused; turning it off");
-        this.contextEditing = false;
-        delete params.context_management;
-        params.betas = params.betas?.filter((beta) => beta !== "context-management-2025-06-27");
-        message = await this.model.turn(params, handlers, signal);
       }
     } catch (error) {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
@@ -165,6 +158,32 @@ export class AiProxy {
     await this.record(who, usageOf(message)).catch((error: unknown) =>
       this.log.error(error, "AI usage was not recorded"),
     );
+  }
+
+  /**
+   * A long chat would send every old 1C result again on every step, and could outgrow the model:
+   * once it is large the API clears all but the latest results (the model reads 1C again if it
+   * needs one; what was proposed and decided is kept), and past COMPACT_FROM_TOKENS it summarizes
+   * the older part. The desktop sends the answer back unchanged, the summary included.
+   */
+  private withContextManagement(base: BetaMessageStreamParams): BetaMessageStreamParams {
+    const edits: NonNullable<BetaMessageStreamParams["context_management"]>["edits"] = [];
+    const betas = [...(base.betas ?? [])];
+    if (this.clearing) {
+      edits.push({
+        type: "clear_tool_uses_20250919",
+        trigger: { type: "input_tokens", value: CLEAR_FROM_TOKENS },
+        keep: { type: "tool_uses", value: KEEP_TOOL_USES },
+        clear_at_least: { type: "input_tokens", value: CLEAR_AT_LEAST_TOKENS },
+        exclude_tools: [...AI_PROPOSAL_TOOLS, "report_findings"],
+      });
+      betas.push(CLEARING_BETA);
+    }
+    if (this.compaction) {
+      edits.push({ type: "compact_20260112", trigger: { type: "input_tokens", value: COMPACT_FROM_TOKENS } });
+      betas.push(COMPACTION_BETA);
+    }
+    return edits.length > 0 ? { ...base, betas, context_management: { edits } } : base;
   }
 
   private async record(who: { accountId: string; userId: string }, usage: ReturnType<typeof usageOf>) {
@@ -195,6 +214,13 @@ function toErrorEvent(error: unknown): AiEvent {
   }
   if (error instanceof Anthropic.RateLimitError || error instanceof Anthropic.InternalServerError) {
     return { type: "error", code: "AI_BUSY", message: "The AI service is busy, try again in a minute" };
+  }
+  if (error instanceof Anthropic.BadRequestError && TOO_LONG.test(error.message)) {
+    return {
+      type: "error",
+      code: "CHAT_TOO_LONG",
+      message: "This chat is too long for the AI; start a new chat",
+    };
   }
   if (error instanceof Anthropic.BadRequestError) {
     return { type: "error", code: "AI_BAD_REQUEST", message: error.message };

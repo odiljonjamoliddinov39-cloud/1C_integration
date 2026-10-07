@@ -259,11 +259,17 @@ describe.skipIf(!available)("control system API", () => {
     expect(JSON.stringify(params.system)).toContain("ООО «Тест»");
     expect(params.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(CHAT_TOOLS);
     // Old 1C results are cleared from a large chat; what was proposed and decided is kept.
-    expect(params.betas).toContain("context-management-2025-06-27");
-    expect(params.context_management?.edits?.[0]).toMatchObject({
-      type: "clear_tool_uses_20250919",
-      exclude_tools: expect.arrayContaining(["propose_changes", "propose_invoices_issued"]),
-    });
+    expect(params.betas).toEqual(
+      expect.arrayContaining(["context-management-2025-06-27", "compact-2026-01-12"]),
+    );
+    expect(params.context_management?.edits).toEqual([
+      expect.objectContaining({
+        type: "clear_tool_uses_20250919",
+        exclude_tools: expect.arrayContaining(["propose_changes", "propose_invoices_issued"]),
+      }),
+      // A chat that would outgrow the model is summarized by the API long before its 1M limit.
+      { type: "compact_20260112", trigger: { type: "input_tokens", value: 200_000 } },
+    ]);
     expect(JSON.stringify(params.system)).not.toContain("older version");
 
     // An app from before the change tools sends no list: it gets the read tools and the update note.
@@ -698,9 +704,66 @@ describe.skipIf(!available)("control system API", () => {
         });
       const first = await ask();
       expect(first.body).toContain('"type":"message"');
-      expect(refusing.calls.map((c) => Boolean(c.context_management))).toEqual([true, false]);
+      // Refused with clearing and compaction, then with compaction alone, then answered without.
+      expect(refusing.calls.map((c) => c.context_management?.edits?.length ?? 0)).toEqual([2, 1, 0]);
       await ask();
-      expect(refusing.calls.map((c) => Boolean(c.context_management))).toEqual([true, false, false]);
+      expect(refusing.calls.map((c) => c.context_management?.edits?.length ?? 0)).toEqual([2, 1, 0, 0]);
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("says a chat is too long in words, and bills the summarizing of a long chat", async () => {
+    const model = {
+      tooLong: true,
+      async turn(params: BetaMessageStreamParams, handlers: { onText: (text: string) => void }) {
+        if (model.tooLong) {
+          throw new Anthropic.BadRequestError(
+            400,
+            {
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message: "prompt is too long: 1001432 tokens > 1000000 maximum",
+              },
+            },
+            "prompt is too long: 1001432 tokens > 1000000 maximum",
+            new Headers(),
+          );
+        }
+        const message = await fakeModel.turn(params, handlers);
+        return {
+          ...message,
+          content: [{ type: "compaction", content: "Summary of the earlier chat" }, ...message.content],
+          usage: {
+            ...message.usage,
+            iterations: [
+              { type: "compaction", input_tokens: 180_000, output_tokens: 3_500 },
+              { type: "message", input_tokens: 1000, output_tokens: 200 },
+            ],
+          },
+        } as unknown as BetaMessage;
+      },
+    };
+    const other = await buildApp(db.db, config, { aiModel: model });
+    try {
+      const { accessToken } = (await post("/v1/auth/register", account)).json();
+      const ask = () =>
+        other.inject({
+          method: "POST",
+          url: "/v1/ai/chat",
+          payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+      expect((await ask()).body).toContain('"code":"CHAT_TOO_LONG"');
+
+      model.tooLong = false;
+      await db.sql`TRUNCATE ai_usage`;
+      const answer = await ask();
+      // The summary goes back to the app with the answer, to be sent again unchanged.
+      expect(answer.body).toContain('"type":"compaction"');
+      const [usage] = await db.db.select().from(aiUsage);
+      expect(usage).toMatchObject({ inputTokens: 181_000, outputTokens: 3_700 });
     } finally {
       await other.close();
     }

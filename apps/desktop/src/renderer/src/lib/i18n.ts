@@ -268,6 +268,8 @@ const en = {
     AI_TOO_MANY_STEPS: "The question needed too many steps; try to narrow it down.",
     AI_REFUSED: "The assistant declined to answer this question.",
     AI_TRUNCATED: "The answer was too long and was cut off; ask for less at once.",
+    CHAT_TOO_LONG:
+      "This chat has grown too long for the AI to read. Start a new conversation (+ New conversation): the work done in 1C stays.",
     AI_ABORTED: "Stopped.",
     NOT_WINDOWS: "The extension can be updated from the app on Windows only.",
     DESIGNER_NOT_FOUND: "1C:Enterprise (1cv8.exe) was not found on this PC.",
@@ -559,6 +561,8 @@ const ru: Dict = {
     AI_TOO_MANY_STEPS: "Вопрос потребовал слишком много шагов; уточните его.",
     AI_REFUSED: "Ассистент отказался отвечать на этот вопрос.",
     AI_TRUNCATED: "Ответ получился слишком длинным и был обрезан; спросите меньше за раз.",
+    CHAT_TOO_LONG:
+      "Этот разговор стал слишком длинным для ИИ. Начните новый разговор (+ Новый разговор): всё сделанное в 1С сохранено.",
     AI_ABORTED: "Остановлено.",
     NOT_WINDOWS: "Расширение обновляется из приложения только в Windows.",
     DESIGNER_NOT_FOUND: "На этом ПК не найдена 1С:Предприятие (1cv8.exe).",
@@ -849,6 +853,8 @@ const uz: Dict = {
     AI_TOO_MANY_STEPS: "Savol juda koʻp qadam talab qildi; uni aniqlashtiring.",
     AI_REFUSED: "Yordamchi bu savolga javob berishdan bosh tortdi.",
     AI_TRUNCATED: "Javob juda uzun boʻlib, kesildi; bir martada kamroq soʻrang.",
+    CHAT_TOO_LONG:
+      "Bu suhbat AI oʻqiy olmaydigan darajada uzun boʻlib ketdi. Yangi suhbat boshlang (+ Yangi suhbat): 1C da qilingan ishlar saqlanadi.",
     AI_ABORTED: "Toʻxtatildi.",
     NOT_WINDOWS: "Kengaytmani dasturdan faqat Windowsda yangilash mumkin.",
     DESIGNER_NOT_FOUND: "Bu kompyuterda 1C:Enterprise (1cv8.exe) topilmadi.",
