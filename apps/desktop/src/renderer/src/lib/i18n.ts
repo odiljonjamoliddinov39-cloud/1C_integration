@@ -211,6 +211,12 @@ const en = {
     password: "1C password",
     test: "Test connection",
     testing: "Connecting to 1C…",
+    install: "Install PlatformAPI in 1C",
+    installing: "Loading PlatformAPI into the 1C base (up to a minute)…",
+    installHint:
+      "The base opens, but it has no PlatformAPI extension yet. The app can load it itself; your configuration and data stay as they are.",
+    installConfirm:
+      "Load PlatformAPI into this 1C base? Only the app's extension changes. Close 1C and the Configurator for this base first, and use a 1C user with administrator rights.",
     connected: "Connected to {{config}} {{version}}, extension {{extension}}",
     organization: "Organization",
     noOrganizations: "The infobase has no organizations.",
@@ -516,6 +522,12 @@ const ru: Dict = {
     password: "Пароль 1С",
     test: "Проверить подключение",
     testing: "Подключение к 1С…",
+    install: "Установить PlatformAPI в 1С",
+    installing: "Загружаем PlatformAPI в базу 1С (до минуты)…",
+    installHint:
+      "База открывается, но в ней ещё нет расширения PlatformAPI. Приложение может загрузить его само; конфигурация и данные не меняются.",
+    installConfirm:
+      "Загрузить PlatformAPI в эту базу 1С? Меняется только расширение приложения. Закройте 1С и Конфигуратор для этой базы и используйте пользователя 1С с правами администратора.",
     connected: "Подключено: {{config}} {{version}}, расширение {{extension}}",
     organization: "Организация",
     noOrganizations: "В базе нет организаций.",
@@ -820,6 +832,12 @@ const uz: Dict = {
     password: "1C paroli",
     test: "Ulanishni tekshirish",
     testing: "1C ga ulanmoqda…",
+    install: "1C ga PlatformAPI oʻrnatish",
+    installing: "PlatformAPI 1C bazasiga yuklanmoqda (bir daqiqagacha)…",
+    installHint:
+      "Baza ochiladi, lekin unda hali PlatformAPI kengaytmasi yoʻq. Dastur uni oʻzi yuklay oladi; konfiguratsiya va maʼlumotlar oʻzgarmaydi.",
+    installConfirm:
+      "PlatformAPI ni shu 1C bazasiga yuklaymizmi? Faqat dasturning kengaytmasi oʻzgaradi. Avval 1C va shu baza uchun Konfiguratorni yoping, administrator huquqli 1C foydalanuvchisidan foydalaning.",
     connected: "Ulandi: {{config}} {{version}}, kengaytma {{extension}}",
     organization: "Tashkilot",
     noOrganizations: "Bazada tashkilot yoʻq.",

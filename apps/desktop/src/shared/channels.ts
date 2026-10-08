@@ -13,6 +13,7 @@ export const CHANNELS = {
   checkStatus: "companies:check",
   removeCompany: "companies:remove",
   updateExtension: "companies:update-extension",
+  installExtension: "companies:install-extension",
   assistantEnable: "assistant:enable",
   assistantSend: "assistant:send",
   assistantStop: "assistant:stop",

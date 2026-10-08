@@ -139,6 +139,23 @@ export function createHandlers({
       return { ok: true, data: company };
     },
 
+    /**
+     * Puts the app's PlatformAPI extension into a base the user is still connecting (the check found
+     * none), then checks it again. A failed install comes back as a failed check, shown in the dialog.
+     */
+    installExtensionInto: async (raw: unknown): Promise<ConnectionTestResult> => {
+      const input = ConnectionInput.safeParse(raw);
+      const failed = (code: string, message: string): ConnectionTestResult => ({
+        status: { ok: false, checkedAt: new Date().toISOString(), code, message },
+        organizations: [],
+      });
+      if (!input.success) return failed("VALIDATION", input.error.issues.map((i) => i.message).join("; "));
+      await connector.release(input.data);
+      const installed = await installExtension(input.data);
+      if (!installed.ok) return failed(installed.code, installed.message);
+      return connector.check(input.data);
+    },
+
     removeCompany: async (id: unknown): Promise<void> => {
       assistant.removeCompany(String(id));
       store.removeCompany(String(id));

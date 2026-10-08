@@ -20,6 +20,7 @@ const bridge: PlatformBridge = {
     checkStatus: (id) => ipcRenderer.invoke(CHANNELS.checkStatus, id),
     remove: (id) => ipcRenderer.invoke(CHANNELS.removeCompany, id),
     updateExtension: (id) => ipcRenderer.invoke(CHANNELS.updateExtension, id),
+    installExtension: (input) => ipcRenderer.invoke(CHANNELS.installExtension, input),
   },
   assistant: {
     enable: (companyId, enabled) => ipcRenderer.invoke(CHANNELS.assistantEnable, companyId, enabled),

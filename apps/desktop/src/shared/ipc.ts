@@ -300,6 +300,11 @@ export interface PlatformBridge {
     remove(id: string): Promise<void>;
     /** Loads this app's PlatformAPI extension into the company's 1C base (1C Designer, batch mode). */
     updateExtension(id: string): Promise<Result<CompanyView>>;
+    /**
+     * Loads the extension into a base that is not connected yet (the connect dialog found none), then
+     * checks the base again; the result is a check like testConnection's.
+     */
+    installExtension(input: ConnectionInput): Promise<ConnectionTestResult>;
   };
   assistant: {
     /** Turns the assistant on or off for a company (on only after the user agreed). */
