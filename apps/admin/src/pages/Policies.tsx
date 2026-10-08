@@ -12,7 +12,7 @@ type NumberKey = {
 const LIMITS: { key: NumberKey; label: string; hint: string; step?: number }[] = [
   { key: "monthlyLimitUsd", label: "Monthly limit per account, USD", hint: "0: no cap", step: 1 },
   { key: "dailyLimitUsdPerUser", label: "Daily limit per user, USD", hint: "0: no cap", step: 0.5 },
-  { key: "warnAtPercent", label: "Warn at, % of a limit", hint: "1–100" },
+  { key: "warnAtPercent", label: "Warn at, % of a limit", hint: "1–100; 0: no warning" },
   {
     key: "dailyAlertUsd",
     label: "Alert when a day costs over, USD",

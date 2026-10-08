@@ -883,6 +883,22 @@ describe.skipIf(!available)("control system API", () => {
       expect((await chat(reg.accessToken, {})).statusCode).toBe(200);
     });
 
+    it("starts without any cap, and 0 as the warning share means no warning", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      expect(DEFAULT_AI_POLICY).toMatchObject({
+        monthlyLimitUsd: 0,
+        dailyLimitUsdPerUser: 0,
+        maxToolCalls: 0,
+      });
+      const period = new Date().toISOString().slice(0, 7);
+      await db.db.insert(aiBudgets).values({ accountId: reg.me.account.id, period, usedUsd: 900 });
+      expect((await chat(reg.accessToken, {})).statusCode).toBe(200);
+      await setPolicy({ monthlyLimitUsd: 1000, warnAtPercent: 0 });
+      const res = await chat(reg.accessToken, {});
+      expect(res.statusCode).toBe(200);
+      expect(eventsOf(res.body).some((e) => e.type === "warning")).toBe(false);
+    });
+
     it("stops a user at the daily cap, not the other users of the account", async () => {
       const reg = (await post("/v1/auth/register", account)).json();
       await setPolicy({ monthlyLimitUsd: 0, dailyLimitUsdPerUser: 1 });

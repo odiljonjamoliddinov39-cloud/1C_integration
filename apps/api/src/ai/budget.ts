@@ -43,7 +43,8 @@ export async function checkBudget(
     .where(and(eq(aiBudgets.accountId, who.accountId), eq(aiBudgets.period, period)));
   const used = budget?.usedUsd ?? 0;
   const limit = budget?.limitUsd ?? policy.monthlyLimitUsd;
-  const warnShare = policy.warnAtPercent / 100;
+  // 0: no warning (a share of 0 would warn on everything).
+  const warnShare = policy.warnAtPercent === 0 ? Number.POSITIVE_INFINITY : policy.warnAtPercent / 100;
 
   if (limit > 0 && used >= limit) {
     await db

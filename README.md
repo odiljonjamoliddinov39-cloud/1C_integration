@@ -54,7 +54,9 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
 
 Keeps AI spend per account predictable without making answers worse. A question stops at the first
 step that can answer it; every limit is a row in the `ai_policies` table, edited in the admin
-dashboard (**AI limits**), enforced on the server, only read by the app.
+dashboard (**AI limits**), enforced on the server, only read by the app. Until the tariffs are set
+there are no spend caps and no read limit (the defaults); the plan's test-plan numbers are $50 a month
+per account, $5 a day per user and 8 reads per question.
 
 1. **Budget guard** (`api/src/ai/budget.ts`): per-account monthly and per-user daily USD caps
    (`ai_budgets`, `ai_usage.cost_usd`), a warning at 80 %, a clear stop at 100 %; an owner can set this

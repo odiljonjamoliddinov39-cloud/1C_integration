@@ -22,8 +22,8 @@ export const AiPolicy = z.object({
   /** Spend caps in USD per calendar month (UTC) per account, and per day per user. 0: no cap. */
   monthlyLimitUsd: z.number().min(0).max(1_000_000),
   dailyLimitUsdPerUser: z.number().min(0).max(1_000_000),
-  /** A warning is sent when either cap passes this share. */
-  warnAtPercent: z.number().int().min(1).max(100),
+  /** A warning is sent when either cap passes this share. 0: no warning. */
+  warnAtPercent: z.number().int().min(0).max(100),
   /** At a cap: "block" stops with a clear message; "addon" stops and offers a paid add-on. */
   onLimit: z.enum(["block", "addon"]),
   /**
@@ -49,14 +49,18 @@ export const AiPolicy = z.object({
 });
 export type AiPolicy = z.infer<typeof AiPolicy>;
 
-/** The test plan: limits are set for paid plans after a week of real cost data. */
+/**
+ * No spend caps and no read limit until the tariffs are set: caps for the plans come from a week of
+ * real cost data (the test plan of the engine's plan is $50 a month per account, $5 a day per user,
+ * 8 reads per question). The alert only shows a banner on the AI cost page.
+ */
 export const DEFAULT_AI_POLICY: AiPolicy = {
-  monthlyLimitUsd: 50,
-  dailyLimitUsdPerUser: 5,
+  monthlyLimitUsd: 0,
+  dailyLimitUsdPerUser: 0,
   warnAtPercent: 80,
   onLimit: "block",
   maxOutputTokens: 32_000,
-  maxToolCalls: 8,
+  maxToolCalls: 0,
   defaultRows: 50,
   maxRows: 500,
   compactionThreshold: 50_000,
