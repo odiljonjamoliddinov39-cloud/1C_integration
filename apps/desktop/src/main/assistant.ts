@@ -11,12 +11,15 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  AI_PROPOSAL_TOOLS,
   AI_TOOLS,
   AUDIT_TOOLS,
   CHAT_TOOLS,
+  CONTINUE_NOTE,
   type AiChatInput,
   type AiContentBlock,
   type AiMessage,
+  type AiPolicy,
   type AiProposalTool,
   type AiReadTool,
   AiToolUse,
@@ -33,10 +36,14 @@ import {
   type ObjectState,
   type ReadAttachmentInput,
   ReportFindingsInput,
+  type RunQueryInput,
   isAiToolName,
   isProposalTool,
 } from "@platform/shared";
 
+import { CostEngine } from "./ai/engine.js";
+import { classifyTask } from "./ai/classify.js";
+import { clampQuery, shapeQueryResult } from "./ai/trim.js";
 import type {
   AssistantEvent,
   AssistantInput,
@@ -75,10 +82,6 @@ const LAST_STEP_NOTE =
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
 const MAX_RESULT_CHARS = 60_000;
-/** Sent when a turn reached the model's output limit with an unfinished answer. */
-const CONTINUE_NOTE =
-  "Your answer reached the output limit and was cut off. Continue exactly where it stopped, without " +
-  "repeating what you already wrote.";
 /** Sent with the results when a turn reached the output limit inside a tool call, which was not run. */
 const CUT_TOOL_NOTE =
   "Your last tool call reached the output limit and was cut off, so it was not run. Send it again in " +
@@ -140,6 +143,16 @@ export interface AssistantDeps {
   /** The audit's checklist and how many checks run at once (tests use their own). */
   auditChecks?: AuditCheck[];
   auditConcurrency?: number;
+  /** The cost engine (limits, templates, answer cache, digest); one is made when absent. */
+  engine?: CostEngine;
+}
+
+/** What one question runs under: the limits in force, and what kind of question it is. */
+interface Run {
+  policy: AiPolicy;
+  task: "lookup" | "work";
+  /** Set once the user declined an answer: the rest of the question runs on the default model. */
+  escalate: boolean;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -159,9 +172,13 @@ export class AssistantService {
   /** Per company: time the current task's cards waited for the user, left out of its work time. */
   private readonly cardWaitMs = new Map<string, number>();
 
-  constructor(private readonly deps: AssistantDeps) {}
+  private readonly engine: CostEngine;
 
-  async send({ companyId, chatId, text, files = [] }: AssistantInput): Promise<Result<null>> {
+  constructor(private readonly deps: AssistantDeps) {
+    this.engine = deps.engine ?? new CostEngine(deps.session, deps.connector);
+  }
+
+  async send({ companyId, chatId, text, files = [], skipFree }: AssistantInput): Promise<Result<null>> {
     const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
@@ -198,7 +215,72 @@ export class AssistantService {
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
-    return this.task(companyId, chat, emit, () => this.converse(chat, company.name, emit, abort.signal));
+    // A read-only question that opens a chat may be answered without the model, and its answer kept.
+    const standalone = chat.messages.length === 1 && attached.blocks.length === 0;
+    return this.task(companyId, chat, emit, async () => {
+      const connection = this.deps.store.connection(companyId);
+      try {
+        if (standalone && !skipFree) {
+          const free = await this.engine.tryFree(companyId, company.name, connection, question, true);
+          if (free) return this.answerFree(chat, question, free, emit);
+        }
+        const run: Run = {
+          policy: await this.engine.policy(),
+          task: classifyTask(question, attached.blocks.length > 0),
+          escalate: false,
+        };
+        const result = await this.converse(chat, company.name, emit, abort.signal, run);
+        if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
+        return result;
+      } finally {
+        // Built after the answer, so the first question is not held up by it.
+        this.engine.ensureDigest(companyId, company.name, connection);
+      }
+    });
+  }
+
+  /** An answer from a template or the cache: shown, kept in the chat, no model involved. */
+  private answerFree(
+    chat: StoredChat,
+    question: string,
+    free: NonNullable<Awaited<ReturnType<CostEngine["tryFree"]>>>,
+    emit: Emit,
+  ): Result<null> {
+    emit({
+      type: "route",
+      route: free.route,
+      question,
+      ...(free.route === "template" ? { title: free.title } : { ageSeconds: free.ageSeconds }),
+    });
+    emit({ type: "text", text: free.text });
+    chat.messages.push({ role: "assistant", content: [{ type: "text", text: free.text }] });
+    emit({ type: "done" });
+    return { ok: true, data: null };
+  }
+
+  /** Keeps the finished answer to a read-only question: no card, no change to 1C, ended normally. */
+  private rememberAnswer(chat: StoredChat, companyName: string, question: string): void {
+    const rest = chat.messages.slice(1);
+    const wrote = rest.some(
+      (m) =>
+        m.role === "assistant" &&
+        Array.isArray(m.content) &&
+        m.content.some(
+          (b) =>
+            (b as { type?: string }).type === "tool_use" &&
+            (AI_PROPOSAL_TOOLS as readonly string[]).includes((b as { name?: string }).name ?? ""),
+        ),
+    );
+    const last = chat.messages.at(-1);
+    if (wrote || last?.role !== "assistant" || !Array.isArray(last.content)) return;
+    const text = last.content
+      .flatMap((b) => {
+        const { type, text: t } = b as { type?: string; text?: unknown };
+        return type === "text" && typeof t === "string" ? [t] : [];
+      })
+      .join("\n")
+      .trim();
+    if (text) void this.engine.remember(chat.companyId, companyName, question, text);
   }
 
   /** A task of the company's chat: busy until it ends, then its working time, and the chat is saved. */
@@ -230,12 +312,19 @@ export class AssistantService {
     companyName: string,
     emit: Emit,
     signal: AbortSignal,
+    run: Run,
   ): Promise<Result<null>> {
     const history = chat.messages;
     const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
     for (let turn = 0; turn < maxTurns; turn++) {
       const answer = await this.turnWithRetries(
-        { company: companyName, tools: CHAT_TOOLS, messages: history },
+        {
+          company: companyName,
+          tools: CHAT_TOOLS,
+          task: run.task,
+          ...(run.escalate ? { escalate: true } : {}),
+          messages: history,
+        },
         emit,
         signal,
       );
@@ -280,8 +369,10 @@ export class AssistantService {
       for (const use of toolUses) {
         const result = signal.aborted
           ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-          : await this.runTool(chat, use, emit, signal);
-        results.push(toToolResult(use.id, result));
+          : await this.runTool(chat, use, emit, signal, run);
+        // A card the user declined: the rest of the question runs on the default model.
+        if (isDeclined(result)) run.escalate = true;
+        results.push(toToolResult(use.id, result, shaped(use.name, result, run.policy)));
       }
       if (turn === maxTurns - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
       history.push({ role: "user", content: results });
@@ -331,6 +422,7 @@ export class AssistantService {
 
     return this.task(companyId, chat, emit, async () => {
       const connection = this.deps.store.connection(companyId);
+      const policy = await this.engine.policy();
       const queue = checks.map((check, i) => ({ check, state: view.checks[i] as AuditCheckView }));
       const worker = async () => {
         for (let next = queue.shift(); next && !abort.signal.aborted; next = queue.shift()) {
@@ -341,6 +433,7 @@ export class AssistantService {
           const result = await this.runCheck(
             company.name,
             connection,
+            policy,
             check,
             view,
             (activity) => {
@@ -369,7 +462,7 @@ export class AssistantService {
 
       chat.messages.push({ role: "user", content: auditReportRequest(view) });
       this.save(chat);
-      return this.converse(chat, company.name, emit, abort.signal);
+      return this.converse(chat, company.name, emit, abort.signal, { policy, task: "work", escalate: false });
     });
   }
 
@@ -377,6 +470,7 @@ export class AssistantService {
   private async runCheck(
     companyName: string,
     connection: ReturnType<LocalStore["connection"]>,
+    policy: AiPolicy,
     check: AuditCheck,
     view: AuditView,
     onActivity: (activity: string) => void,
@@ -411,12 +505,15 @@ export class AssistantService {
 
       const results: AiContentBlock[] = [];
       for (const use of uses) {
-        results.push(
-          toToolResult(
-            use.id,
-            await this.runCheckTool(connection, use, answer.stopReason, onActivity, signal),
-          ),
+        const result = await this.runCheckTool(
+          connection,
+          policy,
+          use,
+          answer.stopReason,
+          onActivity,
+          signal,
         );
+        results.push(toToolResult(use.id, result, shaped(use.name, result, policy)));
       }
       if (answer.stopReason === "max_tokens") {
         results.push({
@@ -444,6 +541,7 @@ export class AssistantService {
   /** A tool call inside an audit check: reads only. */
   private async runCheckTool(
     connection: ReturnType<LocalStore["connection"]>,
+    policy: AiPolicy,
     use: AiToolUse,
     stopReason: string | null,
     onActivity: (activity: string) => void,
@@ -465,7 +563,8 @@ export class AssistantService {
     }
     onActivity(`${use.name}: ${describe(use.name, input.data)}`);
     // An audit check's tools other than report_findings all read 1C.
-    return this.deps.connector.tool(connection, use.name as AiReadTool, input.data);
+    const data = use.name === "run_query" ? clampQuery(input.data as RunQueryInput, policy) : input.data;
+    return this.deps.connector.tool(connection, use.name as AiReadTool, data);
   }
 
   /** An audit's findings as CSV (semicolons, UTF-8 with BOM), the way Excel opens it. */
@@ -509,6 +608,7 @@ export class AssistantService {
               shown = true;
               emit({ type: "progress", text: delta });
             },
+            onWarning: (code, message) => emit({ type: "notice", code, message }),
           },
           signal,
         );
@@ -599,6 +699,7 @@ export class AssistantService {
     use: AiToolUse,
     emit: Emit,
     signal: AbortSignal,
+    run: Run,
   ): Promise<ToolResult> {
     if (!isAiToolName(use.name)) return { ok: false, code: "UNKNOWN_TOOL", message: `No tool ${use.name}` };
     const input = AI_TOOLS[use.name].safeParse(use.input);
@@ -624,7 +725,8 @@ export class AssistantService {
         signal,
       );
     }
-    return this.deps.connector.tool(this.deps.store.connection(chat.companyId), use.name, input.data);
+    const data = use.name === "run_query" ? clampQuery(input.data as RunQueryInput, run.policy) : input.data;
+    return this.deps.connector.tool(this.deps.store.connection(chat.companyId), use.name, data);
   }
 
   /**
@@ -725,6 +827,8 @@ export class AssistantService {
       decided({ status: "declined" });
       return { ok: true, data: { status: "declined_by_user" } };
     }
+    // The books are about to change: answers kept before now are no longer valid.
+    this.engine.noteWrite(companyId);
     const result = await create();
     if (!result.ok) {
       decided({ status: "failed", code: result.code, message: result.message });
@@ -1003,8 +1107,18 @@ function repair(chat: StoredChat): StoredChat {
   return { ...chat, entries, messages };
 }
 
-function toToolResult(toolUseId: string, result: ToolResult): AiContentBlock {
-  const body = JSON.stringify(result.ok ? result.data : { error: result.code, message: result.message });
+/** A run_query result goes up as a compact table; every other result as JSON. */
+function shaped(name: string, result: ToolResult, policy: AiPolicy): string | null {
+  return name === "run_query" && result.ok ? shapeQueryResult(result.data, policy) : null;
+}
+
+function isDeclined(result: ToolResult): boolean {
+  return result.ok && (result.data as { status?: unknown } | null)?.status === "declined_by_user";
+}
+
+function toToolResult(toolUseId: string, result: ToolResult, text: string | null = null): AiContentBlock {
+  const body =
+    text ?? JSON.stringify(result.ok ? result.data : { error: result.code, message: result.message });
   const content =
     body.length > MAX_RESULT_CHARS
       ? `${body.slice(0, MAX_RESULT_CHARS)}… [cut: the result was ${body.length} characters; ask for fewer rows or columns]`

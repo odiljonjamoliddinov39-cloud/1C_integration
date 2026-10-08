@@ -157,10 +157,124 @@ export const aiUsage = pgTable(
     cacheReadTokens: integer("cache_read_tokens").notNull(),
     cacheWriteTokens: integer("cache_write_tokens").notNull(),
     costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }).notNull(),
+    /** The 1C organization the question was about. */
+    company: text("company"),
+    /** "chat" or "audit". */
+    feature: text("feature").notNull().default("chat"),
+    /** Where the answer came from: "model", "template", "cache" or "batch". Free routes cost 0. */
+    route: text("route").notNull().default("model"),
+    /** Tool calls the model made in this step. */
+    toolCalls: integer("tool_calls").notNull().default(0),
+    /** The first step of a question (or a free answer), so questions can be counted. */
+    firstStep: boolean("first_step").notNull().default(false),
+    /** The question this step belongs to, cut to 200 characters (for "most expensive questions"). */
+    question: text("question"),
     createdAt: createdAt(),
   },
-  (t) => [index("ai_usage_account_created_idx").on(t.accountId, t.createdAt)],
+  (t) => [
+    index("ai_usage_account_created_idx").on(t.accountId, t.createdAt),
+    index("ai_usage_user_created_idx").on(t.userId, t.createdAt),
+  ],
 );
+
+/** AI cost limits (see AiPolicy): the default (plan_id null) and each plan's own. Partial overrides. */
+export const aiPolicies = pgTable(
+  "ai_policies",
+  {
+    id: id(),
+    planId: uuid("plan_id").references(() => plans.id, { onDelete: "cascade" }),
+    policy: jsonb("policy").$type<Record<string, unknown>>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("ai_policies_plan_key").on(t.planId),
+    // At most one default policy (plan_id null; unique indexes treat nulls as distinct).
+    uniqueIndex("ai_policies_default_key")
+      .on(sql`(1)`)
+      .where(sql`plan_id is null`),
+  ],
+);
+
+/**
+ * Spend of an account in a calendar month (UTC). limit_usd is the cap an admin set for this month
+ * (an add-on); null: the policy's. warned_at / blocked_at: when the account first passed the warning
+ * share and the cap, so the warning is sent once.
+ */
+export const aiBudgets = pgTable(
+  "ai_budgets",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** "YYYY-MM". */
+    period: text("period").notNull(),
+    limitUsd: numeric("limit_usd", { precision: 12, scale: 4, mode: "number" }),
+    usedUsd: numeric("used_usd", { precision: 14, scale: 6, mode: "number" }).notNull().default(0),
+    warnedAt: timestamp("warned_at", { withTimezone: true }),
+    blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("ai_budgets_account_period_key").on(t.accountId, t.period)],
+);
+
+/** Stored answers to read-only questions, by company, question and data version. */
+export const aiAnswerCache = pgTable(
+  "ai_answer_cache",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    company: text("company").notNull(),
+    questionHash: text("question_hash").notNull(),
+    normalizedQuestion: text("normalized_question").notNull(),
+    dataVersion: text("data_version").notNull(),
+    answer: text("answer").notNull(),
+    hits: integer("hits").notNull().default(0),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("ai_answer_cache_key").on(t.accountId, t.company, t.questionHash, t.dataVersion),
+    index("ai_answer_cache_expires_idx").on(t.expiresAt),
+  ],
+);
+
+/** The compact structure of a company's 1C, built by the desktop once per configuration version. */
+export const metadataDigests = pgTable(
+  "metadata_digests",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    company: text("company").notNull(),
+    configName: text("config_name").notNull(),
+    configVersion: text("config_version").notNull(),
+    digest: text("digest").notNull(),
+    tokenCount: integer("token_count").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("metadata_digests_key").on(t.accountId, t.company, t.configName, t.configVersion)],
+);
+
+/** Known questions answered by a fixed 1C query, without the model. Managed in the admin dashboard. */
+export const queryTemplates = pgTable("query_templates", {
+  id: id(),
+  code: text("code").notNull().unique(),
+  title: text("title").notNull(),
+  intents: jsonb("intents").$type<string[]>().notNull(),
+  onecQuery: text("onec_query").notNull(),
+  params: jsonb("params").$type<{ name: string; type: string }[]>().notNull().default([]),
+  resultLayout: jsonb("result_layout")
+    .$type<{ columns: { label: string; format: string }[]; totals: boolean }>()
+    .notNull(),
+  version: integer("version").notNull().default(1),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
+});
 
 /** Our staff who use the admin dashboard (TD §8 "Admin API": owner, support). Not customers. */
 export const admins = pgTable(

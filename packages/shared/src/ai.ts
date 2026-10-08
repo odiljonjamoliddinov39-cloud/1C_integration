@@ -242,6 +242,14 @@ export type AiMessage = z.infer<typeof AiMessage>;
 /** Tools of the first app versions, which do not say which tools they have. */
 export const LEGACY_AI_TOOLS = ["list_organizations", "describe_objects", "run_query"] as const;
 
+/**
+ * Sent as a user message when a turn reached the output limit with an unfinished answer. The proxy
+ * recognizes it, so a continuation is not counted as a new question.
+ */
+export const CONTINUE_NOTE =
+  "Your answer reached the output limit and was cut off. Continue exactly where it stopped, without " +
+  "repeating what you already wrote.";
+
 export const AiChatInput = z.object({
   /** The company the questions are about (its 1C organization name). */
   company: z.string().trim().min(1).max(200),
@@ -250,6 +258,13 @@ export const AiChatInput = z.object({
    * never asked to run a tool it does not have. Absent: LEGACY_AI_TOOLS.
    */
   tools: z.array(z.string().max(64)).max(50).optional(),
+  /**
+   * What the question is, as the app judged it: "lookup" (a simple read that may run on the cheaper
+   * model, when the policy has one), else "work". Absent: "work".
+   */
+  task: z.enum(["lookup", "work"]).optional(),
+  /** The app asks for the default model for this step (e.g. the user rejected the last answer). */
+  escalate: z.boolean().optional(),
   messages: z.array(AiMessage).min(1).max(20_000),
 });
 export type AiChatInput = z.infer<typeof AiChatInput>;
@@ -276,6 +291,8 @@ export const AiEvent = z.discriminatedUnion("type", [
     content: z.array(AiContentBlock),
     stopReason: z.string().nullable(),
   }),
+  /** The account is close to a spend cap (AI_BUDGET_WARNING); the answer goes on. */
+  z.object({ type: z.literal("warning"), code: z.string(), message: z.string() }),
   z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
 ]);
 export type AiEvent = z.infer<typeof AiEvent>;

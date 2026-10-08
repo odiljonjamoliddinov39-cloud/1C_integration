@@ -138,6 +138,8 @@ export const AssistantInput = z
     chatId: z.uuid().optional(),
     text: z.string().trim().max(4000),
     files: z.array(AssistantFile).max(ATTACHMENTS.maxFiles).optional(),
+    /** Ask the model even if a template or a stored answer could answer ("Ask AI anyway"). */
+    skipFree: z.boolean().optional(),
   })
   .refine((input) => input.text.length > 0 || (input.files?.length ?? 0) > 0, {
     message: "Write a question or attach a file",
@@ -249,6 +251,17 @@ export type AssistantEvent = { companyId: string } & (
   | { type: "audit"; audit: AuditView }
   /** After a task (answered, failed or stopped): how long the assistant worked on it. */
   | { type: "elapsed"; ms: number }
+  /** A heads-up that is not a failure, e.g. the AI budget is almost used (AI_BUDGET_WARNING). */
+  | { type: "notice"; code: string; message: string }
+  /** The next answer did not come from the model: from a query template, or from the answer cache. */
+  | {
+      type: "route";
+      route: "template" | "cache";
+      /** The question, so "Ask AI anyway" can send it again. */
+      question: string;
+      title?: string;
+      ageSeconds?: number;
+    }
 );
 
 /** The app's own updates (electron-updater), pushed from the main process as they change. */

@@ -4,8 +4,16 @@ import { gzip } from "node:zlib";
 
 import {
   AiEvent,
+  AiPolicy,
+  AnswerLookup,
   type AiChatInput,
+  type AnswerKey,
+  type AnswerStoreInput,
   ApiErrorBody,
+  type DigestInput,
+  type DigestKey,
+  type FreeAnswerInput,
+  QueryTemplateView,
   LicenseResponse,
   Me,
   TokenPair,
@@ -41,6 +49,8 @@ export interface TurnHandlers {
   onText: (text: string) => void;
   /** The model's short progress notes between tool calls. */
   onProgress?: (text: string) => void;
+  /** The account is close to a spend limit; the answer goes on. */
+  onWarning?: (code: string, message: string) => void;
 }
 export type SignedIn = z.infer<typeof SignedIn>;
 
@@ -125,6 +135,7 @@ export class ControlClient {
             if (!event.success) continue; // a newer server may send event types this app does not know
             if (event.data.type === "text") handlers.onText(event.data.text);
             else if (event.data.type === "progress") handlers.onProgress?.(event.data.text);
+            else if (event.data.type === "warning") handlers.onWarning?.(event.data.code, event.data.message);
             else if (event.data.type === "ping") continue;
             else if (event.data.type === "error") throw new ControlError(event.data.code, event.data.message);
             else return event.data;
@@ -142,6 +153,42 @@ export class ControlClient {
     } finally {
       clearTimeout(idleTimer);
     }
+  }
+
+  // --- the cost engine's helpers: the limits, the answers the app can give without the model ---
+
+  async aiPolicy(accessToken: string): Promise<AiPolicy> {
+    return AiPolicy.parse(await (await this.request("GET", "/v1/ai/policy", undefined, accessToken)).json());
+  }
+
+  async aiTemplates(accessToken: string): Promise<QueryTemplateView[]> {
+    const response = await this.request("GET", "/v1/ai/templates", undefined, accessToken);
+    return z.array(QueryTemplateView).parse(await response.json());
+  }
+
+  async lookupAnswer(accessToken: string, key: AnswerKey): Promise<AnswerLookup> {
+    return AnswerLookup.parse(
+      await (await this.request("POST", "/v1/ai/answers/lookup", key, accessToken)).json(),
+    );
+  }
+
+  async storeAnswer(accessToken: string, input: AnswerStoreInput): Promise<void> {
+    await this.request("POST", "/v1/ai/answers", input, accessToken);
+  }
+
+  /** Tells the server an answer was given without the model, so the cost dashboard counts it. */
+  async reportFreeAnswer(accessToken: string, input: FreeAnswerInput): Promise<void> {
+    await this.request("POST", "/v1/ai/free", input, accessToken);
+  }
+
+  async hasDigest(accessToken: string, key: DigestKey): Promise<boolean> {
+    const query = new URLSearchParams(key).toString();
+    const response = await this.request("GET", `/v1/ai/digest?${query}`, undefined, accessToken);
+    return z.object({ found: z.boolean() }).parse(await response.json()).found;
+  }
+
+  async putDigest(accessToken: string, input: DigestInput): Promise<void> {
+    await this.request("PUT", "/v1/ai/digest", input, accessToken);
   }
 
   async publicKey(): Promise<string> {

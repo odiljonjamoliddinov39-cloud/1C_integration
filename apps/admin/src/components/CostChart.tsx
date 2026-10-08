@@ -25,7 +25,7 @@ export function CostChart({ days }: { days: UsageDay[] }) {
             <span className="font-medium text-foreground">{shown.date}</span>
             <span className="tabular">{usd(shown.costUsd)}</span>
             <span className="tabular">
-              {shown.requests} requests · {compact(shown.tokens)} tokens
+              {shown.requests} requests{shown.tokens > 0 ? ` · ${compact(shown.tokens)} tokens` : ""}
             </span>
           </>
         ) : (

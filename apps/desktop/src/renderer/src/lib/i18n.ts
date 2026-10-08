@@ -74,6 +74,15 @@ const en = {
     stop: "Stop",
     thinking: "Working…",
     elapsed: "Worked for {{time}}",
+    route: {
+      template: "Answered from the template “{{title}}” · no AI used",
+      cache: "Answered from a saved answer ({{age}} ago) · no AI used",
+      askAnyway: "Ask AI anyway",
+    },
+    notices: {
+      AI_BUDGET_WARNING: "This account has used most of its monthly AI budget.",
+      AI_DAILY_WARNING: "You have used most of today's AI limit.",
+    },
     units: { h: "h", m: "min", s: "s" },
     attach: "Attach files",
     attachHint: "PDF, photos, Excel, Word, CSV or text; up to 5 files of 10 MB",
@@ -261,6 +270,9 @@ const en = {
     AI_NOT_CONFIGURED: "The assistant is not set up on the server yet.",
     AI_QUOTA_EXCEEDED: "The plan's assistant quota is used up.",
     AI_DAILY_LIMIT: "Today's assistant limit is used up; it resets at midnight UTC.",
+    AI_BUDGET_EXCEEDED:
+      "This account used its monthly AI budget. It resets on the 1st; contact us to raise it.",
+    AI_USER_DAILY_LIMIT: "Your AI limit for today is used up. It resets at midnight UTC.",
     SUBSCRIPTION_INACTIVE: "The subscription is not active; renew it to use the assistant.",
     AI_BUSY: "The AI service is busy; try again in a minute.",
     AI_UNAVAILABLE: "The AI service is not available right now.",
@@ -367,6 +379,15 @@ const ru: Dict = {
     stop: "Остановить",
     thinking: "Работаю…",
     elapsed: "Время работы: {{time}}",
+    route: {
+      template: "Ответ по шаблону «{{title}}» · без ИИ",
+      cache: "Сохранённый ответ ({{age}} назад) · без ИИ",
+      askAnyway: "Всё равно спросить ИИ",
+    },
+    notices: {
+      AI_BUDGET_WARNING: "Месячный бюджет ИИ этой учётной записи почти израсходован.",
+      AI_DAILY_WARNING: "Ваш дневной лимит ИИ почти израсходован.",
+    },
     units: { h: "ч", m: "мин", s: "с" },
     attach: "Прикрепить файлы",
     attachHint: "PDF, фото, Excel, Word, CSV или текст; до 5 файлов по 10 МБ",
@@ -554,6 +575,9 @@ const ru: Dict = {
     AI_NOT_CONFIGURED: "Ассистент ещё не настроен на сервере.",
     AI_QUOTA_EXCEEDED: "Лимит ассистента по тарифу исчерпан.",
     AI_DAILY_LIMIT: "Дневной лимит ассистента исчерпан; он обновится в полночь UTC.",
+    AI_BUDGET_EXCEEDED:
+      "Месячный бюджет ИИ этой учётной записи израсходован. Он обновится 1-го числа; напишите нам, чтобы увеличить его.",
+    AI_USER_DAILY_LIMIT: "Ваш дневной лимит ИИ исчерпан. Он обновится в полночь UTC.",
     SUBSCRIPTION_INACTIVE: "Подписка не активна; продлите её, чтобы пользоваться ассистентом.",
     AI_BUSY: "ИИ-сервис перегружен; попробуйте через минуту.",
     AI_UNAVAILABLE: "ИИ-сервис сейчас недоступен.",
@@ -659,6 +683,15 @@ const uz: Dict = {
     stop: "Toʻxtatish",
     thinking: "Ishlayapman…",
     elapsed: "Ishlash vaqti: {{time}}",
+    route: {
+      template: "“{{title}}” shabloni bo‘yicha javob · AI ishlatilmadi",
+      cache: "Saqlangan javob ({{age}} oldin) · AI ishlatilmadi",
+      askAnyway: "Baribir AIdan so‘rash",
+    },
+    notices: {
+      AI_BUDGET_WARNING: "Bu hisobning oylik AI byudjeti deyarli tugadi.",
+      AI_DAILY_WARNING: "Bugungi AI limitingiz deyarli tugadi.",
+    },
     units: { h: "soat", m: "daqiqa", s: "soniya" },
     attach: "Fayl biriktirish",
     attachHint: "PDF, rasm, Excel, Word, CSV yoki matn; 10 MB gacha 5 ta fayl",
@@ -846,6 +879,9 @@ const uz: Dict = {
     AI_NOT_CONFIGURED: "Yordamchi serverda hali sozlanmagan.",
     AI_QUOTA_EXCEEDED: "Tarif boʻyicha yordamchi limiti tugadi.",
     AI_DAILY_LIMIT: "Kunlik yordamchi limiti tugadi; u UTC boʻyicha yarim tunda yangilanadi.",
+    AI_BUDGET_EXCEEDED:
+      "Bu hisobning oylik AI byudjeti tugadi. U 1-sanada yangilanadi; oshirish uchun biz bilan bogʻlaning.",
+    AI_USER_DAILY_LIMIT: "Bugungi AI limitingiz tugadi. U UTC boʻyicha yarim tunda yangilanadi.",
     SUBSCRIPTION_INACTIVE: "Obuna faol emas; yordamchidan foydalanish uchun uni uzaytiring.",
     AI_BUSY: "AI xizmati band; bir daqiqadan keyin urinib koʻring.",
     AI_UNAVAILABLE: "AI xizmati hozir mavjud emas.",

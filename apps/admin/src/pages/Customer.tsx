@@ -101,6 +101,13 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         <ExtendForm id={id} onDone={update} />
         <RechargeForm id={id} detail={d} onDone={update} />
       </div>
+      <BudgetForm
+        key={`${d.budget.limitUsd}-${d.budget.custom}`}
+        id={id}
+        detail={d}
+        owner={me.role === "owner"}
+        onDone={update}
+      />
       {/* Remounted when the saved setting changes, so the form starts from it. */}
       <AiModelForm
         key={`${d.ai.model}-${d.ai.effort}`}
@@ -331,6 +338,86 @@ function RechargeForm({
         {stopped && <b className="text-destructive">{stopped} </b>}
         Adds the tokens to this period&apos;s quota and to today&apos;s limit, so the assistant works again at
         once. Cached prompt tokens count a tenth.
+      </p>
+    </Section>
+  );
+}
+
+/** This month's AI budget in USD: the policy's cap, or one set here (an add-on) that lifts a stop at once. */
+function BudgetForm({
+  id,
+  detail,
+  owner,
+  onDone,
+}: {
+  id: string;
+  detail: AccountDetail;
+  owner: boolean;
+  onDone: (d: AccountDetail) => void;
+}) {
+  const { budget } = detail;
+  const [limit, setLimit] = useState(String(budget.limitUsd));
+  const [reason, setReason] = useState("");
+  const save = useMutation({
+    mutationFn: () => api.setAccountBudget(id, { limitUsd: Number(limit), reason }),
+    onSuccess: (data) => {
+      setReason("");
+      onDone(data);
+    },
+  });
+  const share = budget.limitUsd > 0 ? Math.min(1, budget.usedUsd / budget.limitUsd) : 0;
+  return (
+    <Section title={`AI budget, ${budget.period} (USD)`}>
+      <div className="mb-3 text-sm">
+        Spent <b>{usd(budget.usedUsd)}</b> of <b>{budget.limitUsd > 0 ? usd(budget.limitUsd) : "no cap"}</b>
+        {budget.custom && <span className="text-muted-foreground"> (set for this customer)</span>}
+        {budget.limitUsd > 0 && budget.usedUsd >= budget.limitUsd && (
+          <b className="ml-2 text-destructive">Stopped: the budget is used up.</b>
+        )}
+        {budget.limitUsd > 0 && (
+          <div className="mt-1 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-primary" style={{ width: `${share * 100}%` }} />
+          </div>
+        )}
+      </div>
+      {owner ? (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (
+              window.confirm(
+                `Set this month's AI budget to ${Number(limit) > 0 ? usd(Number(limit)) : "no cap"}?`,
+              )
+            )
+              save.mutate();
+          }}
+        >
+          <Input
+            className="w-28"
+            type="number"
+            min={0}
+            step={1}
+            aria-label="Budget, USD"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+          />
+          <Input
+            className="min-w-48 flex-1"
+            placeholder="Reason, e.g. paid add-on"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <Button disabled={save.isPending || !(Number(limit) >= 0) || limit === ""}>Set budget</Button>
+          {save.isSuccess && <span className="text-sm text-success">Done</span>}
+        </form>
+      ) : (
+        <p className="text-xs text-muted-foreground">Only an owner can change the budget.</p>
+      )}
+      <ErrorText error={save.error} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        The monthly cap comes from the AI limits page; setting it here applies to this month only and lifts a
+        stop at once. 0 removes the cap.
       </p>
     </Section>
   );

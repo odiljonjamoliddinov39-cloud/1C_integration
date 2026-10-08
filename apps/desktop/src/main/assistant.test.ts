@@ -4,12 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakePlatform } from "@platform/onec-client/testing";
-import { AUDIT_TOOLS, CHAT_TOOLS, type AiChatInput, type AiEvent } from "@platform/shared";
-import { describe, expect, it } from "vitest";
+import {
+  AUDIT_TOOLS,
+  CHAT_TOOLS,
+  DEFAULT_AI_POLICY,
+  type AiChatInput,
+  type AiEvent,
+  type QueryTemplateView,
+} from "@platform/shared";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
 import { AssistantService, auditToCsv } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
+import { CostEngine } from "./ai/engine.js";
 import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
 import { ControlClient } from "./control-client.js";
@@ -22,10 +30,27 @@ const secrets: SecretBox = { encrypt: (p) => `enc:${p}`, decrypt: (e) => e.slice
  * A stand-in for the AI proxy: answers each turn from a script and records what the app sent.
  * Turns are written as the proxy streams them: one JSON event per line.
  */
-function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
+function fakeProxy(
+  script: ((input: AiChatInput) => AiEvent[] | Response)[],
+  /** Answers to the cost engine's other endpoints (policy, templates, cache, digest); a 404 by default. */
+  others: (url: string, method: string, body: unknown) => Response | null = () => null,
+) {
   const requests: AiChatInput[] = [];
   const encodings: (string | undefined)[] = [];
-  const fetchImpl: typeof fetch = async (_url, init) => {
+  const calls: { url: string; method: string; body: unknown }[] = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname + new URL(String(url)).search;
+    if (!path.startsWith("/v1/ai/chat")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url: path, method: init?.method ?? "GET", body });
+      return (
+        others(path, init?.method ?? "GET", body) ??
+        new Response(JSON.stringify({ code: "NOT_FOUND", message: "No such endpoint" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })
+      );
+    }
     const encoding = (init?.headers as Record<string, string> | undefined)?.["content-encoding"];
     encodings.push(encoding);
     const raw = encoding === "gzip" ? gunzipSync(init?.body as Buffer).toString() : String(init?.body);
@@ -39,7 +64,7 @@ function fakeProxy(script: ((input: AiChatInput) => AiEvent[] | Response)[]) {
       headers: { "content-type": "application/x-ndjson" },
     });
   };
-  return { requests, fetchImpl, encodings };
+  return { requests, fetchImpl, encodings, calls };
 }
 
 const TEST_CHECKS: AuditCheck[] = [
@@ -57,7 +82,11 @@ const TEST_CHECKS: AuditCheck[] = [
   },
 ];
 
-function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | "read_only" = "active") {
+function setup(
+  script: Parameters<typeof fakeProxy>[0],
+  licenseMode: "active" | "read_only" = "active",
+  others?: Parameters<typeof fakeProxy>[1],
+) {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
   const store = new LocalStore(join(dir, "p.json"), secrets);
@@ -71,7 +100,7 @@ function setup(script: Parameters<typeof fakeProxy>[0], licenseMode: "active" | 
     },
     { ok: false, checkedAt: "", code: "X", message: "" },
   );
-  const proxy = fakeProxy(script);
+  const proxy = fakeProxy(script, others);
   const session = {
     authorized: async () => ({
       client: new ControlClient("https://control.test", proxy.fetchImpl),
@@ -144,6 +173,8 @@ describe("assistant", () => {
     expect(proxy.requests[0]).toEqual({
       company: company.name,
       tools: CHAT_TOOLS,
+      // A short read of a figure: the proxy may give it to the cheaper model, when the policy has one.
+      task: "lookup",
       messages: [{ role: "user", content: "5110 qoldig'i qancha?" }],
     });
     // The second sends the assistant turn back unchanged (thinking included), then the 1C rows.
@@ -154,7 +185,11 @@ describe("assistant", () => {
     )[0]!;
     expect(toolResult).toMatchObject({ type: "tool_result", tool_use_id: "tu_1" });
     expect(toolResult.is_error).toBeUndefined();
-    expect(JSON.parse(toolResult.content).rows[0]).toEqual(["5110 Расчетный счет", 125_000_000, 0]);
+    // The rows go up as a compact table: the column names once, then a line per row.
+    expect(toolResult.content.split("\n").slice(0, 2)).toEqual([
+      "rows[4]{Счет,СальдоДт,СальдоКт}:",
+      "  5110 Расчетный счет,125000000,0",
+    ]);
 
     expect(events.map((e) => e.type)).toEqual(["text", "tool", "text", "done", "elapsed"]);
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
@@ -1285,6 +1320,398 @@ describe("assistant", () => {
         content: [{ type: "tool_result", tool_use_id: "tu_9", is_error: true }],
       });
       expect(sent[3]).toEqual({ role: "user", content: "Keyinroq" });
+    });
+  });
+  describe("cost engine", () => {
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    const none = () => new Response(null, { status: 204 });
+    const text = (value: string) => (): AiEvent[] => [
+      { type: "text", text: value },
+      { type: "message", stopReason: "end_turn", content: [{ type: "text", text: value }] },
+    ];
+    const balances: QueryTemplateView = {
+      id: "t1",
+      code: "balances",
+      title: "Остатки по счетам",
+      intents: ["остатки по счетам", "qoldiqlar hisoblar bo'yicha"],
+      query: "ВЫБРАТЬ Счет, СальдоДт, СальдоКт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
+      params: [{ name: "Дата", type: "date" }],
+      columns: [
+        { label: "Счет", format: "text" },
+        { label: "Дт", format: "money" },
+        { label: "Кт", format: "money" },
+      ],
+      totals: false,
+      enabled: true,
+      version: 1,
+      updatedAt: "2026-10-07T00:00:00Z",
+    };
+    /** The server's cost engine endpoints, with what each test needs different. */
+    const server =
+      (over: {
+        policy?: Partial<typeof DEFAULT_AI_POLICY>;
+        templates?: QueryTemplateView[];
+        cached?: (body: { question: string; dataVersion: string }) => unknown;
+        digestFound?: boolean;
+      }) =>
+      (url: string, _method: string, body: unknown) => {
+        if (url === "/v1/ai/policy") return json({ ...DEFAULT_AI_POLICY, ...over.policy });
+        if (url === "/v1/ai/templates") return json(over.templates ?? []);
+        if (url === "/v1/ai/answers/lookup")
+          return json(over.cached?.(body as { question: string; dataVersion: string }) ?? { hit: false });
+        if (url.startsWith("/v1/ai/digest?")) return json({ found: over.digestFound ?? true });
+        if (url === "/v1/ai/answers" || url === "/v1/ai/free" || url === "/v1/ai/digest") return none();
+        return null;
+      };
+    const ask = async (setupResult: ReturnType<typeof setup>, question: string, extra = {}) => {
+      setupResult.store.setAiEnabled(setupResult.company.id, true);
+      return setupResult.assistant.send({ companyId: setupResult.company.id, text: question, ...extra });
+    };
+
+    it("answers a known question from a template: no model call, labelled, and counted as free", async () => {
+      const t = setup([], "active", server({ templates: [balances] }));
+      expect(await ask(t, "Остатки по счетам")).toEqual({ ok: true, data: null });
+      // The model was never asked.
+      expect(t.proxy.requests).toHaveLength(0);
+      expect(t.events.map((e) => e.type)).toEqual(["route", "text", "done", "elapsed"]);
+      expect(t.events[0]).toMatchObject({ type: "route", route: "template", title: "Остатки по счетам" });
+      const shown = (t.events[1] as { text: string }).text;
+      expect(shown).toContain("| Счет | Дт | Кт |");
+      expect(shown).toContain("5110 Расчетный счет");
+      // The server counts it, so the dashboard's free-answer share is right.
+      expect(t.proxy.calls.find((c) => c.url === "/v1/ai/free")?.body).toEqual({
+        route: "template",
+        company: t.company.name,
+        question: "Остатки по счетам",
+      });
+      // Later questions of the chat see it as the assistant's answer.
+      const chat = t.assistant.openChat(t.company.id, t.assistant.chats(t.company.id)[0]!.id);
+      expect(chat.ok && chat.data.entries.map((e) => e.kind)).toEqual([
+        "user",
+        "route",
+        "assistant",
+        "elapsed",
+      ]);
+    });
+
+    it("lets the user ask the model anyway, and leaves a longer question to the model from the start", async () => {
+      const t = setup([text("Model answer")], "active", server({ templates: [balances] }));
+      await ask(t, "Остатки по счетам", { skipFree: true });
+      expect(t.proxy.requests).toHaveLength(1);
+      expect(t.events.some((e) => e.type === "route")).toBe(false);
+
+      const longer = setup([text("Model answer")], "active", server({ templates: [balances] }));
+      await ask(longer, "Остатки по счетам без учета валютных операций");
+      expect(longer.proxy.requests).toHaveLength(1);
+    });
+
+    it("falls back to the model when the template's query fails", async () => {
+      const broken = { ...balances, query: "УДАЛИТЬ" };
+      const t = setup([text("Model answer")], "active", server({ templates: [broken] }));
+      await ask(t, "Остатки по счетам");
+      expect(t.proxy.requests).toHaveLength(1);
+      expect(t.events.some((e) => e.type === "route")).toBe(false);
+    });
+
+    it("does not use templates when the policy turns them off", async () => {
+      const t = setup(
+        [text("Model answer")],
+        "active",
+        server({ templates: [balances], policy: { templates: false } }),
+      );
+      // The server sends none then; the app also ignores a stale list.
+      await ask(t, "Остатки по счетам");
+      expect(t.proxy.requests).toHaveLength(1);
+    });
+
+    it("answers a repeated question from the answer cache, keyed by the question and the data version", async () => {
+      let seen: { question: string; dataVersion: string } | null = null;
+      const t = setup(
+        [],
+        "active",
+        server({
+          cached: (body) => {
+            seen = body;
+            return { hit: true, answer: "125 mln so'm.", ageSeconds: 180 };
+          },
+        }),
+      );
+      await ask(t, "5110 qoldig'i qancha?");
+      expect(t.proxy.requests).toHaveLength(0);
+      expect(t.events[0]).toMatchObject({ type: "route", route: "cache", ageSeconds: 180 });
+      expect(t.events[1]).toMatchObject({ type: "text", text: "125 mln so'm." });
+      expect(seen).toMatchObject({
+        question: "5110 qoldig'i qancha?",
+        dataVersion: expect.stringMatching(/^\d{4}-\d{2}-\d{2}:/),
+      });
+      expect(t.proxy.calls.find((c) => c.url === "/v1/ai/free")?.body).toMatchObject({ route: "cache" });
+    });
+
+    it("keeps the finished answer of a read-only first question, and nothing else", async () => {
+      const t = setup([text("125 mln so'm."), text("Yana"), text("Fayldan")], "active", server({}));
+      await ask(t, "5110 qoldig'i qancha?");
+      await vi.waitFor(() => expect(t.proxy.calls.filter((c) => c.url === "/v1/ai/answers")).toHaveLength(1));
+      expect(t.proxy.calls.find((c) => c.url === "/v1/ai/answers")?.body).toMatchObject({
+        company: t.company.name,
+        question: "5110 qoldig'i qancha?",
+        answer: "125 mln so'm.",
+      });
+      // A follow-up depends on the chat before it: it is not kept.
+      await t.assistant.send({ companyId: t.company.id, text: "6010 chi?" });
+      expect(t.proxy.calls.filter((c) => c.url === "/v1/ai/answers")).toHaveLength(1);
+    });
+
+    it("keeps no answer that prepared a card, and drops stored answers after a write", async () => {
+      const t = setup(
+        [
+          () => [
+            {
+              type: "message",
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "p1",
+                  name: "propose_invoice_issued",
+                  input: { sale: { number: "0000-000123", date: "2026-10-01" } },
+                },
+              ],
+            },
+          ],
+          text("Tayyor"),
+        ],
+        "active",
+        server({}),
+      );
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Schyot-faktura yoz" });
+      await vi.waitFor(() => expect(t.events.some((e) => e.type === "confirm")).toBe(true));
+      const card = t.events.find((e) => e.type === "confirm");
+      if (card?.type !== "confirm") throw new Error("no card");
+      const before = t.proxy.calls.length;
+      t.assistant.decide(card.companyId, card.id, true);
+      await sending;
+      expect(t.proxy.calls.slice(before).some((c) => c.url === "/v1/ai/answers")).toBe(false);
+    });
+
+    it("changes the data version with every write, so a stored answer is not used after one", () => {
+      const engine = new CostEngine({} as never, {} as never);
+      const first = engine.dataVersion("c1");
+      expect(engine.dataVersion("c1")).toBe(first);
+      engine.noteWrite("c1");
+      expect(engine.dataVersion("c1")).not.toBe(first);
+      expect(engine.dataVersion("c2")).toBe(first);
+    });
+
+    it("limits the rows of a query from the policy, and tells the model when the result was cut", async () => {
+      const t = setup(
+        [
+          () => [
+            {
+              type: "message",
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "q1",
+                  name: "run_query",
+                  input: { query: "ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.Хозрасчетный" },
+                },
+                {
+                  type: "tool_use",
+                  id: "q2",
+                  name: "run_query",
+                  input: { query: "ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.Хозрасчетный", limit: 1000 },
+                },
+              ],
+            },
+          ],
+          text("Done"),
+        ],
+        "active",
+        server({ policy: { defaultRows: 2, maxRows: 3 } }),
+      );
+      await ask(t, "Hisoblarni ko'rsat");
+      const results = (t.proxy.requests[1]!.messages[2]!.content as unknown as { content: string }[]).map(
+        (r) => r.content,
+      );
+      // No limit asked: the default (2 rows). Asked for 1000: the hard cap (3 rows).
+      expect(results[0]!.split("\n").filter((l) => l.startsWith("  "))).toHaveLength(2);
+      expect(results[0]).toContain("The result was cut at 2 rows");
+      expect(results[1]!.split("\n").filter((l) => l.startsWith("  "))).toHaveLength(3);
+      expect(results[1]).toContain("up to 3");
+    });
+
+    it("limits the rows of an audit check's query the same way", async () => {
+      const t = setup(
+        [
+          () => [
+            {
+              type: "message",
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "q1",
+                  name: "run_query",
+                  input: { query: "ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.Хозрасчетный" },
+                },
+              ],
+            },
+          ],
+          () => [
+            {
+              type: "message",
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "r1",
+                  name: "report_findings",
+                  input: { status: "ok", summary: "Fine" },
+                },
+              ],
+            },
+          ],
+          text("Report"),
+        ],
+        "active",
+        server({ policy: { defaultRows: 1 } }),
+      );
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.audit({
+        companyId: t.company.id,
+        chatId: "0b8e3a52-1d3c-4a8e-9f5e-2b1c3d4e5f60",
+        from: "2026-01-01",
+        to: "2026-10-06",
+        language: "en",
+      });
+      const result = (t.proxy.requests[1]!.messages[2]!.content as unknown as { content: string }[])[0]!
+        .content;
+      expect(result).toContain("rows[1]{Счет,СальдоДт,СальдоКт}:");
+    });
+
+    it("shows a budget warning from the server and goes on with the answer", async () => {
+      const t = setup(
+        [
+          () => [
+            { type: "warning", code: "AI_BUDGET_WARNING", message: "80% used" },
+            { type: "text", text: "Javob" },
+            { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "Javob" }] },
+          ],
+        ],
+        "active",
+        server({}),
+      );
+      expect(await ask(t, "5110?")).toEqual({ ok: true, data: null });
+      expect(t.events.map((e) => e.type)).toEqual(["notice", "text", "done", "elapsed"]);
+      expect(t.events[0]).toMatchObject({ code: "AI_BUDGET_WARNING" });
+    });
+
+    it("works as before with a server that has none of these endpoints: the defaults apply", async () => {
+      const t = setup([
+        () => [
+          {
+            type: "message",
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "q1",
+                name: "run_query",
+                input: { query: "ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.Хозрасчетный" },
+              },
+            ],
+          },
+        ],
+        text("Done"),
+      ]);
+      expect(await ask(t, "Hisoblarni ko'rsat")).toEqual({ ok: true, data: null });
+      expect(t.proxy.requests).toHaveLength(2);
+      const result = (t.proxy.requests[1]!.messages[2]!.content as unknown as { content: string }[])[0]!
+        .content;
+      expect(result).toContain("rows[4]{");
+    });
+
+    it("builds the structure digest of the base once, after the first answer, and sends it to the server", async () => {
+      const t = setup([text("Javob"), text("Yana")], "active", server({ digestFound: false }));
+      t.base.queryAnswers.unshift(
+        {
+          match: /ИдентификаторыОбъектовМетаданных.*"Документ\.%"/s,
+          answer: () => ({
+            columns: ["Имя"],
+            rows: [["Документ.РеализацияТоваровУслуг"], ["Документ.ПоступлениеТоваровУслуг"]],
+            truncated: false,
+          }),
+        },
+        {
+          match: /ИдентификаторыОбъектовМетаданных.*"Справочник\.%"/s,
+          answer: () => ({ columns: ["Имя"], rows: [["Справочник.Контрагенты"]], truncated: false }),
+        },
+      );
+      await ask(t, "5110?");
+      await vi.waitFor(() =>
+        expect(t.proxy.calls.some((c) => c.method === "PUT" && c.url === "/v1/ai/digest")).toBe(true),
+      );
+      const put = t.proxy.calls.find((c) => c.method === "PUT")?.body as {
+        company: string;
+        configName: string;
+        digest: string;
+        tokenCount: number;
+      };
+      expect(put.company).toBe(t.company.name);
+      expect(put.configName).toEqual(expect.any(String));
+      expect(put.digest).toContain("Documents (2): РеализацияТоваровУслуг, ПоступлениеТоваровУслуг");
+      expect(put.digest).toContain("Catalogs (1): Контрагенты");
+      expect(put.tokenCount).toBeGreaterThan(0);
+      // Once per run of the app per company.
+      await t.assistant.send({ companyId: t.company.id, text: "6010?" });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(t.proxy.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    });
+
+    it("sends nothing when the server already has the digest of this configuration", async () => {
+      const t = setup([text("Javob")], "active", server({ digestFound: true }));
+      await ask(t, "5110?");
+      await vi.waitFor(() =>
+        expect(t.proxy.calls.some((c) => c.url.startsWith("/v1/ai/digest?"))).toBe(true),
+      );
+      await new Promise((r) => setTimeout(r, 20));
+      expect(t.proxy.calls.some((c) => c.method === "PUT")).toBe(false);
+    });
+
+    it("moves the rest of a question to the default model after the user declines a card", async () => {
+      const t = setup(
+        [
+          () => [
+            {
+              type: "message",
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "p1",
+                  name: "propose_invoice_issued",
+                  input: { sale: { number: "0000-000123", date: "2026-10-01" } },
+                },
+              ],
+            },
+          ],
+          text("Bekor qilindi"),
+        ],
+        "active",
+        server({}),
+      );
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Ko'rsat schyot-faktura" });
+      await vi.waitFor(() => expect(t.events.some((e) => e.type === "confirm")).toBe(true));
+      const card = t.events.find((e) => e.type === "confirm");
+      if (card?.type !== "confirm") throw new Error("no card");
+      t.assistant.decide(card.companyId, card.id, false);
+      await sending;
+      expect(t.proxy.requests[0]!.escalate).toBeUndefined();
+      expect(t.proxy.requests[1]!.escalate).toBe(true);
     });
   });
 });

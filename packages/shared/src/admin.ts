@@ -165,6 +165,13 @@ export const AccountDetail = z.object({
   /** The daily cap plus the tokens added today, and today's use (UTC day). */
   aiDailyLimit: z.number(),
   aiUsedToday: z.number(),
+  /** This month's AI spend against the cap (0: no cap); custom: the cap was set for this account. */
+  budget: z.object({
+    period: z.string(),
+    usedUsd: z.number(),
+    limitUsd: z.number(),
+    custom: z.boolean(),
+  }),
   /** The account's own model and effort (null: the global one), and what it runs on now. */
   ai: z.object({
     model: z.string().nullable(),

@@ -3,7 +3,14 @@ import { generateKeyPairSync } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { AUDIT_TOOLS, AiEvent, CHAT_TOOLS, LEGACY_AI_TOOLS, LicenseClaims } from "@platform/shared";
+import {
+  AUDIT_TOOLS,
+  AiEvent,
+  CHAT_TOOLS,
+  DEFAULT_AI_POLICY,
+  LEGACY_AI_TOOLS,
+  LicenseClaims,
+} from "@platform/shared";
 import { decodeJwt, importSPKI, jwtVerify } from "jose";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -12,7 +19,7 @@ import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { aiGrants, aiUsage, subscriptions } from "./db/schema.js";
+import { aiBudgets, aiGrants, aiUsage, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -84,6 +91,7 @@ describe.skipIf(!available)("control system API", () => {
 
   beforeEach(async () => {
     await db.sql`TRUNCATE accounts, refresh_tokens CASCADE`;
+    await db.sql`TRUNCATE ai_policies, query_templates`;
   });
 
   afterAll(async () => {
@@ -267,8 +275,13 @@ describe.skipIf(!available)("control system API", () => {
         type: "clear_tool_uses_20250919",
         exclude_tools: expect.arrayContaining(["propose_changes", "propose_invoices_issued"]),
       }),
-      // A chat that would outgrow the model is summarized by the API long before its 1M limit.
-      { type: "compact_20260112", trigger: { type: "input_tokens", value: 200_000 } },
+      // A chat that would outgrow the model is summarized by the API (at the policy's threshold),
+      // with what an accountant cannot lose kept word for word.
+      {
+        type: "compact_20260112",
+        trigger: { type: "input_tokens", value: 50_000 },
+        instructions: expect.stringContaining("exactly as written"),
+      },
     ]);
     expect(JSON.stringify(params.system)).not.toContain("older version");
 
@@ -767,6 +780,368 @@ describe.skipIf(!available)("control system API", () => {
     } finally {
       await other.close();
     }
+  });
+
+  describe("cost engine", () => {
+    const boss = { email: "boss@platform.uz", password: "admin-password-123" };
+    const call = (
+      method: "GET" | "POST" | "PUT" | "DELETE",
+      url: string,
+      token?: string,
+      payload?: unknown,
+    ) =>
+      app.inject({
+        method,
+        url,
+        ...(payload === undefined ? {} : { payload: payload as object }),
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      });
+    const adminToken = async () => (await post("/v1/admin/login", boss)).json().accessToken as string;
+    const setPolicy = async (policy: Partial<typeof DEFAULT_AI_POLICY>) =>
+      call("PUT", "/v1/admin/ai-policies", await adminToken(), {
+        planId: null,
+        policy: { ...DEFAULT_AI_POLICY, ...policy },
+      });
+    const chat = (token: string, payload: Record<string, unknown>) =>
+      call("POST", "/v1/ai/chat", token, {
+        company: "X",
+        messages: [{ role: "user", content: "5110?" }],
+        ...payload,
+      });
+    const eventsOf = (body: string) =>
+      body
+        .trim()
+        .split("\n")
+        .map((line) => AiEvent.parse(JSON.parse(line)));
+    /** A chat where the model already made `n` 1C reads for the question. */
+    const afterReads = (n: number, names: string[] = []) => [
+      { role: "user", content: "5110?" },
+      ...Array.from({ length: n }, (_, i) => [
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: `t${i}`, name: names[i] ?? "run_query", input: {} }],
+        },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: "{}" }] },
+      ]).flat(),
+    ];
+
+    it("serves the default policy and lets only an owner change it", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      expect((await call("GET", "/v1/ai/policy", customer.accessToken)).json()).toEqual(DEFAULT_AI_POLICY);
+      expect((await setPolicy({ monthlyLimitUsd: 80, maxToolCalls: 12 })).statusCode).toBe(200);
+      expect((await call("GET", "/v1/ai/policy", customer.accessToken)).json()).toMatchObject({
+        monthlyLimitUsd: 80,
+        maxToolCalls: 12,
+      });
+      const view = (await call("GET", "/v1/admin/ai-policies", await adminToken())).json();
+      expect(view.default.monthlyLimitUsd).toBe(80);
+      expect(view.plans.map((p: { code: string }) => p.code)).toContain("trial");
+      // A plan's own policy wins over the default one; removing it goes back to the default.
+      const trial = view.plans.find((p: { code: string }) => p.code === "trial");
+      await call("PUT", "/v1/admin/ai-policies", await adminToken(), {
+        planId: trial.planId,
+        policy: { ...DEFAULT_AI_POLICY, monthlyLimitUsd: 5 },
+      });
+      expect((await call("GET", "/v1/ai/policy", customer.accessToken)).json().monthlyLimitUsd).toBe(5);
+      await call("PUT", "/v1/admin/ai-policies", await adminToken(), { planId: trial.planId, policy: null });
+      expect((await call("GET", "/v1/ai/policy", customer.accessToken)).json().monthlyLimitUsd).toBe(80);
+      expect(
+        (
+          await call("PUT", "/v1/admin/ai-policies", await adminToken(), {
+            planId: null,
+            policy: { monthlyLimitUsd: -1 },
+          })
+        ).statusCode,
+      ).toBe(400);
+    });
+
+    it("warns at 80% of the monthly budget, stops at 100%, and an add-on lifts the stop", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
+      await setPolicy({ monthlyLimitUsd: 1, dailyLimitUsdPerUser: 0 });
+      const period = new Date().toISOString().slice(0, 7);
+
+      await db.db.insert(aiBudgets).values({ accountId: ids.accountId, period, usedUsd: 0.5 });
+      expect(eventsOf((await chat(reg.accessToken, {})).body).some((e) => e.type === "warning")).toBe(false);
+
+      await db.db.update(aiBudgets).set({ usedUsd: 0.85 });
+      const warned = eventsOf((await chat(reg.accessToken, {})).body);
+      expect(warned[0]).toMatchObject({ type: "warning", code: "AI_BUDGET_WARNING" });
+      // Sent once, not on every step of every question.
+      expect(eventsOf((await chat(reg.accessToken, {})).body).some((e) => e.type === "warning")).toBe(false);
+
+      await db.db.update(aiBudgets).set({ usedUsd: 1 });
+      const blocked = await chat(reg.accessToken, {});
+      expect(blocked.statusCode).toBe(429);
+      expect(blocked.json().code).toBe("AI_BUDGET_EXCEEDED");
+
+      const boost = await call("POST", `/v1/admin/accounts/${ids.accountId}/ai-budget`, await adminToken(), {
+        limitUsd: 5,
+        reason: "paid add-on",
+      });
+      expect(boost.statusCode).toBe(200);
+      expect((await chat(reg.accessToken, {})).statusCode).toBe(200);
+    });
+
+    it("stops a user at the daily cap, not the other users of the account", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await setPolicy({ monthlyLimitUsd: 0, dailyLimitUsdPerUser: 1 });
+      await db.db.insert(aiUsage).values({
+        accountId: reg.me.account.id,
+        userId: reg.me.user.id,
+        model: "m",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 1.2,
+      });
+      const res = await chat(reg.accessToken, {});
+      expect(res.statusCode).toBe(429);
+      expect(res.json().code).toBe("AI_USER_DAILY_LIMIT");
+    });
+
+    it("logs every model call with its feature, route, tool calls and question, and adds it to the month", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await db.sql`TRUNCATE ai_usage`;
+      await chat(reg.accessToken, { company: "Crystal Water" });
+      await chat(reg.accessToken, { messages: afterReads(2) });
+      await chat(reg.accessToken, { tools: AUDIT_TOOLS });
+      const rows = await db.db.select().from(aiUsage).orderBy(aiUsage.createdAt);
+      expect(rows.map((r) => [r.feature, r.route, r.firstStep])).toEqual([
+        ["chat", "model", true],
+        ["chat", "model", false],
+        ["audit", "model", true],
+      ]);
+      expect(rows[0]).toMatchObject({ company: "Crystal Water", question: "5110?" });
+      expect(rows[1]?.question).toBe("5110?");
+      const [budget] = await db.db.select().from(aiBudgets);
+      expect(budget?.usedUsd).toBeCloseTo(
+        rows.reduce((sum, r) => sum + r.costUsd, 0),
+        5,
+      );
+    });
+
+    it("caps the reads of one question: after the limit the model gets no tools to call", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await setPolicy({ maxToolCalls: 3 });
+      aiCalls.length = 0;
+      await chat(reg.accessToken, { messages: afterReads(2) });
+      expect(aiCalls[0]?.tool_choice).toBeUndefined();
+      await chat(reg.accessToken, { messages: afterReads(3) });
+      expect(aiCalls[1]?.tool_choice).toEqual({ type: "none" });
+      expect(JSON.stringify(aiCalls[1]?.system)).toContain("Tool-call limit reached");
+      // Proposals (cards) are not reads, and a new question starts the count again.
+      await chat(reg.accessToken, {
+        messages: afterReads(3, ["run_query", "propose_changes", "propose_changes"]),
+      });
+      expect(aiCalls[2]?.tool_choice).toBeUndefined();
+      await chat(reg.accessToken, {
+        messages: [
+          ...afterReads(3),
+          { role: "assistant", content: "ok" },
+          { role: "user", content: "and 6010?" },
+        ],
+      });
+      expect(aiCalls[3]?.tool_choice).toBeUndefined();
+      // An audit check has its own step limit in the app.
+      await chat(reg.accessToken, { tools: AUDIT_TOOLS, messages: afterReads(5) });
+      expect(aiCalls[4]?.tool_choice).toBeUndefined();
+      // 0 turns the cap off.
+      await setPolicy({ maxToolCalls: 0 });
+      await chat(reg.accessToken, { messages: afterReads(40) });
+      expect(aiCalls[5]?.tool_choice).toBeUndefined();
+    });
+
+    it("limits output tokens and the summary threshold from the policy", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await setPolicy({ maxOutputTokens: 4_000, compactionThreshold: 80_000 });
+      aiCalls.length = 0;
+      await chat(reg.accessToken, {});
+      expect(aiCalls[0]?.max_tokens).toBe(4_000);
+      expect(aiCalls[0]?.context_management?.edits?.at(-1)).toMatchObject({
+        type: "compact_20260112",
+        trigger: { value: 80_000 },
+      });
+    });
+
+    it("runs simple lookups on the cheaper model when the policy has one, and escalates on a failed step", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      aiCalls.length = 0;
+      // No simple model in the policy: everything runs on the default one.
+      await chat(reg.accessToken, { task: "lookup" });
+      expect(aiCalls[0]?.model).toBe("claude-sonnet-5-5");
+
+      await setPolicy({ simpleModel: "claude-haiku-4-5" });
+      await chat(reg.accessToken, { task: "lookup" });
+      const simple = aiCalls[1]!;
+      expect(simple.model).toBe("claude-haiku-4-5");
+      expect(simple.thinking).toBeUndefined();
+      expect(simple.output_config).toBeUndefined();
+      expect(simple.context_management).toBeUndefined();
+      // Thinking blocks of earlier Sonnet turns are not sent to it.
+      await chat(reg.accessToken, {
+        task: "lookup",
+        messages: [
+          { role: "user", content: "5110?" },
+          {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "", signature: "s" },
+              { type: "text", text: "a" },
+            ],
+          },
+          { role: "user", content: "and 6010?" },
+        ],
+      });
+      expect(JSON.stringify(aiCalls[2]?.messages)).not.toContain("thinking");
+
+      // Work, audit checks, a failed tool step and an explicit escalation stay on the default model.
+      await chat(reg.accessToken, { task: "work" });
+      await chat(reg.accessToken, { task: "lookup", tools: AUDIT_TOOLS });
+      await chat(reg.accessToken, { task: "lookup", escalate: true });
+      const failed = afterReads(1);
+      (failed[2] as { content: { is_error?: boolean }[] }).content[0]!.is_error = true;
+      await chat(reg.accessToken, { task: "lookup", messages: failed });
+      expect(aiCalls.slice(3).map((c) => c.model)).toEqual(Array(4).fill("claude-sonnet-5-5"));
+    });
+
+    it("keeps the company's structure digest in the prompt, after the instructions and before the day's context", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const key = { company: "Crystal Water", configName: "Buxgalteriya", configVersion: "3.0.1" };
+      expect(
+        (await call("GET", `/v1/ai/digest?${new URLSearchParams(key)}`, reg.accessToken)).json().found,
+      ).toBe(false);
+      const saved = await call("PUT", "/v1/ai/digest", reg.accessToken, {
+        ...key,
+        digest: "Документ.РеализацияТоваровУслуг: Дата, Номер, Контрагент",
+        tokenCount: 12,
+      });
+      expect(saved.statusCode).toBe(204);
+      expect(
+        (await call("GET", `/v1/ai/digest?${new URLSearchParams(key)}`, reg.accessToken)).json(),
+      ).toEqual({
+        found: true,
+        tokenCount: 12,
+      });
+      aiCalls.length = 0;
+      await chat(reg.accessToken, { company: "Crystal Water" });
+      const system = aiCalls[0]?.system as { text: string; cache_control?: unknown }[];
+      expect(system.map((block) => block.text.slice(0, 20))).toEqual([
+        SYSTEM_PROMPT.slice(0, 20),
+        "Structure of this co",
+        "The accountant is wo",
+      ]);
+      expect(system[1]?.text).toContain("РеализацияТоваровУслуг");
+      expect(system[1]?.cache_control).toEqual({ type: "ephemeral" });
+      // Another company has none.
+      aiCalls.length = 0;
+      await chat(reg.accessToken, { company: "Other" });
+      expect((aiCalls[0]?.system as unknown[]).length).toBe(2);
+    });
+
+    it("answers a repeated question from the cache, until the data version or the time changes", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const key = { company: "Crystal Water", question: "Какой остаток на 5110?", dataVersion: "v1" };
+      expect((await call("POST", "/v1/ai/answers/lookup", reg.accessToken, key)).json()).toEqual({
+        hit: false,
+      });
+      expect(
+        (await call("POST", "/v1/ai/answers", reg.accessToken, { ...key, answer: "125 mln" })).statusCode,
+      ).toBe(204);
+      // The same question, written differently.
+      const again = await call("POST", "/v1/ai/answers/lookup", reg.accessToken, {
+        ...key,
+        question: "  какой остаток на 5110??  ",
+      });
+      expect(again.json()).toMatchObject({ hit: true, answer: "125 mln" });
+      // The books changed (new data version), another company, another question: no hit.
+      for (const other of [{ dataVersion: "v2" }, { company: "Other" }, { question: "Остаток 6010?" }]) {
+        expect(
+          (await call("POST", "/v1/ai/answers/lookup", reg.accessToken, { ...key, ...other })).json().hit,
+        ).toBe(false);
+      }
+      // Expired answers are not served.
+      await db.sql`update ai_answer_cache set expires_at = now() - interval '1 minute'`;
+      expect((await call("POST", "/v1/ai/answers/lookup", reg.accessToken, key)).json().hit).toBe(false);
+      // The cache can be turned off.
+      await setPolicy({ cacheTtlMinutes: 0 });
+      await call("POST", "/v1/ai/answers", reg.accessToken, { ...key, answer: "x" });
+      expect((await call("POST", "/v1/ai/answers/lookup", reg.accessToken, key)).json().hit).toBe(false);
+    });
+
+    it("manages query templates in the dashboard and gives the app the enabled ones", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const template = {
+        code: "cash_balance",
+        title: "Cash balance",
+        intents: ["остаток в кассе", "kassadagi qoldiq"],
+        query: "ВЫБРАТЬ 1 КАК Сумма",
+        params: [{ name: "Дата", type: "date" }],
+        columns: [{ label: "Сумма", format: "money" }],
+        totals: false,
+      };
+      const token = await adminToken();
+      const saved = await call("PUT", "/v1/admin/query-templates", token, template);
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json()).toMatchObject({ code: "cash_balance", version: 1, enabled: true });
+      expect(
+        (await call("PUT", "/v1/admin/query-templates", token, { ...template, title: "Cash" })).json()
+          .version,
+      ).toBe(2);
+      await call("PUT", "/v1/admin/query-templates", token, { ...template, code: "off", enabled: false });
+      expect((await call("GET", "/v1/admin/query-templates", token)).json()).toHaveLength(2);
+      const forApp = (await call("GET", "/v1/ai/templates", reg.accessToken)).json();
+      expect(forApp.map((t: { code: string }) => t.code)).toEqual(["cash_balance"]);
+      expect(forApp[0]).toMatchObject({ title: "Cash", columns: [{ label: "Сумма", format: "money" }] });
+      // A template must be a read: its columns and name are checked.
+      expect(
+        (await call("PUT", "/v1/admin/query-templates", token, { ...template, code: "Bad Code" })).statusCode,
+      ).toBe(400);
+      // Turned off in the policy, the app gets none.
+      await setPolicy({ templates: false });
+      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+      await call("DELETE", `/v1/admin/query-templates/${saved.json().id}`, token);
+      expect((await call("GET", "/v1/admin/query-templates", token)).json()).toHaveLength(1);
+    });
+
+    it("reports the cost per account, user, feature and route, the five metrics and the dearest questions", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await db.sql`TRUNCATE ai_usage`;
+      await chat(reg.accessToken, { company: "Crystal Water" });
+      await chat(reg.accessToken, { company: "Crystal Water", tools: AUDIT_TOOLS });
+      await call("POST", "/v1/ai/free", reg.accessToken, {
+        route: "cache",
+        company: "Crystal Water",
+        question: "5110?",
+      });
+      await call("POST", "/v1/ai/free", reg.accessToken, {
+        route: "template",
+        company: "Crystal Water",
+        question: "cash?",
+      });
+
+      const report = (await call("GET", "/v1/admin/ai-cost?days=7", await adminToken())).json();
+      expect(report.metrics).toMatchObject({ questions: 3, freeAnswerShare: 0.6667 });
+      expect(report.metrics.cacheHitRate).toBeCloseTo(3000 / 4000, 3);
+      expect(report.metrics.avgToolCallsPerQuestion).toBe(0);
+      expect(report.byRoute.map((r: { route: string }) => r.route).sort()).toEqual([
+        "cache",
+        "model",
+        "template",
+      ]);
+      expect(report.byFeature.map((r: { feature: string }) => r.feature).sort()).toEqual(["audit", "chat"]);
+      expect(report.byAccount[0]).toMatchObject({ accountName: "Buxgalter MChJ", requests: 2 });
+      expect(report.byUser[0]).toMatchObject({ email: "owner@example.com" });
+      expect(report.byDay).toHaveLength(7);
+      expect(report.topQuestions[0]).toMatchObject({ question: "5110?", steps: 1 });
+      expect(report.alert).toMatchObject({ thresholdUsd: 20, exceeded: false });
+      // Today's cost over the alert level raises it.
+      await setPolicy({ dailyAlertUsd: 0.001 });
+      expect((await call("GET", "/v1/admin/ai-cost", await adminToken())).json().alert).toMatchObject({
+        exceeded: true,
+      });
+    });
   });
 
   it("validates input", async () => {

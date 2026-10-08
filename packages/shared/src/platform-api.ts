@@ -127,8 +127,14 @@ export const RunQueryInput = z.object({
   params: QueryParams.optional().describe(
     'Values of &Name parameters in the query; "YYYY-MM-DD" strings become dates',
   ),
-  /** Rows to return, at most 1000 (default 200). */
-  limit: z.number().int().min(1).max(1000).optional().describe("Rows to return, default 200"),
+  /** Rows to return; the app applies the policy's default (50) and cap (500). */
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional()
+    .describe("Rows to return: 50 by default, at most 500. Prefer aggregating in the query."),
   refs: z
     .boolean()
     .optional()

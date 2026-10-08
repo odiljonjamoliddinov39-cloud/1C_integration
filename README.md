@@ -50,6 +50,38 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
 - The API key reaches the server from the `ANTHROPIC_API_KEY` repository secret on deploy
   ([`docs/deploy.md`](docs/deploy.md)).
 
+### AI cost engine
+
+Keeps AI spend per account predictable without making answers worse. A question stops at the first
+step that can answer it; every limit is a row in the `ai_policies` table, edited in the admin
+dashboard (**AI limits**), enforced on the server, only read by the app.
+
+1. **Budget guard** (`api/src/ai/budget.ts`): per-account monthly and per-user daily USD caps
+   (`ai_budgets`, `ai_usage.cost_usd`), a warning at 80 %, a clear stop at 100 %; an owner can set this
+   month's cap for one customer on its page (an add-on). `0` is no cap.
+2. **Query templates** (`ai/templates.ts` on the PC, `query_templates` table, admin **Templates**): a
+   question the rules recognize is answered by a fixed 1C query, 0 tokens, labelled with an
+   "Ask AI anyway" button. The matcher is strict: a longer or conditional question goes to the model.
+   No template ships enabled: take them from the dearest-questions list on **AI cost**.
+3. **Answer cache** (`api/src/ai/cache.ts`, `ai_answer_cache`): a read-only first question of a chat,
+   same company, same question, same data version, within `cacheTtlMinutes`. The data version is the
+   day, this run of the app and the writes the app made; another user's changes in 1C are covered
+   only by the expiry.
+4. **Router** (`api/src/ai/router.ts`): simple lookups may use `simpleModel` (off until a test set
+   passes); a failed tool step, a declined card or an audit check always uses the default model.
+5. **Context** (`api/src/ai/proxy.ts`): prompt order tools → instructions → company structure digest
+   (`metadata_digests`, built by `ai/digest.ts` once per configuration version) → day's context →
+   chat; cached prefix; clearing of old 1C results at 40K and summarizing (numbers, dates and
+   documents kept word for word) above `compactionThreshold`.
+6. **Loop guard** (`api/src/ai/loop.ts`): at most `maxToolCalls` 1C reads per question, counted from the
+   chat; then the model gets no tools and answers with what it found. Row limits (`defaultRows`,
+   `maxRows`) and the compact table format (`ai/toon.ts`, `ai/trim.ts`) apply on the PC.
+7. **Logger** (`api/src/ai/usage.ts`): one `ai_usage` row per model call and per free answer
+   (feature, route, tool calls, question), shown on **AI cost** with the five engine metrics.
+
+Not built: the batch lane (nothing yet needs a nightly job) and reading the 1C event log for the data
+version (needs a PlatformAPI function).
+
 ## Prototype deployment
 
 The server (control system) and the Windows installer: [`docs/deploy.md`](docs/deploy.md). Both are

@@ -8,16 +8,22 @@ import { AdminsPage } from "@/pages/Admins";
 import { AiModelPage } from "@/pages/AiModel";
 import { AuditPage } from "@/pages/Audit";
 import { CustomerPage } from "@/pages/Customer";
+import { CostPage } from "@/pages/Cost";
 import { CustomersPage } from "@/pages/Customers";
 import { LoginPage } from "@/pages/Login";
 import { OverviewPage } from "@/pages/Overview";
+import { PoliciesPage } from "@/pages/Policies";
+import { TemplatesPage } from "@/pages/Templates";
 import { UsagePage } from "@/pages/Usage";
 
 const NAV = [
   { path: "", label: "Overview" },
   { path: "customers", label: "Customers" },
   { path: "usage", label: "AI usage" },
+  { path: "cost", label: "AI cost" },
   { path: "ai", label: "AI model" },
+  { path: "limits", label: "AI limits" },
+  { path: "templates", label: "Templates" },
   { path: "audit", label: "Audit log" },
 ] as const;
 
@@ -74,8 +80,14 @@ function Shell() {
           <CustomersPage />
         ) : section === "usage" ? (
           <UsagePage />
+        ) : section === "cost" ? (
+          <CostPage />
         ) : section === "ai" ? (
           <AiModelPage me={me.data} />
+        ) : section === "limits" ? (
+          <PoliciesPage me={me.data} />
+        ) : section === "templates" ? (
+          <TemplatesPage me={me.data} />
         ) : section === "audit" ? (
           <AuditPage />
         ) : section === "admins" && me.data.role === "owner" ? (

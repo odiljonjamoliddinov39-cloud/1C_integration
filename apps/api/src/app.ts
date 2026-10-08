@@ -12,8 +12,16 @@ import {
   ExtendInput,
   RechargeInput,
   AccountAiInput,
+  AccountBudgetInput,
+  AiPolicySaveInput,
   AiSettingsInput,
   AiChatInput,
+  AnswerKey,
+  AnswerStoreInput,
+  DigestInput,
+  DigestKey,
+  FreeAnswerInput,
+  QueryTemplateInput,
   type AiEvent,
   LicenseCheckInput,
   LoginInput,
@@ -26,7 +34,12 @@ import { ZodError, z } from "zod";
 
 import { type AiModel, claudeModel } from "./ai/model.js";
 import { type AdminIdentity, AdminService } from "./admin/service.js";
+import { lookupAnswer, storeAnswer } from "./ai/cache.js";
+import { findDigest, saveDigest } from "./ai/digest.js";
+import { policyFor } from "./ai/policy.js";
 import { AiProxy, assertInlineFiles } from "./ai/proxy.js";
+import { listTemplates } from "./ai/templates.js";
+import { logFreeAnswer } from "./ai/usage.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
@@ -160,7 +173,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       const who = await auth(req);
       const input = parse(AiChatInput, req.body);
       assertInlineFiles(input);
-      await ai.ensureAllowed(who.accountId);
+      const admission = await ai.ensureAllowed(who.accountId, who.userId);
 
       reply.hijack();
       reply.raw.writeHead(200, {
@@ -178,13 +191,47 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       // proxies and the app from taking the quiet connection for a dead one.
       const heartbeat = setInterval(() => send({ type: "ping" }), PING_MS);
       try {
-        await ai.turn(who, input, send, aborted.signal);
+        await ai.turn(who, input, send, aborted.signal, admission);
       } finally {
         clearInterval(heartbeat);
         reply.raw.end();
       }
     },
   );
+
+  // The cost engine's helpers for the app: the limits it runs under, the answers it can give
+  // without the model (templates, cache), the company's structure, and the count of free answers.
+  const policyOf = async (accountId: string) =>
+    policyFor(db, (await service.currentSubscription(accountId)).plan.id);
+  app.get("/v1/ai/policy", async (req) => policyOf((await auth(req)).accountId));
+  app.get("/v1/ai/templates", async (req) => {
+    const policy = await policyOf((await auth(req)).accountId);
+    return policy.templates ? listTemplates(db, true) : [];
+  });
+  app.post("/v1/ai/answers/lookup", async (req) => {
+    const { accountId } = await auth(req);
+    return lookupAnswer(db, await policyOf(accountId), accountId, parse(AnswerKey, req.body));
+  });
+  app.post("/v1/ai/answers", async (req, reply) => {
+    const { accountId } = await auth(req);
+    await storeAnswer(db, await policyOf(accountId), accountId, parse(AnswerStoreInput, req.body));
+    return reply.status(204).send();
+  });
+  app.post("/v1/ai/free", async (req, reply) => {
+    const who = await auth(req);
+    await logFreeAnswer(db, who, parse(FreeAnswerInput, req.body));
+    return reply.status(204).send();
+  });
+  app.get("/v1/ai/digest", async (req) => {
+    const { accountId } = await auth(req);
+    const row = await findDigest(db, accountId, parse(DigestKey, req.query));
+    return { found: row !== null, tokenCount: row?.tokenCount ?? 0 };
+  });
+  app.put("/v1/ai/digest", { bodyLimit: 1024 * 1024 }, async (req, reply) => {
+    const { accountId } = await auth(req);
+    await saveDigest(db, accountId, parse(DigestInput, req.body));
+    return reply.status(204).send();
+  });
 
   // --- admin dashboard (TD §8) ---------------------------------------------------------------
   const idParam = z.object({ id: z.uuid() });
@@ -222,6 +269,36 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   app.post("/v1/admin/ai-settings", async (req) =>
     admin.setAiSettings(await adminAuth(req), parse(AiSettingsInput, req.body)),
   );
+  app.post("/v1/admin/accounts/:id/ai-budget", async (req) =>
+    admin.setAccountBudget(
+      await adminAuth(req),
+      parse(idParam, req.params).id,
+      parse(AccountBudgetInput, req.body),
+    ),
+  );
+  app.get("/v1/admin/ai-policies", async (req) => {
+    await adminAuth(req);
+    return admin.aiPolicies();
+  });
+  app.put("/v1/admin/ai-policies", async (req) =>
+    admin.saveAiPolicy(await adminAuth(req), parse(AiPolicySaveInput, req.body)),
+  );
+  app.get("/v1/admin/ai-cost", async (req) => {
+    await adminAuth(req);
+    const { days } = parse(z.object({ days: z.coerce.number().int().min(1).max(90).default(7) }), req.query);
+    return admin.costReport(days);
+  });
+  app.get("/v1/admin/query-templates", async (req) => {
+    await adminAuth(req);
+    return admin.queryTemplates();
+  });
+  app.put("/v1/admin/query-templates", async (req) =>
+    admin.saveQueryTemplate(await adminAuth(req), parse(QueryTemplateInput, req.body)),
+  );
+  app.delete("/v1/admin/query-templates/:id", async (req, reply) => {
+    await admin.deleteQueryTemplate(await adminAuth(req), parse(idParam, req.params).id);
+    return reply.status(204).send();
+  });
   app.post("/v1/admin/accounts/:id/block", async (req) =>
     admin.setBlocked(await adminAuth(req), parse(idParam, req.params).id, true),
   );

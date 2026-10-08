@@ -6,6 +6,12 @@
 import { hash, verify } from "@node-rs/argon2";
 import type {
   AccountAiInput,
+  AccountBudgetInput,
+  AiPoliciesView,
+  AiPolicySaveInput,
+  CostReport,
+  QueryTemplateInput,
+  QueryTemplateView,
   AccountDetail,
   AccountRow,
   AccountsQuery,
@@ -23,7 +29,7 @@ import type {
   UsageDay,
   UsageRow,
 } from "@platform/shared";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -31,6 +37,7 @@ import {
   accounts,
   adminAudit,
   admins,
+  aiBudgets,
   aiGrants,
   appSettings,
   devices,
@@ -39,7 +46,11 @@ import {
 } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Tokens } from "../lib/tokens.js";
+import { periodOf, setMonthLimit } from "../ai/budget.js";
+import { policiesView, policyFor, savePolicy } from "../ai/policy.js";
 import { aiLimits } from "../ai/quota.js";
+import { deleteTemplate, listTemplates, saveTemplate } from "../ai/templates.js";
+import { costReport } from "./cost.js";
 import { AI_SETTINGS_KEY, aiChoiceFor, globalAiChoice, savedAiSettings } from "../ai/settings.js";
 import { effectiveStatus } from "../service.js";
 
@@ -145,8 +156,9 @@ export class AdminService {
       starts_at: Date;
       ends_at: Date;
       ai_token_quota: number;
+      plan_id: string;
     }>(sql`
-      select s.id, p.code as plan, s.status, s.starts_at, s.ends_at, p.ai_token_quota
+      select s.id, p.code as plan, s.status, s.starts_at, s.ends_at, p.ai_token_quota, p.id as plan_id
       from subscriptions s join plans p on p.id = s.plan_id
       where s.account_id = ${id} order by s.ends_at desc`);
     const deviceRows = await this.db.execute<{
@@ -174,6 +186,12 @@ export class AdminService {
       { startsAt: new Date(current?.starts_at ?? 0), planQuota: Number(current?.ai_token_quota ?? 0) },
       this.config.AI_DAILY_TOKENS,
     );
+
+    const policy = await policyFor(this.db, current?.plan_id ?? null);
+    const [budget] = await this.db
+      .select()
+      .from(aiBudgets)
+      .where(and(eq(aiBudgets.accountId, id), eq(aiBudgets.period, periodOf())));
 
     return {
       account,
@@ -209,6 +227,12 @@ export class AdminService {
       aiGranted: limits.granted,
       aiDailyLimit: limits.dailyLimit,
       aiUsedToday: limits.usedToday,
+      budget: {
+        period: periodOf(),
+        usedUsd: round(budget?.usedUsd ?? 0),
+        limitUsd: budget?.limitUsd ?? policy.monthlyLimitUsd,
+        custom: budget?.limitUsd != null,
+      },
       ai: {
         model: own?.aiModel ?? null,
         effort: own?.aiEffort ?? null,
@@ -308,6 +332,64 @@ export class AdminService {
     if (!row) throw new HttpError(404, "NOT_FOUND", "No such account");
     await this.audit(admin.id, "ai.account_settings", `account:${accountId}`, { ...input });
     return this.account(accountId);
+  }
+
+  // --- cost engine ----------------------------------------------------------------------------
+
+  aiPolicies(): Promise<AiPoliciesView> {
+    return policiesView(this.db);
+  }
+
+  /** Saves the default policy (planId null) or a plan's own; policy null removes it. Owner only. */
+  async saveAiPolicy(admin: AdminIdentity, input: AiPolicySaveInput): Promise<AiPoliciesView> {
+    requireOwner(admin);
+    await savePolicy(this.db, input.planId, input.policy, admin.id);
+    await this.audit(admin.id, "ai.policy", `policy:${input.planId ?? "default"}`, {
+      policy: input.policy,
+    });
+    return policiesView(this.db);
+  }
+
+  costReport(days: number): Promise<CostReport> {
+    return costReport(this.db, days);
+  }
+
+  /** Sets this month's AI budget of an account (an add-on) and lifts its block. Owner only. */
+  async setAccountBudget(
+    admin: AdminIdentity,
+    accountId: string,
+    input: AccountBudgetInput,
+  ): Promise<AccountDetail> {
+    requireOwner(admin);
+    const account = await this.db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
+    if (!account) throw new HttpError(404, "NOT_FOUND", "No such account");
+    await setMonthLimit(this.db, accountId, input.limitUsd);
+    await this.audit(admin.id, "ai.budget", `account:${accountId}`, {
+      limitUsd: input.limitUsd,
+      reason: input.reason,
+    });
+    return this.account(accountId);
+  }
+
+  queryTemplates(): Promise<QueryTemplateView[]> {
+    return listTemplates(this.db, false);
+  }
+
+  async saveQueryTemplate(admin: AdminIdentity, input: QueryTemplateInput): Promise<QueryTemplateView> {
+    requireOwner(admin);
+    const saved = await saveTemplate(this.db, input, admin.id);
+    await this.audit(admin.id, "ai.template", `template:${saved.code}`, {
+      version: saved.version,
+      enabled: saved.enabled,
+    });
+    return saved;
+  }
+
+  async deleteQueryTemplate(admin: AdminIdentity, id: string): Promise<void> {
+    requireOwner(admin);
+    const code = await deleteTemplate(this.db, id);
+    if (!code) throw new HttpError(404, "NOT_FOUND", "No such template");
+    await this.audit(admin.id, "ai.template_deleted", `template:${code}`, {});
   }
 
   /** A blocked account cannot sign in, get licenses or use the assistant. Owner only. */

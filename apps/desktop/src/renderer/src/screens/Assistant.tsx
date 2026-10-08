@@ -634,6 +634,18 @@ function Chat({
     });
   }
 
+  /** The question again, to the model even though a template or a saved answer could answer it. */
+  function askAnyway(question: string) {
+    if (transcript.busy || !transcript.chatId) return;
+    onUserMessage(transcript.chatId, question, []);
+    void window.platform.assistant.send({
+      companyId: company.id,
+      chatId: transcript.chatId,
+      text: question,
+      skipFree: true,
+    });
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault();
     ask(text);
@@ -686,7 +698,19 @@ function Chat({
           </div>
         )}
         {transcript.entries.map((entry, i) => (
-          <EntryView key={i} entry={entry} companyId={company.id} chatId={transcript.chatId} />
+          <EntryView
+            key={i}
+            entry={entry}
+            companyId={company.id}
+            chatId={transcript.chatId}
+            onAskAnyway={
+              entry.kind === "route" &&
+              !transcript.busy &&
+              i === transcript.entries.findLastIndex((e) => e.kind === "route")
+                ? () => askAnyway(entry.question)
+                : undefined
+            }
+          />
         ))}
         {transcript.busy && <div className="text-xs text-muted-foreground">{t("assistant.thinking")}</div>}
         <div ref={bottom} />
@@ -817,7 +841,17 @@ function durationText(ms: number, t: (key: string) => string): string {
   return part(s, "s");
 }
 
-function EntryView({ entry, companyId, chatId }: { entry: Entry; companyId: string; chatId: string | null }) {
+function EntryView({
+  entry,
+  companyId,
+  chatId,
+  onAskAnyway,
+}: {
+  entry: Entry;
+  companyId: string;
+  chatId: string | null;
+  onAskAnyway?: (() => void) | undefined;
+}) {
   const { t } = useTranslation();
   switch (entry.kind) {
     case "user":
@@ -866,6 +900,29 @@ function EntryView({ entry, companyId, chatId }: { entry: Entry; companyId: stri
       return (
         <div className="text-xs text-muted-foreground">
           {t("assistant.elapsed", { time: durationText(entry.ms, t) })}
+        </div>
+      );
+    case "notice": {
+      const known = t(`assistant.notices.${entry.code}`);
+      return (
+        <div className="rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+          {known === `assistant.notices.${entry.code}` ? entry.message : known}
+        </div>
+      );
+    }
+    case "route":
+      return (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            {entry.route === "template"
+              ? t("assistant.route.template", { title: entry.title })
+              : t("assistant.route.cache", { age: durationText((entry.ageSeconds ?? 0) * 1000, t) })}
+          </span>
+          {onAskAnyway && (
+            <button className="underline hover:text-foreground" onClick={onAskAnyway}>
+              {t("assistant.route.askAnyway")}
+            </button>
+          )}
         </div>
       );
     case "proposal":

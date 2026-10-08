@@ -4,15 +4,21 @@
  */
 import type {
   AccountAiInput,
+  AccountBudgetInput,
   AccountDetail,
   AccountRow,
   AdminSession,
   AdminView,
+  AiPoliciesView,
+  AiPolicySaveInput,
   AiSettingsInput,
   AiSettingsView,
   AuditEntry,
+  CostReport,
   CreateAdminInput,
   Overview,
+  QueryTemplateInput,
+  QueryTemplateView,
   SubscriptionStatus,
   UsageRow,
 } from "@platform/shared";
@@ -53,7 +59,11 @@ export function onTokenChange(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {};
   if (token) headers.authorization = `Bearer ${token}`;
@@ -97,6 +107,15 @@ export const api = {
   setDeviceRevoked: (id: string, revoked: boolean) =>
     request<AccountDetail>("POST", `/devices/${id}/${revoked ? "revoke" : "restore"}`),
   usage: (days: number) => request<UsageRow[]>("GET", `/usage?days=${days}`),
+  aiCost: (days: number) => request<CostReport>("GET", `/ai-cost?days=${days}`),
+  aiPolicies: () => request<AiPoliciesView>("GET", "/ai-policies"),
+  saveAiPolicy: (input: AiPolicySaveInput) => request<AiPoliciesView>("PUT", "/ai-policies", input),
+  setAccountBudget: (id: string, input: AccountBudgetInput) =>
+    request<AccountDetail>("POST", `/accounts/${id}/ai-budget`, input),
+  queryTemplates: () => request<QueryTemplateView[]>("GET", "/query-templates"),
+  saveQueryTemplate: (input: QueryTemplateInput) =>
+    request<QueryTemplateView>("PUT", "/query-templates", input),
+  deleteQueryTemplate: (id: string) => request<null>("DELETE", `/query-templates/${id}`),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
   admins: () => request<AdminView[]>("GET", "/admins"),
   createAdmin: (input: CreateAdminInput) => request<AdminView>("POST", "/admins", input),

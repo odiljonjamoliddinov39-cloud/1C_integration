@@ -5,31 +5,45 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageParam, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { AI_PROPOSAL_TOOLS, type AiChatInput, type AiEvent, LEGACY_AI_TOOLS } from "@platform/shared";
+import {
+  AI_PROPOSAL_TOOLS,
+  type AiChatInput,
+  type AiEvent,
+  type AiPolicy,
+  LEGACY_AI_TOOLS,
+} from "@platform/shared";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
-import { aiUsage } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import { type Service, effectiveStatus } from "../service.js";
+import { type Admission, checkBudget } from "./budget.js";
+import { latestDigest } from "./digest.js";
+import { loopGuard, loopNote } from "./loop.js";
 import { type AiModel, usageOf } from "./model.js";
-import { SYSTEM_PROMPT, TOOLS, contextBlock } from "./prompt.js";
+import { policyFor } from "./policy.js";
+import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock } from "./prompt.js";
 import { aiLimits } from "./quota.js";
+import { routeModel, withoutThinking } from "./router.js";
 import { type ModelChoice, aiChoiceFor } from "./settings.js";
+import { isFirstStep, logUsage, questionOf } from "./usage.js";
 
-// The model's own maximum: a card for a whole bank statement is one long tool call, and a turn is
-// never cut short by us. (A turn that still reaches it is continued by the app.)
-const MAX_TOKENS = 128_000;
 /** A chat larger than this has its older 1C results cleared, keeping the latest few. */
 const CLEAR_FROM_TOKENS = 40_000;
 const KEEP_TOOL_USES = 6;
 /** Clearing rewrites the cached prompt from that point, so only when it saves a good amount. */
 const CLEAR_AT_LEAST_TOKENS = 10_000;
 /**
- * A chat larger than this is summarized by the API (the model's limit is 1M tokens): the older
- * part becomes a summary at the start of the answer, and later steps continue from it.
+ * A chat larger than policy.compactionThreshold is summarized by the API (the model's limit is 1M
+ * tokens): the older part becomes a summary at the start of the answer, and later steps continue
+ * from it. What an accountant cannot lose is kept word for word.
  */
-const COMPACT_FROM_TOKENS = 200_000;
+const COMPACT_INSTRUCTIONS =
+  "Summarize for an accounting assistant that will continue this work. Keep every number, amount, " +
+  "date, period, document reference (type, number, date), account code, counterparty and " +
+  "organization name exactly as written: never round, convert or paraphrase them. Keep what the " +
+  "user asked, what was proposed and what the user approved or declined, what was created in 1C " +
+  "(with its reference), and what is still open. Drop raw query output, tool chatter and reasoning.";
 const CLEARING_BETA = "context-management-2025-06-27";
 const COMPACTION_BETA = "compact-2026-01-12";
 
@@ -48,8 +62,11 @@ export class AiProxy {
     private readonly log: { error: (obj: unknown, msg?: string) => void },
   ) {}
 
-  /** Throws when this account may not use the AI now. */
-  async ensureAllowed(accountId: string): Promise<void> {
+  /**
+   * Throws when this account may not use the AI now; otherwise the policy it runs under and the
+   * warnings to show (the budget is close).
+   */
+  async ensureAllowed(accountId: string, userId: string): Promise<Admission> {
     if (!this.model)
       throw new HttpError(503, "AI_NOT_CONFIGURED", "The AI assistant is not set up on the server");
     if (await this.service.isBlocked(accountId))
@@ -59,7 +76,9 @@ export class AiProxy {
     if (status === "suspended" || status === "cancelled") {
       throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "Renew the subscription to use the assistant");
     }
-    if (this.config.PLAN_LIMITS === "off") return;
+    const policy = await policyFor(this.db, plan.id);
+    const admission = await checkBudget(this.db, policy, { accountId, userId });
+    if (this.config.PLAN_LIMITS === "off") return admission;
     const limits = await aiLimits(
       this.db,
       accountId,
@@ -76,6 +95,7 @@ export class AiProxy {
     if (limits.used >= limits.quota) {
       throw new HttpError(429, "AI_QUOTA_EXCEEDED", "The plan's assistant quota is used up");
     }
+    return admission;
   }
 
   /** One model turn, written to `send` as events. Never throws: failures become an error event. */
@@ -84,9 +104,12 @@ export class AiProxy {
     input: AiChatInput,
     send: (event: AiEvent) => void,
     signal: AbortSignal,
+    admission: Admission,
   ): Promise<void> {
     if (!this.model)
       return send({ type: "error", code: "AI_NOT_CONFIGURED", message: "No AI on the server" });
+    const { policy } = admission;
+    for (const warning of admission.warnings) send({ type: "warning", ...warning });
     // Only the tools this app version can run: an older app gets the read tools and is told to update.
     const offered = new Set<string>(input.tools ?? LEGACY_AI_TOOLS);
     const tools = TOOLS.filter((tool) => offered.has(tool.name));
@@ -97,26 +120,49 @@ export class AiProxy {
       model: this.config.AI_MODEL,
       effort: this.config.AI_EFFORT,
     }));
+    const routed = routeModel(choice, policy, input, audit);
+    const loop = loopGuard(policy, input.messages, audit);
+    const digest = await latestDigest(this.db, who.accountId, input.company).catch(() => null);
+    const today = new Date().toISOString().slice(0, 10);
     const params: BetaMessageStreamParams = {
-      model: choice.model,
-      max_tokens: MAX_TOKENS,
-      // On a policy decline, the API retries on a fallback model it picks by refusal category.
-      // "updates": thinking blocks carry the model's short progress notes, which the app shows.
-      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
-      fallbacks: "default",
-      thinking: { type: "adaptive", display: "updates" },
+      model: routed.model,
+      max_tokens: policy.maxOutputTokens,
+      // Prompt order, most stable first so the cache holds: tools, instructions, the company's
+      // structure (digest), today's context, then the chat.
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+        ...(digest
+          ? [
+              {
+                type: "text" as const,
+                text: digestBlock(digest.digest),
+                cache_control: { type: "ephemeral" as const },
+              },
+            ]
+          : []),
         {
           type: "text",
-          text: contextBlock(input.company, new Date().toISOString().slice(0, 10), canChange, audit),
+          text:
+            contextBlock(input.company, today, canChange, audit) +
+            (loop.capped ? `\n\n${loopNote(loop.calls)}` : ""),
         },
       ],
       tools,
       // The desktop keeps the conversation and sends it back unchanged, thinking blocks included.
-      messages: input.messages as BetaMessageParam[],
-      output_config: { effort: choice.effort },
+      messages: (routed.simple ? withoutThinking(input.messages) : input.messages) as BetaMessageParam[],
+      ...(loop.capped ? { tool_choice: { type: "none" as const } } : {}),
       cache_control: { type: "ephemeral" },
+      // The simple-task model takes neither effort nor adaptive thinking.
+      ...(routed.simple
+        ? { betas: [] }
+        : {
+            // On a policy decline, the API retries on a fallback model it picks by refusal category.
+            // "updates": thinking blocks carry the model's short progress notes, which the app shows.
+            betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
+            fallbacks: "default" as const,
+            thinking: { type: "adaptive" as const, display: "updates" as const },
+            ...(routed.effort ? { output_config: { effort: routed.effort } } : {}),
+          }),
     };
     const handlers = {
       onText: (text: string) => send({ type: "text", text }),
@@ -128,7 +174,11 @@ export class AiProxy {
       // runs again without it, and later turns do too.
       for (;;) {
         try {
-          message = await this.model.turn(this.withContextManagement(params), handlers, signal);
+          message = await this.model.turn(
+            this.withContextManagement(params, policy, routed.simple),
+            handlers,
+            signal,
+          );
           break;
         } catch (error) {
           const refused = error instanceof Anthropic.BadRequestError ? error.message : "";
@@ -155,9 +205,19 @@ export class AiProxy {
       content: message.content as unknown as Extract<AiEvent, { type: "message" }>["content"],
       stopReason: message.stop_reason,
     });
-    await this.record(who, usageOf(message)).catch((error: unknown) =>
-      this.log.error(error, "AI usage was not recorded"),
-    );
+    await logUsage(
+      this.db,
+      {
+        ...who,
+        company: input.company,
+        feature: audit ? "audit" : "chat",
+        route: "model",
+        toolCalls: message.content.filter((block) => block.type === "tool_use").length,
+        firstStep: isFirstStep(input.messages),
+        question: questionOf(input.messages),
+      },
+      usageOf(message),
+    ).catch((error: unknown) => this.log.error(error, "AI usage was not recorded"));
   }
 
   /**
@@ -166,7 +226,12 @@ export class AiProxy {
    * needs one; what was proposed and decided is kept), and past COMPACT_FROM_TOKENS it summarizes
    * the older part. The desktop sends the answer back unchanged, the summary included.
    */
-  private withContextManagement(base: BetaMessageStreamParams): BetaMessageStreamParams {
+  private withContextManagement(
+    base: BetaMessageStreamParams,
+    policy: AiPolicy,
+    simple: boolean,
+  ): BetaMessageStreamParams {
+    if (simple) return base;
     const edits: NonNullable<BetaMessageStreamParams["context_management"]>["edits"] = [];
     const betas = [...(base.betas ?? [])];
     if (this.clearing) {
@@ -180,14 +245,14 @@ export class AiProxy {
       betas.push(CLEARING_BETA);
     }
     if (this.compaction) {
-      edits.push({ type: "compact_20260112", trigger: { type: "input_tokens", value: COMPACT_FROM_TOKENS } });
+      edits.push({
+        type: "compact_20260112",
+        trigger: { type: "input_tokens", value: policy.compactionThreshold },
+        instructions: COMPACT_INSTRUCTIONS,
+      });
       betas.push(COMPACTION_BETA);
     }
     return edits.length > 0 ? { ...base, betas, context_management: { edits } } : base;
-  }
-
-  private async record(who: { accountId: string; userId: string }, usage: ReturnType<typeof usageOf>) {
-    await this.db.insert(aiUsage).values({ accountId: who.accountId, userId: who.userId, ...usage });
   }
 }
 

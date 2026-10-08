@@ -15,7 +15,10 @@ export type ChatEntry =
   /** How long the assistant worked on the task, not counting cards waiting for the user. */
   | { kind: "elapsed"; ms: number }
   /** An audit of the base: its checks and what they found. */
-  | { kind: "audit"; audit: AuditView };
+  | { kind: "audit"; audit: AuditView }
+  | { kind: "notice"; code: string; message: string }
+  /** The answer below came from a template or the cache, not the model (0 tokens). */
+  | { kind: "route"; route: "template" | "cache"; question: string; title?: string; ageSeconds?: number };
 
 type EntryEvent = AssistantEvent extends infer E ? (E extends unknown ? Omit<E, "companyId"> : never) : never;
 
@@ -55,6 +58,19 @@ export function applyEvent(entries: ChatEntry[], event: EntryEvent): ChatEntry[]
       const entry: ChatEntry = { kind: "audit", audit: event.audit };
       return at < 0 ? [...entries, entry] : entries.map((e, i) => (i === at ? entry : e));
     }
+    case "notice":
+      return [...entries, { kind: "notice", code: event.code, message: event.message }];
+    case "route":
+      return [
+        ...entries,
+        {
+          kind: "route",
+          route: event.route,
+          question: event.question,
+          ...(event.title === undefined ? {} : { title: event.title }),
+          ...(event.ageSeconds === undefined ? {} : { ageSeconds: event.ageSeconds }),
+        },
+      ];
     case "done":
       return entries;
   }

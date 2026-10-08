@@ -50,6 +50,13 @@
       "when": 1791279287453,
       "tag": "0006_ai_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791473853716,
+      "tag": "0007_cost_engine",
+      "breakpoints": true
     }
   ]
 }
