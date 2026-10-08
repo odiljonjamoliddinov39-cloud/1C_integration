@@ -36,7 +36,6 @@ import {
   type ObjectState,
   type ReadAttachmentInput,
   ReportFindingsInput,
-  type QueryResult,
   type RunQueryInput,
   isAiToolName,
   isProposalTool,
@@ -44,6 +43,7 @@ import {
 
 import { CostEngine } from "./ai/engine.js";
 import { classifyTask } from "./ai/classify.js";
+import { TraceBuilder } from "./ai/trace.js";
 import { clampQuery, shapeQueryResult } from "./ai/trim.js";
 import type {
   AssistantEvent,
@@ -154,10 +154,8 @@ interface Run {
   task: "lookup" | "work";
   /** Set once the user declined an answer: the rest of the question runs on the default model. */
   escalate: boolean;
-  /** What the model read in 1C for this question, to learn a template from a one-query answer. */
-  reads: number;
-  queries: { input: RunQueryInput; data: QueryResult }[];
-  wrote: boolean;
+  /** What was done for this question: the engine learns from it when it ends. */
+  trace: TraceBuilder;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -235,25 +233,30 @@ export class AssistantService {
       try {
         if (standalone && !skipFree) {
           const free = await this.engine.tryFree(companyId, company.name, connection, question, true);
-          if (free) return this.answerFree(chat, question, free, emit);
+          if (free?.route === "template" && free.action) {
+            // The template does the action too: a card from what its query returns, which the user confirms.
+            const done = await this.runAction(chat, question, free, emit, abort.signal);
+            if (done) return done;
+          } else if (free) {
+            return this.answerFree(chat, question, free, emit);
+          }
         }
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
           escalate: false,
-          reads: 0,
-          queries: [],
-          wrote: false,
+          trace: new TraceBuilder(),
         };
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
-        if (result.ok && standalone) {
-          this.rememberAnswer(chat, company.name, question);
-          // Answered by one successful query and nothing else: a candidate for a template.
-          const [only] = run.queries;
-          if (only && run.reads === 1 && !run.wrote) {
-            void this.engine.learn(company.name, question, only.input, only.data);
-          }
-        }
+        if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
+        // Every finished question teaches the engine: what was done, how it ended, no data.
+        void this.engine.sendTrace(
+          run.trace.build(
+            company.name,
+            question,
+            result.ok ? { ok: true } : { ok: false, code: result.code },
+          ),
+        );
         return result;
       } finally {
         // Built after the answer, so the first question is not held up by it.
@@ -279,6 +282,60 @@ export class AssistantService {
     });
     emit({ type: "text", text: free.text });
     chat.messages.push({ role: "assistant", content: [{ type: "text", text: free.text }] });
+    emit({ type: "done" });
+    return { ok: true, data: null };
+  }
+
+  /**
+   * A learned action template: its query's rows become a card (issued invoices for those sales) that
+   * the user confirms, like any card. Null when nothing was shown and the model should take over.
+   */
+  private async runAction(
+    chat: StoredChat,
+    question: string,
+    free: Extract<NonNullable<Awaited<ReturnType<CostEngine["tryFree"]>>>, { route: "template" }>,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<Result<null> | null> {
+    const action = free.action;
+    if (!action) return null;
+    // Nothing to prepare: the (empty) result is the answer.
+    if (action.sales.length === 0) return this.answerFree(chat, question, free, emit);
+    let shown = false;
+    const watch: Emit = (event) => {
+      if (event.type === "confirm" && !shown) {
+        shown = true;
+        emit({
+          type: "route",
+          route: "template",
+          question,
+          title: free.title,
+          ...(free.learned ? { learnedCode: free.code } : {}),
+        });
+      }
+      emit(event);
+    };
+    const result = await this.propose(
+      chat,
+      action.tool,
+      { title: free.title, sales: action.sales.map((ref) => ({ ref })) },
+      watch,
+      signal,
+    );
+    // A card that could not be prepared (read-only license, 1C refused it) was never shown: the model decides.
+    if (!shown) return null;
+    let text = `**${free.title}**\n\n—`;
+    if (result.ok) {
+      const data = result.data as { status?: string; applied?: unknown[]; failed?: unknown[] };
+      if (data.status === "done") {
+        const failed = data.failed?.length ?? 0;
+        text = `**${free.title}**\n\n✓ ${data.applied?.length ?? 0}${failed > 0 ? ` · ✗ ${failed}` : ""}`;
+      }
+    } else {
+      text = `**${free.title}**\n\n✗ ${result.message}`;
+    }
+    emit({ type: "text", text });
+    chat.messages.push({ role: "assistant", content: [{ type: "text", text }] });
     emit({ type: "done" });
     return { ok: true, data: null };
   }
@@ -397,11 +454,11 @@ export class AssistantService {
           : await this.runTool(chat, use, emit, signal, run);
         // A card the user declined: the rest of the question runs on the default model.
         if (isDeclined(result)) run.escalate = true;
-        if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) run.wrote = true;
-        else {
-          run.reads += 1;
-          if (use.name === "run_query" && result.ok) {
-            run.queries.push({ input: use.input as RunQueryInput, data: result.data as QueryResult });
+        if (!signal.aborted) {
+          if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) {
+            run.trace.propose(use.name, use.input, result);
+          } else {
+            run.trace.read(use.name, use.input, result);
           }
         }
         results.push(toToolResult(use.id, result, shaped(use.name, result, run.policy)));
@@ -498,9 +555,7 @@ export class AssistantService {
         policy,
         task: "work",
         escalate: false,
-        reads: 0,
-        queries: [],
-        wrote: false,
+        trace: new TraceBuilder(),
       });
     });
   }

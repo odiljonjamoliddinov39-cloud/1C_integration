@@ -111,6 +111,7 @@ const template = (over: Partial<QueryTemplateView>): QueryTemplateView => ({
   accountName: null,
   hits: 0,
   rejected: 0,
+  action: null,
   ...over,
 });
 

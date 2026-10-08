@@ -1351,6 +1351,7 @@ describe("assistant", () => {
       accountName: null,
       hits: 0,
       rejected: 0,
+      action: null,
     };
     /** The server's cost engine endpoints, with what each test needs different. */
     const server =
@@ -1366,7 +1367,7 @@ describe("assistant", () => {
         if (url === "/v1/ai/answers/lookup")
           return json(over.cached?.(body as { question: string; dataVersion: string }) ?? { hit: false });
         if (url.startsWith("/v1/ai/digest?")) return json({ found: over.digestFound ?? true });
-        if (url === "/v1/ai/templates/learn") return json({ created: false });
+        if (url === "/v1/ai/traces") return none();
         if (url === "/v1/ai/templates/reject") return none();
         if (url === "/v1/ai/answers" || url === "/v1/ai/free" || url === "/v1/ai/digest") return none();
         return null;
@@ -1701,30 +1702,94 @@ describe("assistant", () => {
       ],
       text("Qoldiq: 125 mln"),
     ];
-    const sightings = (t: ReturnType<typeof setup>) =>
-      t.proxy.calls
-        .filter((c) => c.url === "/v1/ai/templates/learn")
-        .map((c) => c.body as { phrase: string });
+    const traces = (t: ReturnType<typeof setup>) =>
+      t.proxy.calls.filter((c) => c.url === "/v1/ai/traces").map((c) => c.body as Record<string, unknown>);
+    const SALES_QUERY = "ВЫБРАТЬ Реализация ИЗ Документ.РеализацияТоваровУслуг ГДЕ ПродажиБезСчетаФактуры";
+    const withSalesQuery = (t: ReturnType<typeof setup>) =>
+      t.base.queryAnswers.unshift({
+        match: /ПродажиБезСчетаФактуры/,
+        answer: () => ({
+          columns: ["Реализация"],
+          rows: t.base.sales.map((sale) => [
+            { type: "Документ.РеализацияТоваровУслуг", ref: sale.ref, name: sale.number },
+          ]),
+          truncated: false,
+        }),
+      });
+    /** Answers the card the moment it appears. */
+    const decideCard = async (t: ReturnType<typeof setup>, approve: boolean) => {
+      await vi.waitFor(() => expect(t.events.some((e) => e.type === "confirm")).toBe(true));
+      const card = t.events.find((e) => e.type === "confirm");
+      if (card?.type !== "confirm") throw new Error("no card");
+      t.assistant.decide(card.companyId, card.id, approve);
+    };
+    const invoiceTurns = (base: () => FakePlatform) => [
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            { type: "tool_use", id: "q1", name: "run_query", input: { query: SALES_QUERY, refs: true } },
+          ],
+        },
+      ],
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "p1",
+              name: "propose_invoices_issued",
+              input: { title: "Счета-фактуры", sales: base().sales.map((s) => ({ ref: s.ref })) },
+            },
+          ],
+        },
+      ],
+      text("Tayyor"),
+    ];
 
-    it("tells the server when the model answered a question with one query, so it can learn a template", async () => {
-      const t = setup(oneQuery(), "active", server({}));
+    it("sends a trace of every finished question: the steps and how it ended, no data", async () => {
+      const t = setup([...oneQuery(), text("Salom!")], "active", server({}));
       await ask(t, "Какой остаток в кассе сегодня?");
-      await vi.waitFor(() => expect(sightings(t)).toHaveLength(1));
-      expect(t.proxy.calls.find((c) => c.url === "/v1/ai/templates/learn")?.body).toEqual({
+      await t.assistant.send({ companyId: t.company.id, text: "Привет" });
+      await vi.waitFor(() => expect(traces(t)).toHaveLength(2));
+      const [first, second] = traces(t);
+      expect(first).toEqual({
         company: t.company.name,
         question: "Какой остаток в кассе сегодня?",
-        phrase: "остаток кассе",
-        query: "ВЫБРАТЬ Счет, СальдоДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
-        params: [{ name: "Дата", type: "date" }],
-        columns: [
-          { label: "Счет", format: "text" },
-          { label: "СальдоДт", format: "number" },
-          { label: "СальдоКт", format: "number" },
+        outcome: "answered",
+        steps: [
+          {
+            tool: "run_query",
+            ok: true,
+            query: "ВЫБРАТЬ Счет, СальдоДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
+            params: { Дата: new Date().toISOString().slice(0, 10) },
+            columns: ["Счет", "СальдоДт", "СальдоКт"],
+            rowCount: 4,
+            truncated: false,
+          },
         ],
+        // The rules found it could be a template: the question's words, the date as a parameter, the columns.
+        learnable: {
+          step: 0,
+          phrase: "остаток кассе",
+          params: [{ name: "Дата", type: "date" }],
+          columns: [
+            { label: "Счет", format: "text" },
+            { label: "СальдоДт", format: "number" },
+            { label: "СальдоКт", format: "number" },
+          ],
+          action: null,
+        },
       });
+      // A follow-up that read nothing is a trace too: every prompt teaches the engine.
+      expect(second).toMatchObject({ question: "Привет", outcome: "answered", steps: [], learnable: null });
+      expect(JSON.stringify(traces(t))).not.toContain("125000000");
     });
 
-    it("learns nothing from an answer with several reads, a card, a follow-up or specifics in the question", async () => {
+    it("finds nothing to learn in an answer with several reads, specifics in the question, or a declined card", async () => {
       const two = setup(
         [
           () => [
@@ -1750,13 +1815,121 @@ describe("assistant", () => {
       await ask(two, "Какой остаток в кассе сегодня?");
       const numbered = setup(oneQuery(), "active", server({}));
       await ask(numbered, "Остаток по счету 5010");
-      const followUp = setup([text("Birinchi"), ...oneQuery()], "active", server({}));
-      await ask(followUp, "Salom");
-      await followUp.assistant.send({ companyId: followUp.company.id, text: "Какой остаток в кассе?" });
-      await new Promise((r) => setTimeout(r, 30));
-      expect(sightings(two)).toHaveLength(0);
-      expect(sightings(numbered)).toHaveLength(0);
-      expect(sightings(followUp)).toHaveLength(0);
+      const declined: ReturnType<typeof setup> = setup(
+        invoiceTurns(() => declined.base),
+        "active",
+        server({}),
+      );
+      withSalesQuery(declined);
+      declined.store.setAiEnabled(declined.company.id, true);
+      const sending = declined.assistant.send({
+        companyId: declined.company.id,
+        text: "Выпиши счета фактуры по продажам",
+      });
+      await decideCard(declined, false);
+      await sending;
+      await vi.waitFor(() => expect(traces(declined)).toHaveLength(1));
+      for (const t of [two, numbered, declined]) await vi.waitFor(() => expect(traces(t)).toHaveLength(1));
+      expect(traces(two)[0]).toMatchObject({ outcome: "answered", learnable: null });
+      expect(traces(numbered)[0]).toMatchObject({ outcome: "answered", learnable: null });
+      expect(traces(declined)[0]).toMatchObject({ outcome: "card_declined", learnable: null });
+    });
+
+    it("notes that a confirmed card's documents were exactly the query's rows, so an action can be learned", async () => {
+      const u: ReturnType<typeof setup> = setup(
+        invoiceTurns(() => u.base),
+        "active",
+        server({}),
+      );
+      withSalesQuery(u);
+      u.store.setAiEnabled(u.company.id, true);
+      const sending = u.assistant.send({ companyId: u.company.id, text: "Выпиши счета фактуры по продажам" });
+      await decideCard(u, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+      expect(u.base.issued).toHaveLength(1);
+      await vi.waitFor(() => expect(traces(u)).toHaveLength(1));
+      const [trace] = traces(u);
+      expect(trace).toMatchObject({
+        outcome: "card_confirmed",
+        steps: [
+          { tool: "run_query", refs: true, rowCount: 1 },
+          { tool: "propose_invoices_issued", status: "done", count: 1, fromQuery: { step: 0, column: 0 } },
+        ],
+        learnable: {
+          step: 0,
+          phrase: "выпиши счета фактуры продажам",
+          action: { tool: "propose_invoices_issued", refsColumn: 0 },
+        },
+      });
+    });
+
+    const actionTemplate: QueryTemplateView = {
+      ...balances,
+      code: "learned_inv",
+      title: "Счета-фактуры по продажам",
+      intents: ["выпиши счета фактуры продажам"],
+      query: SALES_QUERY,
+      params: [],
+      columns: [{ label: "Реализация", format: "text" }],
+      action: { tool: "propose_invoices_issued", refsColumn: 0 },
+      source: "learned",
+      company: "ООО «Тест»",
+    };
+
+    it("does the action of a learned template without the model: a card from the query's rows, which the user confirms", async () => {
+      const t = setup([], "active", server({ templates: [actionTemplate] }));
+      withSalesQuery(t);
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Выпиши счета-фактуры по продажам" });
+      await decideCard(t, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+      // The model was never asked; the invoice was made only after the confirmation.
+      expect(t.proxy.requests).toHaveLength(0);
+      expect(t.base.issued).toHaveLength(1);
+      expect(t.events.map((e) => e.type)).toEqual([
+        "tool",
+        "route",
+        "confirm",
+        "decided",
+        "text",
+        "done",
+        "elapsed",
+      ]);
+      expect(t.events[1]).toMatchObject({ route: "template", learnedCode: "learned_inv" });
+      expect(t.events[2]).toMatchObject({ proposal: { kind: "batch", title: "Счета-фактуры по продажам" } });
+      expect((t.events[4] as { text: string }).text).toContain("✓ 1");
+    });
+
+    it("writes nothing when the user declines a template's card", async () => {
+      const t = setup([], "active", server({ templates: [actionTemplate] }));
+      withSalesQuery(t);
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Выпиши счета-фактуры по продажам" });
+      await decideCard(t, false);
+      await sending;
+      expect(t.base.issued).toHaveLength(0);
+      expect(t.proxy.requests).toHaveLength(0);
+    });
+
+    it("says so when the template's query finds nothing to do, and leaves it to the model when it cannot prepare a card", async () => {
+      const none = setup([], "active", server({ templates: [actionTemplate] }));
+      none.base.queryAnswers.unshift({
+        match: /ПродажиБезСчетаФактуры/,
+        answer: () => ({ columns: ["Реализация"], rows: [], truncated: false }),
+      });
+      await ask(none, "Выпиши счета-фактуры по продажам");
+      expect(none.proxy.requests).toHaveLength(0);
+      expect(none.events.some((e) => e.type === "confirm")).toBe(false);
+      expect(none.events.find((e) => e.type === "text")).toMatchObject({
+        text: expect.stringContaining("Счета-фактуры по продажам"),
+      });
+
+      // A read-only license cannot write: no card, so the model takes the question.
+      const readOnly = setup([text("Model")], "read_only", server({ templates: [actionTemplate] }));
+      withSalesQuery(readOnly);
+      await ask(readOnly, "Выпиши счета-фактуры по продажам");
+      expect(readOnly.proxy.requests).toHaveLength(1);
+      expect(readOnly.events.some((e) => e.type === "route")).toBe(false);
     });
 
     it("answers from a learned template of this company only, and rejects it when asked anyway", async () => {

@@ -12,6 +12,7 @@ import {
   LicenseClaims,
 } from "@platform/shared";
 import { decodeJwt, importSPKI, jwtVerify } from "jose";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -19,7 +20,7 @@ import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { aiBudgets, aiGrants, aiUsage, subscriptions } from "./db/schema.js";
+import { aiBudgets, aiGrants, aiTraces, aiUsage, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -91,7 +92,7 @@ describe.skipIf(!available)("control system API", () => {
 
   beforeEach(async () => {
     await db.sql`TRUNCATE accounts, refresh_tokens CASCADE`;
-    await db.sql`TRUNCATE ai_policies, query_templates, template_candidates`;
+    await db.sql`TRUNCATE ai_policies, query_templates, template_groups`;
   });
 
   afterAll(async () => {
@@ -1121,92 +1122,356 @@ describe.skipIf(!available)("control system API", () => {
       expect((await call("GET", "/v1/admin/query-templates", token)).json()).toHaveLength(1);
     });
 
-    it("learns a template from a question the model answered with one query, after enough identical times", async () => {
-      const reg = (await post("/v1/auth/register", account)).json();
-      const other = (
-        await post("/v1/auth/register", { ...account, email: "second@example.com", accountName: "Boshqa" })
-      ).json();
-      const sighting = {
-        company: "Crystal Water",
-        question: "Какой остаток в кассе?",
-        phrase: "остаток кассе",
-        query: "ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
-        params: [{ name: "Дата", type: "date" }],
-        columns: [{ label: "Сумма", format: "number" }],
+    /** A model that answers the reasoner's questions from a script, and records what it was asked. */
+    const reasoning = () => {
+      const state = {
+        calls: [] as BetaMessageStreamParams[],
+        reply: (_brief: Record<string, unknown>): string => "{}",
       };
-      const learn = async (token: string, over: object = {}) =>
-        (await call("POST", "/v1/ai/templates/learn", token, { ...sighting, ...over })).json();
-      // The default is three sightings.
-      expect((await learn(reg.accessToken)).created).toBe(false);
-      expect((await learn(reg.accessToken, { phrase: "кассе остаток" })).created).toBe(false);
-      const candidates = (await call("GET", "/v1/admin/template-candidates", await adminToken())).json();
-      expect(candidates).toEqual([
-        expect.objectContaining({ hits: 2, accountName: "Buxgalter MChJ", phrase: "остаток кассе" }),
-      ]);
-      expect((await learn(reg.accessToken)).created).toBe(true);
-      // After that it only counts as a template, not as another candidate.
-      expect((await learn(reg.accessToken)).created).toBe(false);
-
-      const mine = (await call("GET", "/v1/ai/templates", reg.accessToken)).json();
-      expect(mine).toEqual([
-        expect.objectContaining({
-          source: "learned",
-          company: "Crystal Water",
-          intents: ["остаток кассе"],
-          query: sighting.query,
-          title: "Какой остаток в кассе?",
-        }),
-      ]);
-      // It belongs to this account's company only.
-      expect((await call("GET", "/v1/ai/templates", other.accessToken)).json()).toEqual([]);
-      const listed = (await call("GET", "/v1/admin/query-templates", await adminToken())).json();
-      expect(listed[0]).toMatchObject({ source: "learned", accountName: "Buxgalter MChJ", hits: 3 });
-
-      // "Ask AI anyway" turns it off, and it is not made again; another account cannot turn it off.
-      const code = mine[0].code;
-      expect((await call("POST", "/v1/ai/templates/reject", other.accessToken, { code })).statusCode).toBe(
-        204,
-      );
-      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toHaveLength(1);
-      expect((await call("POST", "/v1/ai/templates/reject", reg.accessToken, { code })).statusCode).toBe(204);
-      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
-      expect((await learn(reg.accessToken)).created).toBe(false);
-      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
-      expect((await call("GET", "/v1/admin/query-templates", await adminToken())).json()[0]).toMatchObject({
-        enabled: false,
-        rejected: 1,
-      });
+      const model = {
+        async turn(params: BetaMessageStreamParams) {
+          state.calls.push(structuredClone(params));
+          const brief = JSON.parse(String((params.messages[0] as { content: string }).content)) as Record<
+            string,
+            unknown
+          >;
+          return {
+            model: params.model,
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: state.reply(brief) }],
+            usage: {
+              input_tokens: 800,
+              output_tokens: 120,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+          } as unknown as BetaMessage;
+        },
+      };
+      return { state, model };
+    };
+    const QUERY = "ВЫБРАТЬ Счет, Сумма ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)";
+    const trace = (question: string, over: Record<string, unknown> = {}, action: unknown = null) => ({
+      company: "Crystal Water",
+      question,
+      outcome: "answered",
+      steps: [
+        {
+          tool: "run_query",
+          ok: true,
+          query: QUERY,
+          params: { Дата: "2026-10-08" },
+          columns: ["Счет", "Сумма"],
+          rowCount: 4,
+          truncated: false,
+        },
+      ],
+      learnable: {
+        step: 0,
+        phrase: "остаток кассе",
+        params: [{ name: "Дата", type: "date" }],
+        columns: [
+          { label: "Счет", format: "text" },
+          { label: "Сумма", format: "number" },
+        ],
+        action,
+      },
+      ...over,
+    });
+    const reasoningApp = async (model: { turn: typeof fakeModel.turn } | unknown) =>
+      // The engine also reasons by itself after a question; the tests run it by hand.
+      buildApp(db.db, config, { aiModel: model as typeof fakeModel, reasonDelayMs: 3_600_000 });
+    const callOn =
+      (target: Awaited<ReturnType<typeof buildApp>>) =>
+      (method: "GET" | "POST" | "PUT" | "DELETE", url: string, token?: string, payload?: unknown) =>
+        target.inject({
+          method,
+          url,
+          ...(payload === undefined ? {} : { payload: payload as object }),
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        });
+    const REUSABLE = JSON.stringify({
+      reusable: true,
+      reason: "Same balance question each time.",
+      title: "Остаток в кассе",
+      phrases: [
+        "остаток в кассе",
+        "сколько денег в кассе",
+        "kassadagi qoldiq",
+        "cash balance",
+        "остаток 5010",
+        "bitta",
+      ],
+      column_labels: ["Счёт", "Сумма, сум"],
     });
 
-    it("learns only what the policy allows, and counts a different query for the same question apart", async () => {
-      const reg = (await post("/v1/auth/register", account)).json();
-      const sighting = {
-        company: "X",
-        question: "Остаток в кассе",
-        phrase: "остаток кассе",
-        query: "ВЫБРАТЬ 1",
-        params: [],
-        columns: [{ label: "A", format: "text" }],
-      };
-      await setPolicy({ learnMinHits: 2 });
-      await call("POST", "/v1/ai/templates/learn", reg.accessToken, sighting);
-      // A different query is a different sighting: one each is not enough.
-      const second = await call("POST", "/v1/ai/templates/learn", reg.accessToken, {
-        ...sighting,
-        query: "ВЫБРАТЬ 2",
-      });
-      expect(second.json().created).toBe(false);
-      expect((await call("POST", "/v1/ai/templates/learn", reg.accessToken, sighting)).json().created).toBe(
-        true,
-      );
+    it("learns from the traces of every question: Claude groups them and writes the template, for that company only", async () => {
+      const { state, model } = reasoning();
+      state.reply = () => REUSABLE;
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const other = (
+          await post("/v1/auth/register", { ...account, email: "second@example.com", accountName: "Boshqa" })
+        ).json();
+        const token = await adminToken();
+        // Different words, one query: they are one group.
+        for (const question of [
+          "Какой остаток в кассе?",
+          "сколько денег в кассе",
+          "Kassadagi qoldiq qancha",
+        ]) {
+          expect((await c("POST", "/v1/ai/traces", reg.accessToken, trace(question))).statusCode).toBe(204);
+        }
+        // Questions that need no query, or ended badly, teach nothing.
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Привет", { learnable: null, steps: [] }));
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Остаток", { outcome: "failed" }));
 
-      await setPolicy({ learnTemplates: false, learnMinHits: 1 });
-      const off = await call("POST", "/v1/ai/templates/learn", reg.accessToken, {
-        ...sighting,
-        phrase: "долги покупателей",
-      });
-      expect(off.json().created).toBe(false);
-      expect((await call("GET", "/v1/admin/template-candidates", await adminToken())).json()).toHaveLength(2);
+        const groups = (await c("GET", "/v1/admin/template-groups", token)).json();
+        expect(groups).toEqual([]);
+        expect(state.calls).toHaveLength(0);
+        const run = await c("POST", "/v1/admin/engine/run", token);
+        expect(run.json()).toEqual({ decided: 1, made: 1 });
+
+        // Claude was shown the questions, the query and the columns, and nothing else.
+        const brief = JSON.parse(String((state.calls[0]!.messages[0] as { content: string }).content));
+        expect(brief).toMatchObject({ company: "Crystal Water", query: QUERY, parameters: ["Дата: date"] });
+        expect(brief.questions.map((q: { question: string }) => q.question).sort()).toEqual([
+          "Kassadagi qoldiq qancha",
+          "Какой остаток в кассе?",
+          "сколько денег в кассе",
+        ]);
+        expect(state.calls[0]!.model).toBe("claude-haiku-4-5");
+
+        const mine = (await c("GET", "/v1/ai/templates", reg.accessToken)).json();
+        expect(mine).toHaveLength(1);
+        expect(mine[0]).toMatchObject({
+          source: "learned",
+          company: "Crystal Water",
+          title: "Остаток в кассе",
+          query: QUERY,
+          action: null,
+          params: [{ name: "Дата", type: "date" }],
+          columns: [
+            { label: "Счёт", format: "text" },
+            { label: "Сумма, сум", format: "number" },
+          ],
+        });
+        // Claude's wordings (the ones with numbers or a single word left out; one-letter words
+        // dropped) and the rules' own phrase.
+        expect(mine[0].intents.sort()).toEqual(
+          ["cash balance", "kassadagi qoldiq", "остаток кассе", "сколько денег кассе"].sort(),
+        );
+        expect((await c("GET", "/v1/ai/templates", other.accessToken)).json()).toEqual([]);
+        expect((await c("GET", "/v1/admin/template-groups", token)).json()).toEqual([
+          expect.objectContaining({ status: "accepted", hits: 3, accountName: "Buxgalter MChJ" }),
+        ]);
+        // The engine's own cost is on the dashboard, as its own feature.
+        const [usage] = await db.db.select().from(aiUsage).where(eq(aiUsage.feature, "engine"));
+        expect(usage).toMatchObject({ model: "claude-haiku-4-5", inputTokens: 800, outputTokens: 120 });
+        // Decided once: asking again does not ask Claude again.
+        expect((await c("POST", "/v1/admin/engine/run", token)).json()).toEqual({ decided: 0, made: 0 });
+        expect(state.calls).toHaveLength(1);
+
+        // "Ask AI anyway" turns it off, and it is not made again.
+        const code = mine[0].code;
+        expect((await c("POST", "/v1/ai/templates/reject", other.accessToken, { code })).statusCode).toBe(
+          204,
+        );
+        expect((await c("GET", "/v1/ai/templates", reg.accessToken)).json()).toHaveLength(1);
+        expect((await c("POST", "/v1/ai/templates/reject", reg.accessToken, { code })).statusCode).toBe(204);
+        expect((await c("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Остаток в кассе"));
+        await c("POST", "/v1/admin/engine/run", token);
+        expect((await c("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+      } finally {
+        await engine.close();
+      }
+    });
+
+    it("waits for enough sightings, and does not learn when Claude says it is not reusable", async () => {
+      const { state, model } = reasoning();
+      state.reply = () =>
+        JSON.stringify({
+          reusable: false,
+          reason: "The questions ask for different counterparties.",
+          title: "",
+          phrases: [],
+        });
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Остаток в кассе"));
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Остаток в кассе сегодня"));
+        await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(0);
+        expect((await c("GET", "/v1/admin/template-groups", token)).json()).toEqual([
+          expect.objectContaining({ status: "pending", hits: 2 }),
+        ]);
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Остаток в кассе вчера"));
+        await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(1);
+        expect((await c("GET", "/v1/admin/template-groups", token)).json()).toEqual([
+          expect.objectContaining({
+            status: "rejected",
+            reason: "The questions ask for different counterparties.",
+          }),
+        ]);
+        expect((await c("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+      } finally {
+        await engine.close();
+      }
+    });
+
+    it("tries again after an unusable answer, up to three times, and ignores wordings the matcher cannot use", async () => {
+      const { state, model } = reasoning();
+      state.reply = () => "I think this is fine.";
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        for (const q of ["Остаток в кассе", "Остаток кассы", "Кассовый остаток"]) {
+          await c("POST", "/v1/ai/traces", reg.accessToken, trace(q));
+        }
+        for (let i = 0; i < 5; i++) await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(3);
+        expect((await c("GET", "/v1/admin/template-groups", token)).json()[0]).toMatchObject({
+          status: "pending",
+        });
+        // Only wordings with numbers or one word: nothing usable, so no template.
+        await db.sql`TRUNCATE ai_traces, template_groups`;
+        state.calls.length = 0;
+        state.reply = () =>
+          JSON.stringify({
+            reusable: true,
+            reason: "ok",
+            title: "Касса",
+            phrases: ["остаток 5010", "касса", "сумма 100"],
+          });
+        for (const q of ["Остаток в кассе", "Остаток кассы", "Кассовый остаток"]) {
+          await c(
+            "POST",
+            "/v1/ai/traces",
+            reg.accessToken,
+            trace(q, { learnable: { ...trace(q).learnable, phrase: "остаток кассе" } }),
+          );
+        }
+        await c("POST", "/v1/admin/engine/run", token);
+        const mine = (await c("GET", "/v1/ai/templates", reg.accessToken)).json();
+        // The rules' own phrase is the only one left to trigger it.
+        expect(mine[0].intents).toEqual(["остаток кассе"]);
+      } finally {
+        await engine.close();
+      }
+    });
+
+    it("makes an action template from confirmed cards whose documents were the query's rows, apart from the same query's answers", async () => {
+      const { state, model } = reasoning();
+      state.reply = () =>
+        JSON.stringify({
+          reusable: true,
+          reason: "ok",
+          title: "Счета-фактуры по реализациям",
+          phrases: ["выписать счета фактуры", "создай счета фактуры"],
+        });
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        const action = { tool: "propose_invoices_issued", refsColumn: 0 };
+        const card = (question: string) =>
+          trace(
+            question,
+            {
+              outcome: "card_confirmed",
+              steps: [
+                {
+                  tool: "run_query",
+                  ok: true,
+                  query: QUERY,
+                  refs: true,
+                  columns: ["Реализация"],
+                  rowCount: 78,
+                  truncated: false,
+                },
+                {
+                  tool: "propose_invoices_issued",
+                  ok: true,
+                  status: "done",
+                  count: 78,
+                  fromQuery: { step: 0, column: 0 },
+                },
+              ],
+            },
+            action,
+          );
+        for (const q of [
+          "Выпиши счета фактуры",
+          "Создай счета-фактуры по реализациям",
+          "Счета фактуры на реализации",
+        ]) {
+          await c("POST", "/v1/ai/traces", reg.accessToken, card(q));
+        }
+        // The same query asked only for an answer is another group (here: too few to decide).
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Реализации без счёта-фактуры"));
+        await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(1);
+        const brief = JSON.parse(String((state.calls[0]!.messages[0] as { content: string }).content));
+        expect(brief.then_the_accountant_confirmed_a_card_of).toContain("propose_invoices_issued");
+        const mine = (await c("GET", "/v1/ai/templates", reg.accessToken)).json();
+        expect(mine).toHaveLength(1);
+        expect(mine[0]).toMatchObject({ action: action, title: "Счета-фактуры по реализациям" });
+        const groups = (await c("GET", "/v1/admin/template-groups", token)).json();
+        expect(
+          groups.map((g: { status: string; action: string | null }) => [g.status, g.action]).sort(),
+        ).toEqual([
+          ["accepted", "propose_invoices_issued"],
+          ["pending", null],
+        ]);
+      } finally {
+        await engine.close();
+      }
+    });
+
+    it("learns nothing when the policy turns learning or the reasoner off", async () => {
+      const { state, model } = reasoning();
+      state.reply = () => REUSABLE;
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        await setPolicy({ learnTemplates: false });
+        for (const q of ["Остаток в кассе", "Остаток кассы", "Кассовый остаток"]) {
+          await c("POST", "/v1/ai/traces", reg.accessToken, trace(q));
+        }
+        expect(await db.db.select().from(aiTraces)).toHaveLength(0);
+        await setPolicy({ learnTemplates: true, reasoner: false });
+        for (const q of ["Остаток в кассе", "Остаток кассы", "Кассовый остаток"]) {
+          await c("POST", "/v1/ai/traces", reg.accessToken, trace(q));
+        }
+        await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(0);
+        // The traces are kept and counted, so turning the reasoner on decides them at once.
+        expect((await c("GET", "/v1/admin/template-groups", token)).json()).toEqual([
+          expect.objectContaining({ status: "pending", hits: 3 }),
+        ]);
+        await setPolicy({ reasoner: true });
+        await c("POST", "/v1/admin/engine/run", token);
+        expect(state.calls).toHaveLength(1);
+      } finally {
+        await engine.close();
+      }
+    });
+
+    it("lets only an owner run the engine's reasoning by hand", async () => {
+      const customer = (await post("/v1/auth/register", account)).json();
+      expect((await post("/v1/admin/engine/run", {}, customer.accessToken)).statusCode).toBe(401);
     });
 
     it("reports the cost per account, user, feature and route, the five metrics and the dearest questions", async () => {

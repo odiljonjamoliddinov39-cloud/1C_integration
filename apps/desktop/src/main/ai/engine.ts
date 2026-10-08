@@ -10,19 +10,28 @@ import {
   DEFAULT_AI_POLICY,
   type QueryResult,
   type QueryTemplateView,
+  type TraceInput,
 } from "@platform/shared";
 
 import type { ConnectionInput } from "../../shared/ipc.js";
 import type { ConnectorRunner } from "../connector.js";
 import type { SessionService } from "../session.js";
 import { buildDigest } from "./digest.js";
-import { learnFromRun, matchTemplate, renderTemplate } from "./templates.js";
+import { matchTemplate, renderTemplate } from "./templates.js";
 
 const POLICY_TTL_MS = 5 * 60_000;
 const TEMPLATES_TTL_MS = 10 * 60_000;
 
 export type FreeAnswer =
-  | { route: "template"; title: string; text: string; code: string; learned: boolean }
+  | {
+      route: "template";
+      title: string;
+      text: string;
+      code: string;
+      learned: boolean;
+      /** The sales to prepare a card for (the template's action); the user still confirms it. */
+      action?: { tool: "propose_invoices_issued"; sales: string[] };
+    }
   | { route: "cache"; text: string; ageSeconds: number };
 
 export class CostEngine {
@@ -93,10 +102,12 @@ export class CostEngine {
     const usable = (await this.templates()).filter((t) => !t.company || t.company === companyName);
     const matched = policy.templates ? matchTemplate(question, usable) : null;
     if (matched) {
+      const { action } = matched.template;
       const result = await this.connector.tool(connection, "run_query", {
         query: matched.template.query,
         params: matched.params,
         limit: policy.maxRows,
+        ...(action ? { refs: true } : {}),
       });
       if (result.ok) {
         const data = result.data as QueryResult;
@@ -108,6 +119,18 @@ export class CostEngine {
             code: matched.template.code,
             learned: matched.template.source === "learned",
           };
+          if (action) {
+            // The documents are whatever the query returns now. A result that is cut, or a row
+            // without a reference, is not something to prepare a card from: the model takes it.
+            const sales: string[] = [];
+            for (const row of data.rows) {
+              const cell = row[action.refsColumn] as { ref?: unknown } | null | undefined;
+              if (typeof cell !== "object" || cell === null || typeof cell.ref !== "string") return null;
+              sales.push(cell.ref);
+            }
+            if (data.truncated) return null;
+            free.action = { tool: action.tool, sales };
+          }
           await this.reportFree("template", companyName, question);
           return free;
         }
@@ -131,30 +154,15 @@ export class CostEngine {
   }
 
   /**
-   * Tells the server the model answered this question with one successful query, when that could
-   * become a template; after a few identical sightings the server makes it one for this company.
+   * Tells the server what was done for a finished question, so the engine can learn from every
+   * prompt (what became a template, what a card was made of, what it cost) without any data.
    */
-  async learn(
-    companyName: string,
-    question: string,
-    query: { query: string; params?: Record<string, string | number | boolean | null> | undefined },
-    result: QueryResult,
-  ): Promise<void> {
+  async sendTrace(trace: TraceInput): Promise<void> {
     const policy = await this.policy();
-    if (!policy.learnTemplates || !policy.templates) return;
-    const learned = learnFromRun(question, query, result);
-    if (!learned) return;
+    if (!policy.learnTemplates) return;
     try {
       const { client, accessToken } = await this.session.authorized();
-      const created = await client.learnTemplate(accessToken, {
-        company: companyName,
-        question,
-        phrase: learned.phrase,
-        query: learned.query,
-        params: learned.params,
-        columns: learned.columns,
-      });
-      if (created) this.templatesCache = null;
+      await client.sendTrace(accessToken, trace);
     } catch {
       /* learning is only a saving */
     }

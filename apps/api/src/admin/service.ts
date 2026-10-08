@@ -49,7 +49,7 @@ import type { Tokens } from "../lib/tokens.js";
 import { periodOf, setMonthLimit } from "../ai/budget.js";
 import { policiesView, policyFor, savePolicy } from "../ai/policy.js";
 import { aiLimits } from "../ai/quota.js";
-import { candidates, deleteTemplate, listTemplates, saveTemplate } from "../ai/templates.js";
+import { deleteTemplate, groups, listTemplates, saveTemplate } from "../ai/templates.js";
 import { costReport } from "./cost.js";
 import { AI_SETTINGS_KEY, aiChoiceFor, globalAiChoice, savedAiSettings } from "../ai/settings.js";
 import { effectiveStatus } from "../service.js";
@@ -375,8 +375,8 @@ export class AdminService {
     return listTemplates(this.db);
   }
 
-  templateCandidates() {
-    return candidates(this.db);
+  templateGroups() {
+    return groups(this.db);
   }
 
   async saveQueryTemplate(admin: AdminIdentity, input: QueryTemplateInput): Promise<QueryTemplateView> {

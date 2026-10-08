@@ -14,7 +14,7 @@ export interface UsageContext {
   accountId: string;
   userId: string;
   company: string;
-  feature: "chat" | "audit";
+  feature: "chat" | "audit" | "engine";
   route: "model" | "template" | "cache" | "batch";
   toolCalls: number;
   firstStep: boolean;

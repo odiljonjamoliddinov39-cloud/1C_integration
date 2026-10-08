@@ -18,7 +18,14 @@ const PARAM_TYPES = ["date", "month_start", "month_end", "text", "number"];
 /** Known questions answered by a fixed 1C query, without the model. */
 export function TemplatesPage({ me }: { me: AdminView }) {
   const templates = useQuery({ queryKey: ["query-templates"], queryFn: api.queryTemplates });
-  const candidates = useQuery({ queryKey: ["template-candidates"], queryFn: api.templateCandidates });
+  const groups = useQuery({ queryKey: ["template-groups"], queryFn: api.templateGroups });
+  const analyze = useMutation({
+    mutationFn: api.runEngine,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["template-groups"] });
+      await queryClient.invalidateQueries({ queryKey: ["query-templates"] });
+    },
+  });
   const [editing, setEditing] = useState<QueryTemplateView | "new" | null>(null);
   const queryClient = useQueryClient();
   const remove = useMutation({
@@ -110,25 +117,61 @@ export function TemplatesPage({ me }: { me: AdminView }) {
         )}
       </Card>
       <Card>
-        <div className="border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-semibold">Being learned</h2>
-          <p className="text-xs text-muted-foreground">
-            Questions the model answered with one successful query. Each becomes a template for its company
-            once the same question and query have been seen as many times as the AI limits page says. A user
-            pressing &quot;Ask AI anyway&quot; on a learned answer turns that template off.
-          </p>
+        <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
+          <div>
+            <h2 className="text-sm font-semibold">What the engine is learning</h2>
+            <p className="text-xs text-muted-foreground">
+              Every finished question leaves a trace (the steps, no data). Questions answered by the same
+              query form a group; once a group has been seen as many times as the AI limits page says, Claude
+              decides whether it is one reusable question and writes the template. A card confirmed by the
+              user whose documents were exactly the query&apos;s rows becomes an action template: it still
+              asks for confirmation. A user pressing &quot;Ask AI anyway&quot; turns a learned template off.
+            </p>
+          </div>
+          {owner && (
+            <Button
+              className="ml-auto shrink-0"
+              variant="outline"
+              disabled={analyze.isPending}
+              onClick={() => analyze.mutate()}
+            >
+              Analyze now
+            </Button>
+          )}
         </div>
-        {candidates.data?.length === 0 ? (
-          <Empty>Nothing yet.</Empty>
+        {analyze.data && (
+          <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
+            Decided {analyze.data.decided} group(s), made {analyze.data.made} template(s).
+          </p>
+        )}
+        <ErrorText error={groups.error ?? analyze.error} />
+        {groups.data?.length === 0 ? (
+          <Empty>Nothing yet. It starts with the next questions your customers ask.</Empty>
         ) : (
-          <Table head={["Customer", "Company", "Question", "Phrase", "Seen"]}>
-            {candidates.data?.map((c, i) => (
+          <Table
+            head={["Customer", "Company", "Latest question", "Does", "Seen", "State", "Claude's reason"]}
+          >
+            {groups.data?.map((g, i) => (
               <tr key={i}>
-                <Td>{c.accountName}</Td>
-                <Td>{c.company}</Td>
-                <Td className="max-w-xs truncate">{c.question}</Td>
-                <Td>{c.phrase}</Td>
-                <Td>{c.hits}</Td>
+                <Td>{g.accountName}</Td>
+                <Td>{g.company}</Td>
+                <Td className="max-w-xs truncate" title={g.question}>
+                  {g.question}
+                </Td>
+                <Td>{g.action ? "Prepares a card" : "Answers"}</Td>
+                <Td>{g.hits}</Td>
+                <Td>
+                  {g.status === "accepted" ? (
+                    <Badge tone="success">Template made</Badge>
+                  ) : g.status === "rejected" ? (
+                    <Badge tone="warning">Not reusable</Badge>
+                  ) : (
+                    <Badge>Waiting</Badge>
+                  )}
+                </Td>
+                <Td className="max-w-xs truncate" title={g.reason}>
+                  {g.reason}
+                </Td>
               </tr>
             ))}
           </Table>

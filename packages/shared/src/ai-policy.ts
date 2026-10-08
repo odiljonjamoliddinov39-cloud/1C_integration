@@ -6,6 +6,8 @@
  */
 import { z } from "zod";
 
+import { QueryParams } from "./platform-api.js";
+
 /** Models the router may use for simple questions. */
 export const AiSimpleModelId = z.enum(["claude-haiku-4-5"]);
 export type AiSimpleModelId = z.infer<typeof AiSimpleModelId>;
@@ -15,7 +17,7 @@ export const AiRoute = z.enum(["model", "template", "cache", "batch"]);
 export type AiRoute = z.infer<typeof AiRoute>;
 
 /** What a request was for. */
-export const AiFeature = z.enum(["chat", "audit"]);
+export const AiFeature = z.enum(["chat", "audit", "engine"]);
 export type AiFeature = z.infer<typeof AiFeature>;
 
 export const AiPolicy = z.object({
@@ -50,6 +52,13 @@ export const AiPolicy = z.object({
    */
   learnTemplates: z.boolean(),
   learnMinHits: z.number().int().min(1).max(50),
+  /**
+   * The engine's own reasoning: Claude reads the traces of finished questions, decides what is
+   * reusable and writes the phrases and titles of the templates. Its cost is on the AI cost page
+   * as feature "engine".
+   */
+  reasoner: z.boolean(),
+  reasonerModel: z.enum(["claude-haiku-4-5", "claude-sonnet-5-5"]),
   /** The model for simple questions; null: every question runs on the default model. */
   simpleModel: AiSimpleModelId.nullable(),
 });
@@ -75,6 +84,8 @@ export const DEFAULT_AI_POLICY: AiPolicy = {
   templates: true,
   learnTemplates: true,
   learnMinHits: 3,
+  reasoner: true,
+  reasonerModel: "claude-haiku-4-5",
   simpleModel: null,
 };
 
@@ -142,6 +153,18 @@ export const TemplateColumn = z.object({
 });
 export type TemplateColumn = z.infer<typeof TemplateColumn>;
 
+/**
+ * What a template does after its query: prepares a card from the references the query returned,
+ * which the user still confirms. Learned only from a confirmed card whose sales were exactly the
+ * query's result.
+ */
+export const TemplateAction = z.object({
+  tool: z.literal("propose_invoices_issued"),
+  /** The column of the query result that holds the sales (queried with refs). */
+  refsColumn: z.number().int().min(0).max(29),
+});
+export type TemplateAction = z.infer<typeof TemplateAction>;
+
 export const QueryTemplateInput = z.object({
   /** A short unique name, e.g. "cash_balance". */
   code: z.string().regex(/^[a-z][a-z0-9_]{1,59}$/),
@@ -154,6 +177,8 @@ export const QueryTemplateInput = z.object({
   columns: z.array(TemplateColumn).min(1).max(30),
   /** Add a totals row for the money and number columns. */
   totals: z.boolean().default(false),
+  /** After the query: prepare a card from its references. Null: the template only answers. */
+  action: TemplateAction.nullable().default(null),
   enabled: z.boolean().default(true),
 });
 export type QueryTemplateInput = z.infer<typeof QueryTemplateInput>;
@@ -173,36 +198,63 @@ export const QueryTemplateView = QueryTemplateInput.extend({
 });
 export type QueryTemplateView = z.infer<typeof QueryTemplateView>;
 
-/**
- * What the app saw: the model answered this question with one successful read-only query. The
- * server counts it, and after learnMinHits identical sightings makes a template for the company.
- */
-export const LearnInput = z.object({
-  company: z.string().trim().min(1).max(200),
-  /** The question as asked (the template's title). */
-  question: z.string().trim().min(1).max(2_000),
-  /** The question's meaningful words, without dates and filler: the template's phrase. */
+/** What was done for a question, without the data: the engine learns from it. */
+export const TraceStep = z.object({
+  tool: z.string().max(60),
+  ok: z.boolean(),
+  /** run_query: */
+  query: z.string().max(20_000).optional(),
+  params: QueryParams.optional(),
+  refs: z.boolean().optional(),
+  columns: z.array(z.string().max(200)).max(60).optional(),
+  rowCount: z.number().int().optional(),
+  truncated: z.boolean().optional(),
+  /** a proposal: how it ended ("done", "declined_by_user", an error code), how many documents, and
+   * the query result its documents were exactly (checked on the PC, where the data is). */
+  status: z.string().max(60).optional(),
+  count: z.number().int().optional(),
+  fromQuery: z.object({ step: z.number().int(), column: z.number().int() }).optional(),
+});
+export type TraceStep = z.infer<typeof TraceStep>;
+
+/** What the PC found out about whether the question could become a template, by rules. */
+export const TraceLearnable = z.object({
+  /** The index in steps of the query that answers the question. */
+  step: z.number().int().min(0),
+  /** The question's meaningful words, without dates and filler. */
   phrase: z.string().trim().min(3).max(200),
-  query: z.string().trim().min(1).max(20_000),
   params: z.array(TemplateParam).max(10),
   columns: z.array(TemplateColumn).min(1).max(30),
+  action: TemplateAction.nullable(),
 });
-export type LearnInput = z.infer<typeof LearnInput>;
+export type TraceLearnable = z.infer<typeof TraceLearnable>;
+
+export const TraceInput = z.object({
+  company: z.string().trim().min(1).max(200),
+  question: z.string().trim().min(1).max(2_000),
+  outcome: z.enum(["answered", "card_confirmed", "card_declined", "failed", "stopped"]),
+  steps: z.array(TraceStep).max(40),
+  learnable: TraceLearnable.nullable(),
+});
+export type TraceInput = z.infer<typeof TraceInput>;
 
 /** The user pressed "Ask AI anyway" on a learned template's answer: it is turned off. */
 export const TemplateRejectInput = z.object({ code: z.string().regex(/^[a-z][a-z0-9_]{1,59}$/) });
 export type TemplateRejectInput = z.infer<typeof TemplateRejectInput>;
 
-/** A question being learned, not yet a template. Dashboard only. */
-export const TemplateCandidateView = z.object({
+/** A group of questions answered by the same query: what the engine is learning, for the dashboard. */
+export const TemplateGroupView = z.object({
   accountName: z.string(),
   company: z.string(),
   phrase: z.string(),
   question: z.string(),
+  action: z.string().nullable(),
   hits: z.number(),
+  status: z.enum(["pending", "accepted", "rejected"]),
+  reason: z.string(),
   lastAt: z.string(),
 });
-export type TemplateCandidateView = z.infer<typeof TemplateCandidateView>;
+export type TemplateGroupView = z.infer<typeof TemplateGroupView>;
 
 // --- answer cache, free answers, digest ----------------------------------------------------------
 

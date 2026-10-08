@@ -270,6 +270,8 @@ export const queryTemplates = pgTable("query_templates", {
     .default("admin"),
   hits: integer("hits").notNull().default(0),
   rejected: integer("rejected").notNull().default(0),
+  /** After the query: prepare a card from its references (see TemplateAction). */
+  action: jsonb("action").$type<{ tool: string; refsColumn: number } | null>(),
   code: text("code").notNull().unique(),
   title: text("title").notNull(),
   intents: jsonb("intents").$type<string[]>().notNull(),
@@ -341,26 +343,55 @@ export const appSettings = pgTable("app_settings", {
   updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
 });
 
-/** Questions the model answered with one successful query, counted until they become templates. */
-export const templateCandidates = pgTable(
-  "template_candidates",
+/** What was done for each finished question, without the data: what the engine learns from. */
+export const aiTraces = pgTable(
+  "ai_traces",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    company: text("company").notNull(),
+    question: text("question").notNull(),
+    outcome: text("outcome").notNull(),
+    steps: jsonb("steps").$type<unknown[]>().notNull(),
+    /** What the PC's rules found: the query, phrase, parameter types, columns and action. */
+    learnable: jsonb("learnable").$type<Record<string, unknown> | null>(),
+    /** The query (and action) the question was answered by: traces with the same are one group. */
+    groupKey: text("group_key"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("ai_traces_account_idx").on(t.accountId, t.createdAt),
+    index("ai_traces_group_idx").on(t.accountId, t.groupKey),
+  ],
+);
+
+/**
+ * Questions answered by the same query, and what the reasoner decided about them. pending: not
+ * enough sightings yet, or not decided; accepted: a template was made; rejected: not reusable.
+ */
+export const templateGroups = pgTable(
+  "template_groups",
   {
     id: id(),
     accountId: uuid("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
     company: text("company").notNull(),
-    /** The phrase's words, sorted: the same question in another word order is the same one. */
-    phraseKey: text("phrase_key").notNull(),
+    groupKey: text("group_key").notNull(),
     phrase: text("phrase").notNull(),
     question: text("question").notNull(),
-    queryHash: text("query_hash").notNull(),
-    query: text("query").notNull(),
-    params: jsonb("params").$type<{ name: string; type: string }[]>().notNull(),
-    columns: jsonb("columns").$type<{ label: string; format: string }[]>().notNull(),
-    hits: integer("hits").notNull().default(1),
-    firstAt: createdAt(),
-    lastAt: timestamp("last_at", { withTimezone: true }).notNull().defaultNow(),
+    action: text("action"),
+    hits: integer("hits").notNull().default(0),
+    status: text("status", { enum: ["pending", "accepted", "rejected"] })
+      .notNull()
+      .default("pending"),
+    reason: text("reason").notNull().default(""),
+    /** Times the reasoner failed to give a usable answer; after 3 it stops asking. */
+    attempts: integer("attempts").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("template_candidates_key").on(t.accountId, t.company, t.phraseKey, t.queryHash)],
+  (t) => [uniqueIndex("template_groups_key").on(t.accountId, t.company, t.groupKey)],
 );

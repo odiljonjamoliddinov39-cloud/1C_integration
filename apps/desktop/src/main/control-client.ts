@@ -13,7 +13,7 @@ import {
   type DigestInput,
   type DigestKey,
   type FreeAnswerInput,
-  type LearnInput,
+  type TraceInput,
   QueryTemplateView,
   LicenseResponse,
   Me,
@@ -167,10 +167,9 @@ export class ControlClient {
     return z.array(QueryTemplateView).parse(await response.json());
   }
 
-  /** The model answered this question with one query: counted, and made a template after a few times. */
-  async learnTemplate(accessToken: string, input: LearnInput): Promise<boolean> {
-    const response = await this.request("POST", "/v1/ai/templates/learn", input, accessToken);
-    return z.object({ created: z.boolean() }).parse(await response.json()).created;
+  /** What was done for a finished question (steps, no data): the engine learns from it. */
+  async sendTrace(accessToken: string, trace: TraceInput): Promise<void> {
+    await this.request("POST", "/v1/ai/traces", trace, accessToken);
   }
 
   /** "Ask AI anyway" on a learned template's answer: the server turns that template off. */

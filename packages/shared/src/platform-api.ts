@@ -145,9 +145,13 @@ export const RunQueryInput = z.object({
 export type RunQueryInput = z.infer<typeof RunQueryInput>;
 
 /** References and enums come back as their 1C presentation; dates as YYYY-MM-DDTHH:mm:ss. */
+/** With "refs": true a reference comes as an object, to change the object later. */
+export const QueryRef = z.looseObject({ type: z.string(), ref: z.string(), name: z.string() });
+export type QueryRef = z.infer<typeof QueryRef>;
+
 export const QueryResult = z.object({
   columns: z.array(z.string()),
-  rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+  rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null(), QueryRef]))),
   truncated: z.boolean(),
 });
 export type QueryResult = z.infer<typeof QueryResult>;

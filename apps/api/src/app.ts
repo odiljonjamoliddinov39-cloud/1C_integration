@@ -21,9 +21,9 @@ import {
   DigestInput,
   DigestKey,
   FreeAnswerInput,
-  LearnInput,
   QueryTemplateInput,
   TemplateRejectInput,
+  TraceInput,
   type AiEvent,
   LicenseCheckInput,
   LoginInput,
@@ -40,7 +40,9 @@ import { lookupAnswer, storeAnswer } from "./ai/cache.js";
 import { findDigest, saveDigest } from "./ai/digest.js";
 import { policyFor } from "./ai/policy.js";
 import { AiProxy, assertInlineFiles } from "./ai/proxy.js";
-import { learn, rejectLearned, templatesForAccount } from "./ai/templates.js";
+import { Reasoner } from "./ai/reasoner.js";
+import { rejectLearned, templatesForAccount } from "./ai/templates.js";
+import { storeTrace } from "./ai/traces.js";
 import { logFreeAnswer } from "./ai/usage.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
@@ -55,6 +57,8 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
 export interface AppDeps {
   /** Replaces the Claude API in tests. */
   aiModel?: AiModel;
+  /** How soon after a question the engine reasons about it (tests make it short). */
+  reasonDelayMs?: number;
   /** The built admin dashboard (apps/admin/dist), served at /admin/ when present. */
   adminUiDir?: string;
 }
@@ -72,6 +76,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const service = new Service(db, tokens, config);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
   const ai = new AiProxy(db, service, config, aiModel, app.log);
+  const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);
   const admin = new AdminService(db, tokens, config);
   await admin.bootstrap(app.log);
 
@@ -211,11 +216,15 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     const policy = await policyOf(accountId);
     return policy.templates ? templatesForAccount(db, accountId) : [];
   });
-  // The app saw the model answer a question with one query: counted, and learned after a few times.
-  app.post("/v1/ai/templates/learn", async (req) => {
-    const { accountId } = await auth(req);
-    const created = await learn(db, await policyOf(accountId), accountId, parse(LearnInput, req.body));
-    return { created };
+  // What was done for a finished question (steps, no data): the engine learns from it.
+  app.post("/v1/ai/traces", async (req, reply) => {
+    const who = await auth(req);
+    const policy = await policyOf(who.accountId);
+    if (policy.learnTemplates) {
+      const stored = await storeTrace(db, who, parse(TraceInput, req.body));
+      if (stored.learnable) reasoner.schedule(who.accountId, () => policyOf(who.accountId));
+    }
+    return reply.status(204).send();
   });
   app.post("/v1/ai/templates/reject", async (req, reply) => {
     const { accountId } = await auth(req);
@@ -306,9 +315,23 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     await adminAuth(req);
     return admin.queryTemplates();
   });
-  app.get("/v1/admin/template-candidates", async (req) => {
+  app.get("/v1/admin/template-groups", async (req) => {
     await adminAuth(req);
-    return admin.templateCandidates();
+    return admin.templateGroups();
+  });
+  // Runs the engine's reasoning now for every account (it also runs by itself after questions).
+  app.post("/v1/admin/engine/run", async (req) => {
+    const who = await adminAuth(req);
+    if (who.role !== "owner") throw new HttpError(403, "FORBIDDEN", "Only an owner can do this");
+    const ids = await db.execute<{ account_id: string }>(sql`select distinct account_id from ai_traces`);
+    let decided = 0;
+    let made = 0;
+    for (const { account_id: accountId } of ids) {
+      const result = await reasoner.run(accountId, await policyOf(accountId));
+      decided += result.decided;
+      made += result.made;
+    }
+    return { decided, made };
   });
   app.put("/v1/admin/query-templates", async (req) =>
     admin.saveQueryTemplate(await adminAuth(req), parse(QueryTemplateInput, req.body)),

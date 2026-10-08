@@ -19,7 +19,7 @@ import type {
   Overview,
   QueryTemplateInput,
   QueryTemplateView,
-  TemplateCandidateView,
+  TemplateGroupView,
   SubscriptionStatus,
   UsageRow,
 } from "@platform/shared";
@@ -114,7 +114,9 @@ export const api = {
   setAccountBudget: (id: string, input: AccountBudgetInput) =>
     request<AccountDetail>("POST", `/accounts/${id}/ai-budget`, input),
   queryTemplates: () => request<QueryTemplateView[]>("GET", "/query-templates"),
-  templateCandidates: () => request<TemplateCandidateView[]>("GET", "/template-candidates"),
+  templateGroups: () => request<TemplateGroupView[]>("GET", "/template-groups"),
+  /** Runs the engine's reasoning now, for every account. */
+  runEngine: () => request<{ decided: number; made: number }>("POST", "/engine/run"),
   saveQueryTemplate: (input: QueryTemplateInput) =>
     request<QueryTemplateView>("PUT", "/query-templates", input),
   deleteQueryTemplate: (id: string) => request<null>("DELETE", `/query-templates/${id}`),

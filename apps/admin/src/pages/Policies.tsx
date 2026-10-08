@@ -134,6 +134,8 @@ function PolicyForm({
     onLimit: draft.onLimit,
     templates: draft.templates === "true",
     learnTemplates: draft.learnTemplates === "true",
+    reasoner: draft.reasoner === "true",
+    reasonerModel: draft.reasonerModel,
     simpleModel: draft.simpleModel === "" ? null : draft.simpleModel,
   });
   const invalid =
@@ -204,6 +206,26 @@ function PolicyForm({
             >
               <option value="true">On: from questions the model answers with one query</option>
               <option value="false">Off: only templates written here</option>
+            </Select>
+          </label>
+          <label className="flex items-center gap-3 text-sm">
+            <span className="w-64 shrink-0">The engine reasons with Claude</span>
+            <Select
+              disabled={!owner}
+              value={draft.reasoner}
+              onChange={(e) => set("reasoner", e.target.value)}
+            >
+              <option value="true">On: Claude decides what is reusable and writes the templates</option>
+              <option value="false">Off: traces are kept, nothing is decided</option>
+            </Select>
+            <Select
+              aria-label="Reasoning model"
+              disabled={!owner}
+              value={draft.reasonerModel}
+              onChange={(e) => set("reasonerModel", e.target.value)}
+            >
+              <option value="claude-haiku-4-5">Claude Haiku 4.5 (cheapest)</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
             </Select>
           </label>
           <label className="flex items-center gap-3 text-sm">

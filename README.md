@@ -61,15 +61,25 @@ per account, $5 a day per user and 8 reads per question.
 1. **Budget guard** (`api/src/ai/budget.ts`): per-account monthly and per-user daily USD caps
    (`ai_budgets`, `ai_usage.cost_usd`), a warning at 80 %, a clear stop at 100 %; an owner can set this
    month's cap for one customer on its page (an add-on). `0` is no cap.
-2. **Query templates** (`ai/templates.ts` on the PC, `query_templates` table, admin **Templates**): a
-   question the rules recognize is answered by a fixed 1C query, 0 tokens, labelled with an
-   "Ask AI anyway" button. The matcher is strict: a longer or conditional question goes to the model.
-   Templates are **learned automatically**: when the model answers a short question with exactly one
-   successful read-only query (parameters only the question's date or month, a whole result, no
-   numbers or quoted values in the question), the app reports it (`/v1/ai/templates/learn`); after
-   `learnMinHits` identical sightings (question and query) the server makes a template for that
-   company only. "Ask AI anyway" on a learned answer turns the template off for good. Templates can
-   also be written by hand in the dashboard; both kinds are listed there.
+2. **Query templates and the engine's reasoning** (`api/src/ai/{traces,reasoner,templates}.ts`, desktop
+   `ai/{trace,templates}.ts`): a question the rules recognize is answered by a fixed 1C query, 0
+   tokens, labelled with an "Ask AI anyway" button. The matcher is strict: a longer or conditional
+   question goes to the model. Templates are made by the engine itself:
+   - **Every finished prompt leaves a trace** (`/v1/ai/traces`): the steps (queries, columns, row
+     counts, how a card ended), never the data. The PC adds what only it can know by rules: whether
+     one clean query answered the question and as what template (phrase, parameter types, column
+     formats), and whether a confirmed card's documents were exactly that query's rows.
+   - **Claude reasons about the groups** (`reasoner.ts`, Haiku by default, policy `reasonerModel`):
+     traces whose questions were answered by the same query form a group; at `learnMinHits` of them
+     Claude decides if it is one stable, reusable question and writes the title, the wordings and the
+     column labels. Rules check what it returns (the query and parameters are the recorded ones; the
+     wordings must pass the matcher's limits). The cost is on **AI cost** as feature `engine`.
+   - **Action templates**: a group of confirmed `propose_invoices_issued` cards whose sales were
+     exactly one query's rows becomes a template that prepares the same card from the query's rows;
+     the user still confirms it, and only then is anything written.
+   - A template is for the company it came from. "Ask AI anyway" on its answer turns it off. The
+     dashboard (**Templates**) shows what is being learned, what Claude decided and why, and has
+     "Analyze now".
 3. **Answer cache** (`api/src/ai/cache.ts`, `ai_answer_cache`): a read-only first question of a chat,
    same company, same question, same data version, within `cacheTtlMinutes`. The data version is the
    day, this run of the app and the writes the app made; another user's changes in 1C are covered
