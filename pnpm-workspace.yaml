@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 10 runs no install scripts unless listed. electron downloads its binary; winax builds the
+# COM bridge (Windows only; it is an optional dependency and is skipped elsewhere).
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - winax

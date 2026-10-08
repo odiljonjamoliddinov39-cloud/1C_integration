@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: The 1C extension files match their BSL sources
+        run: node onec/extension/build-xml.mjs && git diff --exit-code -- onec/extension/xml
+
+  # The 1C connection is Windows-only: make sure the COM bridge (winax) builds there.
+  windows:
+    runs-on: windows-2022 # node-gyp 11 (bundled with pnpm 10) does not detect Visual Studio 2026 on windows-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test # the API tests skip here: no PostgreSQL on the Windows runner
+      - name: winax loads (no 1C on the runner, so V83.COMConnector is expected to be missing)
+        working-directory: packages/onec-client
+        run: node -e "require('winax'); console.log('winax ok', process.arch)"

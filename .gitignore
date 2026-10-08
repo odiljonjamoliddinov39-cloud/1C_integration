@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+release/
+.turbo/
+*.log
+.env
+.env.*
+!.env.example
+# local test data written by the desktop app in dev
+apps/desktop/.dev-data/
+.astro/
+.vercel/

@@ -1,0 +1,16 @@
+---
+import { Cabinet } from "../../components/Cabinet";
+import Base from "../../layouts/Base.astro";
+import { dict, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).cabinet;
+---
+
+<Base locale={locale} path="/cabinet" title={t.title}>
+  <section class="mx-auto max-w-4xl px-4 py-14">
+    <h1 class="mb-8 text-3xl font-bold">{t.title}</h1>
+    <Cabinet client:only="react" locale={locale} />
+  </section>
+</Base>

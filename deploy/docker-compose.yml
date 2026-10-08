@@ -1,0 +1,88 @@
+# The control system on one server (TD §3 "Our cloud"): PostgreSQL, the API and Caddy (HTTPS).
+# Lives in /opt/platform on the server; server-setup.sh writes .env next to it on the first run.
+name: platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run server-setup.sh first}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    image: ${API_IMAGE:-platform-api:local}
+    environment:
+      DATABASE_URL: postgres://platform:${POSTGRES_PASSWORD}@postgres:5432/platform
+      JWT_SECRET: ${JWT_SECRET}
+      LICENSE_PRIVATE_KEY: ${LICENSE_PRIVATE_KEY}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      # The AI proxy: without a key the assistant answers AI_NOT_CONFIGURED.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
+      # "off" until the tariffs are set: no AI caps or quotas, no PC limit (see apps/api/src/config.ts).
+      PLAN_LIMITS: ${PLAN_LIMITS:-off}
+      AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
+      # How much the assistant thinks before each step: low (fastest) | medium | high.
+      AI_EFFORT: ${AI_EFFORT:-high}
+      # The admin dashboard's first owner (https://<site>/admin/); set from repository secrets.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The desktop installer for the website's Download page (the desktop workflow puts it here).
+      - ./downloads:/srv/downloads:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Daily dump at 01:30 server time, kept 14 days, in /opt/platform/backups.
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: platform
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: platform
+    volumes:
+      - ./backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          now=$$(date +%s); next=$$(date -d "$$(date +%F) 01:30" +%s 2>/dev/null || echo $$((now + 86400)))
+          [ "$$next" -le "$$now" ] && next=$$((next + 86400))
+          sleep $$((next - now))
+          pg_dump -Fc > /backups/platform-$$(date +%F).dump && find /backups -name 'platform-*.dump' -mtime +14 -delete
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

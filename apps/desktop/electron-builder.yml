@@ -1,0 +1,38 @@
+# Windows installer (TD §4: electron-builder, NSIS). Code signing comes with releases.
+appId: uz.platform.desktop
+productName: 1C Platform
+executableName: 1C-Platform
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+# winax is the native COM bridge to 1C: it is rebuilt for Electron and kept outside the asar.
+npmRebuild: true
+asarUnpack:
+  - "**/node_modules/winax/**"
+# The PlatformAPI extension's files: the app loads them into a 1C base when the base's copy is older.
+extraResources:
+  - from: ../../onec/extension/xml
+    to: platformapi
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: 1C-Platform-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+linux:
+  target: [dir]
+
+# Auto-update (electron-updater). Each build also writes latest.yml and a .blockmap, which the desktop
+# workflow puts next to the installer in https://<server>/download/. The installed app reads that
+# folder; its address comes from the build's control-system address at run time (src/main/updater.ts),
+# so the URL here is only the development default.
+publish:
+  provider: generic
+  url: http://localhost:3000/download/

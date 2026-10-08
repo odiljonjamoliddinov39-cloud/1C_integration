@@ -1,0 +1,2 @@
+# The 1C extension files keep the CRLF line ends and BOM the Configurator writes.
+onec/extension/xml/** -text

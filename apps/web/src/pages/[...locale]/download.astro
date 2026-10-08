@@ -1,0 +1,32 @@
+---
+import Base from "../../layouts/Base.astro";
+import { DOWNLOAD_URL } from "../../lib/config";
+import { dict, href, localeOf, localePaths } from "../../lib/i18n";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const t = dict(locale).download;
+const nav = dict(locale).nav;
+---
+
+<Base locale={locale} path="/download" title={t.title}>
+  <section class="mx-auto max-w-4xl px-4 py-14">
+    <h1 class="text-4xl font-bold">{t.title}</h1>
+    <p class="mt-3 text-muted-foreground">{t.subtitle}</p>
+    <div class="mt-8 flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-card p-6">
+      <a href={DOWNLOAD_URL} class="rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.button}</a>
+      <span class="text-sm text-muted-foreground">{t.file}</span>
+      <span class="ml-auto text-sm">{t.noAccount} <a class="text-primary underline" href={href(locale, "/signup")}>{nav.signup}</a></span>
+    </div>
+    <div class="mt-10 grid gap-8 md:grid-cols-2">
+      <div>
+        <h2 class="text-xl font-semibold">{t.requirementsTitle}</h2>
+        <ul class="mt-4 list-disc space-y-2 pl-5 text-sm text-muted-foreground">{t.requirements.map((r) => <li>{r}</li>)}</ul>
+      </div>
+      <div>
+        <h2 class="text-xl font-semibold">{t.stepsTitle}</h2>
+        <ol class="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">{t.steps.map((s) => <li>{s}</li>)}</ol>
+      </div>
+    </div>
+  </section>
+</Base>

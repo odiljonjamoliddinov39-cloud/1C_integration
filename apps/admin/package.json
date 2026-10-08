@@ -1,0 +1,30 @@
+{
+  "name": "@platform/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Admin dashboard for our staff (TD §8): customers, licenses, PCs, AI usage. Served by the API at /admin/",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@platform/shared": "workspace:*",
+    "@tanstack/react-query": "5.104.1",
+    "clsx": "2.1.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tailwind-merge": "3.7.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}
