@@ -1346,6 +1346,11 @@ describe("assistant", () => {
       enabled: true,
       version: 1,
       updatedAt: "2026-10-07T00:00:00Z",
+      source: "admin",
+      company: null,
+      accountName: null,
+      hits: 0,
+      rejected: 0,
     };
     /** The server's cost engine endpoints, with what each test needs different. */
     const server =
@@ -1361,6 +1366,8 @@ describe("assistant", () => {
         if (url === "/v1/ai/answers/lookup")
           return json(over.cached?.(body as { question: string; dataVersion: string }) ?? { hit: false });
         if (url.startsWith("/v1/ai/digest?")) return json({ found: over.digestFound ?? true });
+        if (url === "/v1/ai/templates/learn") return json({ created: false });
+        if (url === "/v1/ai/templates/reject") return none();
         if (url === "/v1/ai/answers" || url === "/v1/ai/free" || url === "/v1/ai/digest") return none();
         return null;
       };
@@ -1679,6 +1686,115 @@ describe("assistant", () => {
       );
       await new Promise((r) => setTimeout(r, 20));
       expect(t.proxy.calls.some((c) => c.method === "PUT")).toBe(false);
+    });
+
+    const oneQuery = (
+      query = "ВЫБРАТЬ Счет, СальдоДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
+      params: object = { Дата: new Date().toISOString().slice(0, 10) },
+    ) => [
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "q1", name: "run_query", input: { query, params } }],
+        },
+      ],
+      text("Qoldiq: 125 mln"),
+    ];
+    const sightings = (t: ReturnType<typeof setup>) =>
+      t.proxy.calls
+        .filter((c) => c.url === "/v1/ai/templates/learn")
+        .map((c) => c.body as { phrase: string });
+
+    it("tells the server when the model answered a question with one query, so it can learn a template", async () => {
+      const t = setup(oneQuery(), "active", server({}));
+      await ask(t, "Какой остаток в кассе сегодня?");
+      await vi.waitFor(() => expect(sightings(t)).toHaveLength(1));
+      expect(t.proxy.calls.find((c) => c.url === "/v1/ai/templates/learn")?.body).toEqual({
+        company: t.company.name,
+        question: "Какой остаток в кассе сегодня?",
+        phrase: "остаток кассе",
+        query: "ВЫБРАТЬ Счет, СальдоДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
+        params: [{ name: "Дата", type: "date" }],
+        columns: [
+          { label: "Счет", format: "text" },
+          { label: "СальдоДт", format: "number" },
+          { label: "СальдоКт", format: "number" },
+        ],
+      });
+    });
+
+    it("learns nothing from an answer with several reads, a card, a follow-up or specifics in the question", async () => {
+      const two = setup(
+        [
+          () => [
+            {
+              type: "message" as const,
+              stopReason: "tool_use",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "a",
+                  name: "run_query",
+                  input: { query: "ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.Хозрасчетный" },
+                },
+                { type: "tool_use", id: "b", name: "describe_objects", input: { objects: ["Документ.X"] } },
+              ],
+            },
+          ],
+          text("Javob"),
+        ],
+        "active",
+        server({}),
+      );
+      await ask(two, "Какой остаток в кассе сегодня?");
+      const numbered = setup(oneQuery(), "active", server({}));
+      await ask(numbered, "Остаток по счету 5010");
+      const followUp = setup([text("Birinchi"), ...oneQuery()], "active", server({}));
+      await ask(followUp, "Salom");
+      await followUp.assistant.send({ companyId: followUp.company.id, text: "Какой остаток в кассе?" });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(sightings(two)).toHaveLength(0);
+      expect(sightings(numbered)).toHaveLength(0);
+      expect(sightings(followUp)).toHaveLength(0);
+    });
+
+    it("answers from a learned template of this company only, and rejects it when asked anyway", async () => {
+      const learned: QueryTemplateView = {
+        ...balances,
+        code: "learned_abc",
+        title: "Какой остаток в кассе?",
+        intents: ["остаток кассе"],
+        source: "learned",
+        company: "ООО «Тест»",
+      };
+      const mine = setup([], "active", server({ templates: [learned] }));
+      await ask(mine, "Остаток в кассе");
+      expect(mine.events[0]).toMatchObject({ type: "route", route: "template", learnedCode: "learned_abc" });
+
+      // Another company of the same account does not get it.
+      const other = setup(
+        [text("Model")],
+        "active",
+        server({ templates: [{ ...learned, company: "Boshqa MChJ" }] }),
+      );
+      await ask(other, "Остаток в кассе");
+      expect(other.proxy.requests).toHaveLength(1);
+
+      // "Ask AI anyway" on its answer tells the server to turn it off.
+      const asked = setup([text("Model")], "active", server({ templates: [learned] }));
+      asked.store.setAiEnabled(asked.company.id, true);
+      await asked.assistant.send({
+        companyId: asked.company.id,
+        text: "Остаток в кассе",
+        skipFree: true,
+        rejectTemplate: "learned_abc",
+      });
+      await vi.waitFor(() =>
+        expect(asked.proxy.calls.find((c) => c.url === "/v1/ai/templates/reject")?.body).toEqual({
+          code: "learned_abc",
+        }),
+      );
     });
 
     it("moves the rest of a question to the default model after the user declines a card", async () => {

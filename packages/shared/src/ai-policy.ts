@@ -44,6 +44,12 @@ export const AiPolicy = z.object({
   dailyAlertUsd: z.number().min(0).max(1_000_000),
   /** Answer known questions from query templates, without the model. */
   templates: z.boolean(),
+  /**
+   * Learn templates from the model's own answers: a question answered by one successful query,
+   * with the same query each time, becomes a template for that company after this many times.
+   */
+  learnTemplates: z.boolean(),
+  learnMinHits: z.number().int().min(1).max(50),
   /** The model for simple questions; null: every question runs on the default model. */
   simpleModel: AiSimpleModelId.nullable(),
 });
@@ -67,6 +73,8 @@ export const DEFAULT_AI_POLICY: AiPolicy = {
   cacheTtlMinutes: 15,
   dailyAlertUsd: 20,
   templates: true,
+  learnTemplates: true,
+  learnMinHits: 3,
   simpleModel: null,
 };
 
@@ -154,8 +162,47 @@ export const QueryTemplateView = QueryTemplateInput.extend({
   id: z.string(),
   version: z.number(),
   updatedAt: z.string(),
+  /** "admin": written in the dashboard, for everyone. "learned": from one company's own questions. */
+  source: z.enum(["admin", "learned"]).default("admin"),
+  /** A learned template applies only to this company (its 1C organization name). */
+  company: z.string().nullable().default(null),
+  /** Dashboard only: whose it is, and how many times the learned question was seen. */
+  accountName: z.string().nullable().default(null),
+  hits: z.number().default(0),
+  rejected: z.number().default(0),
 });
 export type QueryTemplateView = z.infer<typeof QueryTemplateView>;
+
+/**
+ * What the app saw: the model answered this question with one successful read-only query. The
+ * server counts it, and after learnMinHits identical sightings makes a template for the company.
+ */
+export const LearnInput = z.object({
+  company: z.string().trim().min(1).max(200),
+  /** The question as asked (the template's title). */
+  question: z.string().trim().min(1).max(2_000),
+  /** The question's meaningful words, without dates and filler: the template's phrase. */
+  phrase: z.string().trim().min(3).max(200),
+  query: z.string().trim().min(1).max(20_000),
+  params: z.array(TemplateParam).max(10),
+  columns: z.array(TemplateColumn).min(1).max(30),
+});
+export type LearnInput = z.infer<typeof LearnInput>;
+
+/** The user pressed "Ask AI anyway" on a learned template's answer: it is turned off. */
+export const TemplateRejectInput = z.object({ code: z.string().regex(/^[a-z][a-z0-9_]{1,59}$/) });
+export type TemplateRejectInput = z.infer<typeof TemplateRejectInput>;
+
+/** A question being learned, not yet a template. Dashboard only. */
+export const TemplateCandidateView = z.object({
+  accountName: z.string(),
+  company: z.string(),
+  phrase: z.string(),
+  question: z.string(),
+  hits: z.number(),
+  lastAt: z.string(),
+});
+export type TemplateCandidateView = z.infer<typeof TemplateCandidateView>;
 
 // --- answer cache, free answers, digest ----------------------------------------------------------
 

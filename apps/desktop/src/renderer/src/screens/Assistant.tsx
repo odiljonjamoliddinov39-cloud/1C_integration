@@ -635,7 +635,7 @@ function Chat({
   }
 
   /** The question again, to the model even though a template or a saved answer could answer it. */
-  function askAnyway(question: string) {
+  function askAnyway(question: string, learnedCode?: string) {
     if (transcript.busy || !transcript.chatId) return;
     onUserMessage(transcript.chatId, question, []);
     void window.platform.assistant.send({
@@ -643,6 +643,8 @@ function Chat({
       chatId: transcript.chatId,
       text: question,
       skipFree: true,
+      // A learned template that was not wanted is turned off.
+      ...(learnedCode ? { rejectTemplate: learnedCode } : {}),
     });
   }
 
@@ -707,7 +709,7 @@ function Chat({
               entry.kind === "route" &&
               !transcript.busy &&
               i === transcript.entries.findLastIndex((e) => e.kind === "route")
-                ? () => askAnyway(entry.question)
+                ? () => askAnyway(entry.question, entry.learnedCode)
                 : undefined
             }
           />

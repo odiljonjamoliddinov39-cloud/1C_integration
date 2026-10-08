@@ -18,7 +18,14 @@ export type ChatEntry =
   | { kind: "audit"; audit: AuditView }
   | { kind: "notice"; code: string; message: string }
   /** The answer below came from a template or the cache, not the model (0 tokens). */
-  | { kind: "route"; route: "template" | "cache"; question: string; title?: string; ageSeconds?: number };
+  | {
+      kind: "route";
+      route: "template" | "cache";
+      question: string;
+      title?: string;
+      ageSeconds?: number;
+      learnedCode?: string;
+    };
 
 type EntryEvent = AssistantEvent extends infer E ? (E extends unknown ? Omit<E, "companyId"> : never) : never;
 
@@ -69,6 +76,7 @@ export function applyEvent(entries: ChatEntry[], event: EntryEvent): ChatEntry[]
           question: event.question,
           ...(event.title === undefined ? {} : { title: event.title }),
           ...(event.ageSeconds === undefined ? {} : { ageSeconds: event.ageSeconds }),
+          ...(event.learnedCode === undefined ? {} : { learnedCode: event.learnedCode }),
         },
       ];
     case "done":

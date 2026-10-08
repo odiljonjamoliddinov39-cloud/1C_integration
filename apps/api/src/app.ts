@@ -21,7 +21,9 @@ import {
   DigestInput,
   DigestKey,
   FreeAnswerInput,
+  LearnInput,
   QueryTemplateInput,
+  TemplateRejectInput,
   type AiEvent,
   LicenseCheckInput,
   LoginInput,
@@ -38,7 +40,7 @@ import { lookupAnswer, storeAnswer } from "./ai/cache.js";
 import { findDigest, saveDigest } from "./ai/digest.js";
 import { policyFor } from "./ai/policy.js";
 import { AiProxy, assertInlineFiles } from "./ai/proxy.js";
-import { listTemplates } from "./ai/templates.js";
+import { learn, rejectLearned, templatesForAccount } from "./ai/templates.js";
 import { logFreeAnswer } from "./ai/usage.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
@@ -205,8 +207,20 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     policyFor(db, (await service.currentSubscription(accountId)).plan.id);
   app.get("/v1/ai/policy", async (req) => policyOf((await auth(req)).accountId));
   app.get("/v1/ai/templates", async (req) => {
-    const policy = await policyOf((await auth(req)).accountId);
-    return policy.templates ? listTemplates(db, true) : [];
+    const { accountId } = await auth(req);
+    const policy = await policyOf(accountId);
+    return policy.templates ? templatesForAccount(db, accountId) : [];
+  });
+  // The app saw the model answer a question with one query: counted, and learned after a few times.
+  app.post("/v1/ai/templates/learn", async (req) => {
+    const { accountId } = await auth(req);
+    const created = await learn(db, await policyOf(accountId), accountId, parse(LearnInput, req.body));
+    return { created };
+  });
+  app.post("/v1/ai/templates/reject", async (req, reply) => {
+    const { accountId } = await auth(req);
+    await rejectLearned(db, accountId, parse(TemplateRejectInput, req.body).code);
+    return reply.status(204).send();
   });
   app.post("/v1/ai/answers/lookup", async (req) => {
     const { accountId } = await auth(req);
@@ -291,6 +305,10 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   app.get("/v1/admin/query-templates", async (req) => {
     await adminAuth(req);
     return admin.queryTemplates();
+  });
+  app.get("/v1/admin/template-candidates", async (req) => {
+    await adminAuth(req);
+    return admin.templateCandidates();
   });
   app.put("/v1/admin/query-templates", async (req) =>
     admin.saveQueryTemplate(await adminAuth(req), parse(QueryTemplateInput, req.body)),

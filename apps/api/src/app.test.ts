@@ -91,7 +91,7 @@ describe.skipIf(!available)("control system API", () => {
 
   beforeEach(async () => {
     await db.sql`TRUNCATE accounts, refresh_tokens CASCADE`;
-    await db.sql`TRUNCATE ai_policies, query_templates`;
+    await db.sql`TRUNCATE ai_policies, query_templates, template_candidates`;
   });
 
   afterAll(async () => {
@@ -1119,6 +1119,94 @@ describe.skipIf(!available)("control system API", () => {
       expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
       await call("DELETE", `/v1/admin/query-templates/${saved.json().id}`, token);
       expect((await call("GET", "/v1/admin/query-templates", token)).json()).toHaveLength(1);
+    });
+
+    it("learns a template from a question the model answered with one query, after enough identical times", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const other = (
+        await post("/v1/auth/register", { ...account, email: "second@example.com", accountName: "Boshqa" })
+      ).json();
+      const sighting = {
+        company: "Crystal Water",
+        question: "Какой остаток в кассе?",
+        phrase: "остаток кассе",
+        query: "ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
+        params: [{ name: "Дата", type: "date" }],
+        columns: [{ label: "Сумма", format: "number" }],
+      };
+      const learn = async (token: string, over: object = {}) =>
+        (await call("POST", "/v1/ai/templates/learn", token, { ...sighting, ...over })).json();
+      // The default is three sightings.
+      expect((await learn(reg.accessToken)).created).toBe(false);
+      expect((await learn(reg.accessToken, { phrase: "кассе остаток" })).created).toBe(false);
+      const candidates = (await call("GET", "/v1/admin/template-candidates", await adminToken())).json();
+      expect(candidates).toEqual([
+        expect.objectContaining({ hits: 2, accountName: "Buxgalter MChJ", phrase: "остаток кассе" }),
+      ]);
+      expect((await learn(reg.accessToken)).created).toBe(true);
+      // After that it only counts as a template, not as another candidate.
+      expect((await learn(reg.accessToken)).created).toBe(false);
+
+      const mine = (await call("GET", "/v1/ai/templates", reg.accessToken)).json();
+      expect(mine).toEqual([
+        expect.objectContaining({
+          source: "learned",
+          company: "Crystal Water",
+          intents: ["остаток кассе"],
+          query: sighting.query,
+          title: "Какой остаток в кассе?",
+        }),
+      ]);
+      // It belongs to this account's company only.
+      expect((await call("GET", "/v1/ai/templates", other.accessToken)).json()).toEqual([]);
+      const listed = (await call("GET", "/v1/admin/query-templates", await adminToken())).json();
+      expect(listed[0]).toMatchObject({ source: "learned", accountName: "Buxgalter MChJ", hits: 3 });
+
+      // "Ask AI anyway" turns it off, and it is not made again; another account cannot turn it off.
+      const code = mine[0].code;
+      expect((await call("POST", "/v1/ai/templates/reject", other.accessToken, { code })).statusCode).toBe(
+        204,
+      );
+      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toHaveLength(1);
+      expect((await call("POST", "/v1/ai/templates/reject", reg.accessToken, { code })).statusCode).toBe(204);
+      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+      expect((await learn(reg.accessToken)).created).toBe(false);
+      expect((await call("GET", "/v1/ai/templates", reg.accessToken)).json()).toEqual([]);
+      expect((await call("GET", "/v1/admin/query-templates", await adminToken())).json()[0]).toMatchObject({
+        enabled: false,
+        rejected: 1,
+      });
+    });
+
+    it("learns only what the policy allows, and counts a different query for the same question apart", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      const sighting = {
+        company: "X",
+        question: "Остаток в кассе",
+        phrase: "остаток кассе",
+        query: "ВЫБРАТЬ 1",
+        params: [],
+        columns: [{ label: "A", format: "text" }],
+      };
+      await setPolicy({ learnMinHits: 2 });
+      await call("POST", "/v1/ai/templates/learn", reg.accessToken, sighting);
+      // A different query is a different sighting: one each is not enough.
+      const second = await call("POST", "/v1/ai/templates/learn", reg.accessToken, {
+        ...sighting,
+        query: "ВЫБРАТЬ 2",
+      });
+      expect(second.json().created).toBe(false);
+      expect((await call("POST", "/v1/ai/templates/learn", reg.accessToken, sighting)).json().created).toBe(
+        true,
+      );
+
+      await setPolicy({ learnTemplates: false, learnMinHits: 1 });
+      const off = await call("POST", "/v1/ai/templates/learn", reg.accessToken, {
+        ...sighting,
+        phrase: "долги покупателей",
+      });
+      expect(off.json().created).toBe(false);
+      expect((await call("GET", "/v1/admin/template-candidates", await adminToken())).json()).toHaveLength(2);
     });
 
     it("reports the cost per account, user, feature and route, the five metrics and the dearest questions", async () => {

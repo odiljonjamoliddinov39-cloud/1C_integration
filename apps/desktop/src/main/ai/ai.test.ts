@@ -2,7 +2,7 @@ import { DEFAULT_AI_POLICY, type QueryTemplateView } from "@platform/shared";
 import { describe, expect, it } from "vitest";
 
 import { classifyTask } from "./classify.js";
-import { matchTemplate, renderTemplate } from "./templates.js";
+import { learnFromRun, matchTemplate, renderTemplate } from "./templates.js";
 import { cell, encodeTable } from "./toon.js";
 import { clampQuery, shapeQueryResult } from "./trim.js";
 
@@ -106,6 +106,11 @@ const template = (over: Partial<QueryTemplateView>): QueryTemplateView => ({
   enabled: true,
   version: 1,
   updatedAt: "2026-10-07T00:00:00Z",
+  source: "admin",
+  company: null,
+  accountName: null,
+  hits: 0,
+  rejected: 0,
   ...over,
 });
 
@@ -217,3 +222,88 @@ describe("template answer", () => {
     ]);
   });
 });
+
+describe("learning a template from an answered question", () => {
+  const result = {
+    columns: ["Счет", "Сумма", "Дата"],
+    rows: [
+      ["5010", 1250000.5, "2026-10-01T00:00:00"],
+      ["5020", 0, null],
+    ],
+    truncated: false,
+  };
+  const query = "ВЫБРАТЬ Счет, Сумма ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)";
+
+  it("takes the question's meaningful words, the parameter types and the column formats", () => {
+    expect(
+      learnFromRun(
+        "Какой остаток в кассе сегодня?",
+        { query, params: { Дата: "2026-10-07" } },
+        result,
+        TODAY,
+      ),
+    ).toEqual({
+      phrase: "остаток кассе",
+      query,
+      params: [{ name: "Дата", type: "date" }],
+      columns: [
+        { label: "Счет", format: "text" },
+        { label: "Сумма", format: "number" },
+        { label: "Дата", format: "date" },
+      ],
+    });
+  });
+
+  it("types a month's start and end, and leaves the month's name out of the phrase", () => {
+    const learned = learnFromRun(
+      "Долги покупателей за сентябрь",
+      { query, params: { ДатаНачала: "2026-09-01", ДатаКонца: "2026-09-30" } },
+      result,
+      TODAY,
+    );
+    expect(learned?.params).toEqual([
+      { name: "ДатаНачала", type: "month_start" },
+      { name: "ДатаКонца", type: "month_end" },
+    ]);
+    expect(learned?.phrase).toBe("долги покупателей");
+    // Which the matcher then recognizes for another month.
+    const template = { ...learnedTemplate(learned!), id: "l" };
+    expect(matchTemplate("долги покупателей за август", [template], TODAY)?.params).toEqual({
+      ДатаНачала: "2026-08-01",
+      ДатаКонца: "2026-08-31",
+    });
+  });
+
+  it("learns nothing it could get wrong", () => {
+    const ask = (question: string, params?: Record<string, string | number>, over = {}) =>
+      learnFromRun(question, { query, ...(params ? { params } : {}) }, { ...result, ...over }, TODAY);
+    expect(ask("Остаток в кассе", { Дата: "2026-10-07" })).not.toBeNull();
+    // Numbers or quoted values in the question are specifics a template cannot follow.
+    expect(ask("Остаток по счету 5010", { Дата: "2026-10-07" })).toBeNull();
+    expect(ask('Долг контрагента "Рога"', { Дата: "2026-10-07" })).toBeNull();
+    // A parameter that is not the question's date or month (a counterparty, an amount, another period).
+    expect(ask("Остаток в кассе", { Дата: "2025-01-15" })).toBeNull();
+    expect(ask("Остаток в кассе", { Сумма: 1000 })).toBeNull();
+    // A period written into the query.
+    expect(
+      learnFromRun("Остаток в кассе", { query: "ВЫБРАТЬ 1 ГДЕ Дата > ДАТАВРЕМЯ(2026, 1, 1)" }, result, TODAY),
+    ).toBeNull();
+    // A cut or empty result, and a question with too little in it.
+    expect(ask("Остаток в кассе", { Дата: "2026-10-07" }, { truncated: true })).toBeNull();
+    expect(ask("Остаток в кассе", { Дата: "2026-10-07" }, { rows: [] })).toBeNull();
+    expect(ask("Остатки", { Дата: "2026-10-07" })).toBeNull();
+  });
+});
+
+function learnedTemplate(learned: NonNullable<ReturnType<typeof learnFromRun>>): QueryTemplateView {
+  return template({
+    code: "learned_x",
+    title: learned.phrase,
+    intents: [learned.phrase],
+    query: learned.query,
+    params: learned.params,
+    columns: learned.columns,
+    source: "learned",
+    company: "ООО «Тест»",
+  });
+}

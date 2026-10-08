@@ -7,7 +7,7 @@
  * extra condition, another period, another counterparty) goes to the model. A wrong template
  * answer is worse than a paid one; every answer also has an "Ask AI anyway" button.
  */
-import type { QueryResult, QueryTemplateView, TemplateColumn } from "@platform/shared";
+import type { QueryResult, QueryTemplateView, TemplateColumn, TemplateParam } from "@platform/shared";
 
 /** Words that carry no meaning for matching: they may be in the question without counting as extra. */
 const FILLER = new Set([
@@ -283,4 +283,69 @@ export function renderTemplate(template: QueryTemplateView, result: QueryResult)
   }
   if (result.truncated) lines.push("", `_${result.rows.length}+ rows_`);
   return lines.join("\n");
+}
+
+// --- learning -------------------------------------------------------------------------------------
+
+/** What a template learned from one answered question is made of. */
+export interface Learned {
+  phrase: string;
+  query: string;
+  params: TemplateParam[];
+  columns: TemplateColumn[];
+}
+
+const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_CELL = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?$/;
+
+function columnFormat(values: unknown[]): TemplateColumn["format"] {
+  const filled = values.filter((v) => v !== null && v !== undefined && v !== "");
+  if (filled.length === 0) return "text";
+  if (filled.every((v) => typeof v === "number")) return "number";
+  if (filled.every((v) => typeof v === "string" && DATE_CELL.test(v))) return "date";
+  return "text";
+}
+
+/**
+ * Whether the model's answer to this question can become a template, and as what. Only a short
+ * question without numbers or quoted values, answered by one query whose parameters are the date
+ * or the month the question named (or today), with a whole result. Anything else is left to the
+ * model every time: a template must not depend on something the question did not say.
+ */
+export function learnFromRun(
+  question: string,
+  input: { query: string; params?: Record<string, string | number | boolean | null> | undefined },
+  result: QueryResult,
+  today = new Date(),
+): Learned | null {
+  if (/[\d"«»“”]/.test(question) || result.truncated || result.rows.length === 0) return null;
+  // A period written into the query itself cannot follow the question's period.
+  if (/ДАТАВРЕМЯ|DATETIME|НАЧАЛОПЕРИОДА\s*\(\s*"/iu.test(input.query)) return null;
+
+  const params: TemplateParam[] = [];
+  const consumed = new Set<string>();
+  for (const [name, value] of Object.entries(input.params ?? {})) {
+    if (typeof value !== "string" || !DATE_VALUE.test(value)) return null;
+    const types: TemplateParam["type"][] = [];
+    if (findDate(question, today).value === value) types.push("date");
+    const month = findMonth(question, today);
+    if (value === isoDate(month.year, month.month, 1)) types.push("month_start");
+    if (value === isoDate(month.year, month.month, lastDay(month.year, month.month))) types.push("month_end");
+    const type = types.length === 1 ? types[0] : undefined;
+    if (!type || !/^[A-Za-zА-Яа-я_][A-Za-zА-Яа-я0-9_]*$/.test(name)) return null;
+    params.push({ name, type });
+    if (type !== "date") month.used.forEach((u) => consumed.add(u));
+  }
+
+  const meaningful = words(question).filter(
+    (w) => !FILLER.has(w) && ![...consumed].some((u) => u.includes(w) || w.includes(u)),
+  );
+  if (meaningful.length < 2 || meaningful.length > 10) return null;
+
+  const columns = result.columns.map((label, i) => ({
+    label: label || `#${i + 1}`,
+    format: columnFormat(result.rows.map((row) => row[i])),
+  }));
+  if (columns.length === 0 || columns.length > 30) return null;
+  return { phrase: meaningful.join(" "), query: input.query, params, columns };
 }

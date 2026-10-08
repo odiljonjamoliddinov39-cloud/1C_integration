@@ -57,6 +57,13 @@
       "when": 1791473853716,
       "tag": "0007_cost_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791476525362,
+      "tag": "0008_learned_templates",
+      "breakpoints": true
     }
   ]
 }

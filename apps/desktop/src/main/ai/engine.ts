@@ -16,13 +16,14 @@ import type { ConnectionInput } from "../../shared/ipc.js";
 import type { ConnectorRunner } from "../connector.js";
 import type { SessionService } from "../session.js";
 import { buildDigest } from "./digest.js";
-import { matchTemplate, renderTemplate } from "./templates.js";
+import { learnFromRun, matchTemplate, renderTemplate } from "./templates.js";
 
 const POLICY_TTL_MS = 5 * 60_000;
 const TEMPLATES_TTL_MS = 10 * 60_000;
 
 export type FreeAnswer =
-  { route: "template"; title: string; text: string } | { route: "cache"; text: string; ageSeconds: number };
+  | { route: "template"; title: string; text: string; code: string; learned: boolean }
+  | { route: "cache"; text: string; ageSeconds: number };
 
 export class CostEngine {
   private policyCache: { at: number; policy: AiPolicy } | null = null;
@@ -88,7 +89,9 @@ export class CostEngine {
     cacheable: boolean,
   ): Promise<FreeAnswer | null> {
     const policy = await this.policy();
-    const matched = policy.templates ? matchTemplate(question, await this.templates()) : null;
+    // A learned template is for the company it was learned in.
+    const usable = (await this.templates()).filter((t) => !t.company || t.company === companyName);
+    const matched = policy.templates ? matchTemplate(question, usable) : null;
     if (matched) {
       const result = await this.connector.tool(connection, "run_query", {
         query: matched.template.query,
@@ -102,6 +105,8 @@ export class CostEngine {
             route: "template",
             title: matched.template.title,
             text: renderTemplate(matched.template, data),
+            code: matched.template.code,
+            learned: matched.template.source === "learned",
           };
           await this.reportFree("template", companyName, question);
           return free;
@@ -123,6 +128,47 @@ export class CostEngine {
       }
     }
     return null;
+  }
+
+  /**
+   * Tells the server the model answered this question with one successful query, when that could
+   * become a template; after a few identical sightings the server makes it one for this company.
+   */
+  async learn(
+    companyName: string,
+    question: string,
+    query: { query: string; params?: Record<string, string | number | boolean | null> | undefined },
+    result: QueryResult,
+  ): Promise<void> {
+    const policy = await this.policy();
+    if (!policy.learnTemplates || !policy.templates) return;
+    const learned = learnFromRun(question, query, result);
+    if (!learned) return;
+    try {
+      const { client, accessToken } = await this.session.authorized();
+      const created = await client.learnTemplate(accessToken, {
+        company: companyName,
+        question,
+        phrase: learned.phrase,
+        query: learned.query,
+        params: learned.params,
+        columns: learned.columns,
+      });
+      if (created) this.templatesCache = null;
+    } catch {
+      /* learning is only a saving */
+    }
+  }
+
+  /** The user asked the model anyway after a learned template's answer: it is not used again. */
+  async reject(code: string): Promise<void> {
+    this.templatesCache = null;
+    try {
+      const { client, accessToken } = await this.session.authorized();
+      await client.rejectTemplate(accessToken, code);
+    } catch {
+      /* the server keeps it on; the next answer can be rejected again */
+    }
   }
 
   /** Keeps a finished answer to a read-only question, for the same question while the data is the same. */

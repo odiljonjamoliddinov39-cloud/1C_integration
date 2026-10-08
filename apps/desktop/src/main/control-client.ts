@@ -13,6 +13,7 @@ import {
   type DigestInput,
   type DigestKey,
   type FreeAnswerInput,
+  type LearnInput,
   QueryTemplateView,
   LicenseResponse,
   Me,
@@ -164,6 +165,17 @@ export class ControlClient {
   async aiTemplates(accessToken: string): Promise<QueryTemplateView[]> {
     const response = await this.request("GET", "/v1/ai/templates", undefined, accessToken);
     return z.array(QueryTemplateView).parse(await response.json());
+  }
+
+  /** The model answered this question with one query: counted, and made a template after a few times. */
+  async learnTemplate(accessToken: string, input: LearnInput): Promise<boolean> {
+    const response = await this.request("POST", "/v1/ai/templates/learn", input, accessToken);
+    return z.object({ created: z.boolean() }).parse(await response.json()).created;
+  }
+
+  /** "Ask AI anyway" on a learned template's answer: the server turns that template off. */
+  async rejectTemplate(accessToken: string, code: string): Promise<void> {
+    await this.request("POST", "/v1/ai/templates/reject", { code }, accessToken);
   }
 
   async lookupAnswer(accessToken: string, key: AnswerKey): Promise<AnswerLookup> {

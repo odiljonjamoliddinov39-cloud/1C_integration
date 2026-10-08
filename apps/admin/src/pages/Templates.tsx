@@ -18,6 +18,7 @@ const PARAM_TYPES = ["date", "month_start", "month_end", "text", "number"];
 /** Known questions answered by a fixed 1C query, without the model. */
 export function TemplatesPage({ me }: { me: AdminView }) {
   const templates = useQuery({ queryKey: ["query-templates"], queryFn: api.queryTemplates });
+  const candidates = useQuery({ queryKey: ["template-candidates"], queryFn: api.templateCandidates });
   const [editing, setEditing] = useState<QueryTemplateView | "new" | null>(null);
   const queryClient = useQueryClient();
   const remove = useMutation({
@@ -31,10 +32,11 @@ export function TemplatesPage({ me }: { me: AdminView }) {
         <div>
           <h1 className="text-xl font-semibold">Query templates</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            A question the app recognizes is answered by a fixed 1C query, with no AI and no cost. Take the
-            questions from the dearest list on the AI cost page. The matcher compares words, answers only when
-            the question is no longer than the phrase plus its parameters, and every answer has an &quot;Ask
-            AI anyway&quot; button. Check each template against real 1C data before turning it on.
+            A question the app recognizes is answered by a fixed 1C query, with no AI and no cost. Templates
+            are learned automatically from the questions your customers ask (see below), and you can also
+            write them by hand. The matcher compares words, answers only when the question is no longer than
+            the phrase plus its parameters, and every answer has an &quot;Ask AI anyway&quot; button. Look
+            over what was learned, and turn off a template that looks wrong.
           </p>
         </div>
         {owner && (
@@ -55,14 +57,34 @@ export function TemplatesPage({ me }: { me: AdminView }) {
         {templates.data?.length === 0 ? (
           <Empty>No templates yet. Every question goes to the model.</Empty>
         ) : (
-          <Table head={["Code", "Title", "Phrases", "Version", "State", "Changed", ""]}>
+          <Table
+            head={["Code", "Title", "Phrases", "For", "Used to learn", "Version", "State", "Changed", ""]}
+          >
             {templates.data?.map((t) => (
               <tr key={t.id}>
                 <Td className="font-mono text-xs">{t.code}</Td>
                 <Td>{t.title}</Td>
                 <Td className="max-w-xs truncate">{t.intents.join(" · ")}</Td>
+                <Td>
+                  {t.source === "learned" ? (
+                    <span title="Learned from this company's own questions">
+                      {t.accountName} · {t.company}
+                    </span>
+                  ) : (
+                    "Everyone"
+                  )}
+                </Td>
+                <Td>{t.source === "learned" ? t.hits : "—"}</Td>
                 <Td>{t.version}</Td>
-                <Td>{t.enabled ? <Badge tone="success">On</Badge> : <Badge>Off</Badge>}</Td>
+                <Td>
+                  {t.enabled ? (
+                    <Badge tone="success">On</Badge>
+                  ) : t.rejected > 0 ? (
+                    <Badge tone="warning">Off: rejected by a user</Badge>
+                  ) : (
+                    <Badge>Off</Badge>
+                  )}
+                </Td>
                 <Td>{relative(t.updatedAt)}</Td>
                 <Td className="space-x-2 text-right">
                   {owner && (
@@ -82,6 +104,31 @@ export function TemplatesPage({ me }: { me: AdminView }) {
                     </>
                   )}
                 </Td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+      <Card>
+        <div className="border-b border-border px-4 py-2.5">
+          <h2 className="text-sm font-semibold">Being learned</h2>
+          <p className="text-xs text-muted-foreground">
+            Questions the model answered with one successful query. Each becomes a template for its company
+            once the same question and query have been seen as many times as the AI limits page says. A user
+            pressing &quot;Ask AI anyway&quot; on a learned answer turns that template off.
+          </p>
+        </div>
+        {candidates.data?.length === 0 ? (
+          <Empty>Nothing yet.</Empty>
+        ) : (
+          <Table head={["Customer", "Company", "Question", "Phrase", "Seen"]}>
+            {candidates.data?.map((c, i) => (
+              <tr key={i}>
+                <Td>{c.accountName}</Td>
+                <Td>{c.company}</Td>
+                <Td className="max-w-xs truncate">{c.question}</Td>
+                <Td>{c.phrase}</Td>
+                <Td>{c.hits}</Td>
               </tr>
             ))}
           </Table>

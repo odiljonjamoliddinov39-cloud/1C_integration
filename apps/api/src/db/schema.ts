@@ -262,6 +262,14 @@ export const metadataDigests = pgTable(
 /** Known questions answered by a fixed 1C query, without the model. Managed in the admin dashboard. */
 export const queryTemplates = pgTable("query_templates", {
   id: id(),
+  /** Set for a learned template: it belongs to this account's company only. */
+  accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+  company: text("company"),
+  source: text("source", { enum: ["admin", "learned"] })
+    .notNull()
+    .default("admin"),
+  hits: integer("hits").notNull().default(0),
+  rejected: integer("rejected").notNull().default(0),
   code: text("code").notNull().unique(),
   title: text("title").notNull(),
   intents: jsonb("intents").$type<string[]>().notNull(),
@@ -332,3 +340,27 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
 });
+
+/** Questions the model answered with one successful query, counted until they become templates. */
+export const templateCandidates = pgTable(
+  "template_candidates",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    company: text("company").notNull(),
+    /** The phrase's words, sorted: the same question in another word order is the same one. */
+    phraseKey: text("phrase_key").notNull(),
+    phrase: text("phrase").notNull(),
+    question: text("question").notNull(),
+    queryHash: text("query_hash").notNull(),
+    query: text("query").notNull(),
+    params: jsonb("params").$type<{ name: string; type: string }[]>().notNull(),
+    columns: jsonb("columns").$type<{ label: string; format: string }[]>().notNull(),
+    hits: integer("hits").notNull().default(1),
+    firstAt: createdAt(),
+    lastAt: timestamp("last_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("template_candidates_key").on(t.accountId, t.company, t.phraseKey, t.queryHash)],
+);

@@ -19,6 +19,7 @@ import type {
   Overview,
   QueryTemplateInput,
   QueryTemplateView,
+  TemplateCandidateView,
   SubscriptionStatus,
   UsageRow,
 } from "@platform/shared";
@@ -113,6 +114,7 @@ export const api = {
   setAccountBudget: (id: string, input: AccountBudgetInput) =>
     request<AccountDetail>("POST", `/accounts/${id}/ai-budget`, input),
   queryTemplates: () => request<QueryTemplateView[]>("GET", "/query-templates"),
+  templateCandidates: () => request<TemplateCandidateView[]>("GET", "/template-candidates"),
   saveQueryTemplate: (input: QueryTemplateInput) =>
     request<QueryTemplateView>("PUT", "/query-templates", input),
   deleteQueryTemplate: (id: string) => request<null>("DELETE", `/query-templates/${id}`),

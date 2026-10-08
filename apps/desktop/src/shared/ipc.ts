@@ -140,6 +140,8 @@ export const AssistantInput = z
     files: z.array(AssistantFile).max(ATTACHMENTS.maxFiles).optional(),
     /** Ask the model even if a template or a stored answer could answer ("Ask AI anyway"). */
     skipFree: z.boolean().optional(),
+    /** The learned template whose answer was not wanted: the server turns it off. */
+    rejectTemplate: z.string().max(60).optional(),
   })
   .refine((input) => input.text.length > 0 || (input.files?.length ?? 0) > 0, {
     message: "Write a question or attach a file",
@@ -261,6 +263,8 @@ export type AssistantEvent = { companyId: string } & (
       question: string;
       title?: string;
       ageSeconds?: number;
+      /** A learned template's code (it can be rejected with "Ask AI anyway"). */
+      learnedCode?: string;
     }
 );
 

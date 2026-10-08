@@ -35,6 +35,11 @@ const TOOLS: { key: NumberKey; label: string; hint: string }[] = [
   { key: "maxRows", label: "Rows per query, hard cap", hint: "1–1000" },
   { key: "compactionThreshold", label: "Summarize a chat above, tokens", hint: "50 000 or more" },
   { key: "cacheTtlMinutes", label: "Answer cache lives, minutes", hint: "0: the answer cache is off" },
+  {
+    key: "learnMinHits",
+    label: "Learn a template after, times",
+    hint: "the same question answered by the same query this many times (1–50)",
+  },
 ];
 
 /** Every limit of the AI cost engine, editable here; the backend enforces them, the app only reads them. */
@@ -128,6 +133,7 @@ function PolicyForm({
     ),
     onLimit: draft.onLimit,
     templates: draft.templates === "true",
+    learnTemplates: draft.learnTemplates === "true",
     simpleModel: draft.simpleModel === "" ? null : draft.simpleModel,
   });
   const invalid =
@@ -187,6 +193,17 @@ function PolicyForm({
             >
               <option value="true">On: known questions are answered from 1C directly</option>
               <option value="false">Off: every question goes to the model</option>
+            </Select>
+          </label>
+          <label className="flex items-center gap-3 text-sm">
+            <span className="w-64 shrink-0">Learn templates automatically</span>
+            <Select
+              disabled={!owner}
+              value={draft.learnTemplates}
+              onChange={(e) => set("learnTemplates", e.target.value)}
+            >
+              <option value="true">On: from questions the model answers with one query</option>
+              <option value="false">Off: only templates written here</option>
             </Select>
           </label>
           <label className="flex items-center gap-3 text-sm">

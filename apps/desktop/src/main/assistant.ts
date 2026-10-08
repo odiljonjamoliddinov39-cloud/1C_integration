@@ -36,6 +36,7 @@ import {
   type ObjectState,
   type ReadAttachmentInput,
   ReportFindingsInput,
+  type QueryResult,
   type RunQueryInput,
   isAiToolName,
   isProposalTool,
@@ -153,6 +154,10 @@ interface Run {
   task: "lookup" | "work";
   /** Set once the user declined an answer: the rest of the question runs on the default model. */
   escalate: boolean;
+  /** What the model read in 1C for this question, to learn a template from a one-query answer. */
+  reads: number;
+  queries: { input: RunQueryInput; data: QueryResult }[];
+  wrote: boolean;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -178,7 +183,14 @@ export class AssistantService {
     this.engine = deps.engine ?? new CostEngine(deps.session, deps.connector);
   }
 
-  async send({ companyId, chatId, text, files = [], skipFree }: AssistantInput): Promise<Result<null>> {
+  async send({
+    companyId,
+    chatId,
+    text,
+    files = [],
+    skipFree,
+    rejectTemplate,
+  }: AssistantInput): Promise<Result<null>> {
     const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
@@ -215,6 +227,7 @@ export class AssistantService {
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
+    if (rejectTemplate) void this.engine.reject(rejectTemplate);
     // A read-only question that opens a chat may be answered without the model, and its answer kept.
     const standalone = chat.messages.length === 1 && attached.blocks.length === 0;
     return this.task(companyId, chat, emit, async () => {
@@ -228,9 +241,19 @@ export class AssistantService {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
           escalate: false,
+          reads: 0,
+          queries: [],
+          wrote: false,
         };
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
-        if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
+        if (result.ok && standalone) {
+          this.rememberAnswer(chat, company.name, question);
+          // Answered by one successful query and nothing else: a candidate for a template.
+          const [only] = run.queries;
+          if (only && run.reads === 1 && !run.wrote) {
+            void this.engine.learn(company.name, question, only.input, only.data);
+          }
+        }
         return result;
       } finally {
         // Built after the answer, so the first question is not held up by it.
@@ -250,7 +273,9 @@ export class AssistantService {
       type: "route",
       route: free.route,
       question,
-      ...(free.route === "template" ? { title: free.title } : { ageSeconds: free.ageSeconds }),
+      ...(free.route === "template"
+        ? { title: free.title, ...(free.learned ? { learnedCode: free.code } : {}) }
+        : { ageSeconds: free.ageSeconds }),
     });
     emit({ type: "text", text: free.text });
     chat.messages.push({ role: "assistant", content: [{ type: "text", text: free.text }] });
@@ -372,6 +397,13 @@ export class AssistantService {
           : await this.runTool(chat, use, emit, signal, run);
         // A card the user declined: the rest of the question runs on the default model.
         if (isDeclined(result)) run.escalate = true;
+        if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) run.wrote = true;
+        else {
+          run.reads += 1;
+          if (use.name === "run_query" && result.ok) {
+            run.queries.push({ input: use.input as RunQueryInput, data: result.data as QueryResult });
+          }
+        }
         results.push(toToolResult(use.id, result, shaped(use.name, result, run.policy)));
       }
       if (turn === maxTurns - 2) results.push({ type: "text", text: LAST_STEP_NOTE });
@@ -462,7 +494,14 @@ export class AssistantService {
 
       chat.messages.push({ role: "user", content: auditReportRequest(view) });
       this.save(chat);
-      return this.converse(chat, company.name, emit, abort.signal, { policy, task: "work", escalate: false });
+      return this.converse(chat, company.name, emit, abort.signal, {
+        policy,
+        task: "work",
+        escalate: false,
+        reads: 0,
+        queries: [],
+        wrote: false,
+      });
     });
   }
 
