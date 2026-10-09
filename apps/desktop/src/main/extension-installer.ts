@@ -67,7 +67,7 @@ const COMMAND_LINE_ERROR = /параметрах командной строки
 export function explainLog(log: string): { code: string; message: string } {
   const text = log.trim();
   // 1C 8.3.18 says «Ошибка исключительной блокировки информационной базы» and lists who holds it.
-  if (/монопольн|исключительн\w* блокировк|exclusive/i.test(text)) {
+  if (/монопольн|исключительн[а-яё]* блокировк|exclusive/i.test(text)) {
     const sessions = /Активны сеансы:\s*([^\n]+)/i.exec(text)?.[1]?.trim();
     return {
       code: "EXTENSION_BASE_BUSY",
