@@ -162,7 +162,6 @@ describe("attachments", () => {
             { name: "__MACOSX/._readme.txt", data: bytes("x") },
             { name: "Thumbs.db", data: bytes("x") },
             { name: "setup.exe", data: bytes("MZ") },
-            { name: "inner.zip", data: bytes("PK") },
           ]),
         },
       ]);
@@ -170,7 +169,7 @@ describe("attachments", () => {
       expect(blocks).toHaveLength(4);
       expect(noteOf(blocks[0])).toBe(
         "Archive Документы.zip: 3 file(s) read: Выписка.xlsx, акты/oborot.csv, readme.txt.\n" +
-          "Not read: setup.exe (not a supported kind of file); inner.zip (an archive inside an archive).",
+          "Not read: setup.exe (not a supported kind of file).",
       );
       expect(blocks[1]).toMatchObject({ title: "Документы.zip/Выписка.xlsx" });
       expect(textOf(blocks[1])).toContain("ООО Тест");
@@ -182,6 +181,46 @@ describe("attachments", () => {
         "Документы.zip/акты/oborot.csv",
       ]);
       expect(readTable(tables, { file: "документы.zip/акты/OBOROT.csv" })).toMatchObject({ ok: true });
+    });
+
+    it("opens archives inside the archive, as services that zip every document separately make them", async () => {
+      const document = (n: number) =>
+        zip([
+          { name: `Счёт-${n}.xml`, data: bytes(`<doc>${n}</doc>`) },
+          { name: `Счёт-${n}.pdf`, data: bytes("%PDF-1.7 x") },
+          { name: `Счёт-${n}.p7s`, data: bytes("sig") },
+        ]);
+      const { blocks, tables } = await readAttachments([
+        {
+          name: "Архив.zip",
+          data: zip([
+            { name: "1.zip", data: document(1), stored: true },
+            { name: "папка/2.zip", data: document(2), stored: true },
+            { name: "broken.zip", data: bytes("PK nothing"), stored: true },
+          ]),
+        },
+      ]);
+      const note = noteOf(blocks[0]);
+      expect(note).toContain("4 file(s) read: 1.zip/Счёт-1.xml, 1.zip/Счёт-1.pdf, папка/2.zip/Счёт-2.xml,");
+      expect(note).toContain("1.zip/Счёт-1.p7s (not a supported kind of file)");
+      expect(note).toContain("broken.zip (the archive is damaged)");
+      expect(blocks[1]).toMatchObject({ title: "Архив.zip/1.zip/Счёт-1.xml" });
+      expect(textOf(blocks[1])).toBe("<doc>1</doc>");
+      expect(tables).toHaveLength(0);
+    });
+
+    it("stops opening archives inside archives after three levels", async () => {
+      const level4 = zip([{ name: "a.txt", data: bytes("deep") }]);
+      const level3 = zip([
+        { name: "d.zip", data: level4, stored: true },
+        { name: "c.txt", data: bytes("ok") },
+      ]);
+      const level2 = zip([{ name: "c.zip", data: level3, stored: true }]);
+      const { blocks } = await readAttachments([
+        { name: "top.zip", data: zip([{ name: "b.zip", data: level2, stored: true }]) },
+      ]);
+      expect(noteOf(blocks[0])).toContain("b.zip/c.zip/c.txt");
+      expect(noteOf(blocks[0])).toContain("b.zip/c.zip/d.zip (archives are opened only 3 levels deep)");
     });
 
     it("reads names written in the DOS Cyrillic code page", async () => {
@@ -241,7 +280,7 @@ describe("attachments", () => {
     });
 
     it("skips what is larger than a file may be, and what is past the limit of files", async () => {
-      const many = Array.from({ length: 27 }, (_, i) => ({ name: `f${i}.txt`, data: bytes(`n${i}`) }));
+      const many = Array.from({ length: 62 }, (_, i) => ({ name: `f${i}.txt`, data: bytes(`n${i}`) }));
       const { blocks } = await readAttachments([
         {
           name: "many.zip",
@@ -249,10 +288,10 @@ describe("attachments", () => {
         },
       ]);
       const note = noteOf(blocks[0]);
-      expect(note).toContain("25 file(s) read");
+      expect(note).toContain("60 file(s) read");
       expect(note).toContain("huge.txt (larger than 10 MB)");
-      expect(note).toContain("f26.txt (the archive has more than is read at once)");
-      expect(blocks).toHaveLength(26);
+      expect(note).toContain("f61.txt (the archive has more than is read at once)");
+      expect(blocks).toHaveLength(61);
     });
   });
 });

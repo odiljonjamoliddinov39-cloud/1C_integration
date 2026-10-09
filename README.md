@@ -46,7 +46,8 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
   (.docx), CSV and text files are read on the PC and sent as text (`main/attachments.ts`). Up to 5
   files of 10 MB per question; the server accepts files inline only. A `.zip` is opened on the PC
   (`main/zip.ts`, nothing is written to disk): each supported file in it is read as if attached on
-  its own, named `archive.zip/path`; unsupported, damaged or excess files are listed in a note.
+  its own, named `archive.zip/path`; archives inside it are opened too (up to 3 levels, 60 files,
+  30 MB unpacked: Didox packs every document into its own zip); unsupported, damaged or excess files are listed in a note.
   Password-protected and ZIP64 archives are refused with a message.
 - Chat history: each chat is saved on the PC, encrypted with Windows DPAPI like the 1C passwords,
   newest 200 per company (`main/chats.ts`); a reopened chat continues where it stopped.
