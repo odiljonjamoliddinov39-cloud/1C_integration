@@ -66,12 +66,16 @@ const COMMAND_LINE_ERROR = /параметрах командной строки
 /** What went wrong, in words the accountant can act on, from the Designer's log. */
 export function explainLog(log: string): { code: string; message: string } {
   const text = log.trim();
-  if (/монопольн|exclusive/i.test(text)) {
+  // 1C 8.3.18 says «Ошибка исключительной блокировки информационной базы» and lists who holds it.
+  if (/монопольн|исключительн\w* блокировк|exclusive/i.test(text)) {
+    const sessions = /Активны сеансы:\s*([^\n]+)/i.exec(text)?.[1]?.trim();
     return {
       code: "EXTENSION_BASE_BUSY",
       message:
-        "1C could not lock the base to update the extension: close 1C (and the Configurator) on every PC " +
-        "that has this base open, then try again.",
+        "1C could not lock the base to update the extension because another 1C session has it open" +
+        (sessions ? ` (${sessions.slice(0, 200)})` : "") +
+        ". Close 1C and the Configurator on that PC; if nothing is open, end 1cv8.exe and 1cv8c.exe " +
+        "in Task Manager (or restart the PC), then try again.",
     };
   }
   if (
