@@ -60,6 +60,9 @@ function kindOf(name: string): AttachmentKind {
   return "text";
 }
 
+/** Errors about an attached file; their message names the file and what is wrong with it. */
+const FILE_ERRORS = ["FILE_TYPE", "FILE_TOO_LARGE", "FILE_UNREADABLE"];
+
 const sizeText = (bytes: number) =>
   bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -942,6 +945,9 @@ function EntryView({
       return (
         <div className={cn("rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive")}>
           {known === `errors.${entry.code}` ? entry.message : known}
+          {FILE_ERRORS.includes(entry.code) && known !== entry.message && (
+            <div className="mt-1 text-xs opacity-80">{entry.message}</div>
+          )}
         </div>
       );
     }

@@ -218,6 +218,7 @@ describe("attachments", () => {
       expect(await refused(zip([]))).toMatchObject({ code: "FILE_TYPE" });
       expect(await refused(zip([{ name: "setup.exe", data: bytes("MZ") }]))).toMatchObject({
         code: "FILE_TYPE",
+        message: expect.stringContaining("Found: setup.exe (not a supported kind of file)"),
       });
       expect(await refused(zip([{ name: "a.txt", data: bytes("x"), encrypted: true }]))).toMatchObject({
         code: "FILE_UNREADABLE",

@@ -188,12 +188,16 @@ async function readArchive(
     }
   }
   if (read.length === 0) {
+    const inside =
+      skipped.length > 0
+        ? ` Found: ${skipped.slice(0, 8).join("; ")}${skipped.length > 8 ? "; …" : ""}.`
+        : " The archive is empty.";
     throw supported === 0
       ? new AttachmentError(
           "FILE_TYPE",
-          `${name}: nothing in the archive can be read (PDF, images, Excel, Word and text files can)`,
+          `${name}: nothing in the archive can be read (PDF, images, Excel .xlsx, Word .docx and text files can).${inside}`,
         )
-      : unreadable(name);
+      : new AttachmentError("FILE_UNREADABLE", `${name}: no file in the archive could be read.${inside}`);
   }
   const note = [
     `Archive ${name}: ${read.length} file(s) read: ${read.join(", ")}.`,
