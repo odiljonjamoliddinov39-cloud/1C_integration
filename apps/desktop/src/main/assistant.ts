@@ -31,6 +31,8 @@ import {
   type ChangeInput,
   type ChangePreview,
   type CreateInvoiceResult,
+  type DeleteMarkedPreview,
+  type DeleteMarkedResult,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
   type ObjectState,
@@ -866,6 +868,15 @@ export class AssistantService {
         }
         return { ok: true, data: results };
       };
+    } else if (tool === "propose_delete_marked") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const preview = await this.deps.connector.tool(connection, "previewDeleteMarked", input);
+      if (!preview.ok) return preview;
+      const found = preview.data as DeleteMarkedPreview;
+      // Nothing is marked: nothing to confirm.
+      if (found.total === 0) return { ok: true, data: { status: "nothing_marked" } };
+      proposal = { kind: "delete_marked", preview: found };
+      create = () => this.deps.connector.tool(connection, "deleteMarked", input);
     } else if (tool === "propose_change") {
       const change = input as ChangeInput;
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
@@ -927,6 +938,11 @@ export class AssistantService {
     if (!result.ok) {
       decided({ status: "failed", code: result.code, message: result.message });
       return result;
+    }
+    if (proposal.kind === "delete_marked") {
+      const removed = result.data as DeleteMarkedResult;
+      decided({ status: "removed", result: removed });
+      return { ok: true, data: { status: "done", ...removed } };
     }
     if (proposal.kind === "batch") {
       const results = result.data as BatchItemResult[];
@@ -1247,6 +1263,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_invoices_received") {
     const batch = input as { title: string; invoices: unknown[] };
     return `${batch.invoices.length} · ${batch.title}`;
+  }
+  if (name === "propose_delete_marked") {
+    const types = (input as { types?: string[] }).types;
+    return types && types.length > 0 ? types.join(", ") : "*";
   }
   if (name === "check_changes") return String((input as { changes: unknown[] }).changes.length);
   if (name === "propose_change") {

@@ -214,3 +214,70 @@ describe("ComTransport", () => {
     );
   });
 });
+
+describe("removing marked objects", () => {
+  const mark = (fake: FakePlatform, object: string, deletionMark = true) => {
+    const ref = crypto.randomUUID();
+    fake.objects.set(ref, { object, fields: {}, posted: false, deletionMark, version: 1 });
+    return ref;
+  };
+
+  it("lists the marked objects by type, leaves the audit log out, and removes nothing", async () => {
+    const { fake, client } = setup();
+    mark(fake, "Документ.СписаниеСРасчетногоСчета");
+    mark(fake, "Документ.СписаниеСРасчетногоСчета");
+    mark(fake, "Справочник.БанковскиеСчета");
+    mark(fake, "Справочник.Контрагенты", false); // not marked
+    mark(fake, "Справочник.PlatformLog"); // the log is never removed
+    const preview = await client.previewDeleteMarked();
+    expect(preview.total).toBe(3);
+    expect(preview.types).toEqual([
+      expect.objectContaining({ type: "Документ.СписаниеСРасчетногоСчета", count: 2 }),
+      expect.objectContaining({ type: "Справочник.БанковскиеСчета", count: 1 }),
+    ]);
+    expect(preview.otherSessions).toEqual([]);
+    expect([...fake.objects.values()].filter((o) => o.deletionMark)).toHaveLength(4);
+    expect((await client.previewDeleteMarked({ types: ["Справочник.БанковскиеСчета"] })).total).toBe(1);
+  });
+
+  it("removes them for good, keeps what is still referenced, and says what stayed", async () => {
+    const { fake, client } = setup();
+    mark(fake, "Документ.СписаниеСРасчетногоСчета");
+    const used = mark(fake, "Справочник.БанковскиеСчета");
+    fake.referenced.add(used);
+    const log = mark(fake, "Справочник.PlatformLog");
+    const live = mark(fake, "Справочник.Контрагенты", false);
+    const result = await client.deleteMarked();
+    expect(result).toMatchObject({ total: 2, deleted: 1, kept: 1 });
+    expect(result.keptTypes).toEqual([
+      expect.objectContaining({ type: "Справочник.БанковскиеСчета", count: 1 }),
+    ]);
+    expect(result.reasons).toHaveLength(1);
+    // The referenced one, the log and the unmarked object are all still there.
+    expect(fake.objects.has(used) && fake.objects.has(log) && fake.objects.has(live)).toBe(true);
+    expect(fake.objects.size).toBe(3);
+  });
+
+  it("answers BASE_BUSY, naming the sessions, while another 1C session has the base", async () => {
+    const { fake, client } = setup();
+    mark(fake, "Документ.СписаниеСРасчетногоСчета");
+    fake.otherSessions = [
+      {
+        number: 2,
+        application: "Тонкий клиент",
+        user: "Admin",
+        computer: "DESKTOP-1",
+        startedAt: "2026-10-09T10:44:08",
+      },
+    ];
+    expect((await client.previewDeleteMarked()).otherSessions).toHaveLength(1);
+    await expect(client.deleteMarked()).rejects.toMatchObject({
+      code: "BASE_BUSY",
+      details: { sessions: [expect.objectContaining({ computer: "DESKTOP-1" })] },
+    });
+    expect(fake.objects.size).toBe(1);
+    // With nothing marked there is nothing to hold the base for.
+    fake.objects.clear();
+    expect(await client.deleteMarked()).toMatchObject({ total: 0, deleted: 0 });
+  });
+});

@@ -6,6 +6,8 @@
 import type {
   AuditFinding,
   ChangePreview,
+  DeleteMarkedPreview,
+  DeleteMarkedResult,
   CreateInvoiceResult,
   InvoiceReceivedDraft,
   ObjectState,
@@ -227,13 +229,16 @@ export type Proposal =
   | { kind: "change"; preview: ChangePreview }
   | { kind: "batch"; title: string; items: BatchItem[] }
   | { kind: "invoice_issued"; sale: SaleSummary }
-  | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
+  | { kind: "invoice_received"; invoice: InvoiceReceivedDraft }
+  /** The marked objects, by type, to be removed for good; and who else has the base open. */
+  | { kind: "delete_marked"; preview: DeleteMarkedPreview };
 
 export type ProposalOutcome =
   | { status: "declined" }
   | { status: "created"; document: CreateInvoiceResult }
   | { status: "applied"; state: ObjectState }
   | { status: "batch"; results: BatchItemResult[] }
+  | { status: "removed"; result: DeleteMarkedResult }
   | { status: "failed"; code: string; message: string };
 
 /** What the assistant is doing, pushed from the main process while it answers. */

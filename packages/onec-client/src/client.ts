@@ -2,6 +2,9 @@ import {
   ApplyChangeInput,
   ChangeInput,
   ChangePreview,
+  DeleteMarkedInput,
+  DeleteMarkedPreview,
+  DeleteMarkedResult,
   CreateInvoiceResult,
   GetObjectInput,
   ObjectSnapshot,
@@ -80,6 +83,19 @@ export class PlatformApiClient {
   /** Writes a change the user confirmed; `version` from the preview guards against a newer edit. */
   async applyChange(input: ApplyChangeInput): Promise<ObjectState> {
     return this.invoke("ApplyChange", ObjectState, this.valid(ApplyChangeInput, input));
+  }
+
+  /** The objects marked for deletion, by type, and who else has the base open. Removes nothing. */
+  async previewDeleteMarked(input: DeleteMarkedInput = {}): Promise<DeleteMarkedPreview> {
+    return this.invoke("PreviewDeleteMarked", DeleteMarkedPreview, this.valid(DeleteMarkedInput, input));
+  }
+
+  /**
+   * Removes the marked objects for good, with 1C's reference control (an object still in use stays).
+   * Needs the base to itself: with another session open it answers BASE_BUSY.
+   */
+  async deleteMarked(input: DeleteMarkedInput = {}): Promise<DeleteMarkedResult> {
+    return this.invoke("DeleteMarked", DeleteMarkedResult, this.valid(DeleteMarkedInput, input));
   }
 
   close(): Promise<void> {

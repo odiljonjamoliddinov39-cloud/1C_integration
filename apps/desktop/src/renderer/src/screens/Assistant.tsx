@@ -974,6 +974,33 @@ function ProposalCard({
         <BatchBody proposal={proposal} outcome={outcome} />
       ) : proposal.kind === "change" ? (
         <ChangeBody preview={proposal.preview} />
+      ) : proposal.kind === "delete_marked" ? (
+        <>
+          <div>
+            <div className="font-semibold">{t("assistant.proposal.removeTitle")}</div>
+            <div className="text-muted-foreground">
+              {t("assistant.proposal.removeTotal", { count: proposal.preview.total })}
+            </div>
+          </div>
+          <table className="w-full text-xs tabular-nums">
+            <tbody>
+              {proposal.preview.types.map((group) => (
+                <tr key={group.type} className="border-t border-border">
+                  <td className="py-1">{group.presentation}</td>
+                  <td className="py-1 text-right font-medium">{group.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {proposal.preview.otherSessions.length > 0 && (
+            <div className="rounded-lg bg-amber-100 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+              {t("assistant.proposal.removeBusy")}{" "}
+              {proposal.preview.otherSessions
+                .map((s) => `${s.computer} · ${s.application} · #${s.number}`)
+                .join("; ")}
+            </div>
+          )}
+        </>
       ) : proposal.kind === "invoice_issued" ? (
         <>
           <div>
@@ -1040,24 +1067,44 @@ function ProposalCard({
         </>
       )}
       {proposal.kind !== "change" && proposal.kind !== "batch" && (
-        <p className="text-xs text-muted-foreground">
+        <p
+          className={cn(
+            "text-xs",
+            proposal.kind === "delete_marked" ? "font-medium text-destructive" : "text-muted-foreground",
+          )}
+        >
           {t(
             proposal.kind === "invoice_issued"
               ? "assistant.proposal.note"
-              : "assistant.proposal.noteReceived",
+              : proposal.kind === "delete_marked"
+                ? "assistant.proposal.noteRemove"
+                : "assistant.proposal.noteReceived",
           )}
         </p>
       )}
       {outcome === null ? (
         <div className="flex gap-2">
-          <Button size="sm" disabled={sent} onClick={() => decide(true)}>
-            {sent && proposal.kind === "batch"
-              ? t("assistant.proposal.batchApplying")
-              : proposal.kind === "batch"
-                ? t("assistant.proposal.batchApply", {
-                    count: proposal.items.filter((item) => item.preview).length,
-                  })
-                : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
+          <Button
+            size="sm"
+            disabled={sent}
+            className={
+              proposal.kind === "delete_marked"
+                ? "bg-destructive text-white hover:bg-destructive/90"
+                : undefined
+            }
+            onClick={() => decide(true)}
+          >
+            {proposal.kind === "delete_marked"
+              ? sent
+                ? t("assistant.proposal.removing")
+                : t("assistant.proposal.remove", { count: proposal.preview.total })
+              : sent && proposal.kind === "batch"
+                ? t("assistant.proposal.batchApplying")
+                : proposal.kind === "batch"
+                  ? t("assistant.proposal.batchApply", {
+                      count: proposal.items.filter((item) => item.preview).length,
+                    })
+                  : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -1069,6 +1116,19 @@ function ProposalCard({
             number: outcome.document.number,
             date: day(outcome.document.date),
           })}
+        </div>
+      ) : outcome.status === "removed" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.removed", {
+            deleted: outcome.result.deleted,
+            total: outcome.result.total,
+          })}
+          {outcome.result.kept > 0 && (
+            <div className="mt-1 font-normal text-foreground">
+              {t("assistant.proposal.removeKept", { count: outcome.result.kept })}
+              {outcome.result.reasons[0] ? ` ${outcome.result.reasons[0]}` : ""}
+            </div>
+          )}
         </div>
       ) : outcome.status === "batch" ? (
         <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">

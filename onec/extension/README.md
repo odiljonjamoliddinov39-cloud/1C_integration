@@ -8,8 +8,8 @@ updates.
 ```
 src/CommonModules/
   PlatformAPI.bsl        Ping, GetOrganizations, GetMetadata, RunQuery, GetObject, PreviewChange,
-                         ApplyChange, CreateInvoiceReceived, PreviewInvoiceIssued, CreateInvoiceIssued
-                         (JSON in, JSON out)
+                         ApplyChange, PreviewDeleteMarked, DeleteMarked, CreateInvoiceReceived,
+                         PreviewInvoiceIssued, CreateInvoiceIssued (JSON in, JSON out)
   PlatformAPI_Map.bsl    configuration names, one module per configuration version; extension version
   PlatformAPI_Log.bsl    PlatformLog: the write log and the ExternalID index
 build-xml.mjs            src/ -> xml/: the whole extension as Configurator files
@@ -51,6 +51,14 @@ runs «Удаление помеченных объектов»). A document is 
 re-posted. `ApplyChange` takes the `version` from the preview and refuses (CONFLICT) if the object
 changed since; the write, 1C's own checks and the PlatformLog record (with the change as JSON in
 `Details`) are one transaction. Writes run with the connected 1C user's rights.
+
+**Marked objects** (`PreviewDeleteMarked`, `DeleteMarked`): what «Удаление помеченных объектов» does, from the
+app. The preview lists the objects marked for deletion by type (never the PlatformLog catalog) and the other
+1C sessions on the base. `DeleteMarked` removes them for good, in the base's exclusive mode and with 1C's
+reference control (an object still referred to stays, and the answer says how many and why); with another
+session open it answers `BASE_BUSY` and names the sessions. The app calls it only after the user confirmed a
+card, and records the result in PlatformLog (`delete_marked`). `"delete"` in `ApplyChange` still only sets the
+mark. Version 0.5.0.
 
 **Issued invoices** (`CreateInvoiceIssued`) are made on the basis of a sale (Реализация товаров и
 услуг) with the configuration's own filling, as its «Выписать счет-фактуру» button does, and saved

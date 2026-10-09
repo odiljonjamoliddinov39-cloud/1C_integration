@@ -8,11 +8,15 @@ import { randomUUID } from "node:crypto";
 import {
   type ApplyChangeInput,
   type ChangeInput,
+  type DeleteMarkedInput,
+  type DeleteMarkedPreview,
+  type DeleteMarkedResult,
   EXTENSION_VERSION,
   type GetObjectInput,
   type InvoiceIssuedInput,
   type InvoiceReceivedInput,
   type Organization,
+  type OtherSession,
   type PlatformFunction,
   type QueryResult,
   type RunQueryInput,
@@ -144,6 +148,10 @@ export class FakePlatform implements PlatformTransport {
       version: number;
     }
   >();
+  /** Other 1C sessions on the base: while there are any, removing marked objects answers BASE_BUSY. */
+  otherSessions: OtherSession[] = [];
+  /** Refs of objects other objects still refer to: removing them is refused (1C's reference control). */
+  referenced = new Set<string>();
   calls: { fn: PlatformFunction; arg?: string }[] = [];
   /** Fields 1C's filling check wants, per object: empty ones come back as warnings in a preview. */
   required: Record<string, string[]> = {};
@@ -211,6 +219,10 @@ export class FakePlatform implements PlatformTransport {
         }
         return this.state(apply());
       }
+      case "PreviewDeleteMarked":
+        return this.previewDeleteMarked(parse(arg) as DeleteMarkedInput);
+      case "DeleteMarked":
+        return this.deleteMarked(parse(arg) as DeleteMarkedInput);
       case "CreateInvoiceIssued": {
         const sale = this.findSale(parse(arg) as InvoiceIssuedInput);
         const existing = this.issued.find((i) => i.saleRef === sale.ref);
@@ -228,6 +240,47 @@ export class FakePlatform implements PlatformTransport {
         return { ref: doc.ref, number: doc.number, date: doc.date, posted: false, duplicate: false };
       }
     }
+  }
+
+  /** The marked objects, by type, apart from the audit log. */
+  private marked(input: DeleteMarkedInput) {
+    const only = input.types ? new Set(input.types) : null;
+    return [...this.objects.entries()].filter(
+      ([, o]) => o.deletionMark && o.object !== "Справочник.PlatformLog" && (!only || only.has(o.object)),
+    );
+  }
+
+  private groups(entries: [string, { object: string }][]) {
+    const counts = new Map<string, number>();
+    for (const [, o] of entries) counts.set(o.object, (counts.get(o.object) ?? 0) + 1);
+    return [...counts.entries()].map(([type, count]) => ({
+      type,
+      presentation: type.split(".").slice(1).join("."),
+      count,
+    }));
+  }
+
+  private previewDeleteMarked(input: DeleteMarkedInput): DeleteMarkedPreview {
+    const entries = this.marked(input);
+    return { total: entries.length, types: this.groups(entries), otherSessions: this.otherSessions };
+  }
+
+  private deleteMarked(input: DeleteMarkedInput): DeleteMarkedResult {
+    const entries = this.marked(input);
+    if (entries.length > 0 && this.otherSessions.length > 0) {
+      throw new Failure("BASE_BUSY", "Another 1C session has the base open", {
+        sessions: this.otherSessions,
+      });
+    }
+    const kept = entries.filter(([ref]) => this.referenced.has(ref));
+    for (const [ref] of entries) if (!this.referenced.has(ref)) this.objects.delete(ref);
+    return {
+      total: entries.length,
+      deleted: entries.length - kept.length,
+      kept: kept.length,
+      keptTypes: this.groups(kept),
+      reasons: kept.length > 0 ? ["Объект используется в других объектах"] : [],
+    };
   }
 
   private state(ref: string) {

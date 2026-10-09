@@ -18,6 +18,8 @@ export const PLATFORM_FUNCTIONS = [
   "GetObject",
   "PreviewChange",
   "ApplyChange",
+  "PreviewDeleteMarked",
+  "DeleteMarked",
 ] as const;
 export type PlatformFunction = (typeof PLATFORM_FUNCTIONS)[number];
 
@@ -36,6 +38,8 @@ export const ERROR_CODES = [
   "QUERY_ERROR",
   "WRITE_FAILED",
   "CONFLICT",
+  /** Removing marked objects needs the base to itself: another 1C session has it open. */
+  "BASE_BUSY",
   "INTERNAL",
   // client
   "COM_UNAVAILABLE",
@@ -68,9 +72,10 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
 
 /**
  * The PlatformAPI extension version this app is built for: it has every function the app calls
- * (GetObject, PreviewChange, ApplyChange). An older one still answers questions, but cannot change 1C.
+ * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
+ * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.4.0";
+export const EXTENSION_VERSION = "0.5.0";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
@@ -337,3 +342,48 @@ export type ChangePreview = z.infer<typeof ChangePreview>;
 
 export const ApplyChangeInput = z.intersection(ChangeInput, z.object({ version: z.string().optional() }));
 export type ApplyChangeInput = z.infer<typeof ApplyChangeInput>;
+
+// --- Removing objects marked for deletion -------------------------------------------------------
+
+/** Which marked objects to remove; absent: every marked object (the audit log is always kept). */
+export const DeleteMarkedInput = z.object({
+  types: z.array(z.string().trim().min(1).max(200)).max(200).optional(),
+});
+export type DeleteMarkedInput = z.infer<typeof DeleteMarkedInput>;
+
+export const MarkedGroup = z.object({
+  /** Full 1C name, e.g. "Документ.СписаниеСРасчетногоСчета". */
+  type: z.string(),
+  presentation: z.string(),
+  count: z.number().int(),
+});
+export type MarkedGroup = z.infer<typeof MarkedGroup>;
+
+/** Another 1C session on the base: removing needs the base to itself. */
+export const OtherSession = z.object({
+  number: z.number().int(),
+  application: z.string(),
+  user: z.string(),
+  computer: z.string(),
+  startedAt: z.string(),
+});
+export type OtherSession = z.infer<typeof OtherSession>;
+
+/** What would be removed (the marked objects by type), and who else has the base open. Removes nothing. */
+export const DeleteMarkedPreview = z.object({
+  total: z.number().int(),
+  types: z.array(MarkedGroup),
+  otherSessions: z.array(OtherSession),
+});
+export type DeleteMarkedPreview = z.infer<typeof DeleteMarkedPreview>;
+
+/** What was removed. Objects that are still referenced by others stay (1C's own reference control). */
+export const DeleteMarkedResult = z.object({
+  total: z.number().int(),
+  deleted: z.number().int(),
+  kept: z.number().int(),
+  keptTypes: z.array(MarkedGroup),
+  /** 1C's reasons for what stayed, at most a few. */
+  reasons: z.array(z.string()),
+});
+export type DeleteMarkedResult = z.infer<typeof DeleteMarkedResult>;
