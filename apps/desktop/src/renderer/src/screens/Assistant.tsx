@@ -56,6 +56,7 @@ function kindOf(name: string): AttachmentKind {
   if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) return "image";
   if (extension === ".xlsx") return "spreadsheet";
   if (extension === ".docx") return "document";
+  if (extension === ".zip") return "archive";
   return "text";
 }
 
@@ -823,7 +824,14 @@ function PaperclipIcon() {
 }
 
 function FileIcon({ kind }: { kind: AttachmentKind }) {
-  const label = { image: "IMG", pdf: "PDF", spreadsheet: "XLS", document: "DOC", text: "TXT" }[kind];
+  const label = {
+    image: "IMG",
+    pdf: "PDF",
+    spreadsheet: "XLS",
+    document: "DOC",
+    text: "TXT",
+    archive: "ZIP",
+  }[kind];
   return (
     <span className="rounded bg-muted px-1 font-mono text-[10px] font-semibold text-muted-foreground">
       {label}

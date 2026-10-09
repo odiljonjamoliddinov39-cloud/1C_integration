@@ -11,6 +11,7 @@ import readXlsxFile from "read-excel-file/node";
 
 import type { AssistantFile, AttachmentInfo } from "../shared/ipc.js";
 import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
+import { ZipError, readZip } from "./zip.js";
 
 /** The longest side the model looks at; larger photos are scaled down before they are sent. */
 const IMAGE_SIDE = 1568;
@@ -18,6 +19,28 @@ const IMAGE_SIDE = 1568;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Text taken from one Word or text file. */
 const MAX_TEXT_CHARS = 150_000;
+/** Files read from one archive, and how much they may add up to once unpacked. */
+const ATTACHMENT_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_ARCHIVE_FILES = 25;
+const MAX_ARCHIVE_BYTES = 30 * 1024 * 1024;
+/** What is read inside an archive (images are told by their extension here, not by content). */
+const ARCHIVE_EXTENSIONS = new Set([
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".xlsx",
+  ".xlsm",
+  ".csv",
+  ".tsv",
+  ".docx",
+  ".txt",
+  ".xml",
+  ".json",
+  ".md",
+]);
 
 /** Scales a PNG or JPEG down and re-encodes it as JPEG; null when it cannot read the image. */
 export type ShrinkImage = (data: Uint8Array, maxSide: number) => Uint8Array | null;
@@ -46,6 +69,13 @@ export async function readAttachments(
   const info: AttachmentInfo[] = [];
   const tables: TableFile[] = [];
   for (const file of files) {
+    if (extensionOf(file.name) === ".zip") {
+      const archive = await readArchive(file, shrink);
+      blocks.push(...archive.blocks);
+      info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
+      tables.push(...archive.tables);
+      continue;
+    }
     const read = await readOne(file, shrink);
     blocks.push(read.block);
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
@@ -58,7 +88,7 @@ async function readOne(
   { name, data }: AssistantFile,
   shrink?: ShrinkImage,
 ): Promise<{ block: AiContentBlock; kind: AttachmentInfo["kind"]; table?: TableFile }> {
-  const extension = name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+  const extension = extensionOf(name);
   const image = imageType(data);
   if (image) return { block: imageBlock(data, image, shrink, name), kind: "image" };
   if (extension === ".pdf" || startsWith(data, "%PDF-")) {
@@ -101,6 +131,102 @@ async function readOne(
     "FILE_TYPE",
     `${name}: this kind of file is not supported (PDF, images, Excel, Word and text files are)`,
   );
+}
+
+const extensionOf = (name: string) => name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+
+/**
+ * A .zip is opened here and each file in it is read as if it had been attached by itself, named
+ * "archive.zip/folder/file.xlsx". A file in it that is not supported, or can not be read, is left
+ * out and said so in a note at the start, so one odd file does not lose the rest.
+ */
+async function readArchive(
+  { name, data }: AssistantFile,
+  shrink?: ShrinkImage,
+): Promise<{ blocks: AiContentBlock[]; tables: TableFile[] }> {
+  let entries;
+  try {
+    entries = readZip(data);
+  } catch (error) {
+    throw archiveError(name, error);
+  }
+  const files = entries.filter((entry) => !entry.directory && !isNoise(entry.name));
+  const blocks: AiContentBlock[] = [];
+  const tables: TableFile[] = [];
+  const read: string[] = [];
+  const skipped: string[] = [];
+  let total = 0;
+  let supported = 0;
+  for (const entry of files) {
+    const extension = extensionOf(entry.name);
+    if (!ARCHIVE_EXTENSIONS.has(extension)) {
+      skipped.push(
+        `${entry.name} (${extension === ".zip" ? "an archive inside an archive" : "not a supported kind of file"})`,
+      );
+      continue;
+    }
+    supported += 1;
+    if (entry.size > ATTACHMENT_FILE_BYTES) {
+      skipped.push(`${entry.name} (larger than 10 MB)`);
+      continue;
+    }
+    if (read.length >= MAX_ARCHIVE_FILES || total + entry.size > MAX_ARCHIVE_BYTES) {
+      skipped.push(`${entry.name} (the archive has more than is read at once)`);
+      continue;
+    }
+    try {
+      const file = await readOne({ name: `${name}/${entry.name}`, data: entry.read() }, shrink);
+      total += entry.size;
+      blocks.push(file.block);
+      if (file.table) tables.push(file.table);
+      read.push(entry.name);
+    } catch (error) {
+      if (error instanceof ZipError && error.reason === "ENCRYPTED") throw archiveError(name, error);
+      skipped.push(
+        `${entry.name} (${error instanceof AttachmentError && error.code === "FILE_TOO_LARGE" ? "too large" : "could not be read"})`,
+      );
+    }
+  }
+  if (read.length === 0) {
+    throw supported === 0
+      ? new AttachmentError(
+          "FILE_TYPE",
+          `${name}: nothing in the archive can be read (PDF, images, Excel, Word and text files can)`,
+        )
+      : unreadable(name);
+  }
+  const note = [
+    `Archive ${name}: ${read.length} file(s) read: ${read.join(", ")}.`,
+    skipped.length > 0 ? `Not read: ${skipped.join("; ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { blocks: [{ type: "text", text: note }, ...blocks], tables };
+}
+
+/** Files that archivers and systems add themselves. */
+const isNoise = (path: string) =>
+  path.startsWith("__MACOSX/") || /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|~\$[^/]*)$/i.test(path);
+
+function archiveError(name: string, error: unknown): AttachmentError {
+  if (error instanceof ZipError) {
+    if (error.reason === "ENCRYPTED") {
+      return new AttachmentError(
+        "FILE_UNREADABLE",
+        `${name}: the archive is password-protected; unpack it and attach the files`,
+      );
+    }
+    if (error.reason === "UNSUPPORTED") {
+      return new AttachmentError(
+        "FILE_UNREADABLE",
+        `${name}: this kind of archive is not supported (${error.message}); attach the files themselves`,
+      );
+    }
+    if (error.reason === "TOO_MANY") {
+      return new AttachmentError("FILE_TOO_LARGE", `${name}: the archive has too many files`);
+    }
+  }
+  return unreadable(name);
 }
 
 type ImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";

@@ -44,7 +44,10 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
 - Desktop: `apps/desktop/src/main/assistant.ts` (the tool loop) and `screens/Assistant.tsx`.
 - Files: PDF and images go to the model as they are (photos scaled to 1568 px); Excel (.xlsx), Word
   (.docx), CSV and text files are read on the PC and sent as text (`main/attachments.ts`). Up to 5
-  files of 10 MB per question; the server accepts files inline only.
+  files of 10 MB per question; the server accepts files inline only. A `.zip` is opened on the PC
+  (`main/zip.ts`, nothing is written to disk): each supported file in it is read as if attached on
+  its own, named `archive.zip/path`; unsupported, damaged or excess files are listed in a note.
+  Password-protected and ZIP64 archives are refused with a message.
 - Chat history: each chat is saved on the PC, encrypted with Windows DPAPI like the 1C passwords,
   newest 200 per company (`main/chats.ts`); a reopened chat continues where it stopped.
 - The API key reaches the server from the `ANTHROPIC_API_KEY` repository secret on deploy

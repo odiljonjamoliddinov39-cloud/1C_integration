@@ -120,6 +120,7 @@ export const ATTACHMENTS = {
     ".txt",
     ".xml",
     ".json",
+    ".zip",
   ],
   maxFiles: 5,
   maxBytes: 10 * 1024 * 1024,
@@ -191,7 +192,7 @@ export interface AuditView {
   finished: boolean;
 }
 
-export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text";
+export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text" | "archive";
 
 /** An attached file as the chat shows it; its content goes to the model, not to the screen. */
 export interface AttachmentInfo {
