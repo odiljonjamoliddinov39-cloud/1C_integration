@@ -3,7 +3,7 @@ name: Desktop app (Windows .exe)
 # Builds the Windows installer. Run it from the Actions tab ("Run workflow") and give the address
 # of the control system, e.g. https://203-0-113-5.sslip.io. The .exe is attached to the run as an
 # artifact and, when the deploy secrets are set, published on the server at
-# https://<server>/download/1C-Platform-Setup.exe for the website's Download page.
+# https://<server>/download/AI-Accounting-Assistant-Setup.exe for the website's Download page.
 # Every build gets its own version (<major.minor from package.json>.<run number>) and is published
 # with latest.yml, so installed apps find it, download it in the background and update themselves.
 # Without a code-signing certificate Windows SmartScreen shows a warning on first start.
@@ -109,7 +109,9 @@ jobs:
           name="$1"
           cd /opt/platform/downloads
           mv ".incoming/$name" ".incoming/$name.blockmap" .
-          cp "$name" .stable.exe && mv .stable.exe 1C-Platform-Setup.exe
+          cp "$name" .stable.exe && cp .stable.exe 1C-Platform-Setup.exe && mv .stable.exe AI-Accounting-Assistant-Setup.exe
           mv .incoming/latest.yml latest.yml
-          ls -t 1C-Platform-Setup-*.exe | tail -n +6 | while read -r old; do rm -f "$old" "$old.blockmap"; done
+          # The old name stays for links made before the rename; its dated copies are no longer needed.
+          ls -t 1C-Platform-Setup-*.exe 2>/dev/null | while read -r old; do rm -f "$old" "$old.blockmap"; done
+          ls -t AI-Accounting-Assistant-Setup-*.exe | tail -n +6 | while read -r old; do rm -f "$old" "$old.blockmap"; done
           SCRIPT

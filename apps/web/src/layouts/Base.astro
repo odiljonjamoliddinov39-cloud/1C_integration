@@ -27,7 +27,7 @@ const nav = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>{title ? `${title} · 1C Platform` : t.meta.title}</title>
+    <title>{title ? `${title} · AI Accounting Assistant` : t.meta.title}</title>
     <meta name="description" content={t.meta.description} />
     <link rel="alternate" hreflang="uz" href={href("uz", path)} />
     <link rel="alternate" hreflang="ru" href={href("ru", path)} />
@@ -36,8 +36,13 @@ const nav = [
     <header class="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
         <a href={href(locale, "/")} class="flex items-center gap-2 font-semibold">
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">1C</span>
-          1C Platform
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" aria-hidden="true">
+            <rect x="6" y="12" width="32" height="40" rx="10" fill="#7C3AED" />
+            <rect x="26" y="12" width="32" height="40" rx="10" fill="#0D9488" />
+            <path d="M36 12h2v40h-2a10 10 0 0 1-10-10V22a10 10 0 0 1 10-10z" fill="#1B1840" />
+            <path d="M32 22C32.9 29 34 30.1 41 31C34 31.9 32.9 33 32 40C31.1 33 30 31.9 23 31C30 30.1 31.1 29 32 22Z" fill="#FCD34D" />
+          </svg>
+          AI Accounting Assistant
         </a>
         <nav class="order-3 flex w-full gap-4 overflow-x-auto text-sm text-muted-foreground md:order-none md:w-auto">
           {nav.map(([p, label]) => <a class="whitespace-nowrap hover:text-foreground" href={href(locale, p)}>{label}</a>)}
@@ -54,7 +59,7 @@ const nav = [
     </main>
     <footer class="border-t border-border">
       <div class="mx-auto flex max-w-6xl flex-wrap gap-4 px-4 py-6 text-sm text-muted-foreground">
-        <span>© 2026 1C Platform · {t.footer.tagline}</span>
+        <span>© 2026 AI Accounting Assistant · {t.footer.tagline}</span>
         <span class="ml-auto rounded-full bg-warning/20 px-2 py-0.5 text-xs text-foreground">{t.footer.prototype}</span>
       </div>
     </footer>

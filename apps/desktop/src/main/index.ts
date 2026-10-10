@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,6 +19,7 @@ import { machineIdHash, newFallbackId } from "./machine-id.js";
 import { SessionService } from "./session.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
 import { type Updater, UpdateService, loadElectronUpdater } from "./updater.js";
+import { userDataFolder } from "./user-data.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +52,7 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    title: "1C Platform",
+    title: "AI Accounting Assistant",
     webPreferences: {
       preload: join(here, "../preload/index.cjs"), // sandboxed preloads must be CommonJS
       contextIsolation: true,
@@ -101,6 +103,9 @@ const shrinkImage: ShrinkImage = (data, maxSide) => {
 function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
 }
+
+// An installed app keeps its data across the rename.
+app.setPath("userData", userDataFolder(app.getPath("userData"), app.getPath("appData"), existsSync));
 
 void app.whenReady().then(async () => {
   const store = new LocalStore(join(app.getPath("userData"), "platform.json"), secrets);

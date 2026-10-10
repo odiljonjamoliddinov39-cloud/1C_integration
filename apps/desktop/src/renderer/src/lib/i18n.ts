@@ -2,7 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
 const en = {
-  appName: "1C Platform",
+  appName: "AI Accounting Assistant",
   demoBanner: "Demo mode: an in-memory 1C base is used instead of real 1C.",
   signIn: {
     title: "Sign in",
@@ -191,6 +191,18 @@ const en = {
     },
   },
   companies: {
+    openAssistant: "Open assistant",
+    fileBase: "File base",
+    serverBase: "Server base",
+    assistantOn: "Assistant on",
+    addNew: "Connect a new 1C base",
+    addNewHint: "Pick a base on this PC",
+    how: {
+      title: "How it works",
+      connect: { title: "Connect a 1C base", text: "Bases stay on this PC only." },
+      ask: { title: "Give the assistant a task", text: "Documents, audit, bank statements." },
+      confirm: { title: "Confirm", text: "Only the records you confirm reach 1C." },
+    },
     title: "Companies",
     subtitle: "Connected 1C infobases on this PC",
     connect: "Connect company",
@@ -322,7 +334,7 @@ const en = {
 type Dict = typeof en;
 
 const ru: Dict = {
-  appName: "1C Platform",
+  appName: "AI Accounting Assistant",
   demoBanner: "Демо-режим: вместо настоящей 1С используется база в памяти.",
   signIn: {
     title: "Вход",
@@ -513,6 +525,18 @@ const ru: Dict = {
     },
   },
   companies: {
+    openAssistant: "Открыть ассистента",
+    fileBase: "Файловая база",
+    serverBase: "Серверная база",
+    assistantOn: "Ассистент включён",
+    addNew: "Подключить новую базу 1С",
+    addNewHint: "Выберите базу на этом ПК",
+    how: {
+      title: "Как это работает",
+      connect: { title: "Подключите базу 1С", text: "Базы остаются только на этом ПК." },
+      ask: { title: "Поставьте задачу ассистенту", text: "Документы, аудит, банковские выписки." },
+      confirm: { title: "Подтвердите", text: "В 1С попадают только записи, которые вы подтвердили." },
+    },
     title: "Компании",
     subtitle: "Подключённые информационные базы 1С на этом ПК",
     connect: "Подключить компанию",
@@ -643,7 +667,7 @@ const ru: Dict = {
 };
 
 const uz: Dict = {
-  appName: "1C Platform",
+  appName: "AI Accounting Assistant",
   demoBanner: "Demo rejim: haqiqiy 1C oʻrniga xotiradagi baza ishlatilmoqda.",
   signIn: {
     title: "Kirish",
@@ -835,6 +859,18 @@ const uz: Dict = {
     },
   },
   companies: {
+    openAssistant: "Yordamchini ochish",
+    fileBase: "Fayl bazasi",
+    serverBase: "Server bazasi",
+    assistantOn: "Yordamchi yoqilgan",
+    addNew: "Yangi 1C bazasini ulang",
+    addNewHint: "Kompyuterdagi bazani tanlang",
+    how: {
+      title: "Qanday ishlaydi",
+      connect: { title: "1C bazasini ulang", text: "Bazalar faqat shu kompyuterda qoladi." },
+      ask: { title: "Yordamchiga topshiriq bering", text: "Hujjatlar, audit, bank koʻchirmalari." },
+      confirm: { title: "Tasdiqlang", text: "1C ga faqat siz tasdiqlagan yozuvlar tushadi." },
+    },
     title: "Kompaniyalar",
     subtitle: "Ushbu kompyuterdagi ulangan 1C bazalari",
     connect: "Kompaniyani ulash",

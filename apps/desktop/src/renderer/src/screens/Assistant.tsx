@@ -68,11 +68,11 @@ const sizeText = (bytes: number) =>
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export function AssistantScreen() {
+export function AssistantScreen({ initialCompanyId = null }: { initialCompanyId?: string | null }) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialCompanyId);
   const [transcripts, setTranscripts] = useState<Transcripts>({});
 
   useEffect(
@@ -103,15 +103,15 @@ export function AssistantScreen() {
   const setTranscript = (next: Transcript) => setTranscripts((all) => ({ ...all, [company.id]: next }));
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full flex-col px-6 py-4">
+    <div className="flex h-full min-h-[32rem] w-full flex-col px-8 py-6">
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{t("assistant.title")}</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t("assistant.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("assistant.subtitle")}</p>
         </div>
         <select
           aria-label={t("assistant.company")}
-          className="ml-auto h-9 rounded-lg border border-border bg-card px-2 text-sm"
+          className="ml-auto h-10 rounded-xl border border-warning/70 bg-card px-3 text-sm font-semibold"
           value={company.id}
           onChange={(e) => setSelectedId(e.target.value)}
         >
@@ -283,12 +283,14 @@ function ChatList({
     new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
 
   return (
-    <Card className="flex w-60 shrink-0 flex-col p-2">
-      <Button size="sm" variant="outline" disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
+    <Card className="flex w-64 shrink-0 flex-col p-3">
+      <Button disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
         + {t("assistant.newChat")}
       </Button>
       <AuditStart busy={transcript.busy} onStart={onAudit} />
-      <div className="mt-2 px-1 text-xs font-medium text-muted-foreground">{t("assistant.history")}</div>
+      <div className="mt-4 px-1 text-xs font-bold tracking-wider text-muted-foreground uppercase">
+        {t("assistant.history")}
+      </div>
       <nav aria-label={t("assistant.history")} className="mt-1 flex-1 space-y-0.5 overflow-y-auto">
         {(chats.data ?? []).length === 0 && (
           <p className="px-1 py-2 text-xs text-muted-foreground">{t("assistant.noChats")}</p>
@@ -297,8 +299,8 @@ function ChatList({
           <div
             key={chat.id}
             className={cn(
-              "group flex items-start gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-muted",
-              chat.id === transcript.chatId && "bg-muted",
+              "group flex items-start gap-1 rounded-xl px-2.5 py-2 text-sm hover:bg-muted",
+              chat.id === transcript.chatId && "bg-primary/10",
             )}
           >
             <button
@@ -343,7 +345,7 @@ function AuditStart({ busy, onStart }: { busy: boolean; onStart: (from: string, 
   const [to, setTo] = useState(today);
   if (!open) {
     return (
-      <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => setOpen(true)}>
+      <Button variant="teal" className="mt-2" disabled={busy} onClick={() => setOpen(true)}>
         {t("audit.start")}
       </Button>
     );
@@ -768,7 +770,7 @@ function Chat({
           <PaperclipIcon />
         </Button>
         <textarea
-          className="min-h-11 flex-1 resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm"
+          className="min-h-11 flex-1 resize-none rounded-xl border border-primary/50 bg-card px-3 py-2 text-sm outline-none focus:border-primary"
           rows={2}
           maxLength={4000}
           placeholder={t("assistant.placeholder")}
@@ -791,7 +793,12 @@ function Chat({
             {t("assistant.stop")}
           </Button>
         ) : (
-          <Button type="submit" disabled={!text.trim() && files.length === 0}>
+          <Button
+            type="submit"
+            variant="accent"
+            className="h-auto px-5"
+            disabled={!text.trim() && files.length === 0}
+          >
             {t("assistant.send")}
           </Button>
         )}
@@ -885,7 +892,7 @@ function EntryView({
             </div>
           )}
           {entry.text && (
-            <div className="rounded-lg bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
+            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm whitespace-pre-wrap text-primary-foreground shadow-sm">
               {entry.text}
             </div>
           )}
@@ -893,8 +900,16 @@ function EntryView({
       );
     case "assistant":
       return (
-        <div className="markdown max-w-full text-sm">
-          <Markdown remarkPlugins={[remarkGfm]}>{entry.text}</Markdown>
+        <div className="flex gap-3">
+          <span
+            aria-hidden="true"
+            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sidebar text-[10px] font-bold text-amber-300"
+          >
+            AI
+          </span>
+          <div className="markdown min-w-0 flex-1 text-sm">
+            <Markdown remarkPlugins={[remarkGfm]}>{entry.text}</Markdown>
+          </div>
         </div>
       );
     case "note":

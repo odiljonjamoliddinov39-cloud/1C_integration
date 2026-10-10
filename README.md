@@ -1,4 +1,4 @@
-# 1C Accounting Automation Platform
+# AI Accounting Assistant
 
 Removes manual data entry from accounting in Uzbekistan. Data flows from the tax portal, EDO
 operators and banks straight into 1C, checked and correct, and an AI assistant audits the books.

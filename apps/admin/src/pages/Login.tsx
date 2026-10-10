@@ -14,7 +14,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm p-6">
-        <h1 className="text-lg font-semibold">1C Platform Admin</h1>
+        <h1 className="text-lg font-semibold">AI Accounting Assistant Admin</h1>
         <p className="mt-1 text-sm text-muted-foreground">For our staff only.</p>
         <form
           className="mt-5 space-y-3"
