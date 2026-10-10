@@ -46,6 +46,18 @@ Ask Didox support (or the partner manager) for:
 > imzolanadi; 4) limitlar va vebhuklar; 5) mijoz nomidan ishlaydigan uchinchi tomon ilovasi uchun
 > shartlar. Aloqa: <ism, telefon>.
 
+## Leads found (unverified)
+
+From a web summary the project owner pasted on 2026-10-10; none of it is confirmed against Didox's own
+documentation, so treat every name below as "to confirm", not as the API:
+
+- Official docs portal: https://api-docs.didox.uz/login (an account is needed to read it).
+- Public Postman collections: "Didox SSO API" (sign-in and registration with an E-IMZO key) and
+  "DIDOX-1C-INTEGRATION" (https://documenter.getpostman.com/view/7157122/TVsrEUYF).
+- Said to exist: a test host (`testapi.didox.uz`), `POST /v1/auth/login`, `GET /v1/profile/{taxId}`,
+  `GET /v1/documents/{id}/tosign`, `GET /v1/documents/{id}/downloadrequest`.
+- Documents are signed with E-IMZO (ERI) keys; statuses (signed, rejected) come back through the API.
+
 ## Plan once access exists
 
 1. **Client**: a `DidoxClient` in `packages/` behind an interface, with a fake for tests (the same
