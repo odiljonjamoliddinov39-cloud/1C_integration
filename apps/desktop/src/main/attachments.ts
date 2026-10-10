@@ -70,15 +70,17 @@ export async function readAttachments(
   const blocks: AiContentBlock[] = [];
   const info: AttachmentInfo[] = [];
   const tables: TableFile[] = [];
+  const budget: Budget = { sent: 0 };
   for (const file of files) {
     if (extensionOf(file.name) === ".zip") {
-      const archive = await readArchive(file, shrink);
+      const archive = await readArchive(file, budget, shrink);
       blocks.push(...archive.blocks);
       info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
       tables.push(...archive.tables);
       continue;
     }
     const read = await readOne(file, shrink);
+    budget.sent += pagesSize(read.block);
     blocks.push(read.block);
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
     if (read.table) tables.push(read.table);
@@ -137,8 +139,45 @@ async function readOne(
 
 const extensionOf = (name: string) => name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
 
+/**
+ * What goes to the model as pages and pictures (base64) in one question. The API refuses a request
+ * of 32 MB, and the whole chat goes with every step, so a pile of scans must not fill it.
+ */
+interface Budget {
+  sent: number;
+}
+const MAX_PAGES_CHARS = 14_000_000;
+
+const pagesSize = (block: AiContentBlock) => {
+  const source = block.source as { type?: string; data?: string } | undefined;
+  return source?.type === "base64" ? (source.data?.length ?? 0) : 0;
+};
+
+/**
+ * What stays of earlier questions' pages and pictures once they were answered: their names. They
+ * are the bulk of a chat, the model has already read them, and keeping them would stop a long
+ * chat of scans after a few questions.
+ */
+export function dropPages<T extends { role: string; content: unknown }>(messages: T[]): T[] {
+  return messages.map((message) => {
+    if (message.role !== "user" || !Array.isArray(message.content)) return message;
+    const blocks = message.content as AiContentBlock[];
+    if (!blocks.some((block) => pagesSize(block) > 0)) return message;
+    const content = blocks.map((block) =>
+      pagesSize(block) > 0
+        ? {
+            type: "text",
+            text: `[${typeof block.title === "string" ? block.title : "A picture"} was attached earlier; its pages are no longer kept in the chat. Attach it again to look at it again.]`,
+          }
+        : block,
+    );
+    return { ...message, content };
+  });
+}
+
 /** What is collected while an archive, and the archives inside it, are read. */
 interface Walk {
+  budget: Budget;
   blocks: AiContentBlock[];
   tables: TableFile[];
   read: string[];
@@ -157,9 +196,10 @@ interface Walk {
  */
 async function readArchive(
   { name, data }: AssistantFile,
+  budget: Budget,
   shrink?: ShrinkImage,
 ): Promise<{ blocks: AiContentBlock[]; tables: TableFile[] }> {
-  const walk: Walk = { blocks: [], tables: [], read: [], skipped: [], total: 0, supported: 0 };
+  const walk: Walk = { budget, blocks: [], tables: [], read: [], skipped: [], total: 0, supported: 0 };
   await walkArchive(name, "", data, 1, walk, shrink);
   if (walk.read.length === 0) {
     const inside =
@@ -201,10 +241,24 @@ async function walkArchive(
     );
     return;
   }
+  // A document that comes both as XML and as PDF is read from the XML: it has all the data and is
+  // small, while the PDF is only its picture.
+  const stem = (entryName: string) => entryName.replace(/\.[^./]+$/, "").toLowerCase();
+  const xml = entries.filter((e) => !e.directory && extensionOf(e.name) === ".xml");
+  const pdf = entries.filter((e) => !e.directory && extensionOf(e.name) === ".pdf");
+  const xmlStems = new Set(xml.map((e) => stem(e.name)));
+  const pictureOfXml = (entryName: string) =>
+    xmlStems.has(stem(entryName)) || (xml.length === 1 && pdf.length === 1);
+
   for (const entry of entries) {
     if (entry.directory || isNoise(entry.name)) continue;
     const path = `${inside}${entry.name}`;
     const extension = extensionOf(entry.name);
+    if (extension === ".pdf" && pictureOfXml(entry.name)) {
+      walk.supported += 1;
+      walk.skipped.push(`${path} (the XML of the same document is read instead)`);
+      continue;
+    }
     const nested = extension === ".zip";
     if (!nested && !ARCHIVE_EXTENSIONS.has(extension)) {
       walk.skipped.push(`${path} (not a supported kind of file)`);
@@ -231,6 +285,12 @@ async function walkArchive(
         continue;
       }
       const file = await readOne({ name: `${top}/${path}`, data: bytes }, shrink);
+      const pages = pagesSize(file.block);
+      if (pages > 0 && walk.budget.sent + pages > MAX_PAGES_CHARS) {
+        walk.skipped.push(`${path} (too many pages and pictures for one question)`);
+        continue;
+      }
+      walk.budget.sent += pages;
       walk.blocks.push(file.block);
       if (file.table) walk.tables.push(file.table);
       walk.read.push(path);

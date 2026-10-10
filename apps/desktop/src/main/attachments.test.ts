@@ -4,7 +4,7 @@ import { crc32, deflateRawSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { AttachmentError, decodeText, readAttachments } from "./attachments.js";
+import { AttachmentError, decodeText, dropPages, readAttachments } from "./attachments.js";
 import { readTable } from "./tables.js";
 
 const fixture = (name: string) => new Uint8Array(readFileSync(join(import.meta.dirname, "fixtures", name)));
@@ -149,6 +149,43 @@ describe("attachments", () => {
     expect(await refused("broken.xlsx")).toMatchObject({ code: "FILE_UNREADABLE" });
   });
 
+  it("keeps only the names of pages and pictures from earlier questions", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "document",
+            title: "a.pdf",
+            source: { type: "base64", media_type: "application/pdf", data: "AAAA" },
+          },
+          {
+            type: "document",
+            title: "t.xlsx",
+            source: { type: "text", media_type: "text/plain", data: "table" },
+          },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "BBBB" } },
+          { type: "text", text: "question" },
+        ],
+      },
+      { role: "assistant", content: "answer" },
+      { role: "user", content: "plain" },
+    ];
+    const kept = dropPages(messages);
+    expect(kept[0]?.content).toEqual([
+      { type: "text", text: expect.stringContaining("a.pdf was attached earlier") },
+      {
+        type: "document",
+        title: "t.xlsx",
+        source: { type: "text", media_type: "text/plain", data: "table" },
+      },
+      { type: "text", text: expect.stringContaining("A picture was attached earlier") },
+      { type: "text", text: "question" },
+    ]);
+    expect(kept[1]).toBe(messages[1]);
+    expect(kept[2]).toBe(messages[2]);
+  });
+
   describe("zip archives", () => {
     it("reads each supported file in it, named after the archive, and notes what it skipped", async () => {
       const { blocks, info, tables } = await readAttachments([
@@ -201,12 +238,31 @@ describe("attachments", () => {
         },
       ]);
       const note = noteOf(blocks[0]);
-      expect(note).toContain("4 file(s) read: 1.zip/Счёт-1.xml, 1.zip/Счёт-1.pdf, папка/2.zip/Счёт-2.xml,");
+      expect(note).toContain("2 file(s) read: 1.zip/Счёт-1.xml, папка/2.zip/Счёт-2.xml.");
+      expect(note).toContain("1.zip/Счёт-1.pdf (the XML of the same document is read instead)");
       expect(note).toContain("1.zip/Счёт-1.p7s (not a supported kind of file)");
       expect(note).toContain("broken.zip (the archive is damaged)");
       expect(blocks[1]).toMatchObject({ title: "Архив.zip/1.zip/Счёт-1.xml" });
       expect(textOf(blocks[1])).toBe("<doc>1</doc>");
       expect(tables).toHaveLength(0);
+    });
+
+    it("reads a PDF that has no XML, and keeps the pages of a question within what the API takes", async () => {
+      const page = (n: number) => bytes(`%PDF-1.7 ${"x".repeat(4_000_000)}${n}`);
+      const { blocks } = await readAttachments([
+        {
+          name: "scans.zip",
+          data: zip([
+            { name: "a.pdf", data: page(1) },
+            { name: "b.pdf", data: page(2) },
+            { name: "c.pdf", data: page(3) },
+          ]),
+        },
+      ]);
+      const note = noteOf(blocks[0]);
+      expect(note).toContain("2 file(s) read: a.pdf, b.pdf.");
+      expect(note).toContain("c.pdf (too many pages and pictures for one question)");
+      expect(blocks).toHaveLength(3);
     });
 
     it("stops opening archives inside archives after three levels", async () => {

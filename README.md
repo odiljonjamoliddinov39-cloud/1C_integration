@@ -47,7 +47,10 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
   files of 10 MB per question; the server accepts files inline only. A `.zip` is opened on the PC
   (`main/zip.ts`, nothing is written to disk): each supported file in it is read as if attached on
   its own, named `archive.zip/path`; archives inside it are opened too (up to 3 levels, 60 files,
-  30 MB unpacked: Didox packs every document into its own zip); unsupported, damaged or excess files are listed in a note.
+  30 MB unpacked: Didox packs every document into its own zip); a PDF that comes with an XML of the same document is
+  skipped (the XML has the data), and the pages and pictures of one question are capped at about
+  10 MB; pages and pictures of earlier questions are dropped from the chat, leaving their names,
+  so a chat of scans does not hit the size limit; unsupported, damaged or excess files are listed in a note.
   Password-protected and ZIP64 archives are refused with a message.
 - Chat history: each chat is saved on the PC, encrypted with Windows DPAPI like the 1C passwords,
   newest 200 per company (`main/chats.ts`); a reopened chat continues where it stopped.

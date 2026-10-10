@@ -64,7 +64,7 @@ import type {
 } from "../shared/ipc.js";
 import { applyEvent } from "../shared/transcript.js";
 import { AUDIT_CHECKS, AUDIT_SECTIONS, type AuditCheck } from "./audit-checks.js";
-import { AttachmentError, type ShrinkImage, readAttachments } from "./attachments.js";
+import { AttachmentError, type ShrinkImage, dropPages, readAttachments } from "./attachments.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
@@ -213,6 +213,8 @@ export class AssistantService {
     const question = text.trim() || attached.info.map((file) => file.name).join(", ");
     const content: AiMessage["content"] =
       attached.blocks.length > 0 ? [...attached.blocks, { type: "text", text: question }] : question;
+    // Pages and pictures of earlier questions were read; only their names stay.
+    chat.messages = dropPages(chat.messages);
     if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
       return this.fail(notify, "CHAT_TOO_LARGE", "This chat is too large; start a new chat");
     }
