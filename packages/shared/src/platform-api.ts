@@ -75,7 +75,7 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
  * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
  * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.5.0";
+export const EXTENSION_VERSION = "0.6.0";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
@@ -170,6 +170,8 @@ export const InvoiceLine = z.object({
   item: z
     .object({ ref: Uuid.optional(), ikpu: z.string().optional(), name: z.string().optional() })
     .refine((i) => i.ref || i.ikpu || i.name, "item needs ref, ikpu or name"),
+  /** Goods (the default) or a service: a service goes to the services table of the document when it has one. */
+  kind: z.enum(["goods", "service"]).optional(),
   unit: z.string().optional(),
   quantity: z.number().positive(),
   price: Money.nonnegative(),

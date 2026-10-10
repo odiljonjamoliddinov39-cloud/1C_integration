@@ -25,6 +25,15 @@ describe("InvoiceReceivedInput", () => {
     expect(InvoiceReceivedInput.parse(invoice).lines).toHaveLength(1);
   });
 
+  it("takes service lines, and refuses another kind", () => {
+    expect(
+      InvoiceReceivedInput.parse({ ...invoice, lines: [{ ...line, kind: "service" }] }).lines[0]?.kind,
+    ).toBe("service");
+    expect(InvoiceReceivedInput.safeParse({ ...invoice, lines: [{ ...line, kind: "work" }] }).success).toBe(
+      false,
+    );
+  });
+
   it("rejects arithmetic that does not add up", () => {
     const bad = { ...invoice, lines: [{ ...line, total: 22000 }] };
     const result = InvoiceReceivedInput.safeParse(bad);

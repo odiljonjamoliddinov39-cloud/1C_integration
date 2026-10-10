@@ -46,6 +46,18 @@ describe("PlatformApiClient", () => {
     expect(fake.documents).toHaveLength(1);
   });
 
+  it("keeps whether a line is goods or a service", async () => {
+    const { client, fake } = setup();
+    const [first] = invoice.lines;
+    if (!first) throw new Error("the fixture has a line");
+    await client.createInvoiceReceived({
+      ...invoice,
+      externalId: "didox-act",
+      lines: [first, { ...first, kind: "service" }],
+    });
+    expect(fake.documents[0]?.lines.map((l) => l.kind)).toEqual(["goods", "service"]);
+  });
+
   it("turns 1C errors into structured OneCErrors", async () => {
     const { client, fake } = setup();
     await expect(

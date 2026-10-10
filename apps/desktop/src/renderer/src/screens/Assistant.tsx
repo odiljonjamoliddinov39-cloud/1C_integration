@@ -1061,7 +1061,12 @@ function ProposalCard({
             <tbody>
               {proposal.invoice.lines.map((line, i) => (
                 <tr key={i} className="border-t border-border">
-                  <td className="py-1">{line.item.name ?? line.item.ikpu ?? line.item.ref}</td>
+                  <td className="py-1">
+                    {line.item.name ?? line.item.ikpu ?? line.item.ref}
+                    {line.kind === "service" && (
+                      <span className="ml-1 text-muted-foreground">({t("assistant.proposal.service")})</span>
+                    )}
+                  </td>
                   <td className="py-1 text-right">{money(line.quantity)}</td>
                   <td className="py-1 text-right">{money(line.price)}</td>
                   <td className="py-1 text-right">{line.vatRate}%</td>

@@ -71,7 +71,7 @@ lines and the amounts. First sort them: a document belongs to an organization of
 received document) or its seller (an issued one) has that organization's INN (list_organizations); the others are \
 not entered here, and you name them with their INN and say which company's base they go to, never create an \
 organization to fit them. Then enter every kind of document that 1C records: an invoice with its receipt \
-(propose_invoices_received), an act of services as a receipt (or a sale, if we issued it) of the services kind, a \
+(propose_invoices_received; a service line has kind "service"), an act of services as a receipt (or a sale, if we issued it) of the services kind, a \
 power of attorney in the document or directory this configuration has for it, filled with its number, date, validity \
 period and holder, and posted when the documents of that kind already there are. Waybills (ТТН), delivery notes and \
 specifications that only back up an invoice are not separate postings: find out with the search of \
@@ -256,7 +256,8 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
-    "rate in percent; VAT amount; total = amount + VAT). The accountant confirms or cancels it in the app.",
+    'rate in percent; VAT amount; total = amount + VAT; kind "service" for a service line such as an act of work ' +
+    "done, goods by default). The accountant confirms or cancels it in the app.",
 };
 
 function inputSchema(schema: z.ZodType): Anthropic.Tool.InputSchema {

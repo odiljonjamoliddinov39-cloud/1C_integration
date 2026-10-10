@@ -35,6 +35,7 @@ interface FakeDocument {
   contractRef?: string;
   supplierNumber: string;
   lines: {
+    kind: "goods" | "service";
     itemRef: string;
     quantity: number;
     price: number;
@@ -441,6 +442,7 @@ export class FakePlatform implements PlatformTransport {
       );
       if (!item) throw new Failure("ITEM_NOT_FOUND", `Item of line ${i + 1} not found`, { line: i + 1 });
       return {
+        kind: line.kind ?? ("goods" as const),
         itemRef: item.ref,
         quantity: line.quantity,
         price: line.price,

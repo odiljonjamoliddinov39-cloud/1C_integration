@@ -58,7 +58,7 @@ app. The preview lists the objects marked for deletion by type (never the Platfo
 reference control (an object still referred to stays, and the answer says how many and why); with another
 session open it answers `BASE_BUSY` and names the sessions. The app calls it only after the user confirmed a
 card, and records the result in PlatformLog (`delete_marked`). `"delete"` in `ApplyChange` still only sets the
-mark. Version 0.5.0.
+mark. Version 0.6.0 (invoice lines can be services).
 
 **Issued invoices** (`CreateInvoiceIssued`) are made on the basis of a sale (Реализация товаров и
 услуг) with the configuration's own filling, as its «Выписать счет-фактуру» button does, and saved
