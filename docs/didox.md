@@ -86,18 +86,43 @@ Development server: `https://devapi.goodsign.biz/`. Requests carry `api-key` (a 
 **Not in the collection** (to be seen on the dev server): the shape of the document list and of a
 document's details, the shape of the login answer, and whether the token travels as `user-key`.
 
+## E-IMZO (from https://github.com/qo0p/e-imzo-doc)
+
+E-IMZO is a program on the accountant's PC. It has a local WebSocket service, and every call is one
+short connection: connect to `ws://127.0.0.1:64646/service/cryptapi` (`wss://127.0.0.1:64443` from an
+https page), send one JSON message, take one answer, close.
+
+- `{plugin:"pfx", name:"list_all_certificates"}` lists key files: `disk`, `path`, `name`, `alias`. The
+  alias holds `1.2.860.3.16.1.1` (INN), `1.2.860.3.16.1.2` (PINFL), `CN`, `O`, `SERIALNUMBER` (hex, what
+  Didox calls the serial number), `VALIDFROM`, `VALIDTO`.
+- `{plugin:"pfx", name:"load_key", arguments:[disk, path, name, alias]}` gives a `keyId`. **E-IMZO asks
+  for the key's password in its own window**, and keeps it for the `keyId`'s session (the user can tick
+  "remember for 6 hours"); the app never sees it. A `keyId` lives 24 hours.
+- `{plugin:"pkcs7", name:"create_pkcs7", arguments:[dataBase64, keyId, "no"]}` gives `pkcs7_64`
+  (`"no"`: the data is inside the document). ID cards and tokens use `"idcard"`, `"baikey"`, `"ckc"`
+  instead of a `keyId` (not supported by the app yet).
+- `{name:"apikey", arguments:[domain, key, ...]}`: an API key bound to a **domain**, issued by НИЦ НТ.
+  The demo's `localhost` and `127.0.0.1` keys are only for a local page. For a test, E-IMZO's tray menu
+  has a "developer mode". **Whether E-IMZO accepts a desktop app, which has no page and no domain, is
+  not documented** and has to be tried on a PC (then ask НИЦ НТ what key an installed application uses).
+- Test without a physical key: tray menu, Development, ID-card emulator (test only).
+
 ## Built
 
-`apps/desktop/src/main/didox/`: `DidoxClient` (sign-in through a `DidoxSigner`, listing, details,
-archive download, create/sign/reject), a `FakeDidox` server and a `FakeSigner`, with tests. The signer
-that talks to the real E-IMZO is not built (see below).
+`apps/desktop/src/main/didox/`, with tests and fakes (`FakeDidox`, `FakeSigner`, a fake E-IMZO):
+
+- `client.ts`: `DidoxClient` (sign-in through a `DidoxSigner`, listing, details, archive download,
+  create/sign/reject).
+- `eimzo.ts`: `EImzoClient` (the local service above), `EImzoSigner` (picks the key by serial number or
+  INN, else the only valid one; opens it once; signs; reopens it if E-IMZO forgot the id).
+
+Not wired into the app yet: no settings screen, no assistant tool.
 
 ## Needed next
 
-1. **E-IMZO on the PC**: how the app asks it for the key list and for a PKCS#7 (its local service
-   and its API key for our app; see e-imzo.uz documentation), and a test key.
-2. **The partner `api-key`** from Didox, and a test company on the dev server.
-3. A first real run against the dev server, to fix the unknown shapes above.
+1. A first run on a PC with E-IMZO and a test key, against `devapi.goodsign.biz`: to see whether E-IMZO
+   accepts the app, and the shapes of the answers the collection does not show.
+2. The partner `api-key` from Didox, and a test company on the dev server.
 
 ## Plan once access exists
 
