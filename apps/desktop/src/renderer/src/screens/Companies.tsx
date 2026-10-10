@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import type { CompanyView } from "../../../shared/ipc";
 import { ConnectCompanyDialog } from "@/components/ConnectCompanyDialog";
+import { DidoxTestDialog } from "@/components/DidoxTestDialog";
 import { ConnectorStatusBadge } from "@/components/ConnectorStatus";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,6 +30,7 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
+  const [didoxOpen, setDidoxOpen] = useState(false);
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
   const session = useQuery({ queryKey: ["session"], queryFn: () => window.platform.auth.session() });
   const readOnly = session.data?.license?.mode !== "active";
@@ -61,8 +63,11 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
           <h1 className="text-3xl font-bold tracking-tight">{t("companies.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("companies.subtitle")}</p>
         </div>
+        <Button variant="outline" className="ml-auto h-11 px-5" onClick={() => setDidoxOpen(true)}>
+          {t("didox.button")}
+        </Button>
         <Button
-          className="ml-auto h-11 px-5 shadow-lg shadow-primary/25"
+          className="h-11 px-5 shadow-lg shadow-primary/25"
           disabled={readOnly}
           onClick={() => setConnecting(true)}
         >
@@ -166,6 +171,8 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
           </div>
         ))}
       </div>
+
+      {didoxOpen && <DidoxTestDialog onClose={() => setDidoxOpen(false)} />}
 
       {connecting && (
         <ConnectCompanyDialog

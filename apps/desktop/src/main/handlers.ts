@@ -10,6 +10,9 @@ import {
   AssistantInput,
   AuditInput,
   type AppInfo,
+  type DidoxKeyView,
+  DidoxTestInput,
+  type DidoxTestResult,
   type ChatSummary,
   type ChatView,
   type CompanyView,
@@ -21,6 +24,8 @@ import {
   SignInInput,
 } from "../shared/ipc.js";
 import type { AssistantService } from "./assistant.js";
+import { EImzoClient, EImzoError } from "./didox/eimzo.js";
+import { listKeys, runDidoxTest } from "./didox/test-run.js";
 import type { ConnectorRunner } from "./connector.js";
 import type { SessionService } from "./session.js";
 import { type LocalStore, StoreError } from "./store.js";
@@ -36,6 +41,8 @@ export interface HandlerDeps {
   saveFile: (defaultName: string, content: string) => Promise<boolean>;
   /** Loads the app's PlatformAPI extension into a base (1C Designer, batch mode). */
   installExtension: (connection: ConnectionInput) => Promise<Result<unknown>>;
+  /** E-IMZO and the network for the Didox test; the real ones unless a test hands in fakes. */
+  didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
 }
 
 /** Chats are files named by these ids: anything but a UUID is refused before it reaches the disk. */
@@ -54,6 +61,7 @@ export function createHandlers({
   pickFolder,
   saveFile,
   installExtension,
+  didox,
 }: HandlerDeps) {
   return {
     appInfo: async (): Promise<AppInfo> => info,
@@ -154,6 +162,31 @@ export function createHandlers({
       const installed = await installExtension(input.data);
       if (!installed.ok) return failed(installed.code, installed.message);
       return connector.check(input.data);
+    },
+
+    didoxKeys: async (): Promise<Result<DidoxKeyView[]>> => {
+      try {
+        return { ok: true, data: await listKeys(didox?.eimzo ?? new EImzoClient()) };
+      } catch (e) {
+        if (e instanceof EImzoError) return { ok: false, code: e.code, message: e.message };
+        throw e;
+      }
+    },
+
+    didoxTest: async (raw: unknown): Promise<Result<DidoxTestResult>> => {
+      const input = DidoxTestInput.safeParse(raw ?? {});
+      if (!input.success) return invalid(input.error);
+      const baseUrl = input.data.baseUrl;
+      if (baseUrl && !/^https:\/\//i.test(baseUrl)) {
+        return { ok: false, code: "VALIDATION", message: "Didox's address must start with https://" };
+      }
+      return {
+        ok: true,
+        data: await runDidoxTest(input.data, {
+          eimzo: didox?.eimzo ?? new EImzoClient(),
+          ...(didox?.fetch ? { fetch: didox.fetch } : {}),
+        }),
+      };
     },
 
     removeCompany: async (id: unknown): Promise<void> => {

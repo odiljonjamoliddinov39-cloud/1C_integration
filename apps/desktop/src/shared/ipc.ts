@@ -51,6 +51,36 @@ export const RegisterAccountInput = SignInInput.extend({
 });
 export type RegisterAccountInput = z.infer<typeof RegisterAccountInput>;
 
+/** A key E-IMZO shows on this PC (never its password). */
+export interface DidoxKeyView {
+  serialNumber: string;
+  tin: string;
+  commonName: string;
+  organization: string;
+  validTo: string | null;
+}
+
+export const DidoxTestInput = z.object({
+  /** Didox's address; the development server when empty. */
+  baseUrl: z.string().trim().max(200).optional(),
+  /** The partner key Didox gave (header api-key). */
+  apiKey: z.string().trim().max(200).optional(),
+  /** The key (hex serial number) to sign with when E-IMZO shows several. */
+  serialNumber: z.string().trim().max(100).optional(),
+});
+export type DidoxTestInput = z.infer<typeof DidoxTestInput>;
+
+export interface DidoxTestStep {
+  name: "eimzo" | "keys" | "login" | "profile" | "documents" | "archive";
+  ok: boolean;
+  /** What was found, or why it failed; the answers of Didox in full are cut at a few lines. */
+  detail: string;
+}
+export interface DidoxTestResult {
+  baseUrl: string;
+  steps: DidoxTestStep[];
+}
+
 /** Result of reaching 1C; never throws across the bridge. */
 export type ConnectorStatus =
   | { ok: true; checkedAt: string; ping: PingResult }
@@ -311,6 +341,12 @@ export interface PlatformBridge {
      * checks the base again; the result is a check like testConnection's.
      */
     installExtension(input: ConnectionInput): Promise<ConnectionTestResult>;
+  };
+  didox: {
+    /** The keys E-IMZO shows (it must be running on this PC). */
+    keys(): Promise<Result<DidoxKeyView[]>>;
+    /** Signs in to Didox with the key and reads what it answers, step by step; E-IMZO asks for the password. */
+    test(input: DidoxTestInput): Promise<Result<DidoxTestResult>>;
   };
   assistant: {
     /** Turns the assistant on or off for a company (on only after the user agreed). */

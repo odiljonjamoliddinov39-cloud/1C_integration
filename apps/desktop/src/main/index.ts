@@ -183,6 +183,8 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
   ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
   ipcMain.handle(CHANNELS.installExtension, (_e, input: unknown) => handlers.installExtensionInto(input));
+  ipcMain.handle(CHANNELS.didoxKeys, () => handlers.didoxKeys());
+  ipcMain.handle(CHANNELS.didoxTest, (_e, input: unknown) => handlers.didoxTest(input));
   ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
     handlers.assistantEnable(id, enabled),
   );

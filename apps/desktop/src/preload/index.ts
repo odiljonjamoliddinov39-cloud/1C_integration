@@ -22,6 +22,10 @@ const bridge: PlatformBridge = {
     updateExtension: (id) => ipcRenderer.invoke(CHANNELS.updateExtension, id),
     installExtension: (input) => ipcRenderer.invoke(CHANNELS.installExtension, input),
   },
+  didox: {
+    keys: () => ipcRenderer.invoke(CHANNELS.didoxKeys),
+    test: (input) => ipcRenderer.invoke(CHANNELS.didoxTest, input),
+  },
   assistant: {
     enable: (companyId, enabled) => ipcRenderer.invoke(CHANNELS.assistantEnable, companyId, enabled),
     send: (input) => ipcRenderer.invoke(CHANNELS.assistantSend, input),

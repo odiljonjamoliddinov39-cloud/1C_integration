@@ -1,59 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  EImzoClient,
-  EImzoError,
-  EImzoSigner,
-  type SocketLike,
-  chooseCertificate,
-  parseAlias,
-} from "./eimzo.js";
+import { EImzoClient, EImzoError, EImzoSigner, chooseCertificate, parseAlias } from "./eimzo.js";
+import { FakeEImzo } from "./fake-eimzo.js";
 
 const ALIAS =
   "1.2.860.3.16.1.1=302936161,CN=ИВАНОВ ИВАН,O=FIDES PROJECTS XK,T=DIRECTOR,SERIALNUMBER=5A3C0F11,VALIDFROM=2025.01.01 00:00:00,VALIDTO=2027.01.01 23:59:59";
 const cert = (alias: string, name = "key1") => ({ disk: "DSK1", path: "/keys", name, alias });
-
-/** An E-IMZO that answers like the real one: one answer per connection. */
-class FakeEImzo {
-  readonly messages: Record<string, unknown>[] = [];
-  certificates = [cert(ALIAS)];
-  /** Key ids that are no longer known (E-IMZO restarted). */
-  forgotten = new Set<string>();
-  private loaded = 0;
-  down = false;
-  readonly connect = (): SocketLike => {
-    if (this.down) throw new Error("ECONNREFUSED");
-    const socket: SocketLike = {
-      onopen: null,
-      onmessage: null,
-      onclose: null,
-      onerror: null,
-      send: (text) => {
-        const message = JSON.parse(text) as { plugin?: string; name: string; arguments?: unknown[] };
-        this.messages.push(message);
-        queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(this.answer(message)) }));
-      },
-      close: () => {},
-    };
-    queueMicrotask(() => socket.onopen?.());
-    return socket;
-  };
-  private answer(m: { plugin?: string; name: string; arguments?: unknown[] }): unknown {
-    if (m.name === "apikey") return { success: true };
-    if (m.name === "list_all_certificates") return { success: true, certificates: this.certificates };
-    if (m.name === "load_key") return { success: true, keyId: `key-${++this.loaded}` };
-    if (m.name === "create_pkcs7") {
-      const id = String(m.arguments?.[1]);
-      if (this.forgotten.has(id) || !id.startsWith("key-"))
-        return { success: false, reason: "Ключ по идентификатору не найден" };
-      return {
-        success: true,
-        pkcs7_64: Buffer.from(`SIGNED(${id}):${String(m.arguments?.[0])}`).toString("base64"),
-      };
-    }
-    return { success: false, reason: `unknown ${m.name}` };
-  }
-}
 
 describe("E-IMZO", () => {
   it("reads a certificate's name: INN, serial number, organization, validity", () => {
@@ -63,6 +15,7 @@ describe("E-IMZO", () => {
 
   it("lists the keys with their tax number and dates, leaving out ones with neither INN nor PINFL", async () => {
     const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
     eimzo.certificates.push(cert("CN=NO ID,SERIALNUMBER=1", "other"));
     const list = await new EImzoClient({ connect: eimzo.connect }).listCertificates();
     expect(list).toHaveLength(1);
@@ -72,6 +25,7 @@ describe("E-IMZO", () => {
 
   it("signs the data with the key: the key is opened once, the data goes as base64", async () => {
     const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
     expect(await signer.serialNumber()).toBe("5A3C0F11");
     const first = await signer.pkcs7('{"authId":"x"}');
@@ -87,6 +41,7 @@ describe("E-IMZO", () => {
 
   it("opens the key again when E-IMZO no longer knows its id, once", async () => {
     const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
     await signer.pkcs7("a");
     eimzo.forgotten.add("key-1");
@@ -96,6 +51,7 @@ describe("E-IMZO", () => {
 
   it("sends the API keys once, before the first call", async () => {
     const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
     const client = new EImzoClient({ connect: eimzo.connect, apiKeys: ["localhost", "KEY"] });
     await client.listCertificates();
     await client.listCertificates();
@@ -107,6 +63,7 @@ describe("E-IMZO", () => {
 
   it("says so when E-IMZO is not running", async () => {
     const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
     eimzo.down = true;
     const error = await new EImzoClient({ connect: eimzo.connect })
       .listCertificates()

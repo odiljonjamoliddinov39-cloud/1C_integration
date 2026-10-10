@@ -116,6 +116,12 @@ https page), send one JSON message, take one answer, close.
 - `eimzo.ts`: `EImzoClient` (the local service above), `EImzoSigner` (picks the key by serial number or
   INN, else the only valid one; opens it once; signs; reopens it if E-IMZO forgot the id).
 
+- `test-run.ts` and the **"Didox test" button** (Companies screen, top right): asks E-IMZO for its version
+  and keys, signs in to Didox with the chosen key (E-IMZO opens its own password window), then reads
+  the profile, the five newest incoming documents and the archive of the first one (through the zip
+  reader), showing each step's answer. It changes nothing. Address (empty: the dev server), the partner
+  `api-key` and the key to use are fields of the dialog; nothing is saved.
+
 Not wired into the app yet: no settings screen, no assistant tool.
 
 ## Needed next

@@ -14,6 +14,8 @@ export const CHANNELS = {
   removeCompany: "companies:remove",
   updateExtension: "companies:update-extension",
   installExtension: "companies:install-extension",
+  didoxKeys: "didox:keys",
+  didoxTest: "didox:test",
   assistantEnable: "assistant:enable",
   assistantSend: "assistant:send",
   assistantStop: "assistant:stop",
