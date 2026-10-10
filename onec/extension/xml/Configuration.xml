@@ -51,12 +51,12 @@
 			</UsePurposes>
 			<ScriptVariant>Russian</ScriptVariant>
 			<DefaultRoles/>
-			<Vendor>1C Platform</Vendor>
+			<Vendor>AI Accounting Assistant</Vendor>
 			<Version>0.6.0</Version>
 			<BriefInformation>
 				<v8:item>
 					<v8:lang>ru</v8:lang>
-					<v8:content>Platform API: обмен данными с приложением 1C Platform</v8:content>
+					<v8:content>Platform API: обмен данными с приложением AI Accounting Assistant</v8:content>
 				</v8:item>
 			</BriefInformation>
 			<DetailedInformation/>
