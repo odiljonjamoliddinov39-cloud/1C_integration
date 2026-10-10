@@ -46,17 +46,58 @@ Ask Didox support (or the partner manager) for:
 > imzolanadi; 4) limitlar va vebhuklar; 5) mijoz nomidan ishlaydigan uchinchi tomon ilovasi uchun
 > shartlar. Aloqa: <ism, telefon>.
 
-## Leads found (unverified)
+## The API (from the "DIDOX-1C-INTEGRATION" Postman collection, 2026-10-10)
 
-From a web summary the project owner pasted on 2026-10-10; none of it is confirmed against Didox's own
-documentation, so treat every name below as "to confirm", not as the API:
+Development server: `https://devapi.goodsign.biz/`. Requests carry `api-key` (a partner key) and
+`user-key` (the user's token, to be confirmed), `Accept: application/json`.
 
-- Official docs portal: https://api-docs.didox.uz/login (an account is needed to read it).
-- Public Postman collections: "Didox SSO API" (sign-in and registration with an E-IMZO key) and
-  "DIDOX-1C-INTEGRATION" (https://documenter.getpostman.com/view/7157122/TVsrEUYF).
-- Said to exist: a test host (`testapi.didox.uz`), `POST /v1/auth/login`, `GET /v1/profile/{taxId}`,
-  `GET /v1/documents/{id}/tosign`, `GET /v1/documents/{id}/downloadrequest`.
-- Documents are signed with E-IMZO (ERI) keys; statuses (signed, rejected) come back through the API.
+**Sign-in with an E-IMZO key**
+
+1. `GET /v1/auth/authId/{serialNumber}`: the key's serial number in hex gives an `authId`.
+2. The app signs the JSON `{"authId": "..."}` with the key (PKCS#7).
+3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}`: returns a token valid for 24 hours.
+   `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
+   user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.
+
+**Profile**: `GET /v1/profile`, `GET /v1/profile/{taxId}`, `/v1/profile/operators`, `/branches?tin=`,
+`/productClasses` (list, bind, unbind, search).
+
+**Documents**
+
+- `GET /v1/documents`, filters: `doctype` (006 power of attorney, 061 power of attorney Didox-only,
+  005 act, 001 invoice, 002 invoice without an act, 021 invoice return, 008/081 pharma, 000 free-form),
+  `status` (0 created, 1 signed by self, 2 signed by partner, 3 signed, 4 rejected, 5 deleted, 6 waits
+  for agent, 8 signed by agent, 40 not valid, 60 partner waits for agent), `owner` (0 incoming, 1
+  outgoing), `page`, `limit` (default 20), `dateFrom`/`dateTo`, `partner` (tax number).
+- `GET /v1/documents/statistics/all` (counts, same filters); `GET /v1/documents/{id}` (details).
+- **`GET /v1/documents/{id}/downloadrequest`: a link, valid 5 minutes, to the archive of the document**
+  (the same zip the Didox site offers: XML, PDF, signatures). The app already reads those zips.
+- Print forms: `/v1/documents/{id}/html/{locale}`, `/pdf/{locale}`, `/file/false`.
+- Sending: `POST /v1/documents/{docType}/create` makes a draft (the body is Didox's structure; for an
+  act `ActDoc`, `ContractDoc`, `SellerTin`, `BuyerTin`, `ProductList.Products[]` with `Name`,
+  `MeasureId`, `Count`, `Summa`, `TotalSum`, `VatRate`, `VatSum`, `TotalSumWithVat`);
+  `POST /v1/documents/{id}/update/{doctype}` updates a draft, `/delete/draft` deletes it.
+- Signing: `GET /v1/documents/{id}/tosign` (body `{"action": "accept|cancel|reject"}`) says what to
+  sign; `POST /v1/documents/{id}/sign` with `{"signature"}`; `/reject` with `{"signature","comment"}`;
+  `/delete` with `{"signature"}`.
+- Catalogs: `/v1/banks/all`, `/measures/all`, `/regions/all`, `/districts/all`; time stamp:
+  `POST /v1/dsvs/gettimestamp`.
+
+**Not in the collection** (to be seen on the dev server): the shape of the document list and of a
+document's details, the shape of the login answer, and whether the token travels as `user-key`.
+
+## Built
+
+`apps/desktop/src/main/didox/`: `DidoxClient` (sign-in through a `DidoxSigner`, listing, details,
+archive download, create/sign/reject), a `FakeDidox` server and a `FakeSigner`, with tests. The signer
+that talks to the real E-IMZO is not built (see below).
+
+## Needed next
+
+1. **E-IMZO on the PC**: how the app asks it for the key list and for a PKCS#7 (its local service
+   and its API key for our app; see e-imzo.uz documentation), and a test key.
+2. **The partner `api-key`** from Didox, and a test company on the dev server.
+3. A first real run against the dev server, to fix the unknown shapes above.
 
 ## Plan once access exists
 
@@ -64,8 +105,9 @@ documentation, so treat every name below as "to confirm", not as the API:
    pattern as `onec-client` and `FakePlatform`), so everything below is tested without Didox.
 2. **Connection per company**: the company's Didox sign-in on the PC, stored encrypted like the 1C
    passwords. It never goes to our server.
-3. **Incoming**: tools for the assistant to list and read incoming documents; the existing
-   received-invoice, services and change tools do the entering. Documents whose buyer is another
+3. **Incoming**: tools for the assistant to list incoming documents and read them through the
+   archive link (the zip reader and the XML-first rule already exist); the existing received-invoice,
+   services and change tools do the entering. Documents whose buyer is another
    organization are listed, not entered (already in the prompt).
 4. **Outgoing**: a proposal card for sending (what, to whom, the amounts), the accountant confirms,
    the document is signed (E-IMZO) and sent; the status comes back to the chat. Nothing is sent
