@@ -3,7 +3,7 @@ import type { CostReport } from "@platform/shared";
 import { sql } from "drizzle-orm";
 
 import { periodOf } from "../ai/budget.js";
-import { policyFor } from "../ai/policy.js";
+import { policiesView, policyFor } from "../ai/policy.js";
 import type { Db } from "../db/client.js";
 
 const DAY = 86_400_000;
@@ -66,14 +66,22 @@ export async function costReport(db: Db, days: number): Promise<CostReport> {
     questions: number;
     month: number;
     limit: number | null;
+    plan_id: string | null;
   }>(sql`
     select a.id, a.name, sum(u.cost_usd)::float8 as cost,
+      (select s.plan_id from subscriptions s where s.account_id = a.id order by s.ends_at desc limit 1) as plan_id,
       (count(*) filter (where u.route in ('model', 'batch')))::int as requests,
       (count(*) filter (where u.first_step and u.feature = 'chat'))::int as questions,
       coalesce((select b.used_usd from ai_budgets b where b.account_id = a.id and b.period = ${periodOf()}), 0)::float8 as month,
       (select b.limit_usd from ai_budgets b where b.account_id = a.id and b.period = ${periodOf()})::float8 as limit
     from ai_usage u join accounts a on a.id = u.account_id
     where u.created_at >= ${from}::timestamptz group by a.id, a.name order by cost desc limit 200`);
+
+  // The cap an account runs under: its own for this month, else its plan's policy (else the default).
+  const policies = await policiesView(db);
+  const planCap = new Map(
+    policies.plans.map((p) => [p.planId, (p.policy ?? policies.default).monthlyLimitUsd]),
+  );
 
   const userRows = await db.execute<{
     id: string;
@@ -129,15 +137,21 @@ export async function costReport(db: Db, days: number): Promise<CostReport> {
       const r = byDay.get(date);
       return { date, costUsd: round(r?.cost ?? 0), requests: r?.requests ?? 0, questions: r?.questions ?? 0 };
     }),
-    byAccount: accountRows.map((r) => ({
-      accountId: r.id,
-      accountName: r.name,
-      costUsd: round(r.cost),
-      monthUsd: round(r.month),
-      limitUsd: r.limit,
-      requests: r.requests,
-      questions: r.questions,
-    })),
+    byAccount: accountRows.map((r) => {
+      const cap =
+        r.limit ?? (r.plan_id ? planCap.get(r.plan_id) : undefined) ?? policies.default.monthlyLimitUsd;
+      return {
+        accountId: r.id,
+        accountName: r.name,
+        costUsd: round(r.cost),
+        monthUsd: round(r.month),
+        limitUsd: r.limit,
+        capUsd: cap,
+        leftUsd: cap > 0 ? round(Math.max(0, cap - r.month), 2) : null,
+        requests: r.requests,
+        questions: r.questions,
+      };
+    }),
     byUser: userRows.map((r) => ({
       userId: r.id,
       email: r.email,

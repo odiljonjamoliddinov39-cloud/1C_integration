@@ -1545,6 +1545,32 @@ describe.skipIf(!available)("control system API", () => {
       expect(report.byFeature.map((r: { feature: string }) => r.feature).sort()).toEqual(["audit", "chat"]);
       expect(report.byAccount[0]).toMatchObject({ accountName: "Buxgalter MChJ", requests: 2 });
       expect(report.byUser[0]).toMatchObject({ email: "owner@example.com" });
+      // No cap: nothing "left" to show. With the policy's cap, what the month's use leaves of it.
+      expect(report.byAccount[0]).toMatchObject({ capUsd: 0, leftUsd: null });
+      await setPolicy({ monthlyLimitUsd: 10 });
+      const capped = (await call("GET", "/v1/admin/ai-cost?days=7", await adminToken())).json();
+      expect(capped.byAccount[0].capUsd).toBe(10);
+      expect(capped.byAccount[0].leftUsd).toBeCloseTo(10 - capped.byAccount[0].monthUsd, 2);
+      // A cap set for the customer wins over the policy's.
+      await db.db
+        .insert(aiBudgets)
+        .values({
+          accountId: reg.me.account.id,
+          period: new Date().toISOString().slice(0, 7),
+          usedUsd: 3,
+          limitUsd: 4,
+        })
+        .onConflictDoUpdate({
+          target: [aiBudgets.accountId, aiBudgets.period],
+          set: { usedUsd: 3, limitUsd: 4 },
+        });
+      expect(
+        (await call("GET", "/v1/admin/ai-cost?days=7", await adminToken())).json().byAccount[0],
+      ).toMatchObject({
+        capUsd: 4,
+        leftUsd: 1,
+      });
+      await setPolicy({ monthlyLimitUsd: 0 });
       expect(report.byDay).toHaveLength(7);
       expect(report.topQuestions[0]).toMatchObject({ question: "5110?", steps: 1 });
       expect(report.alert).toMatchObject({ thresholdUsd: 20, exceeded: false });
