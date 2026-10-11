@@ -10,7 +10,7 @@ const t = dict(locale).faq;
 <Base locale={locale} path="/faq" title={t.title}>
   <section class="mx-auto max-w-3xl px-4 py-14">
     <h1 class="text-4xl font-bold">{t.title}</h1>
-    <div class="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
+    <div class="mt-8 divide-y divide-border rounded-2xl border border-border bg-card shadow-sm">
       {
         t.items.map((item) => (
           <details class="group p-5">
