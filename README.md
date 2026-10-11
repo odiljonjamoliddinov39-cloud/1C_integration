@@ -81,6 +81,12 @@ per account, $5 a day per user and 8 reads per question.
      Claude decides if it is one stable, reusable question and writes the title, the wordings and the
      column labels. Rules check what it returns (the query and parameters are the recorded ones; the
      wordings must pass the matcher's limits). The cost is on **AI cost** as feature `engine`.
+   - **The past teaches too.** The questions already asked are not wasted: (1) the app replays its
+     saved chats through the same rules once (`ai/backfill.ts`, a minute after start, only the
+     queries and column names go up, never figures; questions with files, cards or several queries
+     are left out); (2) a group needs only one sighting when the usage log (`ai_usage`, the same
+     data as the **AI cost** page's most expensive questions) shows the model answered the same
+     questions `learnMinHits` times already.
    - **Action templates**: a group of confirmed `propose_invoices_issued` cards whose sales were
      exactly one query's rows becomes a template that prepares the same card from the query's rows;
      the user still confirms it, and only then is anything written.

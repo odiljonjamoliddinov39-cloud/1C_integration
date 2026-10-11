@@ -11,6 +11,7 @@ import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
 import type { ShrinkImage } from "./attachments.js";
+import { TraceLog } from "./ai/backfill.js";
 import { ChatStore } from "./chats.js";
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
@@ -124,7 +125,10 @@ void app.whenReady().then(async () => {
     connector,
     emit: (event) => broadcast(CHANNELS.assistantEvent, event),
     shrinkImage,
+    traceLog: new TraceLog(join(app.getPath("userData"), "traced-chats.json")),
   });
+  // The questions already in the saved chats teach the engine too (a minute after start, in the background).
+  setTimeout(() => void assistant.backfillTraces().catch(() => undefined), 60_000).unref();
   const updates = new UpdateService({
     updater: await updater(),
     emit: (state) => broadcast(CHANNELS.updateChanged, state),

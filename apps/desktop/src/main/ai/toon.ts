@@ -47,3 +47,60 @@ export function encodeTable(columns: string[], rows: unknown[][]): string {
   const header = `rows[${rows.length}]{${columns.map(cell).join(",")}}:`;
   return [header, ...rows.map((row) => `  ${columns.map((_, i) => cell(row[i])).join(",")}`)].join("\n");
 }
+
+interface Token {
+  text: string;
+  quoted: boolean;
+}
+
+/** One line of cells (the inverse of how cell() writes them): commas split, quotes protect. */
+function splitCells(line: string): Token[] {
+  const tokens: Token[] = [];
+  let text = "";
+  let quoted = false;
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i] ?? "";
+    if (inQuotes) {
+      if (ch === "\\") {
+        const next = line[++i] ?? "";
+        text += next === "n" ? "\n" : next === "r" ? "\r" : next === "t" ? "\t" : next;
+      } else if (ch === '"') inQuotes = false;
+      else text += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+      quoted = true;
+    } else if (ch === ",") {
+      tokens.push({ text, quoted });
+      text = "";
+      quoted = false;
+    } else text += ch;
+  }
+  tokens.push({ text, quoted });
+  return tokens;
+}
+
+function value(token: Token): unknown {
+  if (token.quoted) return token.text;
+  if (token.text === "null") return null;
+  if (token.text === "true") return true;
+  if (token.text === "false") return false;
+  return NUMERIC.test(token.text) ? Number(token.text) : token.text;
+}
+
+/**
+ * A TOON table back into columns and rows, as a saved chat holds query results the model was sent.
+ * Null when the text is not one. Dates that were at midnight stay date-only strings.
+ */
+export function decodeTable(text: string): { columns: string[]; rows: unknown[][] } | null {
+  const lines = text.split("\n");
+  const head = /^rows\[\d+\]\{(.*)\}:$/.exec(lines[0] ?? "");
+  if (!head) return null;
+  const columns = splitCells(head[1] ?? "").map((t) => t.text);
+  const rows: unknown[][] = [];
+  for (const line of lines.slice(1)) {
+    if (!line.startsWith("  ")) break; // the note about a cut result, or the end
+    rows.push(splitCells(line.slice(2)).map(value));
+  }
+  return { columns, rows };
+}

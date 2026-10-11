@@ -1469,6 +1469,49 @@ describe.skipIf(!available)("control system API", () => {
       }
     });
 
+    it("needs one sighting, not three, for a question the usage log shows was asked and paid for again and again", async () => {
+      const { state, model } = reasoning();
+      state.reply = () => REUSABLE;
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
+        const usage = {
+          model: "m",
+          inputTokens: 5_000,
+          outputTokens: 500,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0.2,
+          company: "Crystal Water",
+          feature: "chat",
+          route: "model",
+          firstStep: true,
+        };
+        // Asked twice before (not enough), plus other questions and another company's.
+        for (const question of ["какой остаток в кассе? ", "Какой остаток в кассе?"]) {
+          await db.db.insert(aiUsage).values({ ...ids, ...usage, question });
+        }
+        await db.db.insert(aiUsage).values({ ...ids, ...usage, question: "Что-то другое" });
+        await db.db
+          .insert(aiUsage)
+          .values({ ...ids, ...usage, company: "Other", question: "Какой остаток в кассе?" });
+        await c("POST", "/v1/ai/traces", reg.accessToken, trace("Какой остаток в кассе?"));
+        expect((await c("POST", "/v1/admin/engine/run", token)).json()).toEqual({ decided: 0, made: 0 });
+
+        // A third time in the log: the question has proven itself, and its one trace is enough.
+        await db.db.insert(aiUsage).values({ ...ids, ...usage, question: "Какой остаток в кассе?" });
+        expect((await c("POST", "/v1/admin/engine/run", token)).json()).toEqual({ decided: 1, made: 1 });
+        const brief = JSON.parse(String((state.calls[0]!.messages[0] as { content: string }).content));
+        expect(brief.times_the_assistant_already_answered_these_questions_before).toBe(3);
+        expect((await c("GET", "/v1/ai/templates", reg.accessToken)).json()).toHaveLength(1);
+      } finally {
+        await engine.close();
+      }
+    });
+
     it("lets only an owner run the engine's reasoning by hand", async () => {
       const customer = (await post("/v1/auth/register", account)).json();
       expect((await post("/v1/admin/engine/run", {}, customer.accessToken)).statusCode).toBe(401);

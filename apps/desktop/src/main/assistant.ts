@@ -65,6 +65,7 @@ import type {
 import { applyEvent } from "../shared/transcript.js";
 import { AUDIT_CHECKS, AUDIT_SECTIONS, type AuditCheck } from "./audit-checks.js";
 import { AttachmentError, type ShrinkImage, dropPages, readAttachments } from "./attachments.js";
+import { type TraceLog, tracesFromMessages } from "./ai/backfill.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
@@ -148,6 +149,8 @@ export interface AssistantDeps {
   auditConcurrency?: number;
   /** The cost engine (limits, templates, answer cache, digest); one is made when absent. */
   engine?: CostEngine;
+  /** Which messages of which chats the engine has already learned from (see backfillTraces). */
+  traceLog?: TraceLog;
 }
 
 /** What one question runs under: the limits in force, and what kind of question it is. */
@@ -254,19 +257,58 @@ export class AssistantService {
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
         if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
         // Every finished question teaches the engine: what was done, how it ended, no data.
-        void this.engine.sendTrace(
-          run.trace.build(
-            company.name,
-            question,
-            result.ok ? { ok: true } : { ok: false, code: result.code },
-          ),
-        );
+        void this.engine
+          .sendTrace(
+            run.trace.build(
+              company.name,
+              question,
+              result.ok ? { ok: true } : { ok: false, code: result.code },
+            ),
+          )
+          .then((sent) => {
+            // This chat's questions up to here are learned from; a replay starts after them.
+            if (sent) this.deps.traceLog?.set(chat.id, chat.messages.length);
+          });
         return result;
       } finally {
         // Built after the answer, so the first question is not held up by it.
         this.engine.ensureDigest(companyId, company.name, connection);
       }
     });
+  }
+
+  /**
+   * Teaches the engine what this PC already knows: the questions in the saved chats, the queries that
+   * answered them and what they returned, replayed through the rules that watch a live question. Only
+   * traces (the query, the question, the columns; no figures) go to the server, where the usual
+   * reasoning decides which become templates. Each chat is replayed once, from where it was left.
+   */
+  async backfillTraces(limit = 300): Promise<{ sent: number }> {
+    const log = this.deps.traceLog;
+    if (!log) return { sent: 0 };
+    if (!(await this.engine.policy()).learnTemplates) return { sent: 0 };
+    let sent = 0;
+    for (const company of this.deps.store.listCompanies()) {
+      if (this.running.has(company.id)) continue;
+      for (const summary of this.deps.chats.list(company.id)) {
+        if (sent >= limit) return { sent };
+        const chat = this.deps.chats.load(company.id, summary.id);
+        if (!chat || log.get(chat.id) >= chat.messages.length) continue;
+        const days = [...new Set([chat.createdAt, chat.updatedAt].map((d) => d.slice(0, 10)))].map(
+          (d) => new Date(`${d}T12:00:00Z`),
+        );
+        let complete = true;
+        for (const trace of tracesFromMessages(chat.messages, log.get(chat.id), company.name, days)) {
+          if (!(await this.engine.sendTrace(trace))) {
+            complete = false;
+            break;
+          }
+          sent += 1;
+        }
+        if (complete) log.set(chat.id, chat.messages.length);
+      }
+    }
+    return { sent };
   }
 
   /** An answer from a template or the cache: shown, kept in the chat, no model involved. */

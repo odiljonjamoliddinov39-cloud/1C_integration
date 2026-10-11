@@ -157,14 +157,16 @@ export class CostEngine {
    * Tells the server what was done for a finished question, so the engine can learn from every
    * prompt (what became a template, what a card was made of, what it cost) without any data.
    */
-  async sendTrace(trace: TraceInput): Promise<void> {
+  async sendTrace(trace: TraceInput): Promise<boolean> {
     const policy = await this.policy();
-    if (!policy.learnTemplates) return;
+    if (!policy.learnTemplates) return false;
     try {
       const { client, accessToken } = await this.session.authorized();
       await client.sendTrace(accessToken, trace);
+      return true;
     } catch {
       /* learning is only a saving */
+      return false;
     }
   }
 

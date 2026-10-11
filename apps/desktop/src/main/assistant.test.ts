@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AssistantEvent } from "../shared/ipc.js";
 import { AssistantService, auditToCsv } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
+import { TraceLog } from "./ai/backfill.js";
 import { CostEngine } from "./ai/engine.js";
 import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
@@ -1843,6 +1844,38 @@ describe("assistant", () => {
       ],
       text("Tayyor"),
     ];
+
+    it("teaches the engine from the chats saved before: each question once, and what a live question already taught is not repeated", async () => {
+      const t = setup([...oneQuery(), ...oneQuery()], "active", server({}));
+      // Two questions in a chat made before the engine learned from them (no trace log then).
+      await ask(t, "Какой остаток в кассе сегодня?");
+      await t.assistant.send({
+        companyId: t.company.id,
+        text: "Сальдо по счетам сегодня",
+      });
+      await vi.waitFor(() => expect(traces(t)).toHaveLength(2));
+      const before = traces(t).length;
+
+      const log = new TraceLog(join(t.dir, "traced.json"));
+      const later = new AssistantService({
+        store: t.store,
+        chats: t.chats,
+        session: t.session,
+        connector: new InProcessConnector(() => t.base),
+        emit: () => undefined,
+        traceLog: log,
+      });
+      expect(await later.backfillTraces()).toEqual({ sent: 2 });
+      expect(traces(t)).toHaveLength(before + 2);
+      expect(
+        traces(t)
+          .slice(before)
+          .map((x) => x.question),
+      ).toEqual(["Какой остаток в кассе сегодня?", "Сальдо по счетам сегодня"]);
+      // Replayed once.
+      expect(await later.backfillTraces()).toEqual({ sent: 0 });
+      expect(traces(t)).toHaveLength(before + 2);
+    });
 
     it("sends a trace of every finished question: the steps and how it ended, no data", async () => {
       const t = setup([...oneQuery(), text("Salom!")], "active", server({}));
