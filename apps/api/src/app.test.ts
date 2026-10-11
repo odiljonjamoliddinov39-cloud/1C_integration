@@ -544,6 +544,11 @@ describe.skipIf(!available)("control system API", () => {
       const id = customer.me.account.id;
       expect((await call("POST", `/v1/admin/accounts/${id}/block`, helper)).statusCode).toBe(403);
       expect((await call("GET", "/v1/admin/admins", helper)).statusCode).toBe(403);
+      // A Free account has no period to extend; a paid one does.
+      expect((await call("POST", `/v1/admin/accounts/${id}/extend`, helper, { days: 7 })).statusCode).toBe(
+        409,
+      );
+      await db.db.update(subscriptions).set({ status: "active", endsAt: new Date(Date.now() + 86_400_000) });
       expect((await call("POST", `/v1/admin/accounts/${id}/extend`, helper, { days: 7 })).statusCode).toBe(
         200,
       );

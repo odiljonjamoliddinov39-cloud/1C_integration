@@ -41,7 +41,7 @@ const uz = {
     title: "1C ga qoʻlda kiritishni unuting",
     subtitle:
       "Hisob-fakturalar, bank koʻchirmalari va soliq hujjatlari 1C ga tekshirilgan holda tushadi. AI yordamchi esa hisob boʻyicha savollarga bir necha soniyada javob beradi.",
-    cta: "14 kun bepul sinab koʻring",
+    cta: "Bepul boshlash",
     ctaSecondary: "Qanday ishlaydi",
     problemTitle: "Buxgalter vaqti nimaga ketadi",
     problems: [
@@ -103,11 +103,11 @@ const uz = {
       "Ilova 1C bilan sizning kompyuteringizda ishlaydi. Bizning serverimiz faqat akkaunt va litsenziyani biladi. AI yordamchi har bir kompaniya uchun alohida, roziligingiz bilan yoqiladi.",
     securityLink: "Batafsil",
     finalTitle: "Bugun boshlang",
-    finalText: "14 kun bepul, karta talab qilinmaydi.",
+    finalText: "Bepul tarif doim bepul, karta talab qilinmaydi.",
   },
   pricing: {
     title: "Narxlar",
-    subtitle: "Barcha imkoniyatlar bilan bepul boshlang. Pullik tariflar tez orada eʼlon qilinadi.",
+    subtitle: "Bepul boshlang, kerak boʻlganda tarifni oshiring. Narxlar QQSsiz, soʻmda.",
     trial: {
       name: "Sinov",
       price: "0 soʻm",
@@ -209,7 +209,7 @@ const uz = {
   },
   auth: {
     signupTitle: "Bepul sinovni boshlash",
-    signupSubtitle: "14 kun, barcha imkoniyatlar bilan. Ilovaga xuddi shu akkaunt bilan kirasiz.",
+    signupSubtitle: "Bepul tarif doimiy. Ilovaga xuddi shu akkaunt bilan kirasiz.",
     loginTitle: "Kabinetga kirish",
     loginSubtitle: "Tarif, kompyuterlar va yuklab olish.",
     name: "Ismingiz",
@@ -239,6 +239,7 @@ const uz = {
     plan: "Tarif",
     planNames: { trial: "Sinov" } as Record<string, string>,
     status: {
+      free: "Bepul",
       trial: "Sinov davri",
       active: "Faol",
       grace: "Toʻlov muddati oʻtgan",
@@ -287,7 +288,7 @@ const ru: Dict = {
     title: "Забудьте о ручном вводе в 1С",
     subtitle:
       "Счета-фактуры, банковские выписки и налоговые документы попадают в 1С уже проверенными. А ИИ-ассистент за секунды отвечает на вопросы по учёту.",
-    cta: "Попробовать 14 дней бесплатно",
+    cta: "Начать бесплатно",
     ctaSecondary: "Как это работает",
     problemTitle: "На что уходит время бухгалтера",
     problems: [
@@ -349,11 +350,11 @@ const ru: Dict = {
       "Приложение работает с 1С на вашем компьютере. Наш сервер знает только аккаунт и лицензию. ИИ-ассистент включается отдельно для каждой компании, с вашего согласия.",
     securityLink: "Подробнее",
     finalTitle: "Начните сегодня",
-    finalText: "14 дней бесплатно, карта не нужна.",
+    finalText: "Бесплатный тариф навсегда, карта не нужна.",
   },
   pricing: {
     title: "Цены",
-    subtitle: "Начните бесплатно со всеми возможностями. Платные тарифы объявим скоро.",
+    subtitle: "Начните бесплатно и переходите на платный тариф, когда понадобится. Цены в сумах, без НДС.",
     trial: {
       name: "Пробный",
       price: "0 сум",
@@ -455,7 +456,7 @@ const ru: Dict = {
   },
   auth: {
     signupTitle: "Начать бесплатный период",
-    signupSubtitle: "14 дней со всеми возможностями. В приложение входите с этим же аккаунтом.",
+    signupSubtitle: "Бесплатный тариф — навсегда. В приложение входите с этим же аккаунтом.",
     loginTitle: "Вход в кабинет",
     loginSubtitle: "Тариф, компьютеры и загрузка приложения.",
     name: "Ваше имя",
@@ -485,6 +486,7 @@ const ru: Dict = {
     plan: "Тариф",
     planNames: { trial: "Пробный" },
     status: {
+      free: "Бесплатный",
       trial: "Пробный период",
       active: "Активен",
       grace: "Оплата просрочена",

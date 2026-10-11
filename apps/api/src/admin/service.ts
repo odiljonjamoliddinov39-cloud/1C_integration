@@ -253,6 +253,13 @@ export class AdminService {
       orderBy: desc(subscriptions.endsAt),
     });
     if (!current) throw new HttpError(404, "NOT_FOUND", "The account has no subscription");
+    if (current.status === "free") {
+      throw new HttpError(
+        409,
+        "FREE_HAS_NO_PERIOD",
+        "A Free account has no period to extend: put it on a plan first",
+      );
+    }
     const from = Math.max(Date.now(), current.endsAt.getTime());
     const endsAt = new Date(from + input.days * DAY);
     const status =

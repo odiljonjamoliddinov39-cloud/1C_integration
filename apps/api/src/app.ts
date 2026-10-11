@@ -8,6 +8,10 @@ import {
   AccountsQuery,
   ActivateDeviceInput,
   AdminLoginInput,
+  AddonSaveInput,
+  PlanSaveInput,
+  PromoInput,
+  SubscriptionActionInput,
   CreateAdminInput,
   ExtendInput,
   RechargeInput,
@@ -49,6 +53,7 @@ import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
 import { Tokens } from "./lib/tokens.js";
 import { Billing } from "./billing/entitlements.js";
+import { AdminBilling } from "./billing/admin.js";
 import { Invoicing } from "./billing/invoicing.js";
 import { Lifecycle, startBillingJobs } from "./billing/lifecycle.js";
 import { PaymeMerchant } from "./billing/payme.js";
@@ -85,6 +90,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const billing = new BillingService(db, config, entitlements, invoicing.providers());
   const payme = new PaymeMerchant(db, config, invoicing);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
+  const adminBilling = new AdminBilling(db, entitlements, invoicing);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
   const ai = new AiProxy(db, service, billing, config, aiModel, app.log);
   const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);
@@ -392,6 +398,77 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   );
   app.post("/v1/admin/admins/:id/enable", async (req) =>
     admin.setAdminDisabled(await adminAuth(req), parse(idParam, req.params).id, false),
+  );
+
+  // --- billing in the dashboard: plans, subscriptions, revenue, promo codes ----------------------
+  const ownerOnly = async (req: FastifyRequest) => {
+    const who = await adminAuth(req);
+    if (who.role !== "owner") throw new HttpError(403, "FORBIDDEN", "Only an owner can do this");
+    return who;
+  };
+  const codeParam = z.object({ code: z.string().min(1).max(40) });
+  app.get("/v1/admin/billing/plans", async (req) => {
+    await adminAuth(req);
+    return adminBilling.plansView();
+  });
+  app.put("/v1/admin/plans/:code", async (req) =>
+    adminBilling.savePlan(
+      await ownerOnly(req),
+      parse(codeParam, req.params).code,
+      parse(PlanSaveInput, req.body),
+    ),
+  );
+  app.put("/v1/admin/addons/:code", async (req) =>
+    adminBilling.saveAddon(
+      await ownerOnly(req),
+      parse(codeParam, req.params).code,
+      parse(AddonSaveInput, req.body),
+    ),
+  );
+  app.get("/v1/admin/subscriptions", async (req) => {
+    await adminAuth(req);
+    return adminBilling.subscriptionList(
+      parse(
+        z.object({ q: z.string().optional(), plan: z.string().optional(), status: z.string().optional() }),
+        req.query,
+      ),
+    );
+  });
+  app.get("/v1/admin/subscriptions/by-account/:id", async (req) => {
+    await adminAuth(req);
+    return adminBilling.detail(parse(idParam, req.params).id);
+  });
+  app.post("/v1/admin/subscriptions/:id/extend", async (req) =>
+    adminBilling.act(
+      await adminAuth(req),
+      parse(idParam, req.params).id,
+      parse(SubscriptionActionInput, req.body),
+    ),
+  );
+  app.get("/v1/admin/revenue", async (req) => {
+    await adminAuth(req);
+    return adminBilling.revenue();
+  });
+  app.get("/v1/admin/promo-codes", async (req) => {
+    await adminAuth(req);
+    return adminBilling.promos();
+  });
+  app.post("/v1/admin/promo-codes", async (req) =>
+    adminBilling.createPromo(await ownerOnly(req), parse(PromoInput, req.body)),
+  );
+  app.post("/v1/admin/promo-codes/:code/disable", async (req) =>
+    adminBilling.setPromoDisabled(
+      await ownerOnly(req),
+      parse(codeParam, req.params).code.toUpperCase(),
+      true,
+    ),
+  );
+  app.post("/v1/admin/promo-codes/:code/enable", async (req) =>
+    adminBilling.setPromoDisabled(
+      await ownerOnly(req),
+      parse(codeParam, req.params).code.toUpperCase(),
+      false,
+    ),
   );
 
   // The dashboard itself: static files, routed by the URL hash, so /admin/ is the only page.

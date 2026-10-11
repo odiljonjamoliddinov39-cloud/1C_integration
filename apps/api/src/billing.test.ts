@@ -704,4 +704,210 @@ describe.skipIf(!available)("tariffs", () => {
     ).toBe(403);
     expect((await call("GET", "/v1/billing/entitlements", member.accessToken)).statusCode).toBe(200);
   });
+
+  // --- the admin dashboard's billing ------------------------------------------------------------
+
+  const adminToken = async () =>
+    (
+      await call("POST", "/v1/admin/login", undefined, {
+        email: "boss@platform.uz",
+        password: "admin-password-123",
+      })
+    ).json().accessToken as string;
+  const adminCall = (method: "GET" | "POST" | "PUT", url: string, token: string, payload?: unknown) =>
+    app.inject({
+      method,
+      url,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+  it("lets an owner edit a plan's price and limits, which the public catalog shows at once", async () => {
+    const admin = await adminToken();
+    const view = (await adminCall("GET", "/v1/admin/billing/plans", admin)).json();
+    expect(view.plans.map((p: { code: string }) => p.code)).toContain("trial");
+    const start = view.plans.find((p: { code: string }) => p.code === "start");
+    const saved = await adminCall("PUT", "/v1/admin/plans/start", admin, {
+      ...start,
+      priceMonthSum: 650_000,
+      companies: 2,
+      isPublic: true,
+    });
+    expect(saved.statusCode).toBe(200);
+    const catalog = (await call("GET", "/v1/plans")).json();
+    expect(catalog.plans.find((p: { code: string }) => p.code === "start")).toMatchObject({
+      priceMonthSum: 650_000,
+      companies: 2,
+    });
+    // A hand-made plan stays out of the public list.
+    await adminCall("PUT", "/v1/admin/plans/custom", admin, {
+      ...start,
+      name: "Custom",
+      companies: 25,
+      isPublic: false,
+    });
+    expect((await call("GET", "/v1/plans")).json().plans.map((p: { code: string }) => p.code)).not.toContain(
+      "custom",
+    );
+    // Put it back for the other tests.
+    await adminCall("PUT", "/v1/admin/plans/start", admin, {
+      ...start,
+      priceMonthSum: 590_000,
+      companies: 1,
+    });
+  });
+
+  it("changes a plan, extends it, grants an add-on and marks a bank transfer paid from the admin, with a reason in the audit log", async () => {
+    const admin = await adminToken();
+    const { token, accountId } = await register();
+    const sub = await subscription(accountId);
+    expect(
+      (await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, { days: 10 })).json().code,
+    ).toBe("FREE_HAS_NO_PERIOD");
+
+    const bank = await checkout(token, { plan: "business", cycle: "month", provider: "bank" });
+    const paid = await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {
+      markPaidInvoiceId: bank.invoice.id,
+      reason: "bank transfer 12 Oct",
+    });
+    expect(paid.statusCode).toBe(200);
+    expect(paid.json().subscription).toMatchObject({ plan: "business", status: "active" });
+    expect(paid.json().invoices[0]).toMatchObject({ status: "paid" });
+    // Marking it again changes nothing.
+    const endBefore = (await subscription(accountId)).endsAt;
+    await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {
+      markPaidInvoiceId: bank.invoice.id,
+    });
+    expect((await subscription(accountId)).endsAt).toEqual(endBefore);
+
+    await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {
+      days: 15,
+      reason: "goodwill",
+    });
+    expect((await subscription(accountId)).endsAt.getTime()).toBe(endBefore.getTime() + 15 * DAY);
+    const granted = await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {
+      addon: "addon_ai_100",
+      reason: "support",
+    });
+    expect(granted.json().addons).toHaveLength(1);
+    expect((await entitlements(token)).entitlements.aiQuestionsPerMonth).toBe(350);
+
+    const comped = await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {
+      plan: "firm",
+      reason: "partner",
+    });
+    expect(comped.json().subscription.plan).toBe("firm");
+    expect((await entitlements(token)).entitlements).toMatchObject({ plan: "firm", companies: 10 });
+    expect((await adminCall("POST", `/v1/admin/subscriptions/${sub.id}/extend`, admin, {})).statusCode).toBe(
+      400,
+    );
+
+    const list = (await adminCall("GET", "/v1/admin/subscriptions?plan=firm", admin)).json();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ accountId, plan: "firm", paidInvoices: 1 });
+    const detail = (await adminCall("GET", `/v1/admin/subscriptions/by-account/${accountId}`, admin)).json();
+    expect(detail.events.map((e: { type: string }) => e.type)).toEqual(
+      expect.arrayContaining([
+        "invoice_paid",
+        "extended_by_admin",
+        "plan_set_by_admin",
+        "addon_granted_by_admin",
+      ]),
+    );
+    const audit = (await adminCall("GET", `/v1/admin/accounts/${accountId}`, admin)).json().audit;
+    expect(audit.map((a: { action: string }) => a.action)).toContain("subscription.plan");
+  });
+
+  it("reports revenue: MRR by plan, conversion, collected money and overdue invoices", async () => {
+    const admin = await adminToken();
+    const a = await register("a@example.com");
+    const b = await register("b@example.com");
+    await register("c@example.com"); // stays Free
+    await pay((await checkout(a.token, { plan: "business" })).invoice);
+    await pay((await checkout(b.token, { plan: "start", cycle: "year" })).invoice);
+    // An unpaid invoice past its due date.
+    const open = await checkout(b.token, { addon: "addon_ai_100" });
+    await db.db
+      .update(invoices)
+      .set({ dueAt: new Date(Date.now() - DAY) })
+      .where(eq(invoices.id, open.invoice.id));
+
+    const report = (await adminCall("GET", "/v1/admin/revenue", admin)).json();
+    // Business 1 690 000 + Start yearly 5 900 000 / 12.
+    expect(report.mrrSum).toBe(1_690_000 + Math.round(5_900_000 / 12));
+    expect(report).toMatchObject({
+      accounts: 3,
+      paidAccounts: 2,
+      freeAccounts: 1,
+      trialAccounts: 0,
+      conversionPercent: 66.7,
+    });
+    expect(report.byPlan.find((p: { plan: string }) => p.plan === "business")).toMatchObject({
+      accounts: 1,
+      mrrSum: 1_690_000,
+    });
+    expect(report.collected30dSum).toBeGreaterThan(1_690_000);
+    expect(report.overdue).toMatchObject({ count: 1 });
+    expect(report.overdue.items[0].accountName).toBe("Buxgalter MChJ");
+  });
+
+  it("manages promo codes: an owner creates and disables them, and a disabled code stops working", async () => {
+    const admin = await adminToken();
+    const { token } = await register();
+    const made = await adminCall("POST", "/v1/admin/promo-codes", admin, {
+      code: "launch30",
+      kind: "percent",
+      value: 30,
+      months: 12,
+      maxUses: 10,
+    });
+    expect(made.statusCode).toBe(200);
+    expect(made.json()[0]).toMatchObject({ code: "LAUNCH30", months: 12, usedCount: 0, disabled: false });
+    expect(
+      (
+        await adminCall("POST", "/v1/admin/promo-codes", admin, {
+          code: "LAUNCH30",
+          kind: "percent",
+          value: 5,
+        })
+      ).json().code,
+    ).toBe("PROMO_EXISTS");
+    expect(
+      (await adminCall("POST", "/v1/admin/promo-codes", admin, { code: "BIG", kind: "percent", value: 150 }))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (await call("POST", "/v1/billing/quote", token, { plan: "start", promoCode: "LAUNCH30" })).json()
+        .discountSum,
+    ).toBe(177_000);
+    await adminCall("POST", "/v1/admin/promo-codes/LAUNCH30/disable", admin);
+    expect(
+      (await call("POST", "/v1/billing/quote", token, { plan: "start", promoCode: "LAUNCH30" })).json().code,
+    ).toBe("INVALID_PROMO");
+    await adminCall("POST", "/v1/admin/promo-codes/LAUNCH30/enable", admin);
+    expect((await adminCall("GET", "/v1/admin/promo-codes", admin)).json()[0].disabled).toBe(false);
+  });
+
+  it("keeps support staff out of plan, promo and add-on editing", async () => {
+    const boss = await adminToken();
+    await adminCall("POST", "/v1/admin/admins", boss, {
+      email: "support@platform.uz",
+      name: "Support",
+      password: "support-password-1",
+      role: "support",
+    });
+    const support = (
+      await call("POST", "/v1/admin/login", undefined, {
+        email: "support@platform.uz",
+        password: "support-password-1",
+      })
+    ).json().accessToken as string;
+    expect((await adminCall("GET", "/v1/admin/billing/plans", support)).statusCode).toBe(200);
+    expect((await adminCall("PUT", "/v1/admin/plans/start", support, {})).statusCode).toBe(403);
+    expect(
+      (await adminCall("POST", "/v1/admin/promo-codes", support, { code: "NOPE", kind: "percent", value: 5 }))
+        .statusCode,
+    ).toBe(403);
+    await db.sql`DELETE FROM admins WHERE email = 'support@platform.uz'`;
+  });
 });
