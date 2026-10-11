@@ -54,6 +54,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     title: "AI Accounting Assistant",
+    backgroundColor: "#0b2670", // the start-up screen's blue: no white flash before it
     webPreferences: {
       preload: join(here, "../preload/index.cjs"), // sandboxed preloads must be CommonJS
       contextIsolation: true,

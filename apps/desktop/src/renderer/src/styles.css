@@ -75,3 +75,34 @@ body {
   border-radius: 0.25rem;
   padding: 0 0.25rem;
 }
+
+/* The start-up screen. */
+@keyframes se-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes se-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+.se-float {
+  animation: se-float 3s ease-in-out infinite;
+}
+.se-bar {
+  animation: se-bar 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .se-float,
+  .se-bar {
+    animation: none;
+  }
+}

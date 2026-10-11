@@ -260,6 +260,7 @@ const uz = {
   footer: {
     tagline: "Oʻzbekiston buxgalterlari uchun 1C avtomatlashtirish",
     prototype: "Prototip",
+    madeBy: "Ishlab chiqaruvchi",
   },
 };
 
@@ -505,6 +506,7 @@ const ru: Dict = {
   footer: {
     tagline: "Автоматизация 1С для бухгалтеров Узбекистана",
     prototype: "Прототип",
+    madeBy: "Разработчик",
   },
 };
 
