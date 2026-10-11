@@ -131,10 +131,12 @@ export function App() {
               >
                 {t("header.signOut")}
               </button>
-              <div className="flex items-center justify-center gap-2 pt-1 text-[11px] text-sidebar-muted">
+              <div className="flex flex-col items-center gap-1.5 pt-1 text-[11px] text-sidebar-muted">
                 <span>{t("splash.madeBy")}</span>
-                <img src={spaceEngineering} alt="" width={20} height={20} className="rounded-md" />
-                <span className="font-semibold text-sidebar-foreground/80">Space Engineering</span>
+                <span className="flex items-center gap-2 font-semibold text-sidebar-foreground/90">
+                  <img src={spaceEngineering} alt="" width={22} height={22} className="rounded-md" />
+                  Space Engineering
+                </span>
               </div>
             </div>
           </aside>
