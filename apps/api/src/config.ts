@@ -12,7 +12,10 @@ const Env = z.object({
   REFRESH_TOKEN_DAYS: z.coerce.number().default(30),
   /** The offline grace of the desktop app (TD §4). */
   LICENSE_TOKEN_DAYS: z.coerce.number().default(7),
-  TRIAL_DAYS: z.coerce.number().default(14),
+  /** VAT added to every invoice (shown separately); prices of the plans exclude it. */
+  VAT_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  /** How long a computed set of limits is reused (0: never; tests use 0). */
+  ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */
   ALLOW_REGISTRATION: z
     .enum(["true", "false"])
@@ -34,12 +37,12 @@ const Env = z.object({
    */
   AI_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
   /**
-   * "off" (default, until the tariffs are set): the plans' limits are not enforced: no daily AI cap,
-   * no AI quota, no limit on PCs per account, and a high ceiling on assistant requests per minute.
-   * Use is still recorded and shown in the admin dashboard. "on": the plans' limits apply.
+   * "on" (default): the plans' limits apply: companies, users, PCs, imports, audits, AI questions
+   * and the daily AI cap. "off": none is enforced and the assistant's request ceiling is high; use
+   * is still counted and shown in the admin dashboard.
    * Blocked accounts, inactive subscriptions and the sign-in rate limit apply either way.
    */
-  PLAN_LIMITS: z.enum(["on", "off"]).default("off"),
+  PLAN_LIMITS: z.enum(["on", "off"]).default("on"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
   AI_DAILY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
   /**

@@ -3,6 +3,7 @@ import type { SubscriptionStatus } from "@platform/shared";
 import { Badge, type Tone } from "@/components/ui";
 
 const STATUS: Record<SubscriptionStatus, [Tone, string]> = {
+  free: ["muted", "Free"],
   trial: ["info", "Trial"],
   active: ["success", "Active"],
   grace: ["warning", "Grace (unpaid)"],

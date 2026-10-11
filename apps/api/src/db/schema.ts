@@ -4,6 +4,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -57,18 +58,54 @@ export const users = pgTable(
   (t) => [uniqueIndex("users_email_key").on(t.email)],
 );
 
+/**
+ * What a plan allows and costs (tariffs: docs/billing.md). Prices are whole sum, VAT excluded.
+ * price_uzs is the monthly price; seats is the number of users; null limits mean unlimited.
+ */
 export const plans = pgTable("plans", {
   id: id(),
   code: text("code").notNull().unique(),
-  priceUzs: integer("price_uzs").notNull(),
+  name: text("name").notNull().default(""),
+  priceUzs: bigint("price_uzs", { mode: "number" }).notNull(),
+  /** 12 months for the price of 10. */
+  priceYearSum: bigint("price_year_sum", { mode: "number" }).notNull().default(0),
   periodDays: integer("period_days").notNull(),
   seats: integer("seats").notNull(),
   maxCompanies: integer("max_companies").notNull(),
   aiTokenQuota: integer("ai_token_quota").notNull().default(0),
-  /** e.g. {"maxDevicesPerSeat": 2} */
-  features: jsonb("features").$type<{ maxDevicesPerSeat?: number }>().notNull().default({}),
+  importsPerMonth: integer("imports_per_month"),
+  auditsPerMonth: integer("audits_per_month"),
+  aiQuestionsPerMonth: integer("ai_questions_per_month").notNull().default(0),
+  /** e.g. {"maxDevicesPerSeat": 2, "excelExport": true}. */
+  features: jsonb("features").$type<PlanFeatures>().notNull().default({}),
+  isPublic: boolean("is_public").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
 });
 
+export interface PlanFeatures {
+  maxDevicesPerSeat?: number;
+  excelExport?: boolean;
+  prioritySupport?: boolean;
+  /** "docs" | "telegram" | "telegram-priority" | "manager": shown on the pricing page. */
+  support?: string;
+}
+
+/** Extras that widen a paid plan: one more company or user, or 100 more AI questions this period. */
+export const addons = pgTable("addons", {
+  code: text("code").primaryKey(),
+  name: text("name").notNull(),
+  priceSum: bigint("price_sum", { mode: "number" }).notNull(),
+  kind: text("kind", { enum: ["recurring", "one_off"] }).notNull(),
+  allowedPlans: text("allowed_plans").array().notNull(),
+  grants: jsonb("grants").$type<{ companies?: number; users?: number; aiQuestions?: number }>().notNull(),
+  isPublic: boolean("is_public").notNull().default(true),
+});
+
+/**
+ * One row per account, changed in place. starts_at / ends_at are the period (a Free account's
+ * period never ends); status is what the account has been put in, see effectiveStatus for what it is
+ * now. pending_plan_id: a downgrade that takes effect at the end of the period.
+ */
 export const subscriptions = pgTable("subscriptions", {
   id: id(),
   accountId: uuid("account_id")
@@ -77,11 +114,158 @@ export const subscriptions = pgTable("subscriptions", {
   planId: uuid("plan_id")
     .notNull()
     .references(() => plans.id),
-  status: text("status", { enum: ["trial", "active", "grace", "suspended", "cancelled"] }).notNull(),
+  status: text("status", { enum: ["free", "trial", "active", "grace", "suspended", "cancelled"] }).notNull(),
   startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
   endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
   autoRenew: boolean("auto_renew").notNull().default(true),
+  billingCycle: text("billing_cycle", { enum: ["month", "year"] })
+    .notNull()
+    .default("month"),
+  /** The Business trial was started once: per account (and per INN of the first company). */
+  trialUsed: boolean("trial_used").notNull().default(false),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  pendingPlanId: uuid("pending_plan_id").references(() => plans.id),
+  /** Reminders sent for the current period: "7", "1". */
+  remindersSent: text("reminders_sent")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
 });
+
+export const subscriptionAddons = pgTable(
+  "subscription_addons",
+  {
+    id: id(),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    addonCode: text("addon_code")
+      .notNull()
+      .references(() => addons.code),
+    quantity: integer("quantity").notNull().default(1),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull(),
+    validTo: timestamp("valid_to", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("subscription_addons_sub_idx").on(t.subscriptionId)],
+);
+
+/** What an account used in a period: the key is where the period started. */
+export const usageCounters = pgTable(
+  "usage_counters",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    imports: integer("imports").notNull().default(0),
+    audits: integer("audits").notNull().default(0),
+    aiQuestions: integer("ai_questions").notNull().default(0),
+    /** The 80% warning of the AI questions was shown for this period. */
+    aiWarnedAt: timestamp("ai_warned_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("usage_counters_key").on(t.accountId, t.periodStart)],
+);
+
+export interface InvoiceItem {
+  kind: "plan" | "upgrade" | "addon";
+  code: string;
+  title: string;
+  quantity: number;
+  amountSum: number;
+}
+
+/** What paying an invoice does: see applyInvoice. */
+export interface InvoiceIntent {
+  type: "plan" | "upgrade" | "addon";
+  planCode?: string;
+  cycle?: "month" | "year";
+  addonCode?: string;
+  quantity?: number;
+  promoCode?: string;
+}
+
+/** Our own invoice: the provider only confirms that it was paid. Amounts are whole sum. */
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    /** Short number for the customer and for the payment systems: INV-000123. */
+    number: integer("number").generatedAlwaysAsIdentity(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    items: jsonb("items").$type<InvoiceItem[]>().notNull(),
+    intent: jsonb("intent").$type<InvoiceIntent>().notNull(),
+    subtotalSum: bigint("subtotal_sum", { mode: "number" }).notNull(),
+    discountSum: bigint("discount_sum", { mode: "number" }).notNull().default(0),
+    vatSum: bigint("vat_sum", { mode: "number" }).notNull(),
+    totalSum: bigint("total_sum", { mode: "number" }).notNull(),
+    status: text("status", { enum: ["pending", "paid", "cancelled", "expired"] })
+      .notNull()
+      .default("pending"),
+    provider: text("provider", { enum: ["payme", "click", "bank"] }),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("invoices_account_idx").on(t.accountId, t.createdAt),
+    uniqueIndex("invoices_number_key").on(t.number),
+  ],
+);
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: id(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    /** The provider's transaction id: a repeated call with it returns what was stored. */
+    providerTxnId: text("provider_txn_id").notNull().unique(),
+    amountSum: bigint("amount_sum", { mode: "number" }).notNull(),
+    state: text("state").notNull(),
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("payments_invoice_idx").on(t.invoiceId)],
+);
+
+export const promoCodes = pgTable("promo_codes", {
+  code: text("code").primaryKey(),
+  kind: text("kind", { enum: ["percent", "fixed"] }).notNull(),
+  /** Percent (1-100) or sum. */
+  value: bigint("value", { mode: "number" }).notNull(),
+  /** Plans it applies to; empty: all paid plans. */
+  allowedPlans: text("allowed_plans")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  validFrom: timestamp("valid_from", { withTimezone: true }),
+  validTo: timestamp("valid_to", { withTimezone: true }),
+  maxUses: integer("max_uses"),
+  usedCount: integer("used_count").notNull().default(0),
+  /** How many months of paid periods get the discount; null: the first payment only. */
+  months: integer("months"),
+  disabled: boolean("disabled").notNull().default(false),
+});
+
+/** Plan changes, payments and lifecycle steps of an account, for support and review. */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("billing_events_account_idx").on(t.accountId, t.createdAt)],
+);
 
 export const devices = pgTable(
   "devices",
@@ -123,6 +307,10 @@ export const companies = pgTable(
       .references(() => accounts.id, { onDelete: "cascade" }),
     inn: text("inn").notNull(),
     name: text("name").notNull(),
+    /** Over the plan's company limit after a downgrade: data visible, imports and AI off. */
+    readOnly: boolean("read_only").notNull().default(false),
+    /** The owner chose to keep it active when a downgrade leaves room for fewer companies. */
+    preferred: boolean("preferred").notNull().default(false),
     connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("companies_account_inn_key").on(t.accountId, t.inn)],

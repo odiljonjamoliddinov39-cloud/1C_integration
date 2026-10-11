@@ -430,6 +430,7 @@ export class AdminService {
   async overview(): Promise<Overview> {
     const rows = await this.accountRows(null, null);
     const byStatus: Record<SubscriptionStatus, number> = {
+      free: 0,
       trial: 0,
       active: 0,
       grace: 0,
@@ -606,7 +607,10 @@ export class AdminService {
       name: r.name,
       ownerEmail: r.owner_email,
       blocked: r.account_status === "blocked",
-      plan: r.plan,
+      plan:
+        r.sub_status && r.ends_at && effectiveStatus(r.sub_status, new Date(r.ends_at)) === "free"
+          ? "free"
+          : r.plan,
       status: r.sub_status && r.ends_at ? effectiveStatus(r.sub_status, new Date(r.ends_at)) : null,
       endsAt: iso(r.ends_at),
       users: r.users,

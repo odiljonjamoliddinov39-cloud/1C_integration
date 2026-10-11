@@ -48,6 +48,9 @@ import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
 import { Tokens } from "./lib/tokens.js";
+import { Billing } from "./billing/entitlements.js";
+import { registerBillingRoutes } from "./billing/routes.js";
+import { BillingService } from "./billing/service.js";
 import { Service } from "./service.js";
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
@@ -73,9 +76,11 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     bodyLimit: 64 * 1024,
   });
   const tokens = new Tokens(config);
-  const service = new Service(db, tokens, config);
+  const entitlements = new Billing(db, config.ENTITLEMENTS_CACHE_SECONDS * 1000);
+  const service = new Service(db, tokens, config, entitlements);
+  const billing = new BillingService(db, config, entitlements);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
-  const ai = new AiProxy(db, service, config, aiModel, app.log);
+  const ai = new AiProxy(db, service, billing, config, aiModel, app.log);
   const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);
   const admin = new AdminService(db, tokens, config);
   await admin.bootstrap(app.log);
@@ -137,6 +142,8 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
+  registerBillingRoutes(app, { db, billing, auth });
+
   app.get("/v1/me", async (req) => service.me((await auth(req)).userId));
 
   app.post("/v1/devices/activate", async (req) => {
@@ -180,7 +187,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       const who = await auth(req);
       const input = parse(AiChatInput, req.body);
       assertInlineFiles(input);
-      const admission = await ai.ensureAllowed(who.accountId, who.userId);
+      const admission = await ai.ensureAllowed(who.accountId, who.userId, input);
 
       reply.hijack();
       reply.raw.writeHead(200, {
@@ -209,7 +216,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   // The cost engine's helpers for the app: the limits it runs under, the answers it can give
   // without the model (templates, cache), the company's structure, and the count of free answers.
   const policyOf = async (accountId: string) =>
-    policyFor(db, (await service.currentSubscription(accountId)).plan.id);
+    policyFor(db, (await entitlements.get(accountId)).effectivePlan.id);
   app.get("/v1/ai/policy", async (req) => policyOf((await auth(req)).accountId));
   app.get("/v1/ai/templates", async (req) => {
     const { accountId } = await auth(req);
