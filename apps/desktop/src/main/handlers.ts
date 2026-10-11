@@ -10,6 +10,7 @@ import {
   AssistantInput,
   AuditInput,
   type AppInfo,
+  type BillingView,
   type DidoxKeyView,
   DidoxTestInput,
   type DidoxTestResult,
@@ -24,6 +25,7 @@ import {
   SignInInput,
 } from "../shared/ipc.js";
 import type { AssistantService } from "./assistant.js";
+import type { BillingState } from "./billing.js";
 import { EImzoClient, EImzoError } from "./didox/eimzo.js";
 import { listKeys, runDidoxTest } from "./didox/test-run.js";
 import type { ConnectorRunner } from "./connector.js";
@@ -35,6 +37,7 @@ export interface HandlerDeps {
   session: SessionService;
   connector: ConnectorRunner;
   assistant: AssistantService;
+  billing: BillingState;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
   /** Asks where to save a file and writes it there; false when the user cancelled. */
@@ -57,6 +60,7 @@ export function createHandlers({
   session,
   connector,
   assistant,
+  billing,
   info,
   pickFolder,
   saveFile,
@@ -70,15 +74,29 @@ export function createHandlers({
 
     signIn: async (raw: unknown): Promise<Result<Session>> => {
       const input = SignInInput.safeParse(raw);
-      return input.success ? session.signIn(input.data) : invalid(input.error);
+      if (!input.success) return invalid(input.error);
+      const result = await session.signIn(input.data);
+      if (result.ok) void billing.refresh();
+      return result;
     },
 
     register: async (raw: unknown): Promise<Result<Session>> => {
       const input = RegisterAccountInput.safeParse(raw);
-      return input.success ? session.register(input.data) : invalid(input.error);
+      if (!input.success) return invalid(input.error);
+      const result = await session.register(input.data);
+      if (result.ok) void billing.refresh();
+      return result;
     },
 
-    refreshLicense: async (): Promise<Session | null> => session.refreshLicense(),
+    refreshLicense: async (): Promise<Session | null> => {
+      const view = await session.refreshLicense();
+      void billing.refresh();
+      return view;
+    },
+
+    billing: async (): Promise<BillingView | null> => billing.current(),
+
+    billingRefresh: async (): Promise<BillingView | null> => billing.refresh(),
 
     signOut: async (): Promise<void> => session.signOut(),
 
@@ -111,8 +129,13 @@ export function createHandlers({
           code: "ORGANIZATION_NOT_FOUND",
           message: "This organization is not in the infobase",
         };
+      // The plan decides how many companies: the server refuses one over the limit.
+      const allowed = await billing.registerCompany({ inn: org.inn, name: org.name });
+      if (!allowed.ok) return allowed;
       try {
-        return { ok: true, data: store.addCompany({ ...input.data, organization: org }, check.status) };
+        const added = store.addCompany({ ...input.data, organization: org }, check.status);
+        void billing.refresh();
+        return { ok: true, data: added };
       } catch (e) {
         if (e instanceof StoreError) return { ok: false, code: e.code, message: e.message };
         throw e;

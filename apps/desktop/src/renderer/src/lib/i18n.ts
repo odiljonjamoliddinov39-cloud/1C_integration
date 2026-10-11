@@ -24,6 +24,7 @@ const en = {
     until: "until {{date}}",
     checked: "License checked {{time}}",
     status: {
+      free: "Free",
       trial: "Trial",
       active: "Active",
       grace: "Payment overdue",
@@ -36,6 +37,48 @@ const en = {
       cancelled: "Read-only: the subscription is cancelled.",
       wrong_machine: "Read-only: this license belongs to another PC. Sign in again.",
       invalid: "Read-only: the license is not valid. Sign in again.",
+    },
+  },
+  billing: {
+    plan: { free: "Free", start: "Start", business: "Business", firm: "Firm", custom: "Custom" },
+    aiLeft: "AI questions left: {{left}} of {{total}}",
+    aiNone: "No AI questions left",
+    upgrade: "Upgrade",
+    close: "Close",
+    cabinet: "Open the website, sign in and choose a plan.",
+    readOnlyCompany: "Over the plan’s limit: data is visible, imports and the assistant are off.",
+    readOnlyBanner:
+      "This company is over the plan’s limit: its data is visible, but imports and the assistant are off. Upgrade the plan or choose which companies stay active.",
+    excel: "Available on Start and above",
+    limit: {
+      COMPANY_LIMIT: {
+        title: "Company limit reached",
+        body: "Your plan has no room for another company. Upgrade to connect more.",
+      },
+      USER_LIMIT: {
+        title: "No free seat",
+        body: "Your plan has no free seat for another user. Upgrade or add an extra user.",
+      },
+      IMPORT_LIMIT: {
+        title: "Import limit reached",
+        body: "This month’s limit of imported documents is used. Nothing is lost: import them next month, or upgrade for unlimited imports.",
+      },
+      AUDIT_LIMIT: {
+        title: "Audit limit reached",
+        body: "The Free plan includes one audit report a month. Upgrade for unlimited audits.",
+      },
+      AI_QUESTIONS_LIMIT: {
+        title: "AI questions used up",
+        body: "All AI questions of this period are used. Add 100 more questions or upgrade your plan. Answers from templates and saved answers still work.",
+      },
+      COMPANY_READ_ONLY: {
+        title: "Company is read-only",
+        body: "This company is over the plan’s limit: its data is visible, but imports and the assistant are off. Upgrade or choose which companies stay active.",
+      },
+      FEATURE_UNAVAILABLE: {
+        title: "Not on your plan",
+        body: "This feature is available on Start and above.",
+      },
     },
   },
   header: { signOut: "Sign out", language: "Language" },
@@ -81,6 +124,7 @@ const en = {
     },
     notices: {
       AI_BUDGET_WARNING: "This account has used most of its monthly AI budget.",
+      AI_QUESTIONS_WARNING: "You have used most of this period’s AI questions.",
       AI_DAILY_WARNING: "You have used most of today's AI limit.",
     },
     units: { h: "h", m: "min", s: "s" },
@@ -380,6 +424,7 @@ const ru: Dict = {
     until: "до {{date}}",
     checked: "Лицензия проверена {{time}}",
     status: {
+      free: "Бесплатный",
       trial: "Пробный период",
       active: "Активна",
       grace: "Оплата просрочена",
@@ -393,6 +438,48 @@ const ru: Dict = {
       cancelled: "Только чтение: подписка отменена.",
       wrong_machine: "Только чтение: лицензия выдана другому ПК. Войдите заново.",
       invalid: "Только чтение: лицензия недействительна. Войдите заново.",
+    },
+  },
+  billing: {
+    plan: { free: "Free", start: "Start", business: "Business", firm: "Firm", custom: "Индивидуальный" },
+    aiLeft: "Вопросов к ИИ осталось: {{left}} из {{total}}",
+    aiNone: "Вопросов к ИИ не осталось",
+    upgrade: "Улучшить тариф",
+    close: "Закрыть",
+    cabinet: "Откройте сайт, войдите и выберите тариф.",
+    readOnlyCompany: "Сверх лимита тарифа: данные видны, импорт и ассистент выключены.",
+    readOnlyBanner:
+      "Эта компания сверх лимита тарифа: данные видны, но импорт и ассистент выключены. Перейдите на другой тариф или выберите, какие компании остаются активными.",
+    excel: "Доступно на тарифе Start и выше",
+    limit: {
+      COMPANY_LIMIT: {
+        title: "Достигнут лимит компаний",
+        body: "В вашем тарифе нет места для ещё одной компании. Перейдите на другой тариф, чтобы подключить больше.",
+      },
+      USER_LIMIT: {
+        title: "Нет свободного места для пользователя",
+        body: "В вашем тарифе нет свободного места для ещё одного пользователя. Перейдите на другой тариф или добавьте пользователя.",
+      },
+      IMPORT_LIMIT: {
+        title: "Достигнут лимит импорта",
+        body: "Лимит импортируемых документов в этом месяце исчерпан. Ничего не потеряно: загрузите их в следующем месяце или перейдите на тариф с безлимитным импортом.",
+      },
+      AUDIT_LIMIT: {
+        title: "Достигнут лимит аудитов",
+        body: "В бесплатный тариф входит один аудиторский отчёт в месяц. Перейдите на другой тариф для безлимитных аудитов.",
+      },
+      AI_QUESTIONS_LIMIT: {
+        title: "Вопросы к ИИ закончились",
+        body: "Все вопросы к ИИ за этот период использованы. Добавьте ещё 100 вопросов или перейдите на другой тариф. Ответы по шаблонам и сохранённые ответы работают по-прежнему.",
+      },
+      COMPANY_READ_ONLY: {
+        title: "Компания только для чтения",
+        body: "Эта компания сверх лимита тарифа: данные видны, но импорт и ассистент выключены. Перейдите на другой тариф или выберите, какие компании остаются активными.",
+      },
+      FEATURE_UNAVAILABLE: {
+        title: "Нет в вашем тарифе",
+        body: "Эта функция доступна на тарифе Start и выше.",
+      },
     },
   },
   header: { signOut: "Выйти", language: "Язык" },
@@ -439,6 +526,7 @@ const ru: Dict = {
     },
     notices: {
       AI_BUDGET_WARNING: "Месячный бюджет ИИ этой учётной записи почти израсходован.",
+      AI_QUESTIONS_WARNING: "Вы использовали большую часть вопросов к ИИ за этот период.",
       AI_DAILY_WARNING: "Ваш дневной лимит ИИ почти израсходован.",
     },
     units: { h: "ч", m: "мин", s: "с" },
@@ -737,6 +825,7 @@ const uz: Dict = {
     until: "{{date}} gacha",
     checked: "Litsenziya {{time}} da tekshirildi",
     status: {
+      free: "Bepul",
       trial: "Sinov davri",
       active: "Faol",
       grace: "Toʻlov kechikdi",
@@ -750,6 +839,48 @@ const uz: Dict = {
       cancelled: "Faqat oʻqish: obuna bekor qilingan.",
       wrong_machine: "Faqat oʻqish: litsenziya boshqa kompyuterga tegishli. Qayta kiring.",
       invalid: "Faqat oʻqish: litsenziya yaroqsiz. Qayta kiring.",
+    },
+  },
+  billing: {
+    plan: { free: "Free", start: "Start", business: "Business", firm: "Firm", custom: "Maxsus" },
+    aiLeft: "Qolgan AI savollari: {{left}} / {{total}}",
+    aiNone: "AI savollari qolmadi",
+    upgrade: "Tarifni oshirish",
+    close: "Yopish",
+    cabinet: "Saytni oching, tizimga kiring va tarifni tanlang.",
+    readOnlyCompany: "Tarif limitidan oshgan: maʼlumotlar koʻrinadi, import va yordamchi oʻchirilgan.",
+    readOnlyBanner:
+      "Bu kompaniya tarif limitidan oshgan: maʼlumotlari koʻrinadi, lekin import va yordamchi oʻchirilgan. Tarifni oshiring yoki qaysi kompaniyalar faol qolishini tanlang.",
+    excel: "Start va undan yuqori tariflarda mavjud",
+    limit: {
+      COMPANY_LIMIT: {
+        title: "Kompaniyalar limiti tugadi",
+        body: "Tarifingizda yana bir kompaniya uchun joy yoʻq. Koʻproq ulash uchun tarifni oshiring.",
+      },
+      USER_LIMIT: {
+        title: "Boʻsh oʻrin yoʻq",
+        body: "Tarifingizda yana bir foydalanuvchi uchun boʻsh oʻrin yoʻq. Tarifni oshiring yoki qoʻshimcha foydalanuvchi qoʻshing.",
+      },
+      IMPORT_LIMIT: {
+        title: "Import limiti tugadi",
+        body: "Bu oydagi import qilinadigan hujjatlar limiti tugadi. Hech narsa yoʻqolmaydi: ularni keyingi oyda import qiling yoki cheksiz importli tarifga oʻting.",
+      },
+      AUDIT_LIMIT: {
+        title: "Audit limiti tugadi",
+        body: "Bepul tarif oyiga bitta audit hisobotini oʻz ichiga oladi. Cheksiz auditlar uchun tarifni oshiring.",
+      },
+      AI_QUESTIONS_LIMIT: {
+        title: "AI savollari tugadi",
+        body: "Bu davrdagi barcha AI savollari ishlatildi. Yana 100 ta savol qoʻshing yoki tarifni oshiring. Andoza va saqlangan javoblar avvalgidek ishlaydi.",
+      },
+      COMPANY_READ_ONLY: {
+        title: "Kompaniya faqat oʻqish uchun",
+        body: "Bu kompaniya tarif limitidan oshgan: maʼlumotlari koʻrinadi, lekin import va yordamchi oʻchirilgan. Tarifni oshiring yoki qaysi kompaniyalar faol qolishini tanlang.",
+      },
+      FEATURE_UNAVAILABLE: {
+        title: "Tarifingizda yoʻq",
+        body: "Bu imkoniyat Start va undan yuqori tariflarda mavjud.",
+      },
     },
   },
   header: { signOut: "Chiqish", language: "Til" },
@@ -796,6 +927,7 @@ const uz: Dict = {
     },
     notices: {
       AI_BUDGET_WARNING: "Bu hisobning oylik AI byudjeti deyarli tugadi.",
+      AI_QUESTIONS_WARNING: "Bu davrdagi AI savollarining koʻp qismini ishlatdingiz.",
       AI_DAILY_WARNING: "Bugungi AI limitingiz deyarli tugadi.",
     },
     units: { h: "soat", m: "daqiqa", s: "soniya" },

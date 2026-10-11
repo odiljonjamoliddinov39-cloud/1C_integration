@@ -3,6 +3,15 @@
  * the tab closes, and an expired or revoked one sends the admin back to the sign-in screen.
  */
 import type {
+  AddonSaveInput,
+  AdminBillingDetail,
+  AdminPlansView,
+  AdminSubscriptionRow,
+  PlanSaveInput,
+  PromoInput,
+  PromoView,
+  RevenueReport,
+  SubscriptionActionInput,
   AccountAiInput,
   AccountBudgetInput,
   AccountDetail,
@@ -121,6 +130,26 @@ export const api = {
     request<QueryTemplateView>("PUT", "/query-templates", input),
   deleteQueryTemplate: (id: string) => request<null>("DELETE", `/query-templates/${id}`),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
+  billingPlans: () => request<AdminPlansView>("GET", "/billing/plans"),
+  savePlan: (code: string, input: PlanSaveInput) => request<AdminPlansView>("PUT", `/plans/${code}`, input),
+  saveAddon: (code: string, input: AddonSaveInput) =>
+    request<AdminPlansView>("PUT", `/addons/${code}`, input),
+  subscriptions: (q: string, plan: string, status: string) => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set("q", q.trim());
+    if (plan) params.set("plan", plan);
+    if (status) params.set("status", status);
+    return request<AdminSubscriptionRow[]>("GET", `/subscriptions?${params}`);
+  },
+  billingDetail: (accountId: string) =>
+    request<AdminBillingDetail>("GET", `/subscriptions/by-account/${accountId}`),
+  subscriptionAction: (subscriptionId: string, input: Partial<SubscriptionActionInput>) =>
+    request<AdminBillingDetail>("POST", `/subscriptions/${subscriptionId}/extend`, input),
+  revenue: () => request<RevenueReport>("GET", "/revenue"),
+  promoCodes: () => request<PromoView[]>("GET", "/promo-codes"),
+  createPromo: (input: Partial<PromoInput>) => request<PromoView[]>("POST", "/promo-codes", input),
+  setPromoDisabled: (code: string, disabled: boolean) =>
+    request<PromoView[]>("POST", `/promo-codes/${code}/${disabled ? "disable" : "enable"}`),
   admins: () => request<AdminView[]>("GET", "/admins"),
   createAdmin: (input: CreateAdminInput) => request<AdminView>("POST", "/admins", input),
   setAdminDisabled: (id: string, disabled: boolean) =>

@@ -10,6 +10,10 @@ import {
   type AnswerKey,
   type AnswerStoreInput,
   ApiErrorBody,
+  type AuditRunInput,
+  type CompanyInput,
+  EntitlementsResponse,
+  type ImportInput,
   type DigestInput,
   type DigestKey,
   type FreeAnswerInput,
@@ -200,6 +204,31 @@ export class ControlClient {
 
   async putDigest(accessToken: string, input: DigestInput): Promise<void> {
     await this.request("PUT", "/v1/ai/digest", input, accessToken);
+  }
+
+  // --- tariffs: what the plan allows, and the counters the server keeps --------------------------
+
+  async entitlements(accessToken: string): Promise<EntitlementsResponse> {
+    const response = await this.request("GET", "/v1/billing/entitlements", undefined, accessToken);
+    return EntitlementsResponse.parse(await response.json());
+  }
+
+  /** Connects a base on the server (INN and name only); refused (COMPANY_LIMIT) over the plan's limit. */
+  async registerCompany(accessToken: string, company: CompanyInput): Promise<void> {
+    await this.request("POST", "/v1/companies", company, accessToken);
+  }
+
+  /** Documents about to be written to 1C; refused (IMPORT_LIMIT) when the month's limit is used. */
+  async countImport(accessToken: string, input: ImportInput): Promise<EntitlementsResponse> {
+    return EntitlementsResponse.parse(
+      await (await this.request("POST", "/v1/usage/import", input, accessToken)).json(),
+    );
+  }
+
+  async countAudit(accessToken: string, input: AuditRunInput): Promise<EntitlementsResponse> {
+    return EntitlementsResponse.parse(
+      await (await this.request("POST", "/v1/audits/runs", input, accessToken)).json(),
+    );
   }
 
   async publicKey(): Promise<string> {

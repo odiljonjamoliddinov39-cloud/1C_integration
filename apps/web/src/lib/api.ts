@@ -2,7 +2,18 @@
  * The website's calls to the control system (sign-up, sign-in, cabinet). Tokens live in this
  * browser's localStorage: the access token for 15 minutes, the refresh token until sign-out.
  */
-import { ApiErrorBody, DeviceView, Me, TokenPair } from "@platform/shared";
+import {
+  ApiErrorBody,
+  CatalogResponse,
+  ChangePlanResponse,
+  CheckoutResponse,
+  DeviceView,
+  EntitlementsResponse,
+  InvoiceView,
+  Me,
+  SubscriptionResponse,
+  TokenPair,
+} from "@platform/shared";
 import { z } from "zod";
 
 import { API_BASE } from "./config";
@@ -143,3 +154,53 @@ async function authorized<T>(method: string, path: string, schema: z.ZodType<T>,
 export const me = () => authorized("GET", "/v1/me", Me);
 export const devices = () => authorized("GET", "/v1/devices", z.array(DeviceView));
 export const revokeDevice = (id: string) => authorized("POST", `/v1/devices/${id}/revoke`, z.undefined(), {});
+
+// --- tariffs and billing -----------------------------------------------------------------------
+
+/** The plans and add-ons: public, no sign-in needed. */
+export const catalog = () => request("GET", "/v1/plans", CatalogResponse);
+export const entitlements = () => authorized("GET", "/v1/billing/entitlements", EntitlementsResponse);
+export const subscription = () => authorized("GET", "/v1/billing/subscription", SubscriptionResponse);
+export const startTrial = () => authorized("POST", "/v1/billing/trial", SubscriptionResponse, {});
+export const cancelPlan = () => authorized("POST", "/v1/billing/cancel", SubscriptionResponse, {});
+export const resumePlan = () => authorized("POST", "/v1/billing/resume", SubscriptionResponse, {});
+export const invoices = () => authorized("GET", "/v1/billing/invoices", z.array(InvoiceView));
+
+export interface CheckoutRequest {
+  plan?: string;
+  addon?: string;
+  quantity?: number;
+  cycle?: "month" | "year";
+  promoCode?: string;
+  provider: "payme" | "bank";
+}
+export const checkout = (input: CheckoutRequest) =>
+  authorized("POST", "/v1/billing/checkout", CheckoutResponse, input);
+export const quote = (input: CheckoutRequest) =>
+  authorized(
+    "POST",
+    "/v1/billing/quote",
+    z.object({ subtotalSum: z.number(), discountSum: z.number(), vatSum: z.number(), totalSum: z.number() }),
+    input,
+  );
+export const changePlan = (input: { plan: string; cycle?: "month" | "year"; provider: "payme" | "bank" }) =>
+  authorized("POST", "/v1/billing/change-plan", ChangePlanResponse, input);
+export const invoiceCheckout = (id: string, provider: "payme" | "bank") =>
+  authorized(
+    "POST",
+    `/v1/billing/invoices/${id}/checkout`,
+    z.object({ checkoutUrl: z.string().nullable() }),
+    { provider },
+  );
+
+/** Opens an invoice as a printable page (the browser saves it as PDF). It needs the sign-in, so it is fetched here. */
+export async function openInvoicePrint(id: string): Promise<void> {
+  const token = await accessToken();
+  if (!token) throw new ApiError("UNAUTHORIZED", "Sign in", 401);
+  const response = await fetch(`${API_BASE}/v1/billing/invoices/${id}/print`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new ApiError("SERVER_ERROR", `HTTP ${response.status}`, response.status);
+  const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/html" }));
+  window.open(url, "_blank");
+}

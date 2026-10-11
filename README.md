@@ -162,5 +162,5 @@ packages/shared/       Zod schemas: PlatformAPI contract, SourceItem
 packages/onec-client/  PlatformAPI client, COM transport (winax), fake 1C for tests, phase-0 scripts
 onec/extension/        PlatformAPI extension: BSL sources, build script, setup steps
 onec/mapping/          field map of БУ для Узбекистана 3.0 and the metadata dumps
-docs/                  technical design, phase notes
+docs/                  technical design, phase notes, tariffs and billing (billing.md)
 ```

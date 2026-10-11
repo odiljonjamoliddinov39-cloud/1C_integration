@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import spaceEngineering from "@/assets/space-engineering.webp";
 import { LanguageSelect } from "@/components/LanguageSelect";
+import { LimitProvider } from "@/components/Limit";
 import { LicenseCard, ReadOnlyBanner } from "@/components/LicenseBadge";
 import { Logo } from "@/components/Logo";
 import { SPLASH_MIN_MS, SplashLoader } from "@/components/SplashLoader";
 import { UpdateBanner, VersionButton, useUpdateState } from "@/components/Updates";
+import { useBilling } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 import { AssistantScreen } from "@/screens/Assistant";
 import { CompaniesScreen } from "@/screens/Companies";
@@ -59,6 +61,7 @@ export function App() {
   const session = useQuery({ queryKey: ["session"], queryFn: () => window.platform.auth.session() });
   const info = useQuery({ queryKey: ["info"], queryFn: () => window.platform.app.info() });
   const update = useUpdateState();
+  const billing = useBilling();
   const signOut = useMutation({
     mutationFn: () => window.platform.auth.signOut(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["session"] }),
@@ -75,7 +78,7 @@ export function App() {
   const user = session.data;
 
   return (
-    <>
+    <LimitProvider>
       {splash}
       <div className="flex h-screen">
         {user && (
@@ -109,7 +112,7 @@ export function App() {
                 </button>
               ))}
             </nav>
-            <LicenseCard license={user.license} />
+            <LicenseCard license={user.license} billing={billing} />
             <div className="mt-auto space-y-3">
               <div>
                 <div className="mb-1.5 px-1 text-xs text-sidebar-muted">{t("header.language")}</div>
@@ -161,6 +164,6 @@ export function App() {
           </main>
         </div>
       </div>
-    </>
+    </LimitProvider>
   );
 }

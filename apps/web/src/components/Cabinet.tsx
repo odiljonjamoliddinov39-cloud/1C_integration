@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { ApiError, devices as loadDevices, logout, me as loadMe, revokeDevice } from "../lib/api";
 import { DOWNLOAD_URL } from "../lib/config";
 import { type Locale, dict, href } from "../lib/i18n";
+import { formatDate } from "../lib/dates";
+import { BillingSection } from "./Billing";
 
 /** Customer cabinet (TD §9): plan and status, this account's PCs, the download link. */
 export function Cabinet({ locale }: { locale: Locale }) {
@@ -50,8 +52,6 @@ export function Cabinet({ locale }: { locale: Locale }) {
     return <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>;
   if (!me) return <p className="text-muted-foreground">{t.loading}</p>;
 
-  const status = me.subscription.status;
-  const good = status === "trial" || status === "active";
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-border bg-card p-6">
@@ -67,17 +67,9 @@ export function Cabinet({ locale }: { locale: Locale }) {
             {t.logout}
           </button>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t.plan}:</span>
-          <span className="font-medium">{t.planNames[me.subscription.plan] ?? me.subscription.plan}</span>
-          <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${good ? "bg-success/15 text-success" : "bg-warning/20"}`}
-          >
-            {t.status[status] ?? status} · {t.until.replace("{date}", date(me.subscription.endsAt))}
-          </span>
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">{t.trialNote}</p>
       </section>
+
+      <BillingSection locale={locale} />
 
       <section className="rounded-xl border border-border bg-card p-6">
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -118,25 +110,4 @@ export function Cabinet({ locale }: { locale: Locale }) {
       </section>
     </div>
   );
-}
-
-// Browsers often lack Uzbek month names ("2026 M10 18"), so Uzbek dates are written out here.
-const UZ_MONTHS = [
-  "yanvar",
-  "fevral",
-  "mart",
-  "aprel",
-  "may",
-  "iyun",
-  "iyul",
-  "avgust",
-  "sentabr",
-  "oktabr",
-  "noyabr",
-  "dekabr",
-];
-
-function formatDate(d: Date, locale: Locale): string {
-  if (locale === "uz") return `${d.getFullYear()}-yil ${d.getDate()}-${UZ_MONTHS[d.getMonth()]}`;
-  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
 }

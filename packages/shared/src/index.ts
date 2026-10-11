@@ -4,3 +4,5 @@ export * from "./control-api.js";
 export * from "./ai.js";
 export * from "./admin.js";
 export * from "./ai-policy.js";
+export * from "./billing.js";
+export * from "./admin-billing.js";

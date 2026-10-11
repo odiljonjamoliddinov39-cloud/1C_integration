@@ -21,7 +21,9 @@ import {
 } from "../../../shared/ipc";
 import { type ChatEntry, applyEvent } from "../../../shared/transcript";
 import { Button } from "@/components/ui/button";
+import { useLimitDialog } from "@/components/Limit";
 import { Card } from "@/components/ui/card";
+import { isLimitCode, useBilling } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 
 type Entry = ChatEntry;
@@ -74,17 +76,24 @@ export function AssistantScreen({ initialCompanyId = null }: { initialCompanyId?
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
   const [selectedId, setSelectedId] = useState<string | null>(initialCompanyId);
   const [transcripts, setTranscripts] = useState<Transcripts>({});
+  const showLimit = useLimitDialog();
+  const billing = useBilling();
 
   useEffect(
     () =>
       window.platform.assistant.onEvent((e) => {
         setTranscripts((all) => apply(all, e));
+        // A plan limit: say it plainly, with the way to upgrade.
+        if (e.type === "error" && isLimitCode(e.code)) showLimit(e.code, e.message);
+        if (e.type === "decided" && e.outcome.status === "failed" && isLimitCode(e.outcome.code)) {
+          showLimit(e.outcome.code, e.outcome.message);
+        }
         // The answer is saved: the chat list shows it (new chats, newest first).
         if (e.type === "done" || e.type === "error") {
           void queryClient.invalidateQueries({ queryKey: ["chats", e.companyId] });
         }
       }),
-    [queryClient],
+    [queryClient, showLimit],
   );
 
   const list = companies.data ?? [];
@@ -124,6 +133,11 @@ export function AssistantScreen({ initialCompanyId = null }: { initialCompanyId?
       </div>
       {company.aiEnabled ? (
         <div className="flex min-h-0 flex-1 flex-col">
+          {billing?.readOnlyCompanies.includes(company.inn) && (
+            <div className="mb-3 rounded-lg border border-warning/50 bg-warning/15 px-4 py-3 text-sm">
+              {t("billing.readOnlyBanner")}
+            </div>
+          )}
           <ExtensionNotice company={company} />
           <div className="flex min-h-0 flex-1 gap-4">
             <ChatList
@@ -418,6 +432,8 @@ function AuditCard({
 }) {
   const { t } = useTranslation();
   const [saved, setSaved] = useState<string | null>(null);
+  const billing = useBilling();
+  const excel = billing?.entitlements.features.excelExport ?? true;
   const done = audit.checks.filter((c) => !["pending", "running"].includes(c.status)).length;
   const problems = audit.checks.reduce((n, c) => n + (c.findings?.length ?? 0), 0);
   const withIssues = audit.checks.filter((c) => c.status === "issues").length;
@@ -442,7 +458,13 @@ function AuditCard({
           </div>
         </div>
         {audit.finished && chatId && (
-          <Button size="sm" variant="outline" onClick={() => void download()}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!excel}
+            title={excel ? undefined : t("billing.excel")}
+            onClick={() => void download()}
+          >
             {t("audit.download")}
           </Button>
         )}
@@ -956,7 +978,9 @@ function EntryView({
     case "proposal":
       return <ProposalCard companyId={companyId} entry={entry} />;
     case "error": {
-      const known = t(`errors.${entry.code}`);
+      const known = isLimitCode(entry.code)
+        ? t(`billing.limit.${entry.code}.body`)
+        : t(`errors.${entry.code}`);
       return (
         <div className={cn("rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive")}>
           {known === `errors.${entry.code}` ? entry.message : known}

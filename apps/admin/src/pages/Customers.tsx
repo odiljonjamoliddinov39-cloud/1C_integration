@@ -31,6 +31,7 @@ export function CustomersPage() {
           <option value="trial">Trial</option>
           <option value="active">Active</option>
           <option value="grace">Grace (unpaid)</option>
+          <option value="free">Free</option>
           <option value="suspended">Suspended</option>
           <option value="cancelled">Cancelled</option>
         </Select>

@@ -20,7 +20,7 @@ import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { aiBudgets, aiGrants, aiTraces, aiUsage, subscriptions } from "./db/schema.js";
+import { aiBudgets, aiTraces, aiUsage, plans, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -84,6 +84,7 @@ describe.skipIf(!available)("control system API", () => {
       LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
       PLAN_LIMITS: "on",
+      ENTITLEMENTS_CACHE_SECONDS: "0",
       ADMIN_EMAIL: "Boss@Platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
     });
@@ -109,13 +110,13 @@ describe.skipIf(!available)("control system API", () => {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
 
-  it("registers an account with a 14-day trial and signs in", async () => {
+  it("registers an account on the Free plan and signs in", async () => {
     const reg = await post("/v1/auth/register", account);
     expect(reg.statusCode).toBe(200);
     expect(reg.json().me).toMatchObject({
       user: { email: "owner@example.com", role: "owner" },
       account: { name: "Buxgalter MChJ" },
-      subscription: { plan: "trial", status: "trial" },
+      subscription: { plan: "free", status: "free" },
     });
     expect((await post("/v1/auth/register", account)).json().code).toBe("EMAIL_TAKEN");
 
@@ -150,10 +151,10 @@ describe.skipIf(!available)("control system API", () => {
     expect(res.statusCode).toBe(200);
     const { licenseToken, claims } = res.json();
     expect(LicenseClaims.parse(claims)).toMatchObject({
-      plan: "trial",
-      status: "trial",
+      plan: "free",
+      status: "free",
       mid: machineId,
-      maxCompanies: 5,
+      maxCompanies: 1,
     });
     expect(claims.exp - claims.iat).toBe(7 * 86400);
 
@@ -207,15 +208,21 @@ describe.skipIf(!available)("control system API", () => {
     expect((await post("/v1/devices/nope/revoke", {}, accessToken)).statusCode).toBe(400);
   });
 
-  it("reports an expired trial as grace, then suspended", async () => {
-    const { accessToken } = (await post("/v1/auth/register", account)).json();
-    await db.db.update(subscriptions).set({ endsAt: new Date(Date.now() - 2 * 86_400_000) });
+  it("reports a missed payment as grace, then Free: nobody is locked out", async () => {
+    const { accessToken, me } = (await post("/v1/auth/register", account)).json();
+    const business = await db.db.query.plans.findFirst({ where: eq(plans.code, "business") });
+    await db.db
+      .update(subscriptions)
+      .set({ planId: business!.id, status: "active", endsAt: new Date(Date.now() - 2 * 86_400_000) });
     const res = await post("/v1/devices/activate", { machineId, name: "PC" }, accessToken);
-    expect(res.json().claims.status).toBe("grace");
+    expect(res.json().claims).toMatchObject({ status: "grace", plan: "business", maxCompanies: 3 });
     await db.db.update(subscriptions).set({ endsAt: new Date(Date.now() - 4 * 86_400_000) });
-    expect((await post("/v1/license/check", { machineId }, accessToken)).json().claims.status).toBe(
-      "suspended",
-    );
+    expect((await post("/v1/license/check", { machineId }, accessToken)).json().claims).toMatchObject({
+      status: "free",
+      plan: "free",
+      maxCompanies: 1,
+    });
+    expect(me.account.id).toBeTruthy();
   });
 
   it("relays an assistant turn as a stream and records its tokens", async () => {
@@ -371,7 +378,7 @@ describe.skipIf(!available)("control system API", () => {
     }
   });
 
-  it("stops the assistant at the daily cap, the plan quota and an inactive subscription", async () => {
+  it("stops the assistant at the daily cap and a suspended subscription", async () => {
     const reg = (await post("/v1/auth/register", account)).json();
     const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
     const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
@@ -387,14 +394,8 @@ describe.skipIf(!available)("control system API", () => {
     await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
     expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_DAILY_LIMIT");
 
-    await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) });
-    await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 1_000_000 });
-    await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000 / 2 - 86_400_000) });
-    await db.db.update(subscriptions).set({ startsAt: new Date(Date.now() - 3 * 86_400_000) });
-    expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_QUOTA_EXCEEDED");
-
     await db.sql`TRUNCATE ai_usage`;
-    await db.db.update(subscriptions).set({ endsAt: new Date(Date.now() - 4 * 86_400_000) });
+    await db.db.update(subscriptions).set({ status: "suspended" });
     const res = await post("/v1/ai/chat", chat, reg.accessToken);
     expect(res.statusCode).toBe(402);
     expect(res.json().code).toBe("SUBSCRIPTION_INACTIVE");
@@ -457,8 +458,8 @@ describe.skipIf(!available)("control system API", () => {
         expect.objectContaining({
           name: "Buxgalter MChJ",
           ownerEmail: "owner@example.com",
-          plan: "trial",
-          status: "trial",
+          plan: "free",
+          status: "free",
           activeDevices: 1,
           aiCostUsd30d: 0.007,
         }),
@@ -470,7 +471,7 @@ describe.skipIf(!available)("control system API", () => {
       expect(detail.devices).toEqual([
         expect.objectContaining({ name: "BUX-PC", userEmail: "owner@example.com" }),
       ]);
-      expect(detail).toMatchObject({ aiQuota: 1_000_000, aiUsedTokens: 1500 });
+      expect(detail).toMatchObject({ aiUsedTokens: 1500 });
       expect(detail.usage).toHaveLength(30);
       expect(detail.usage.at(-1)).toMatchObject({ requests: 1, tokens: 1500 });
 
@@ -478,7 +479,7 @@ describe.skipIf(!available)("control system API", () => {
       expect(overview).toMatchObject({
         accounts: 1,
         newAccounts7d: 1,
-        byStatus: { trial: 1 },
+        byStatus: { free: 1 },
         activeDevices24h: 1,
       });
       expect((await call("GET", "/v1/admin/usage?days=7", token)).json()).toEqual([
@@ -543,6 +544,11 @@ describe.skipIf(!available)("control system API", () => {
       const id = customer.me.account.id;
       expect((await call("POST", `/v1/admin/accounts/${id}/block`, helper)).statusCode).toBe(403);
       expect((await call("GET", "/v1/admin/admins", helper)).statusCode).toBe(403);
+      // A Free account has no period to extend; a paid one does.
+      expect((await call("POST", `/v1/admin/accounts/${id}/extend`, helper, { days: 7 })).statusCode).toBe(
+        409,
+      );
+      await db.db.update(subscriptions).set({ status: "active", endsAt: new Date(Date.now() + 86_400_000) });
       expect((await call("POST", `/v1/admin/accounts/${id}/extend`, helper, { days: 7 })).statusCode).toBe(
         200,
       );
@@ -576,7 +582,7 @@ describe.skipIf(!available)("control system API", () => {
       expect((await post("/v1/admin/login", boss)).statusCode).toBe(200);
     });
 
-    it("recharges AI tokens: a customer stopped by the daily cap or the quota goes on at once", async () => {
+    it("recharges AI tokens: a customer stopped by the daily cap goes on at once", async () => {
       const customer = (await post("/v1/auth/register", account)).json();
       const ids = { accountId: customer.me.account.id, userId: customer.me.user.id };
       const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
@@ -607,17 +613,6 @@ describe.skipIf(!available)("control system API", () => {
         aiDailyLimit: config.AI_DAILY_TOKENS + 500_000,
       });
       expect(await ask()).toBe("answered");
-
-      // Recharged tokens also lift the plan quota; yesterday's top-up no longer lifts today's cap.
-      await db.sql`TRUNCATE ai_usage`;
-      await db.db.update(subscriptions).set({ startsAt: new Date(Date.now() - 3 * 86_400_000) });
-      await db.db.update(aiGrants).set({ createdAt: new Date(Date.now() - 86_400_000) });
-      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: before.aiQuota + 400_000 });
-      await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000) });
-      expect(await ask()).toBe("answered");
-      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 200_000 });
-      await db.db.update(aiUsage).set({ createdAt: new Date(Date.now() - 86_400_000) });
-      expect(await ask()).toBe("AI_QUOTA_EXCEEDED");
 
       expect((await call("POST", `/v1/admin/accounts/${id}/recharge`, token, { tokens: 0 })).statusCode).toBe(
         400,
@@ -836,9 +831,9 @@ describe.skipIf(!available)("control system API", () => {
       });
       const view = (await call("GET", "/v1/admin/ai-policies", await adminToken())).json();
       expect(view.default.monthlyLimitUsd).toBe(80);
-      expect(view.plans.map((p: { code: string }) => p.code)).toContain("trial");
+      expect(view.plans.map((p: { code: string }) => p.code)).toContain("free");
       // A plan's own policy wins over the default one; removing it goes back to the default.
-      const trial = view.plans.find((p: { code: string }) => p.code === "trial");
+      const trial = view.plans.find((p: { code: string }) => p.code === "free");
       await call("PUT", "/v1/admin/ai-policies", await adminToken(), {
         planId: trial.planId,
         policy: { ...DEFAULT_AI_POLICY, monthlyLimitUsd: 5 },
@@ -1670,7 +1665,7 @@ describe("effectiveStatus", () => {
     const end = new Date("2026-10-10T00:00:00Z");
     expect(effectiveStatus("active", end, new Date("2026-10-09T00:00:00Z"))).toBe("active");
     expect(effectiveStatus("active", end, new Date("2026-10-12T00:00:00Z"))).toBe("grace");
-    expect(effectiveStatus("trial", end, new Date("2026-10-14T00:00:00Z"))).toBe("suspended");
+    expect(effectiveStatus("trial", end, new Date("2026-10-14T00:00:00Z"))).toBe("free");
     expect(effectiveStatus("cancelled", end, new Date("2026-10-01T00:00:00Z"))).toBe("cancelled");
   });
 });

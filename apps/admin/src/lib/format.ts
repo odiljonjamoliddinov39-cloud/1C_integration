@@ -37,3 +37,8 @@ export function relative(iso: string | null, now = Date.now()): string {
         : [Math.round(abs / 86_400_000), abs < 2 * 86_400_000 ? "day" : "days"];
   return diff < 0 ? `${value} ${unit} ago` : `in ${value} ${unit}`;
 }
+
+/** Whole sum with thousands separated, e.g. 1 690 000. */
+export function sum(value: number): string {
+  return `${new Intl.NumberFormat("ru-RU").format(Math.round(value))} UZS`;
+}

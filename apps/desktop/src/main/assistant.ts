@@ -66,6 +66,7 @@ import { applyEvent } from "../shared/transcript.js";
 import { AUDIT_CHECKS, AUDIT_SECTIONS, type AuditCheck } from "./audit-checks.js";
 import { AttachmentError, type ShrinkImage, dropPages, readAttachments } from "./attachments.js";
 import { type TraceLog, tracesFromMessages } from "./ai/backfill.js";
+import type { BillingState } from "./billing.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
@@ -151,7 +152,12 @@ export interface AssistantDeps {
   engine?: CostEngine;
   /** Which messages of which chats the engine has already learned from (see backfillTraces). */
   traceLog?: TraceLog;
+  /** The plan's limits: read-only companies, and the monthly counts of imports and audits. */
+  billing?: Pick<BillingState, "isReadOnly" | "countImport" | "countAudit">;
 }
+
+const READ_ONLY_MESSAGE =
+  "This company is over the plan's limit: its data is visible, but imports and the assistant are off. Upgrade the plan or choose which companies stay active.";
 
 /** What one question runs under: the limits in force, and what kind of question it is. */
 interface Run {
@@ -198,6 +204,8 @@ export class AssistantService {
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
+    if (this.deps.billing?.isReadOnly(company.inn))
+      return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
 
     const chat = this.chat(companyId, chatId ?? this.open.get(companyId)?.id ?? randomUUID());
@@ -528,7 +536,11 @@ export class AssistantService {
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
+    if (this.deps.billing?.isReadOnly(company.inn))
+      return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
+    const counted = await this.deps.billing?.countAudit(company.inn);
+    if (counted && !counted.ok) return this.fail(notify, counted.code, counted.message);
 
     const abort = new AbortController();
     this.running.set(companyId, abort);
@@ -975,6 +987,20 @@ export class AssistantService {
     if (!approved) {
       decided({ status: "declined" });
       return { ok: true, data: { status: "declined_by_user" } };
+    }
+    // Documents the plan counts (invoices, and the rows of a batch): reserved before anything is written.
+    const documents =
+      proposal.kind === "invoice_received" || proposal.kind === "invoice_issued"
+        ? 1
+        : proposal.kind === "batch"
+          ? proposal.items.filter((item) => !item.error).length
+          : 0;
+    if (documents > 0 && this.deps.billing) {
+      const counted = await this.deps.billing.countImport(documents, this.deps.store.company(companyId).inn);
+      if (!counted.ok) {
+        decided({ status: "failed", code: counted.code, message: counted.message });
+        return counted;
+      }
     }
     // The books are about to change: answers kept before now are no longer valid.
     this.engine.noteWrite(companyId);

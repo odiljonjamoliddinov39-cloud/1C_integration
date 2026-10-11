@@ -253,6 +253,13 @@ export class AdminService {
       orderBy: desc(subscriptions.endsAt),
     });
     if (!current) throw new HttpError(404, "NOT_FOUND", "The account has no subscription");
+    if (current.status === "free") {
+      throw new HttpError(
+        409,
+        "FREE_HAS_NO_PERIOD",
+        "A Free account has no period to extend: put it on a plan first",
+      );
+    }
     const from = Math.max(Date.now(), current.endsAt.getTime());
     const endsAt = new Date(from + input.days * DAY);
     const status =
@@ -430,6 +437,7 @@ export class AdminService {
   async overview(): Promise<Overview> {
     const rows = await this.accountRows(null, null);
     const byStatus: Record<SubscriptionStatus, number> = {
+      free: 0,
       trial: 0,
       active: 0,
       grace: 0,
@@ -606,7 +614,10 @@ export class AdminService {
       name: r.name,
       ownerEmail: r.owner_email,
       blocked: r.account_status === "blocked",
-      plan: r.plan,
+      plan:
+        r.sub_status && r.ends_at && effectiveStatus(r.sub_status, new Date(r.ends_at)) === "free"
+          ? "free"
+          : r.plan,
       status: r.sub_status && r.ends_at ? effectiveStatus(r.sub_status, new Date(r.ends_at)) : null,
       endsAt: iso(r.ends_at),
       users: r.users,

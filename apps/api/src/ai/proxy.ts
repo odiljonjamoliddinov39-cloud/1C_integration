@@ -16,7 +16,8 @@ import {
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
 import { HttpError } from "../lib/errors.js";
-import { type Service, effectiveStatus } from "../service.js";
+import type { BillingService } from "../billing/service.js";
+import type { Service } from "../service.js";
 import { type Admission, checkBudget } from "./budget.js";
 import { latestDigest } from "./digest.js";
 import { loopGuard, loopNote } from "./loop.js";
@@ -57,6 +58,7 @@ export class AiProxy {
   constructor(
     private readonly db: Db,
     private readonly service: Service,
+    private readonly billingService: BillingService,
     private readonly config: Config,
     private readonly model: AiModel | null,
     private readonly log: { error: (obj: unknown, msg?: string) => void },
@@ -66,23 +68,23 @@ export class AiProxy {
    * Throws when this account may not use the AI now; otherwise the policy it runs under and the
    * warnings to show (the budget is close).
    */
-  async ensureAllowed(accountId: string, userId: string): Promise<Admission> {
+  async ensureAllowed(accountId: string, userId: string, input?: AiChatInput): Promise<Admission> {
     if (!this.model)
       throw new HttpError(503, "AI_NOT_CONFIGURED", "The AI assistant is not set up on the server");
     if (await this.service.isBlocked(accountId))
       throw new HttpError(403, "ACCOUNT_BLOCKED", "This account is blocked");
-    const { subscription, plan } = await this.service.currentSubscription(accountId);
-    const status = effectiveStatus(subscription.status, subscription.endsAt);
-    if (status === "suspended" || status === "cancelled") {
-      throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "Renew the subscription to use the assistant");
+    const { subscription, effectivePlan } = await this.service.billing.get(accountId);
+    // Only an admin can suspend an account; an unpaid one is on Free and keeps its free questions.
+    if (subscription.status === "suspended" || subscription.status === "cancelled") {
+      throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "This subscription is suspended: contact support");
     }
-    const policy = await policyFor(this.db, plan.id);
+    const policy = await policyFor(this.db, effectivePlan.id);
     const admission = await checkBudget(this.db, policy, { accountId, userId });
     if (this.config.PLAN_LIMITS === "off") return admission;
     const limits = await aiLimits(
       this.db,
       accountId,
-      { startsAt: subscription.startsAt, planQuota: plan.aiTokenQuota },
+      { startsAt: subscription.startsAt, planQuota: 0 },
       this.config.AI_DAILY_TOKENS,
     );
     if (limits.usedToday >= limits.dailyLimit) {
@@ -92,8 +94,12 @@ export class AiProxy {
         "Today's assistant limit is used up; it resets at midnight UTC",
       );
     }
-    if (limits.used >= limits.quota) {
-      throw new HttpError(429, "AI_QUOTA_EXCEEDED", "The plan's assistant quota is used up");
+    // The plan's allowance is in questions: counted when a new one reaches the model (the first
+    // step of an answer, not an audit), so the answer in progress is never cut.
+    const audit = input?.tools?.includes("report_findings") ?? false;
+    if (input && !audit && isFirstStep(input.messages)) {
+      const warning = await this.billingService.takeAiQuestion(accountId);
+      if (warning) admission.warnings.push(warning);
     }
     return admission;
   }

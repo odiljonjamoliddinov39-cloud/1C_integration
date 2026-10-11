@@ -27,8 +27,10 @@ services:
       # The AI proxy: without a key the assistant answers AI_NOT_CONFIGURED.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
-      # "off" until the tariffs are set: no AI caps or quotas, no PC limit (see apps/api/src/config.ts).
+      # "off": plan limits are not enforced (use is still counted). Set "on" once the desktop with the limit dialogs is out (docs/billing.md).
       PLAN_LIMITS: ${PLAN_LIMITS:-off}
+      # The website, where the desktop's "Upgrade" button leads (https://<site>).
+      SITE_URL: ${SITE_URL:-}
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
       AI_EFFORT: ${AI_EFFORT:-high}

@@ -1,15 +1,24 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { LicenseView } from "../../../shared/ipc";
+import type { BillingView, LicenseView } from "../../../shared/ipc";
+import { aiQuestionsLeft } from "@/lib/billing";
 import { formatTime } from "@/lib/format";
 
-const TRIAL_DAYS = 30;
+const TRIAL_DAYS = 14;
 
 /** The licence in the sidebar: its state, until when, and for a trial how much of it has passed. */
-export function LicenseCard({ license }: { license: LicenseView | null }) {
+export function LicenseCard({
+  license,
+  billing,
+}: {
+  license: LicenseView | null;
+  billing: BillingView | null;
+}) {
   const { t, i18n } = useTranslation();
   const [now] = useState(() => Date.now());
+  const ai = aiQuestionsLeft(billing);
+  const planName = billing ? t(`billing.plan.${billing.entitlements.plan}`) : null;
   const label = !license
     ? t("license.none")
     : license.mode === "read_only"
@@ -33,11 +42,22 @@ export function LicenseCard({ license }: { license: LicenseView | null }) {
     >
       <div className="flex items-center gap-2 text-sm font-semibold">
         <span className={`h-2.5 w-2.5 rounded-full ${tone}`} />
-        {label}
+        {planName ? `${planName} · ${label}` : label}
       </div>
-      {license && (
+      {license && license.status !== "free" && (
         <div className="mt-1.5 text-xs text-sidebar-muted">
           {t("license.until", { date: formatTime(license.paidUntil, i18n.language) })}
+        </div>
+      )}
+      {ai && (
+        <div className="mt-2 text-xs text-sidebar-foreground/90">
+          {ai.left > 0 ? t("billing.aiLeft", { left: ai.left, total: ai.total }) : t("billing.aiNone")}
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
+            <div
+              className={`h-full rounded-full ${ai.left === 0 ? "bg-destructive" : ai.left / Math.max(1, ai.total) <= 0.2 ? "bg-warning" : "bg-emerald-400"}`}
+              style={{ width: `${Math.round((ai.left / Math.max(1, ai.total)) * 100)}%` }}
+            />
+          </div>
         </div>
       )}
       {passed !== null && (

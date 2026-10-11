@@ -13,6 +13,10 @@ import { CostPage } from "@/pages/Cost";
 import { CustomersPage } from "@/pages/Customers";
 import { LoginPage } from "@/pages/Login";
 import { OverviewPage } from "@/pages/Overview";
+import { PlansPage } from "@/pages/Plans";
+import { PromoPage } from "@/pages/Promo";
+import { RevenuePage } from "@/pages/Revenue";
+import { SubscriptionsPage } from "@/pages/Subscriptions";
 import { PoliciesPage } from "@/pages/Policies";
 import { TemplatesPage } from "@/pages/Templates";
 import { UsagePage } from "@/pages/Usage";
@@ -20,6 +24,10 @@ import { UsagePage } from "@/pages/Usage";
 const NAV = [
   { path: "", label: "Overview" },
   { path: "customers", label: "Customers" },
+  { path: "subscriptions", label: "Subscriptions" },
+  { path: "revenue", label: "Revenue" },
+  { path: "plans", label: "Plans" },
+  { path: "promo", label: "Promo codes" },
   { path: "usage", label: "AI usage" },
   { path: "cost", label: "AI cost" },
   { path: "ai", label: "AI model" },
@@ -89,6 +97,14 @@ function Shell() {
             <CustomerPage id={id} me={me.data} />
           ) : section === "customers" ? (
             <CustomersPage />
+          ) : section === "subscriptions" ? (
+            <SubscriptionsPage accountId={id ?? null} />
+          ) : section === "revenue" ? (
+            <RevenuePage />
+          ) : section === "plans" ? (
+            <PlansPage me={me.data} />
+          ) : section === "promo" ? (
+            <PromoPage me={me.data} />
           ) : section === "usage" ? (
             <UsagePage />
           ) : section === "cost" ? (

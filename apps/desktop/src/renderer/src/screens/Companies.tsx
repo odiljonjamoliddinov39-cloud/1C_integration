@@ -9,6 +9,7 @@ import { ConnectorStatusBadge } from "@/components/ConnectorStatus";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { describeInfobase, formatTime } from "@/lib/format";
+import { useBilling } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 
 /** Company avatars cycle through the palette. */
@@ -34,6 +35,7 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
   const session = useQuery({ queryKey: ["session"], queryFn: () => window.platform.auth.session() });
   const readOnly = session.data?.license?.mode !== "active";
+  const billing = useBilling();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["companies"] });
   const check = useMutation({
     mutationFn: (id: string) => window.platform.companies.checkStatus(id),
@@ -103,6 +105,14 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
             </div>
             <div className="flex flex-wrap items-start gap-2">
               <ConnectorStatusBadge status={company.lastStatus} />
+              {billing?.readOnlyCompanies.includes(company.inn) && (
+                <span
+                  className="inline-flex items-center rounded-full bg-warning/25 px-2 py-0.5 text-xs font-medium"
+                  title={t("billing.readOnlyCompany")}
+                >
+                  {t("billing.limit.COMPANY_READ_ONLY.title")}
+                </span>
+              )}
               {company.aiEnabled && (
                 <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                   {t("companies.assistantOn")}

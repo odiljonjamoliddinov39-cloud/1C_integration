@@ -29,7 +29,7 @@ export const TokenPair = z.object({
 });
 export type TokenPair = z.infer<typeof TokenPair>;
 
-export const SubscriptionStatus = z.enum(["trial", "active", "grace", "suspended", "cancelled"]);
+export const SubscriptionStatus = z.enum(["free", "trial", "active", "grace", "suspended", "cancelled"]);
 export type SubscriptionStatus = z.infer<typeof SubscriptionStatus>;
 
 export const Me = z.object({

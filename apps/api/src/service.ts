@@ -2,36 +2,42 @@
  * Accounts, sign-in, devices and licenses. Routes stay thin; the rules live here.
  */
 import { hash, verify } from "@node-rs/argon2";
-import type {
-  DeviceView,
-  LicenseResponse,
-  Me,
-  RegisterInput,
-  SubscriptionStatus,
-  TokenPair,
+import {
+  GRACE_DAYS,
+  type DeviceView,
+  type LicenseResponse,
+  type Me,
+  type RegisterInput,
+  type SubscriptionStatus,
+  type TokenPair,
 } from "@platform/shared";
-import { and, count, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
 
 import type { Config } from "./config.js";
 import type { Db } from "./db/client.js";
 import { accounts, devices, licenses, plans, refreshTokens, subscriptions, users } from "./db/schema.js";
+import type { Billing } from "./billing/entitlements.js";
+import { FREE_END } from "./billing/period.js";
 import { HttpError } from "./lib/errors.js";
 import { type Tokens, newRefreshToken, sha256 } from "./lib/tokens.js";
 
 const DAY = 86_400_000;
-/** No payment by the end date -> 3-day grace -> suspended (TD §8 "Billing logic"). */
-const GRACE_DAYS = 3;
 // A real hash to compare against when the email is unknown, so timing does not reveal accounts.
 const DUMMY_HASH = await hash("not-a-real-password-for-timing");
 
+/**
+ * What a stored subscription is now. A missed payment gives 3 days of grace and then Free, never
+ * a lock-out; a trial that ends is Free. Only an admin can suspend or cancel an account.
+ */
 export function effectiveStatus(
   status: SubscriptionStatus,
   endsAt: Date,
   now = new Date(),
 ): SubscriptionStatus {
-  if (status === "suspended" || status === "cancelled") return status;
+  if (status === "free" || status === "suspended" || status === "cancelled") return status;
   if (now.getTime() <= endsAt.getTime()) return status;
-  return now.getTime() <= endsAt.getTime() + GRACE_DAYS * DAY ? "grace" : "suspended";
+  if (status === "trial") return "free";
+  return now.getTime() <= endsAt.getTime() + GRACE_DAYS * DAY ? "grace" : "free";
 }
 
 export class Service {
@@ -39,6 +45,7 @@ export class Service {
     private readonly db: Db,
     private readonly tokens: Tokens,
     private readonly config: Config,
+    readonly billing: Billing,
   ) {}
 
   // --- auth -----------------------------------------------------------------------------------
@@ -48,8 +55,8 @@ export class Service {
       throw new HttpError(403, "REGISTRATION_CLOSED", "Sign-up is on the website");
     const existing = await this.db.query.users.findFirst({ where: eq(users.email, input.email) });
     if (existing) throw new HttpError(409, "EMAIL_TAKEN", "An account with this email already exists");
-    const trial = await this.db.query.plans.findFirst({ where: eq(plans.code, "trial") });
-    if (!trial) throw new HttpError(500, "NO_TRIAL_PLAN", "The trial plan is missing");
+    const free = await this.db.query.plans.findFirst({ where: eq(plans.code, "free") });
+    if (!free) throw new HttpError(500, "NO_FREE_PLAN", "The Free plan is missing");
 
     const passwordHash = await hash(input.password);
     const userId = await this.db.transaction(async (tx) => {
@@ -60,13 +67,13 @@ export class Service {
         .values({ accountId: account.id, email: input.email, name: input.name, passwordHash, role: "owner" })
         .returning();
       if (!user) throw new HttpError(500, "INTERNAL", "User was not created");
-      const now = new Date();
+      // Every account starts on Free; the Business trial is started on purpose (POST /v1/billing/trial).
       await tx.insert(subscriptions).values({
         accountId: account.id,
-        planId: trial.id,
-        status: "trial",
-        startsAt: now,
-        endsAt: new Date(now.getTime() + this.config.TRIAL_DAYS * DAY),
+        planId: free.id,
+        status: "free",
+        startsAt: new Date(),
+        endsAt: FREE_END,
       });
       return user.id;
     });
@@ -124,12 +131,12 @@ export class Service {
     if (!user) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
     const account = await this.db.query.accounts.findFirst({ where: eq(accounts.id, user.accountId) });
     if (!account) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
-    const { subscription, plan } = await this.currentSubscription(user.accountId);
+    const { subscription, entitlements } = await this.billing.get(user.accountId);
     return {
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
       account: { id: account.id, name: account.name },
       subscription: {
-        plan: plan.code,
+        plan: entitlements.plan,
         status: effectiveStatus(subscription.status, subscription.endsAt),
         endsAt: subscription.endsAt.toISOString(),
       },
@@ -159,7 +166,7 @@ export class Service {
   async activateDevice(userId: string, machineId: string, name: string): Promise<LicenseResponse> {
     const user = await this.db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
-    const { plan } = await this.currentSubscription(user.accountId);
+    const { entitlements, plan } = await this.billing.get(user.accountId);
     let device = await this.db.query.devices.findFirst({
       where: and(eq(devices.userId, userId), eq(devices.machineId, machineId)),
     });
@@ -169,7 +176,22 @@ export class Service {
         .select({ value: count() })
         .from(devices)
         .where(and(eq(devices.userId, userId), eq(devices.revoked, false)));
-      const limit = plan.seats * (plan.features.maxDevicesPerSeat ?? 2);
+      if (this.config.PLAN_LIMITS === "on" && active === 0) {
+        // A new user's first PC takes a seat; users who already work keep theirs.
+        const [{ value: seated } = { value: 0 }] = await this.db
+          .select({ value: sql<number>`count(distinct ${users.id})::int` })
+          .from(users)
+          .innerJoin(devices, and(eq(devices.userId, users.id), eq(devices.revoked, false)))
+          .where(eq(users.accountId, user.accountId));
+        if (seated >= entitlements.users) {
+          throw new HttpError(
+            409,
+            "USER_LIMIT",
+            `The plan allows ${entitlements.users} user${entitlements.users === 1 ? "" : "s"}; upgrade or remove one first`,
+          );
+        }
+      }
+      const limit = plan.features.maxDevicesPerSeat ?? 2;
       if (this.config.PLAN_LIMITS === "on" && active >= limit) {
         throw new HttpError(
           409,
@@ -227,17 +249,17 @@ export class Service {
   ): Promise<LicenseResponse> {
     if (await this.isBlocked(accountId))
       throw new HttpError(403, "ACCOUNT_BLOCKED", "This account is blocked");
-    const { subscription, plan } = await this.currentSubscription(accountId);
+    const { subscription, entitlements } = await this.billing.get(accountId);
     const status = effectiveStatus(subscription.status, subscription.endsAt);
     const { token, claims } = await this.tokens.license({
       sub: userId,
       acc: accountId,
       dev: deviceId,
       mid: machineId,
-      plan: plan.code,
+      plan: entitlements.plan,
       status,
       paidUntil: subscription.endsAt.toISOString(),
-      maxCompanies: plan.maxCompanies,
+      maxCompanies: entitlements.companies,
     });
     await this.db.insert(licenses).values({
       subscriptionId: subscription.id,
