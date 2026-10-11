@@ -10,6 +10,7 @@ import type { ConnectionInput } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
 import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
+import { BillingState } from "./billing.js";
 import { createHandlers } from "./handlers.js";
 import { SessionService } from "./session.js";
 import { infobaseKey } from "./onec-jobs.js";
@@ -49,6 +50,7 @@ function setup() {
   const handlers = createHandlers({
     store,
     session,
+    billing: new BillingState({ session, companies: () => [] }),
     connector,
     assistant: new AssistantService({ store, chats, session, connector, emit: () => undefined }),
     info: {
@@ -241,6 +243,7 @@ describe("without secure storage", () => {
     const handlers = createHandlers({
       store,
       session,
+      billing: new BillingState({ session, companies: () => [] }),
       connector,
       assistant: new AssistantService({
         store,

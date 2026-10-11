@@ -4,9 +4,11 @@ import { useTranslation } from "react-i18next";
 
 import type { ConnectionInput, ConnectionTestResult, InfobaseInput } from "../../../shared/ipc";
 import { errorText } from "@/components/ConnectorStatus";
+import { useLimitDialog } from "@/components/Limit";
 import { Button } from "@/components/ui/button";
 import { Card, ErrorText } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
+import { isLimitCode } from "@/lib/billing";
 
 /** TD §4 "Connect company": pick the infobase, check the 1C extension, choose the organization. */
 export function ConnectCompanyDialog({
@@ -38,6 +40,7 @@ export function ConnectCompanyDialog({
       setTest(null); // any change needs a new test
     };
 
+  const showLimit = useLimitDialog();
   const runTest = useMutation({
     mutationFn: () => window.platform.companies.testConnection(connection()),
     onSuccess: (result) => {
@@ -59,6 +62,7 @@ export function ConnectCompanyDialog({
       return window.platform.companies.add({ ...connection(), organization });
     },
     onSuccess: (result) => {
+      if (!result.ok && isLimitCode(result.code)) showLimit(result.code, result.message);
       if (result.ok) onConnected();
     },
   });

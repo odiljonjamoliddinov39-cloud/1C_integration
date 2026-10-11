@@ -12,6 +12,11 @@ const Env = z.object({
   REFRESH_TOKEN_DAYS: z.coerce.number().default(30),
   /** The offline grace of the desktop app (TD §4). */
   LICENSE_TOKEN_DAYS: z.coerce.number().default(7),
+  /** The website (https://...), where the desktop sends a customer to upgrade; empty: no link. */
+  SITE_URL: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
   /** VAT added to every invoice (shown separately); prices of the plans exclude it. */
   VAT_PERCENT: z.coerce.number().min(0).max(100).default(12),
   /** How long a computed set of limits is reused (0: never; tests use 0). */

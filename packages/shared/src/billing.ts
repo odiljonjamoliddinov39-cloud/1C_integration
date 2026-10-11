@@ -52,6 +52,8 @@ export const EntitlementsResponse = z.object({
   /** The plan takes effect later (a scheduled downgrade) or the account will fall back to Free. */
   pendingPlan: z.string().nullable(),
   cancelAtPeriodEnd: z.boolean(),
+  /** The website's cabinet, where "Upgrade" leads (null when the server does not know the site). */
+  cabinetUrl: z.string().nullable(),
 });
 export type EntitlementsResponse = z.infer<typeof EntitlementsResponse>;
 

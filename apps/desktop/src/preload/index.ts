@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { CHANNELS } from "../shared/channels.js";
-import type { AssistantEvent, PlatformBridge, UpdateState } from "../shared/ipc.js";
+import type { AssistantEvent, BillingView, PlatformBridge, UpdateState } from "../shared/ipc.js";
 
 const bridge: PlatformBridge = {
   app: { info: () => ipcRenderer.invoke(CHANNELS.appInfo) },
@@ -21,6 +21,15 @@ const bridge: PlatformBridge = {
     remove: (id) => ipcRenderer.invoke(CHANNELS.removeCompany, id),
     updateExtension: (id) => ipcRenderer.invoke(CHANNELS.updateExtension, id),
     installExtension: (input) => ipcRenderer.invoke(CHANNELS.installExtension, input),
+  },
+  billing: {
+    get: () => ipcRenderer.invoke(CHANNELS.billingGet),
+    refresh: () => ipcRenderer.invoke(CHANNELS.billingRefresh),
+    onChange: (listener) => {
+      const handler = (_e: unknown, view: BillingView) => listener(view);
+      ipcRenderer.on(CHANNELS.billingChanged, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.billingChanged, handler);
+    },
   },
   didox: {
     keys: () => ipcRenderer.invoke(CHANNELS.didoxKeys),

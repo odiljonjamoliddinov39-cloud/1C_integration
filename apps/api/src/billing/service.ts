@@ -102,6 +102,7 @@ export class BillingService {
       canStartTrial: state === "free" && !subscription.trialUsed,
       pendingPlan: pending?.code ?? null,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      cabinetUrl: this.config.SITE_URL ? `${this.config.SITE_URL}/cabinet` : null,
     };
   }
 

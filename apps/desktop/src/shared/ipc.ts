@@ -9,6 +9,7 @@ import type {
   DeleteMarkedPreview,
   DeleteMarkedResult,
   CreateInvoiceResult,
+  EntitlementsResponse,
   InvoiceReceivedDraft,
   ObjectState,
   Organization,
@@ -124,6 +125,9 @@ export interface Session {
   signedInAt: string;
   license: LicenseView | null;
 }
+
+/** The plan, its limits and what is used: from the server, with the companies this PC could not register. */
+export type BillingView = EntitlementsResponse;
 
 export interface AppInfo {
   /** Control system address baked into this build (editable on the sign-in screen). */
@@ -341,6 +345,13 @@ export interface PlatformBridge {
      * checks the base again; the result is a check like testConnection's.
      */
     installExtension(input: ConnectionInput): Promise<ConnectionTestResult>;
+  };
+  billing: {
+    /** The plan, its limits and what is used (the last answer of the server; null before the first one). */
+    get(): Promise<BillingView | null>;
+    /** Asks the server now. */
+    refresh(): Promise<BillingView | null>;
+    onChange(listener: (view: BillingView) => void): () => void;
   };
   didox: {
     /** The keys E-IMZO shows (it must be running on this PC). */

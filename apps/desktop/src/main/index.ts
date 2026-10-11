@@ -11,6 +11,7 @@ import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
 import type { ShrinkImage } from "./attachments.js";
+import { BillingState } from "./billing.js";
 import { TraceLog } from "./ai/backfill.js";
 import { ChatStore } from "./chats.js";
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
@@ -119,7 +120,13 @@ void app.whenReady().then(async () => {
     deviceName: hostname(),
     bakedPublicKey,
   });
+  const billing = new BillingState({
+    session,
+    companies: () => store.listCompanies().map((c) => ({ inn: c.inn, name: c.name })),
+    onChange: (view) => broadcast(CHANNELS.billingChanged, view),
+  });
   const assistant = new AssistantService({
+    billing,
     store,
     chats: new ChatStore(join(app.getPath("userData"), "chats"), secrets),
     session,
@@ -137,6 +144,7 @@ void app.whenReady().then(async () => {
   const handlers = createHandlers({
     store,
     session,
+    billing,
     connector,
     assistant,
     info: {
@@ -188,6 +196,8 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
   ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
   ipcMain.handle(CHANNELS.installExtension, (_e, input: unknown) => handlers.installExtensionInto(input));
+  ipcMain.handle(CHANNELS.billingGet, () => handlers.billing());
+  ipcMain.handle(CHANNELS.billingRefresh, () => handlers.billingRefresh());
   ipcMain.handle(CHANNELS.didoxKeys, () => handlers.didoxKeys());
   ipcMain.handle(CHANNELS.didoxTest, (_e, input: unknown) => handlers.didoxTest(input));
   ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
@@ -215,8 +225,11 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.updateInstall, () => updates.install());
 
   // License check at start and every 6 hours (TD §4).
-  void session.refreshLicense();
-  setInterval(() => void session.refreshLicense(), LICENSE_CHECK_HOURS * 3600 * 1000);
+  void session.refreshLicense().then(() => billing.refresh());
+  setInterval(
+    () => void session.refreshLicense().then(() => billing.refresh()),
+    LICENSE_CHECK_HOURS * 3600 * 1000,
+  );
   updates.start();
 
   createWindow();

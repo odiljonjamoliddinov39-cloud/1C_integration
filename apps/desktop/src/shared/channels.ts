@@ -14,6 +14,8 @@ export const CHANNELS = {
   removeCompany: "companies:remove",
   updateExtension: "companies:update-extension",
   installExtension: "companies:install-extension",
+  billingGet: "billing:get",
+  billingRefresh: "billing:refresh",
   didoxKeys: "didox:keys",
   didoxTest: "didox:test",
   assistantEnable: "assistant:enable",
@@ -32,4 +34,5 @@ export const CHANNELS = {
   /** main → renderer */
   assistantEvent: "assistant:event",
   updateChanged: "update:changed",
+  billingChanged: "billing:changed",
 } as const;
