@@ -27,10 +27,10 @@ services:
       # The AI proxy: without a key the assistant answers AI_NOT_CONFIGURED.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
-      # "off": plan limits are not enforced (use is still counted). Set "on" once the desktop with the limit dialogs is out (docs/billing.md).
-      PLAN_LIMITS: ${PLAN_LIMITS:-off}
+      # "on": the plans' limits are enforced (docs/billing.md); "off": only counted. Override in .env.
+      PLAN_LIMITS: ${PLAN_LIMITS:-on}
       # The website, where the desktop's "Upgrade" button leads (https://<site>).
-      SITE_URL: ${SITE_URL:-}
+      SITE_URL: ${SITE_URL:-https://1c-integration.vercel.app}
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
       AI_EFFORT: ${AI_EFFORT:-high}
