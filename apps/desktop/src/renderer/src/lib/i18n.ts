@@ -190,6 +190,7 @@ const en = {
       batchPosting: "Documents marked to post are posted when applied.",
     },
   },
+  splash: { madeBy: "Made by" },
   didox: {
     button: "Didox test",
     title: "Didox test",
@@ -547,6 +548,7 @@ const ru: Dict = {
       batchPosting: "Документы с отметкой проведения будут проведены при записи.",
     },
   },
+  splash: { madeBy: "Разработчик" },
   didox: {
     button: "Тест Didox",
     title: "Тест Didox",
@@ -904,6 +906,7 @@ const uz: Dict = {
       batchPosting: "Oʻtkazish belgilangan hujjatlar yozilganda oʻtkaziladi.",
     },
   },
+  splash: { madeBy: "Ishlab chiqaruvchi" },
   didox: {
     button: "Didox testi",
     title: "Didox testi",

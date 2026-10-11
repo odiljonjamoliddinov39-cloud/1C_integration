@@ -33,6 +33,43 @@ const nav = [
     <link rel="alternate" hreflang="ru" href={href("ru", path)} />
   </head>
   <body class="flex min-h-screen flex-col antialiased">
+    <div id="se-loader" class="se-loader fixed inset-0 z-[100] flex flex-col items-center justify-center gap-10 bg-linear-to-br from-[#0b2670] via-[#12399a] to-[#1d5fe0] text-white" aria-hidden="true">
+      <div class="flex flex-col items-center gap-4">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+          <rect x="6" y="12" width="32" height="40" rx="10" fill="#7C3AED" />
+          <rect x="26" y="12" width="32" height="40" rx="10" fill="#0D9488" />
+          <path d="M36 12h2v40h-2a10 10 0 0 1-10-10V22a10 10 0 0 1 10-10z" fill="#1B1840" />
+          <path d="M32 22C32.9 29 34 30.1 41 31C34 31.9 32.9 33 32 40C31.1 33 30 31.9 23 31C30 30.1 31.1 29 32 22Z" fill="#FCD34D" />
+        </svg>
+        <div class="text-2xl font-bold tracking-tight">AI Accounting Assistant</div>
+        <div class="h-1 w-48 overflow-hidden rounded-full bg-white/20"><div class="se-bar h-full w-1/3 rounded-full bg-amber-300"></div></div>
+      </div>
+      <div class="flex flex-col items-center gap-3">
+        <span class="text-[11px] font-semibold tracking-[0.25em] text-white/70 uppercase">{t.footer.madeBy}</span>
+        <img src="/space-engineering.webp" alt="" width="176" height="176" class="se-float rounded-[2.2rem] shadow-2xl shadow-black/40" />
+      </div>
+    </div>
+    <noscript><style>#se-loader{display:none}</style></noscript>
+    <script is:inline>
+      // The first page of a visit shows the start-up screen for a moment; later pages do not.
+      (function () {
+        var el = document.getElementById("se-loader");
+        if (!el) return;
+        var seen = false;
+        try { seen = sessionStorage.getItem("se-loader") === "1"; } catch (e) {}
+        if (seen) { el.remove(); return; }
+        var close = function () {
+          el.style.opacity = "0";
+          setTimeout(function () { el.remove(); }, 500);
+          try { sessionStorage.setItem("se-loader", "1"); } catch (e) {}
+        };
+        var started = Date.now();
+        var after = function () { setTimeout(close, Math.max(0, 1100 - (Date.now() - started))); };
+        if (document.readyState === "complete") after(); else window.addEventListener("load", after);
+        // Never hold the page for long if something is slow to load.
+        setTimeout(close, 4000);
+      })();
+    </script>
     <header class="sticky top-0 z-10 border-b border-border bg-background/85 backdrop-blur-lg">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
         <a href={href(locale, "/")} class="flex items-center gap-2.5 text-lg font-bold tracking-tight">
@@ -72,7 +109,12 @@ const nav = [
         <nav class="flex flex-wrap gap-4 text-ink-muted">
           {nav.map(([p, label]) => <a class="hover:text-ink-foreground" href={href(locale, p)}>{label}</a>)}
         </nav>
-        <span class="ml-auto rounded-full bg-amber-300/20 px-3 py-1 text-xs text-amber-200">{t.footer.prototype}</span>
+        <span class="ml-auto flex items-center gap-2 text-xs text-ink-muted">
+          {t.footer.madeBy}
+          <img src="/space-engineering.webp" alt="" width="24" height="24" class="rounded-md" />
+          <span class="font-semibold text-ink-foreground">Space Engineering</span>
+        </span>
+        <span class="rounded-full bg-amber-300/20 px-3 py-1 text-xs text-amber-200">{t.footer.prototype}</span>
       </div>
     </footer>
   </body>
