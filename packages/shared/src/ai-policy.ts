@@ -137,13 +137,15 @@ export type AccountBudgetInput = z.infer<typeof AccountBudgetInput>;
 
 /**
  * How a &parameter of a template query is filled from the question.
+ * counterparty: the name of a customer or supplier written in the question (any words that are left
+ * once the phrase is matched), found in 1C's counterparties before it goes into the query.
  * date: a date written in the question, else today. month_start / month_end: the first / last day of
  * the month named in the question (with its year, else this year), else the current month.
  * text, number: a value that must be written in the question, in quotes (text) or as a number.
  */
 export const TemplateParam = z.object({
   name: z.string().regex(/^[A-Za-zА-Яа-я_][A-Za-zА-Яа-я0-9_]*$/),
-  type: z.enum(["date", "month_start", "month_end", "text", "number"]),
+  type: z.enum(["date", "month_start", "month_end", "text", "number", "counterparty"]),
 });
 export type TemplateParam = z.infer<typeof TemplateParam>;
 
@@ -221,8 +223,10 @@ export type TraceStep = z.infer<typeof TraceStep>;
 export const TraceLearnable = z.object({
   /** The index in steps of the query that answers the question. */
   step: z.number().int().min(0),
-  /** The question's meaningful words, without dates and filler. */
+  /** The question's meaningful words, without dates, a counterparty's name and filler. */
   phrase: z.string().trim().min(3).max(200),
+  /** The query with the counterparty's name turned into a parameter, when the question named one. */
+  query: z.string().trim().min(1).max(20_000).optional(),
   params: z.array(TemplateParam).max(10),
   columns: z.array(TemplateColumn).min(1).max(30),
   action: TemplateAction.nullable(),

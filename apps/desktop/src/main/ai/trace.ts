@@ -130,6 +130,8 @@ export class TraceBuilder {
     return {
       step: only.step,
       phrase: learned.phrase,
+      // The query as the template will run it (a counterparty's name is a parameter now).
+      query: learned.query,
       params: learned.params,
       columns: learned.columns,
       action,

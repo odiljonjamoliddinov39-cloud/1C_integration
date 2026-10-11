@@ -81,6 +81,13 @@ per account, $5 a day per user and 8 reads per question.
      Claude decides if it is one stable, reusable question and writes the title, the wordings and the
      column labels. Rules check what it returns (the query and parameters are the recorded ones; the
      wordings must pass the matcher's limits). The cost is on **AI cost** as feature `engine`.
+   - **A counterparty is a parameter.** "Texmashga hisob-faktura yoz" and "Kapital uchun hisob-faktura
+     yoz" are one question: when the name in the question is a text the query holds (a parameter's
+     value or a literal, in a query about counterparties) it becomes a `counterparty` parameter
+     (`ai/templates.ts`), the query is sent as the template will run it (`learnable.query`), so
+     questions about different counterparties are one group. Running the template looks the name up
+     in the company's own 1C (`ai/counterparty.ts`: the words, then with the ending cut); exactly one
+     counterparty must fit, else the model answers and asks which. The card still needs a confirmation.
    - **The past teaches too.** The questions already asked are not wasted: (1) the app replays its
      saved chats through the same rules once (`ai/backfill.ts`, a minute after start, only the
      queries and column names go up, never figures; questions with files, cards or several queries

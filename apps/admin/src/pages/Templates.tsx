@@ -13,7 +13,7 @@ import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
 
 const FORMATS = ["text", "money", "number", "date"];
-const PARAM_TYPES = ["date", "month_start", "month_end", "text", "number"];
+const PARAM_TYPES = ["date", "month_start", "month_end", "text", "number", "counterparty"];
 
 /** Known questions answered by a fixed 1C query, without the model. */
 export function TemplatesPage({ me }: { me: AdminView }) {

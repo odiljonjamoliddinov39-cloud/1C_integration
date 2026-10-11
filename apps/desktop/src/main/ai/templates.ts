@@ -61,7 +61,31 @@ const FILLER = new Set([
   "menga",
   "ko'rsat",
   "qancha",
+  // Particles that go with a name ("Texmashga", "Texmash uchun", "для Техмаша"), not part of what is asked.
+  "ga",
+  "ka",
+  "qa",
+  "uchun",
+  "bilan",
+  "ning",
+  "dan",
+  "для",
+  "с",
+  "к",
 ]);
+
+/** Legal forms that stand next to a counterparty's name. */
+const LEGAL_FORMS = new Set(["mchj", "ooo", "ооо", "мчж", "xk", "qk", "ao", "ак", "ип", "ok", "aj"]);
+
+/** Words that are the same word with an ending ("texmash", "texmashga"): one is the start of the other. */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 4 && long.startsWith(short);
+}
+
+/** Longest counterparty name taken from a question, in words. */
+const MAX_NAME_WORDS = 4;
 
 const MONTHS: Record<string, number> = {
   январ: 1,
@@ -122,8 +146,10 @@ function words(text: string): string[] {
 
 export interface TemplateMatch {
   template: QueryTemplateView;
-  /** Values of the &parameters, ready for RunQuery. */
+  /** Values of the &parameters, ready for RunQuery (a counterparty's is still to be found, see below). */
   params: Record<string, string | number>;
+  /** The words of the question that name a counterparty, and the parameter they are for. */
+  counterparty?: { param: string; words: string[] };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -194,8 +220,11 @@ export function matchTemplate(
     const params: Record<string, string | number> = {};
     const used = new Set<string>();
     let usable = true;
+    let counterpartyParam: string | null = null;
     for (const param of template.params) {
-      if (param.type === "date") {
+      if (param.type === "counterparty") {
+        counterpartyParam = param.name;
+      } else if (param.type === "date") {
         const found = findDate(question, today);
         params[param.name] = found.value;
         found.used.forEach((u) => used.add(u));
@@ -231,10 +260,23 @@ export function matchTemplate(
       if (phraseStems.length < 2) continue;
       const restStems = rest.filter((w) => !FILLER.has(w)).map(stem);
       if (!phraseStems.every((s) => restStems.includes(s))) continue;
-      // Any further word may be a condition that makes it another question.
-      if (restStems.some((s) => !phraseStems.includes(s))) continue;
+      let counterparty: TemplateMatch["counterparty"];
+      if (counterpartyParam) {
+        // What is left of the question is a counterparty's name (a legal form next to it is not part of it).
+        const left = rest
+          .filter((w) => !FILLER.has(w) && !phraseStems.includes(stem(w)))
+          .filter((w) => !LEGAL_FORMS.has(w));
+        if (left.length === 0 || left.length > MAX_NAME_WORDS) continue;
+        counterparty = { param: counterpartyParam, words: left };
+      } else if (restStems.some((s) => !phraseStems.includes(s))) {
+        // Any further word may be a condition that makes it another question.
+        continue;
+      }
       if (!best || phraseStems.length > best.size) {
-        best = { match: { template, params }, size: phraseStems.length };
+        best = {
+          match: { template, params, ...(counterparty ? { counterparty } : {}) },
+          size: phraseStems.length,
+        };
       }
     }
   }
@@ -260,10 +302,10 @@ function format(value: unknown, column: TemplateColumn): string {
 const escapeCell = (text: string) => text.replaceAll("|", "\\|").replace(/\s*\n\s*/g, " ");
 
 /** The query's result as the chat shows it: a title, a table, an optional totals row. */
-export function renderTemplate(template: QueryTemplateView, result: QueryResult): string {
+export function renderTemplate(template: QueryTemplateView, result: QueryResult, subject?: string): string {
   const columns = template.columns;
   const lines = [
-    `**${template.title}**`,
+    `**${template.title}${subject ? ` — ${subject}` : ""}**`,
     "",
     `| ${columns.map((c) => escapeCell(c.label)).join(" | ")} |`,
     `| ${columns.map((c) => (c.format === "money" || c.format === "number" ? "---:" : "---")).join(" | ")} |`,
@@ -306,11 +348,29 @@ function columnFormat(values: unknown[]): TemplateColumn["format"] {
   return "text";
 }
 
+/** The text literals of a 1C query ("" inside one is a quote), whole, with their quotes. */
+function queryLiterals(query: string): { literal: string; text: string }[] {
+  const found: { literal: string; text: string }[] = [];
+  for (const m of query.matchAll(/"((?:[^"]|"")*)"/g)) {
+    const text = (m[1] ?? "").replaceAll('""', '"').replace(/%/g, "").trim();
+    if (text.length >= 3) found.push({ literal: m[0], text });
+  }
+  return found;
+}
+
+const PARAM_NAME = /^[A-Za-zА-Яа-я_][A-Za-zА-Яа-я0-9_]*$/;
+
 /**
  * Whether the model's answer to this question can become a template, and as what. Only a short
  * question without numbers or quoted values, answered by one query whose parameters are the date
- * or the month the question named (or today), with a whole result. Anything else is left to the
- * model every time: a template must not depend on something the question did not say.
+ * or the month the question named (or today), or the name of a counterparty the question wrote, with
+ * a whole result. Anything else is left to the model every time: a template must not depend on
+ * something the question did not say.
+ *
+ * A counterparty's name in the question, found in a text the query holds (a parameter's value or a
+ * literal in it), becomes a parameter of the query: the same question about another counterparty then
+ * gives the same template, and the same query, so the questions about different counterparties are
+ * one group for the engine to learn from.
  */
 export function learnFromRun(
   question: string,
@@ -324,7 +384,15 @@ export function learnFromRun(
 
   const params: TemplateParam[] = [];
   const consumed = new Set<string>();
+  /** Text parameters of the query: a counterparty's name, if the question has it. */
+  const textParams: { name: string; value: string }[] = [];
+  const aboutCounterparties = /Контрагент/iu.test(input.query);
   for (const [name, value] of Object.entries(input.params ?? {})) {
+    if (typeof value === "string" && !DATE_VALUE.test(value) && aboutCounterparties) {
+      if (!PARAM_NAME.test(name)) return null;
+      textParams.push({ name, value: value.replace(/%/g, "").trim() });
+      continue;
+    }
     if (typeof value !== "string" || !DATE_VALUE.test(value)) return null;
     const types: TemplateParam["type"][] = [];
     if (findDate(question, today).value === value) types.push("date");
@@ -332,7 +400,7 @@ export function learnFromRun(
     if (value === isoDate(month.year, month.month, 1)) types.push("month_start");
     if (value === isoDate(month.year, month.month, lastDay(month.year, month.month))) types.push("month_end");
     const type = types.length === 1 ? types[0] : undefined;
-    if (!type || !/^[A-Za-zА-Яа-я_][A-Za-zА-Яа-я0-9_]*$/.test(name)) return null;
+    if (!type || !PARAM_NAME.test(name)) return null;
     params.push({ name, type });
     if (type !== "date") month.used.forEach((u) => consumed.add(u));
   }
@@ -340,12 +408,49 @@ export function learnFromRun(
   const meaningful = words(question).filter(
     (w) => !FILLER.has(w) && ![...consumed].some((u) => u.includes(w) || w.includes(u)),
   );
-  if (meaningful.length < 2 || meaningful.length > 10) return null;
+
+  let phraseWords = meaningful;
+  let query = input.query;
+  if (aboutCounterparties) {
+    // Which text in the query is the name the question wrote? The one that shares a word with it.
+    const candidates = [
+      ...textParams.map((p) => ({ text: p.value, param: p.name, literal: null as string | null })),
+      ...queryLiterals(input.query).map((l) => ({
+        text: l.text,
+        param: null as string | null,
+        literal: l.literal,
+      })),
+    ];
+    let bound = false;
+    for (const candidate of candidates) {
+      const textWords = words(candidate.text);
+      const named = meaningful.filter((w) => textWords.some((u) => sameWord(w, u)));
+      if (named.length === 0) continue;
+      const nameWords = meaningful.filter((w) => named.includes(w) || LEGAL_FORMS.has(w));
+      const rest = meaningful.filter((w) => !nameWords.includes(w));
+      if (rest.length < 2) continue;
+      let paramName = candidate.param;
+      if (!paramName) {
+        paramName = "Контрагент";
+        const taken = new Set([...params, ...textParams].map((p) => p.name));
+        for (let n = 2; taken.has(paramName); n++) paramName = `Контрагент${n}`;
+        query = query.split(candidate.literal ?? "").join(`&${paramName}`);
+      }
+      params.push({ name: paramName, type: "counterparty" });
+      phraseWords = rest;
+      bound = true;
+      break;
+    }
+    // A text parameter that is not the question's counterparty is something it did not say.
+    if (textParams.length > 0 && !bound) return null;
+    if (textParams.length > 1) return null;
+  }
+  if (phraseWords.length < 2 || phraseWords.length > 10) return null;
 
   const columns = result.columns.map((label, i) => ({
     label: label || `#${i + 1}`,
     format: columnFormat(result.rows.map((row) => row[i])),
   }));
   if (columns.length === 0 || columns.length > 30) return null;
-  return { phrase: meaningful.join(" "), query: input.query, params, columns };
+  return { phrase: phraseWords.join(" "), query, params, columns };
 }

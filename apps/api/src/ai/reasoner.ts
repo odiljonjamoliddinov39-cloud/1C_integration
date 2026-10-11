@@ -49,10 +49,11 @@ Decide:
 - reusable: true only if (a) all the questions ask for the same thing, (b) the query and its columns fully answer it (nothing in the questions \
 is a condition the query does not have: a counterparty, an amount, a document number, a one-time period, an account the query ignores), and \
 (c) for an action: the questions clearly ask for that action, on whatever the query selects. The dates and months in the questions are \
-parameters of the query, they are not specifics. When unsure, false.
+parameters of the query, they are not specifics; neither is a counterparty's name when the query has a parameter of type counterparty (the \
+questions then name different customers or suppliers: that is the point, one template serves them all). When unsure, false.
 - title: a short name for the question, in the language most of the questions use.
 - phrases: 3 to 10 short wordings that mean exactly this question, in the languages the accountants use (the ones seen, and likely \
-rewordings). Each has at least two meaningful words and no numbers, names, dates or months. Do not add wordings that mean something broader or different.
+rewordings). Each has at least two meaningful words and no numbers, names (of counterparties too), dates or months. Do not add wordings that mean something broader or different.
 - column_labels: a readable label for each result column, in the title's language, same number as the columns; or [] to keep the names.
 - reason: one sentence.
 
@@ -157,7 +158,8 @@ export class Reasoner {
     for (const row of rows) {
       const learnable = row.learnable as TraceLearnable | null;
       const step = learnable ? (row.steps[learnable.step] as { query?: string } | undefined) : undefined;
-      if (!learnable || !row.groupKey || !step?.query) continue;
+      const query = learnable?.query ?? step?.query;
+      if (!learnable || !row.groupKey || !query) continue;
       const key = `${row.company}|${row.groupKey}`;
       const group =
         groups.get(key) ??
@@ -166,7 +168,7 @@ export class Reasoner {
           company: row.company,
           groupKey: row.groupKey,
           learnable,
-          query: step.query,
+          query,
           questions: new Map(),
           latest: row.question,
           hits: 0,
