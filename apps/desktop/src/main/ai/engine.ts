@@ -16,6 +16,7 @@ import {
 import type { ConnectionInput } from "../../shared/ipc.js";
 import type { ConnectorRunner } from "../connector.js";
 import type { SessionService } from "../session.js";
+import { resolveCounterparty } from "./counterparty.js";
 import { buildDigest } from "./digest.js";
 import { matchTemplate, renderTemplate } from "./templates.js";
 
@@ -100,7 +101,21 @@ export class CostEngine {
     const policy = await this.policy();
     // A learned template is for the company it was learned in.
     const usable = (await this.templates()).filter((t) => !t.company || t.company === companyName);
-    const matched = policy.templates ? matchTemplate(question, usable) : null;
+    let matched = policy.templates ? matchTemplate(question, usable) : null;
+    let subject: string | undefined;
+    if (matched?.counterparty) {
+      // The template is about "a counterparty": which one is looked up in this company's 1C.
+      const found = await resolveCounterparty(async (query, params) => {
+        const r = await this.connector.tool(connection, "run_query", { query, params, limit: 6 });
+        return r.ok && Array.isArray((r.data as QueryResult | null)?.rows) ? (r.data as QueryResult) : null;
+      }, matched.counterparty.words);
+      if (found) {
+        matched.params[matched.counterparty.param] = found;
+        subject = found;
+      } else {
+        matched = null; // none, several, or 1C did not answer: the model takes the question
+      }
+    }
     if (matched) {
       const { action } = matched.template;
       const result = await this.connector.tool(connection, "run_query", {
@@ -115,7 +130,7 @@ export class CostEngine {
           const free: FreeAnswer = {
             route: "template",
             title: matched.template.title,
-            text: renderTemplate(matched.template, data),
+            text: renderTemplate(matched.template, data, subject),
             code: matched.template.code,
             learned: matched.template.source === "learned",
           };

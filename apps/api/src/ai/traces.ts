@@ -19,8 +19,11 @@ export const sha = (text: string) => createHash("sha256").update(text).digest("h
 /** Questions answered by the same query (and the same kind of card) are one group. */
 export function groupKeyOf(input: TraceInput): string | null {
   const step = input.learnable ? input.steps[input.learnable.step] : undefined;
-  if (!input.learnable || !step?.query) return null;
-  return sha(`${input.company}|${step.query.trim()}|${input.learnable.action?.tool ?? ""}`);
+  // The query as the template will run it: with a counterparty's name as a parameter, questions
+  // about different counterparties are one group.
+  const query = input.learnable?.query ?? step?.query;
+  if (!input.learnable || !query) return null;
+  return sha(`${input.company}|${query.trim()}|${input.learnable.action?.tool ?? ""}`);
 }
 
 export async function storeTrace(

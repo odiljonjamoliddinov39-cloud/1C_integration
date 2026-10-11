@@ -5,7 +5,7 @@ import spaceEngineering from "@/assets/space-engineering.webp";
 import { Logo } from "@/components/Logo";
 
 /** How long the splash stays at least, so it is seen and not a flash. */
-export const SPLASH_MIN_MS = 1500;
+export const SPLASH_MIN_MS = 5000;
 const FADE_MS = 450;
 
 /**

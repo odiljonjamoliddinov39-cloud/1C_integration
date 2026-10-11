@@ -1469,6 +1469,81 @@ describe.skipIf(!available)("control system API", () => {
       }
     });
 
+    it("makes one group of the same question about different counterparties, and one template with a counterparty parameter", async () => {
+      const { state, model } = reasoning();
+      state.reply = () =>
+        JSON.stringify({
+          reusable: true,
+          reason: "Same action for whichever counterparty.",
+          title: "Счета-фактуры контрагенту",
+          phrases: ["hisob faktura yoz", "schyot faktura chiqar", "счёт-фактуру выписать"],
+          column_labels: ["Реализация"],
+        });
+      const engine = await reasoningApp(model);
+      try {
+        const c = callOn(engine);
+        const reg = (await post("/v1/auth/register", account)).json();
+        const token = await adminToken();
+        const SALES =
+          "ВЫБРАТЬ Реализация ИЗ Документ.РеализацияТоваровУслуг ГДЕ Контрагент.Наименование ПОДОБНО &Контрагент";
+        const forName = (question: string, name: string) => ({
+          company: "Crystal Water",
+          question,
+          outcome: "card_confirmed",
+          // What was run names the counterparty; what the template will run does not.
+          steps: [
+            {
+              tool: "run_query",
+              ok: true,
+              query: SALES.replace("&Контрагент", `"%${name}%"`),
+              refs: true,
+              columns: ["Реализация"],
+              rowCount: 2,
+              truncated: false,
+            },
+            {
+              tool: "propose_invoices_issued",
+              ok: true,
+              status: "done",
+              count: 2,
+              fromQuery: { step: 0, column: 0 },
+            },
+          ],
+          learnable: {
+            step: 0,
+            phrase: "hisob faktura yoz",
+            query: SALES,
+            params: [{ name: "Контрагент", type: "counterparty" }],
+            columns: [{ label: "Реализация", format: "text" }],
+            action: { tool: "propose_invoices_issued", refsColumn: 0 },
+          },
+        });
+        for (const [question, name] of [
+          ["Texmash ga hisob-faktura yoz", "TEXMASH"],
+          ["Kapital uchun hisob-faktura yoz", "KAPITAL"],
+          ["Crystalga schyot-faktura chiqar", "CRYSTAL"],
+        ] as const) {
+          expect(
+            (await c("POST", "/v1/ai/traces", reg.accessToken, forName(question, name))).statusCode,
+          ).toBe(204);
+        }
+        expect((await c("POST", "/v1/admin/engine/run", token)).json()).toEqual({ decided: 1, made: 1 });
+        const brief = JSON.parse(String((state.calls[0]!.messages[0] as { content: string }).content));
+        expect(brief).toMatchObject({ query: SALES, parameters: ["Контрагент: counterparty"] });
+        expect(brief.questions).toHaveLength(3);
+
+        const [template] = (await c("GET", "/v1/ai/templates", reg.accessToken)).json();
+        expect(template).toMatchObject({
+          source: "learned",
+          query: SALES,
+          params: [{ name: "Контрагент", type: "counterparty" }],
+          action: { tool: "propose_invoices_issued", refsColumn: 0 },
+        });
+      } finally {
+        await engine.close();
+      }
+    });
+
     it("needs one sighting, not three, for a question the usage log shows was asked and paid for again and again", async () => {
       const { state, model } = reasoning();
       state.reply = () => REUSABLE;

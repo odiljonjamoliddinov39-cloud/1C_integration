@@ -2,6 +2,7 @@ import { DEFAULT_AI_POLICY, type QueryTemplateView } from "@platform/shared";
 import { describe, expect, it } from "vitest";
 
 import { classifyTask } from "./classify.js";
+import { nameVariants, resolveCounterparty } from "./counterparty.js";
 import { learnFromRun, matchTemplate, renderTemplate } from "./templates.js";
 import { cell, encodeTable } from "./toon.js";
 import { clampQuery, shapeQueryResult } from "./trim.js";
@@ -308,3 +309,110 @@ function learnedTemplate(learned: NonNullable<ReturnType<typeof learnFromRun>>):
     company: "ООО «Тест»",
   });
 }
+
+describe("a counterparty in the question", () => {
+  const SALES = `ВЫБРАТЬ Реализация, Сумма
+ИЗ Документ.РеализацияТоваровУслуг
+ГДЕ Контрагент.Наименование ПОДОБНО "%TEXMASH%" И НЕ Реализация.Проведен`;
+  const result = {
+    columns: ["Реализация", "Сумма"],
+    rows: [
+      ["Реализация 1", 1000],
+      ["Реализация 2", 2000],
+    ],
+    truncated: false,
+  };
+  const learn = (
+    question: string,
+    input: { query: string; params?: Record<string, string> } = { query: SALES },
+  ) => learnFromRun(question, input, result, TODAY);
+
+  it("turns the name the question wrote into a parameter of the query, and leaves it out of the phrase", () => {
+    const learned = learn("Texmash ga hisob-faktura yoz");
+    expect(learned).toMatchObject({
+      phrase: "hisob faktura yoz",
+      params: [{ name: "Контрагент", type: "counterparty" }],
+    });
+    // The same question about another counterparty gives the same query: one group for the engine.
+    const other = learn("Kapital uchun hisob-faktura yoz", { query: SALES.replace("TEXMASH", "KAPITAL") });
+    expect(other?.query).toBe(learned?.query);
+    expect(learned?.query).toContain("ПОДОБНО &Контрагент");
+    expect(learned?.query).not.toContain("TEXMASH");
+  });
+
+  it("takes the name from a parameter of the query as well, with a legal form beside it", () => {
+    const query = "ВЫБРАТЬ Реализация ИЗ Документ.РеализацияТоваровУслуг ГДЕ Контрагент.Наименование = &Имя";
+    const learned = learn("TEXMASH IMPORT ООО ga hisob-faktura yoz", {
+      query,
+      params: { Имя: "TEXMASH IMPORT ООО" },
+    });
+    expect(learned).toMatchObject({
+      phrase: "hisob faktura yoz",
+      query,
+      params: [{ name: "Имя", type: "counterparty" }],
+    });
+  });
+
+  it("learns no counterparty from a query that is not about counterparties, or from words it does not hold", () => {
+    // "kassa" is an account's name here, not a counterparty.
+    const cash = learn("Kassa hisob-faktura yoz", {
+      query: 'ВЫБРАТЬ Сумма ИЗ Регистр ГДЕ Счет.Наименование = "Касса"',
+    });
+    expect(cash?.params).toEqual([]);
+    expect(cash?.phrase).toBe("kassa hisob faktura yoz");
+    // A text parameter the question never named is something it did not say.
+    expect(
+      learn("Hisob-faktura yoz", { query: SALES.replace('"%TEXMASH%"', "&Имя"), params: { Имя: "TEXMASH" } }),
+    ).toBeNull();
+    // Nothing is left for the phrase once the name is taken.
+    expect(learn("Texmash ga yoz")).toMatchObject({ phrase: "texmash yoz", params: [] });
+  });
+
+  it("makes a template that matches the question about any counterparty, with the words of its name", () => {
+    const learned = learn("Texmash ga hisob-faktura yoz");
+    const t = {
+      ...learnedTemplate(learned!),
+      id: "c",
+      intents: ["hisob faktura yoz", "schyot faktura chiqar"],
+    };
+    expect(matchTemplate("Kapital uchun hisob-faktura yoz", [t], TODAY)?.counterparty).toEqual({
+      param: "Контрагент",
+      words: ["kapital"],
+    });
+    expect(matchTemplate("Texmashga schyot-faktura chiqar", [t], TODAY)?.counterparty?.words).toEqual([
+      "texmashga",
+    ]);
+    expect(
+      matchTemplate("TEXMASH IMPORT MCHJ ga hisob-faktura yoz", [t], TODAY)?.counterparty?.words,
+    ).toEqual(["texmash", "import"]);
+    // No name, or too many words to be one: the model answers.
+    expect(matchTemplate("hisob-faktura yoz", [t], TODAY)).toBeNull();
+    expect(matchTemplate("Bu juda uzun gap emas lekin ko'p so'zli hisob-faktura yoz", [t], TODAY)).toBeNull();
+  });
+
+  it("tries the name with endings cut, and uses a counterparty only when exactly one fits", async () => {
+    expect(nameVariants(["texmashga"])).toEqual(["texmashga", "texmashg", "texmash", "texmas"]);
+    expect(nameVariants(["texmash", "import"])).toEqual(["texmash import", "texmash impor", "texmash impo"]);
+    const asked: string[] = [];
+    const base = (names: Record<string, string[]>) => async (_q: string, params: Record<string, string>) => {
+      asked.push(params.Строка ?? "");
+      const key = (params.Строка ?? "").replaceAll("%", "").toLowerCase();
+      return { columns: ["Имя"], rows: (names[key] ?? []).map((n) => [n]), truncated: false };
+    };
+    expect(await resolveCounterparty(base({ texmash: ["TEXMASH IMPORT ООО"] }), ["texmashga"])).toBe(
+      "TEXMASH IMPORT ООО",
+    );
+    expect(asked).toEqual(["%texmashga%", "%texmashg%", "%texmash%"]);
+    // Two fit: not guessed.
+    expect(
+      await resolveCounterparty(base({ texmash: ["TEXMASH IMPORT ООО", "TEXMASH SAVDO"] }), ["texmash"]),
+    ).toBeNull();
+    // An exact name wins over longer ones.
+    expect(await resolveCounterparty(base({ texmash: ["Texmash", "TEXMASH IMPORT"] }), ["texmash"])).toBe(
+      "Texmash",
+    );
+    // None fits, or 1C did not answer.
+    expect(await resolveCounterparty(base({}), ["texmash"])).toBeNull();
+    expect(await resolveCounterparty(async () => null, ["texmash"])).toBeNull();
+  });
+});

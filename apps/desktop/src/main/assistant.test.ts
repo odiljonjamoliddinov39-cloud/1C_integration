@@ -1902,6 +1902,7 @@ describe("assistant", () => {
         learnable: {
           step: 0,
           phrase: "остаток кассе",
+          query: "ВЫБРАТЬ Счет, СальдоДт ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата)",
           params: [{ name: "Дата", type: "date" }],
           columns: [
             { label: "Счет", format: "text" },
@@ -2025,6 +2026,51 @@ describe("assistant", () => {
       expect(t.events[1]).toMatchObject({ route: "template", learnedCode: "learned_inv" });
       expect(t.events[2]).toMatchObject({ proposal: { kind: "batch", title: "Счета-фактуры по продажам" } });
       expect((t.events[4] as { text: string }).text).toContain("✓ 1");
+    });
+
+    it("does the action for the counterparty the question names: found in this company's 1C, not guessed", async () => {
+      const forCounterparty: QueryTemplateView = {
+        ...actionTemplate,
+        code: "learned_cp",
+        title: "Счета-фактуры контрагенту",
+        intents: ["hisob faktura yoz"],
+        query: `${SALES_QUERY} И Контрагент.Наименование ПОДОБНО &Контрагент`,
+        params: [{ name: "Контрагент", type: "counterparty" }],
+      };
+      const names = (list: string[]) => (t: ReturnType<typeof setup>) =>
+        t.base.queryAnswers.unshift({
+          match: /Справочник\.Контрагенты/,
+          answer: () => ({ columns: ["Имя"], rows: list.map((n) => [n]), truncated: false }),
+        });
+      const queriesOf = (t: ReturnType<typeof setup>) =>
+        t.base.calls
+          .filter((c) => c.fn === "RunQuery")
+          .map((c) => JSON.parse(String(c.arg)) as { query: string; params?: Record<string, string> });
+
+      // One counterparty fits: the card is prepared for its sales, and the model is not asked.
+      const one = setup([], "active", server({ templates: [forCounterparty] }));
+      withSalesQuery(one);
+      names(["TEXMASH IMPORT ООО"])(one);
+      one.store.setAiEnabled(one.company.id, true);
+      const sending = one.assistant.send({ companyId: one.company.id, text: "Texmashga hisob-faktura yoz" });
+      await decideCard(one, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+      expect(one.proxy.requests).toHaveLength(0);
+      expect(one.base.issued).toHaveLength(1);
+      const [find, sales] = queriesOf(one);
+      expect(find?.params).toEqual({ Строка: "%texmashga%" }); // the fake 1C answers the first try
+      expect(sales?.params).toEqual({ Контрагент: "TEXMASH IMPORT ООО" });
+
+      // Two fit, or none: the model answers (and asks which one).
+      for (const list of [["TEXMASH IMPORT ООО", "TEXMASH SAVDO"], []]) {
+        const t = setup([text("Qaysi Texmash?")], "active", server({ templates: [forCounterparty] }));
+        withSalesQuery(t);
+        names(list)(t);
+        await ask(t, "Texmash hisob-faktura yoz");
+        expect(t.proxy.requests).toHaveLength(1);
+        expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+        expect(t.base.issued).toHaveLength(0);
+      }
     });
 
     it("writes nothing when the user declines a template's card", async () => {

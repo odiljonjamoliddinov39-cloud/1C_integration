@@ -51,7 +51,7 @@ const nav = [
     </div>
     <noscript><style>#se-loader{display:none}</style></noscript>
     <script is:inline>
-      // The first page of a visit shows the start-up screen for a moment; later pages do not.
+      // The first page of a visit shows the start-up screen for 5 seconds; later pages do not.
       (function () {
         var el = document.getElementById("se-loader");
         if (!el) return;
@@ -64,10 +64,10 @@ const nav = [
           try { sessionStorage.setItem("se-loader", "1"); } catch (e) {}
         };
         var started = Date.now();
-        var after = function () { setTimeout(close, Math.max(0, 1100 - (Date.now() - started))); };
+        var after = function () { setTimeout(close, Math.max(0, 5000 - (Date.now() - started))); };
         if (document.readyState === "complete") after(); else window.addEventListener("load", after);
         // Never hold the page for long if something is slow to load.
-        setTimeout(close, 4000);
+        setTimeout(close, 8000);
       })();
     </script>
     <header class="sticky top-0 z-10 border-b border-border bg-background/85 backdrop-blur-lg">
