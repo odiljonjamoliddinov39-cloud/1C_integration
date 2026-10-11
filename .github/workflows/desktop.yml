@@ -112,6 +112,7 @@ jobs:
           cp "$name" .stable.exe && cp .stable.exe 1C-Platform-Setup.exe && mv .stable.exe AI-Accounting-Assistant-Setup.exe
           mv .incoming/latest.yml latest.yml
           # The old name stays for links made before the rename; its dated copies are no longer needed.
-          ls -t 1C-Platform-Setup-*.exe 2>/dev/null | while read -r old; do rm -f "$old" "$old.blockmap"; done
-          ls -t AI-Accounting-Assistant-Setup-*.exe | tail -n +6 | while read -r old; do rm -f "$old" "$old.blockmap"; done
+          # (ls fails when nothing matches, and the script runs with pipefail: hence the braces)
+          { ls -t 1C-Platform-Setup-*.exe 2>/dev/null || true; } | while read -r old; do rm -f "$old" "$old.blockmap"; done
+          { ls -t AI-Accounting-Assistant-Setup-*.exe 2>/dev/null || true; } | tail -n +6 | while read -r old; do rm -f "$old" "$old.blockmap"; done
           SCRIPT
