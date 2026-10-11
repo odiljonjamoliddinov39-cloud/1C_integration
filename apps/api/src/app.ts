@@ -49,7 +49,10 @@ import type { Db } from "./db/client.js";
 import { HttpError } from "./lib/errors.js";
 import { Tokens } from "./lib/tokens.js";
 import { Billing } from "./billing/entitlements.js";
-import { registerBillingRoutes } from "./billing/routes.js";
+import { Invoicing } from "./billing/invoicing.js";
+import { Lifecycle, startBillingJobs } from "./billing/lifecycle.js";
+import { PaymeMerchant } from "./billing/payme.js";
+import { registerBillingRoutes, registerSubscriptionRoutes } from "./billing/routes.js";
 import { BillingService } from "./billing/service.js";
 import { Service } from "./service.js";
 
@@ -78,12 +81,19 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const tokens = new Tokens(config);
   const entitlements = new Billing(db, config.ENTITLEMENTS_CACHE_SECONDS * 1000);
   const service = new Service(db, tokens, config, entitlements);
-  const billing = new BillingService(db, config, entitlements);
+  const invoicing = new Invoicing(db, config, entitlements);
+  const billing = new BillingService(db, config, entitlements, invoicing.providers());
+  const payme = new PaymeMerchant(db, config, invoicing);
+  const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
   const ai = new AiProxy(db, service, billing, config, aiModel, app.log);
   const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);
   const admin = new AdminService(db, tokens, config);
   await admin.bootstrap(app.log);
+  if (config.BILLING_JOBS === "on") {
+    const stop = startBillingJobs(lifecycle, app.log);
+    app.addHook("onClose", async () => stop());
+  }
 
   // The desktop calls from its main process; the website (via Vercel) and the admin dashboard
   // (served below) reach the API from their own origin, so no cross-origin requests are allowed.
@@ -142,7 +152,9 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
-  registerBillingRoutes(app, { db, billing, auth });
+  const billingDeps = { db, billing, invoicing, payme, auth };
+  registerBillingRoutes(app, billingDeps);
+  registerSubscriptionRoutes(app, billingDeps);
 
   app.get("/v1/me", async (req) => service.me((await auth(req)).userId));
 

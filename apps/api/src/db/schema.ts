@@ -125,6 +125,9 @@ export const subscriptions = pgTable("subscriptions", {
   trialUsed: boolean("trial_used").notNull().default(false),
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   pendingPlanId: uuid("pending_plan_id").references(() => plans.id),
+  /** A promo code in force: it discounts the next `promoMonthsLeft` months of paid periods. */
+  promoCode: text("promo_code"),
+  promoMonthsLeft: integer("promo_months_left").notNull().default(0),
   /** Reminders sent for the current period: "7", "1". */
   remindersSent: text("reminders_sent")
     .array()
@@ -183,6 +186,8 @@ export interface InvoiceIntent {
   addonCode?: string;
   quantity?: number;
   promoCode?: string;
+  /** A renewal: the end of the period it renews (ISO), so one period gets one renewal invoice. */
+  renewalOf?: string;
 }
 
 /** Our own invoice: the provider only confirms that it was paid. Amounts are whole sum. */

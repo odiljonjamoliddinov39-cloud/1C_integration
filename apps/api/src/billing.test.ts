@@ -1,14 +1,26 @@
 import { generateKeyPairSync } from "node:crypto";
 
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { companies, plans, subscriptionAddons, subscriptions } from "./db/schema.js";
+import { Billing } from "./billing/entitlements.js";
+import { Invoicing } from "./billing/invoicing.js";
+import { Lifecycle } from "./billing/lifecycle.js";
+import {
+  billingEvents,
+  companies,
+  invoices,
+  payments,
+  plans,
+  promoCodes,
+  subscriptionAddons,
+  subscriptions,
+} from "./db/schema.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
 const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? "postgres://postgres@127.0.0.1:5432/postgres";
@@ -47,6 +59,7 @@ const fakeModel = {
 describe.skipIf(!available)("tariffs", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let db: ReturnType<typeof createDb>;
+  let lifecycle: Lifecycle;
 
   beforeAll(async () => {
     await admin.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
@@ -61,14 +74,22 @@ describe.skipIf(!available)("tariffs", () => {
       LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
       ENTITLEMENTS_CACHE_SECONDS: "0",
+      BILLING_JOBS: "off",
+      PAYME_MERCHANT_ID: "merchant-1",
+      PAYME_KEY: "payme-secret-key",
+      PAYME_TEST: "true",
+      SITE_URL: "https://site.example",
       ADMIN_EMAIL: "boss@platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
     });
     app = await buildApp(db.db, config, { aiModel: fakeModel });
+    const billing = new Billing(db.db, 0);
+    lifecycle = new Lifecycle(db.db, config, billing, new Invoicing(db.db, config, billing));
   });
 
   beforeEach(async () => {
     await db.sql`TRUNCATE accounts, refresh_tokens CASCADE`;
+    await db.sql`TRUNCATE promo_codes`;
   });
 
   afterAll(async () => {
@@ -291,5 +312,396 @@ describe.skipIf(!available)("tariffs", () => {
     const blocked = await ask(question(11));
     expect(blocked).toMatchObject({ status: 402, code: "AI_QUESTIONS_LIMIT" });
     expect((await call("GET", "/v1/billing/entitlements", token)).json().usage.aiQuestions).toBe(10);
+  });
+
+  // --- trial, invoices, Payme, plan changes and the lifecycle ----------------------------------------
+
+  const DAY = 86_400_000;
+  const entitlements = async (token: string) => (await call("GET", "/v1/billing/entitlements", token)).json();
+  const subscription = async (accountId: string) =>
+    (await db.db.query.subscriptions.findFirst({ where: eq(subscriptions.accountId, accountId) }))!;
+  const events = async (accountId: string) =>
+    (await db.db.select().from(billingEvents).where(eq(billingEvents.accountId, accountId))).map(
+      (e) => e.type,
+    );
+  /** Payme's sandbox calls, with the merchant key. */
+  const rpc = (method: string, params: Record<string, unknown>, key = "payme-secret-key") =>
+    app
+      .inject({
+        method: "POST",
+        url: "/v1/billing/payme",
+        payload: { id: 1, method, params },
+        headers: { authorization: `Basic ${Buffer.from(`Paycom:${key}`).toString("base64")}` },
+      })
+      .then((res) => res.json());
+  /** The customer pays an invoice through Payme: create and perform a transaction. */
+  const pay = async (invoice: { number: string; totalSum: number }, txn = `txn-${Math.random()}`) => {
+    const account = { invoice_id: Number(invoice.number.slice(4)) };
+    const amount = invoice.totalSum * 100;
+    const created = await rpc("CreateTransaction", { id: txn, time: Date.now(), amount, account });
+    expect(created.result?.state).toBe(1);
+    const done = await rpc("PerformTransaction", { id: txn });
+    expect(done.result?.state).toBe(2);
+    return txn;
+  };
+  const checkout = async (token: string, body: Record<string, unknown>) => {
+    const res = await call("POST", "/v1/billing/checkout", token, body);
+    expect(res.statusCode).toBe(200);
+    return res.json() as {
+      invoice: { id: string; number: string; totalSum: number; vatSum: number; discountSum: number };
+      checkoutUrl: string | null;
+    };
+  };
+
+  it("starts the 14-day Business trial once, caps its AI questions at 30, and lands on Free when it ends", async () => {
+    const { token, accountId } = await register();
+    const started = await call("POST", "/v1/billing/trial", token);
+    expect(started.statusCode).toBe(200);
+    expect(started.json()).toMatchObject({ plan: "business", status: "trial", trialUsed: true });
+    const view = await entitlements(token);
+    expect(view.entitlements).toMatchObject({
+      plan: "business",
+      status: "trial",
+      companies: 3,
+      users: 2,
+      aiQuestionsPerMonth: 30,
+    });
+    expect(view.canStartTrial).toBe(false);
+    expect((await call("POST", "/v1/billing/trial", token)).json().code).toBe("TRIAL_USED");
+
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() - 60_000) })
+      .where(eq(subscriptions.accountId, accountId));
+    // Before the job runs the account already counts as Free (read against the clock).
+    expect((await entitlements(token)).entitlements).toMatchObject({ plan: "free", status: "free" });
+    expect(await lifecycle.hourly()).toMatchObject({ movedToFree: 1 });
+    expect((await subscription(accountId)).status).toBe("free");
+    expect(await events(accountId)).toEqual(expect.arrayContaining(["trial_started", "moved_to_free"]));
+    expect((await call("POST", "/v1/billing/trial", token)).json().code).toBe("TRIAL_USED");
+  });
+
+  it("refuses a second trial for the same company INN on another account", async () => {
+    const first = await register("first@example.com");
+    await call("POST", "/v1/companies", first.token, { inn: "300111222", name: "Alfa" });
+    expect((await call("POST", "/v1/billing/trial", first.token)).statusCode).toBe(200);
+    const second = await register("second@example.com");
+    await call("POST", "/v1/companies", second.token, { inn: "300111222", name: "Alfa again" });
+    const refused = await call("POST", "/v1/billing/trial", second.token);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().code).toBe("TRIAL_USED");
+  });
+
+  it("makes an invoice with VAT, and a Payme checkout link in tiyin; a bank transfer has no link", async () => {
+    const { token } = await register();
+    const card = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    // 590 000 + 12% VAT = 660 800 sum = 66 080 000 tiyin.
+    expect(card.invoice).toMatchObject({ totalSum: 660_800, vatSum: 70_800, discountSum: 0 });
+    const link = new URL(card.checkoutUrl!);
+    expect(link.host).toBe("test.paycom.uz");
+    const params = Buffer.from(link.pathname.slice(1), "base64").toString();
+    expect(params).toContain("m=merchant-1");
+    expect(params).toContain(`ac.invoice_id=${Number(card.invoice.number.slice(4))}`);
+    expect(params).toContain("a=66080000");
+    const bank = await checkout(token, { plan: "business", cycle: "year", provider: "bank" });
+    expect(bank.checkoutUrl).toBeNull();
+    // 16 900 000 + VAT.
+    expect(bank.invoice.totalSum).toBe(16_900_000 + 2_028_000);
+    expect((await call("GET", "/v1/billing/invoices", token)).json()).toHaveLength(2);
+    const page = await call("GET", `/v1/billing/invoices/${bank.invoice.id}/print`, token);
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("INV-");
+  });
+
+  it("passes Payme's cases: privileges, wrong amount, unknown invoice, idempotent create and perform, no cancel after perform", async () => {
+    const { token, accountId } = await register();
+    const { invoice } = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    const account = { invoice_id: Number(invoice.number.slice(4)) };
+    const amount = invoice.totalSum * 100;
+
+    expect((await rpc("CheckPerformTransaction", { amount, account }, "wrong-key")).error.code).toBe(-32504);
+    expect((await rpc("Nope", {})).error.code).toBe(-32601);
+    expect((await rpc("CheckPerformTransaction", { amount: amount + 100, account })).error.code).toBe(-31001);
+    expect(
+      (await rpc("CheckPerformTransaction", { amount, account: { invoice_id: 999_999 } })).error.code,
+    ).toBe(-31050);
+    expect((await rpc("CheckPerformTransaction", { amount, account })).result).toEqual({ allow: true });
+
+    const created = await rpc("CreateTransaction", { id: "p1", time: Date.now(), amount, account });
+    expect(created.result).toMatchObject({ state: 1 });
+    // The same transaction again returns what was stored; another transaction for the invoice is refused.
+    expect((await rpc("CreateTransaction", { id: "p1", time: Date.now(), amount, account })).result).toEqual(
+      created.result,
+    );
+    expect((await rpc("CreateTransaction", { id: "p2", time: Date.now(), amount, account })).error.code).toBe(
+      -31099,
+    );
+    expect((await rpc("CheckTransaction", { id: "p1" })).result).toMatchObject({ state: 1, perform_time: 0 });
+    expect((await rpc("CheckTransaction", { id: "nope" })).error.code).toBe(-31003);
+
+    const done = await rpc("PerformTransaction", { id: "p1" });
+    expect(done.result).toMatchObject({ state: 2 });
+    const before = await subscription(accountId);
+    expect(before).toMatchObject({ status: "active" });
+    // Performing again changes nothing: the stored result comes back and the period is not extended twice.
+    expect((await rpc("PerformTransaction", { id: "p1" })).result).toEqual(done.result);
+    expect((await subscription(accountId)).endsAt).toEqual(before.endsAt);
+    expect((await rpc("CancelTransaction", { id: "p1", reason: 5 })).error.code).toBe(-31007);
+    expect((await rpc("CheckPerformTransaction", { amount, account })).error.code).toBe(-31051);
+
+    const statement = await rpc("GetStatement", { from: Date.now() - DAY, to: Date.now() + DAY });
+    expect(statement.result.transactions).toHaveLength(1);
+    expect(await db.db.select().from(payments)).toHaveLength(1);
+    expect((await entitlements(token)).entitlements).toMatchObject({
+      plan: "start",
+      status: "active",
+      aiQuestionsPerMonth: 80,
+    });
+  });
+
+  it("cancels an unpaid Payme transaction, and cancels one nobody finished after 12 hours", async () => {
+    const { token } = await register();
+    const { invoice } = await checkout(token, { plan: "start", provider: "payme" });
+    const account = { invoice_id: Number(invoice.number.slice(4)) };
+    const amount = invoice.totalSum * 100;
+    await rpc("CreateTransaction", { id: "c1", time: Date.now(), amount, account });
+    expect((await rpc("CancelTransaction", { id: "c1", reason: 3 })).result).toMatchObject({ state: -1 });
+    expect((await rpc("PerformTransaction", { id: "c1" })).error.code).toBe(-31008);
+    // The invoice can be paid with a new transaction.
+    await rpc("CreateTransaction", { id: "c2", time: Date.now(), amount, account });
+    await db.db
+      .update(payments)
+      .set({ raw: sql`jsonb_set(raw, '{create_time}', to_jsonb(${Date.now() - 13 * 3_600_000}::bigint))` })
+      .where(eq(payments.providerTxnId, "c2"));
+    expect((await rpc("PerformTransaction", { id: "c2" })).error.code).toBe(-31008);
+    expect((await rpc("CheckTransaction", { id: "c2" })).result).toMatchObject({ state: -1, reason: 4 });
+  });
+
+  it("accepts a payment that arrives after the invoice expired, from the payment date, and logs it for review", async () => {
+    const { token, accountId } = await register();
+    const { invoice } = await checkout(token, { plan: "start" });
+    await db.db.update(invoices).set({ dueAt: new Date(Date.now() - DAY) });
+    expect((await lifecycle.hourly()).invoicesExpired).toBe(1);
+    await pay(invoice);
+    const sub = await subscription(accountId);
+    expect(sub.status).toBe("active");
+    expect(sub.startsAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+    expect(await events(accountId)).toContain("late_payment");
+  });
+
+  it("prorates an upgrade over the days left, rounded up to 1 000 sum, and keeps the period", async () => {
+    const { token, accountId } = await register();
+    await pay((await checkout(token, { plan: "start" })).invoice);
+    // 10 days used, 20 left of 30.
+    await db.db
+      .update(subscriptions)
+      .set({ startsAt: new Date(Date.now() - 10 * DAY), endsAt: new Date(Date.now() + 20 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    const before = await subscription(accountId);
+    const res = await call("POST", "/v1/billing/change-plan", token, { plan: "business" });
+    expect(res.json()).toMatchObject({ effect: "invoice" });
+    const { invoice } = res.json().checkout;
+    // (1 690 000 - 590 000) * 20 / 30 = 733 333.3 -> 734 000, VAT 88 080.
+    expect(invoice).toMatchObject({ totalSum: 734_000 + 88_080, vatSum: 88_080 });
+    expect(invoice.items[0].amountSum).toBe(734_000);
+    // Not yet: the plan changes when the invoice is paid.
+    expect((await entitlements(token)).entitlements.plan).toBe("start");
+    await pay(invoice);
+    const after = await subscription(accountId);
+    expect((await entitlements(token)).entitlements).toMatchObject({ plan: "business", companies: 3 });
+    expect(after.endsAt).toEqual(before.endsAt);
+    expect(await events(accountId)).toContain("upgraded");
+  });
+
+  it("schedules a downgrade for the end of the period; the renewal invoice uses the new price", async () => {
+    const { token, accountId } = await register();
+    await pay((await checkout(token, { plan: "business" })).invoice);
+    const sub = await subscription(accountId);
+    const res = await call("POST", "/v1/billing/change-plan", token, { plan: "start" });
+    expect(res.json()).toMatchObject({ effect: "scheduled", effectiveAt: sub.endsAt.toISOString() });
+    // Still Business until the period ends.
+    expect(await entitlements(token)).toMatchObject({
+      entitlements: { plan: "business" },
+      pendingPlan: "start",
+    });
+
+    // The renewal 7 days before the end is made at the new price.
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() + 6 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    expect(await lifecycle.daily()).toMatchObject({ renewalInvoices: 1 });
+    const list = (await call("GET", "/v1/billing/invoices", token)).json();
+    const renewal = list.find((i: { status: string }) => i.status === "pending");
+    expect(renewal.items[0]).toMatchObject({ code: "start", amountSum: 590_000 });
+    const oldEnd = (await subscription(accountId)).endsAt;
+    await pay(renewal);
+    const renewed = await subscription(accountId);
+    expect((await entitlements(token)).entitlements.plan).toBe("start");
+    // The next period starts where the last ended.
+    expect(renewed.startsAt).toEqual(oldEnd);
+    expect(renewed.pendingPlanId).toBeNull();
+    // A second run the same day makes no second renewal invoice for the period.
+    expect((await lifecycle.daily()).renewalInvoices).toBe(0);
+  });
+
+  it("goes through grace to Free: full access for 3 days, paying restores the original dates", async () => {
+    const { token, accountId } = await register();
+    await pay((await checkout(token, { plan: "business" })).invoice);
+    const original = await subscription(accountId);
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() - DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    expect(await lifecycle.hourly()).toMatchObject({ graceStarted: 1 });
+    expect((await subscription(accountId)).status).toBe("grace");
+    expect((await entitlements(token)).entitlements).toMatchObject({
+      plan: "business",
+      status: "grace",
+      companies: 3,
+    });
+
+    // Paying in grace: the period goes on from the old end date.
+    const graceEnd = (await subscription(accountId)).endsAt;
+    const quote = await checkout(token, { plan: "business" });
+    expect(quote.invoice.totalSum).toBe(1_690_000 + 202_800);
+    await pay(quote.invoice);
+    const restored = await subscription(accountId);
+    expect(restored.status).toBe("active");
+    expect(restored.startsAt).toEqual(graceEnd);
+    expect(await events(accountId)).toEqual(expect.arrayContaining(["grace_started", "renewed_in_grace"]));
+    expect(original.status).toBe("active");
+
+    // Not paid for more than 3 days: Free, nothing deleted.
+    await db.db
+      .update(subscriptions)
+      .set({ status: "grace", endsAt: new Date(Date.now() - 4 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    expect(await lifecycle.hourly()).toMatchObject({ movedToFree: 1 });
+    expect((await entitlements(token)).entitlements).toMatchObject({
+      plan: "free",
+      status: "free",
+      companies: 1,
+    });
+  });
+
+  it("keeps the plan until the period ends after a cancel, then Free without grace", async () => {
+    const { token, accountId } = await register();
+    await pay((await checkout(token, { plan: "start" })).invoice);
+    const res = await call("POST", "/v1/billing/cancel", token);
+    expect(res.json()).toMatchObject({ plan: "start", cancelAtPeriodEnd: true, autoRenew: false });
+    // No renewal invoice is made for a cancelled plan.
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() + 2 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    expect((await lifecycle.daily()).renewalInvoices).toBe(0);
+    expect((await entitlements(token)).entitlements.plan).toBe("start");
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() - 1000) })
+      .where(eq(subscriptions.accountId, accountId));
+    expect(await lifecycle.hourly()).toMatchObject({ movedToFree: 1, graceStarted: 0 });
+    expect((await entitlements(token)).entitlements.plan).toBe("free");
+  });
+
+  it("sells add-ons only on a paid plan: extra AI questions this period, an extra company", async () => {
+    const { token, accountId } = await register();
+    expect((await call("POST", "/v1/billing/checkout", token, { addon: "addon_ai_100" })).json().code).toBe(
+      "ADDON_NOT_AVAILABLE",
+    );
+    await pay((await checkout(token, { plan: "start" })).invoice);
+    const ai = await checkout(token, { addon: "addon_ai_100", promoCode: "ANY" });
+    // 390 000 + 12% VAT; a promo never applies to add-ons.
+    expect(ai.invoice).toMatchObject({ totalSum: 436_800, discountSum: 0 });
+    await pay(ai.invoice);
+    expect((await entitlements(token)).entitlements.aiQuestionsPerMonth).toBe(180);
+    // Not for a plan it is not sold on: users are Business and Firm only.
+    expect((await call("POST", "/v1/billing/checkout", token, { addon: "addon_user" })).json().code).toBe(
+      "ADDON_NOT_AVAILABLE",
+    );
+    const company = await checkout(token, { addon: "addon_company" });
+    // Charged for the days left of the month.
+    expect(company.invoice.totalSum).toBeLessThanOrEqual(436_800);
+    await pay(company.invoice);
+    expect((await entitlements(token)).entitlements.companies).toBe(2);
+    expect((await subscription(accountId)).status).toBe("active");
+  });
+
+  it("applies a promo code: 30% off for 12 months, counted once, and the discount goes on at renewal", async () => {
+    const { token, accountId } = await register();
+    await db.db
+      .insert(promoCodes)
+      .values({ code: "LAUNCH30", kind: "percent", value: 30, months: 12, maxUses: 10 });
+    expect(
+      (await call("POST", "/v1/billing/checkout", token, { plan: "start", promoCode: "nope" })).json().code,
+    ).toBe("INVALID_PROMO");
+    const quote = (
+      await call("POST", "/v1/billing/quote", token, { plan: "start", promoCode: "launch30" })
+    ).json();
+    // 590 000 - 30% = 413 000, VAT 49 560.
+    expect(quote).toMatchObject({
+      subtotalSum: 590_000,
+      discountSum: 177_000,
+      vatSum: 49_560,
+      totalSum: 462_560,
+    });
+    const first = await checkout(token, { plan: "start", promoCode: "LAUNCH30" });
+    await pay(first.invoice);
+    const [promo] = await db.db.select().from(promoCodes);
+    expect(promo?.usedCount).toBe(1);
+    const sub = await subscription(accountId);
+    expect(sub).toMatchObject({ promoCode: "LAUNCH30", promoMonthsLeft: 11 });
+
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() + 5 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    await lifecycle.daily();
+    const renewal = (await call("GET", "/v1/billing/invoices", token))
+      .json()
+      .find((i: { status: string }) => i.status === "pending");
+    expect(renewal.discountSum).toBe(177_000);
+    await pay(renewal);
+    expect(await subscription(accountId)).toMatchObject({ promoMonthsLeft: 10 });
+    expect((await db.db.select().from(promoCodes))[0]?.usedCount).toBe(1);
+  });
+
+  it("sends reminders 7 and 1 days before the end, once each", async () => {
+    const { token, accountId } = await register();
+    await pay((await checkout(token, { plan: "start" })).invoice);
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() + 6.5 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    await lifecycle.daily();
+    await lifecycle.daily();
+    expect((await events(accountId)).filter((e) => e === "reminder_renewal")).toHaveLength(1);
+    await db.db
+      .update(subscriptions)
+      .set({ endsAt: new Date(Date.now() + 0.5 * DAY) })
+      .where(eq(subscriptions.accountId, accountId));
+    await lifecycle.daily();
+    expect((await events(accountId)).filter((e) => e === "reminder_renewal")).toHaveLength(2);
+  });
+
+  it("owner-only billing routes refuse a member", async () => {
+    const { token } = await register();
+    await call("POST", "/v1/billing/trial", token); // Business trial: room for a second user
+    await call("POST", "/v1/users", token, {
+      email: "m@example.com",
+      name: "Member",
+      password: "member-password-1",
+    });
+    const member = (
+      await call("POST", "/v1/auth/login", undefined, {
+        email: "m@example.com",
+        password: "member-password-1",
+      })
+    ).json();
+    expect(
+      (await call("POST", "/v1/billing/checkout", member.accessToken, { plan: "start" })).statusCode,
+    ).toBe(403);
+    expect((await call("GET", "/v1/billing/entitlements", member.accessToken)).statusCode).toBe(200);
   });
 });

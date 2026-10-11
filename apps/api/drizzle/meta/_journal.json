@@ -92,6 +92,13 @@
       "when": 1791720161256,
       "tag": "0012_seed_tariffs",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791720908101,
+      "tag": "0013_subscription_promo",
+      "breakpoints": true
     }
   ]
 }

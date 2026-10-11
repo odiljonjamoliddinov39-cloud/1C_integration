@@ -19,6 +19,29 @@ const Env = z.object({
     .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
   /** VAT added to every invoice (shown separately); prices of the plans exclude it. */
   VAT_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  /** Days an invoice can be paid before it expires (a late payment is still accepted). */
+  INVOICE_DUE_DAYS: z.coerce.number().int().min(1).default(3),
+  /** Payme Merchant API (docs/billing.md): off until both are set. The key signs the webhook's Basic auth. */
+  PAYME_MERCHANT_ID: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  PAYME_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  /** "true": the checkout of Payme's sandbox (test.paycom.uz) is used; "false": the real one. */
+  PAYME_TEST: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  /** Our bank requisites, printed on invoices paid by bank transfer (plain text, lines separated by "|"). */
+  BANK_REQUISITES: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  /** The scheduled billing jobs (reminders, grace, move to Free): "off" in tests. */
+  BILLING_JOBS: z.enum(["on", "off"]).default("on"),
   /** How long a computed set of limits is reused (0: never; tests use 0). */
   ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */
