@@ -324,6 +324,10 @@ export const CostReport = z.object({
       /** This calendar month, against the account's cap (null: no cap). */
       monthUsd: z.number(),
       limitUsd: z.number().nullable(),
+      /** The cap in force this month: the customer's own, else the plan's policy (0: no cap). */
+      capUsd: z.number(),
+      /** What is left of it this month; null when there is no cap. */
+      leftUsd: z.number().nullable(),
       requests: z.number(),
       questions: z.number(),
     }),

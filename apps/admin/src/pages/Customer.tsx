@@ -79,16 +79,16 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
           note={`${d.users.length} user(s), ${a.companies} company(ies)`}
         />
         <Stat
-          label="AI quota used"
-          value={`${Math.round(quotaShare * 100)}%`}
-          note={`${compact(d.aiUsedTokens)} of ${compact(d.aiQuota)} tokens this period${
-            d.aiGranted > 0 ? ` (${compact(d.aiGranted)} recharged)` : ""
+          label="AI quota left"
+          value={d.aiQuota > 0 ? compact(Math.max(0, d.aiQuota - d.aiUsedTokens)) : "no cap"}
+          note={`${compact(d.aiUsedTokens)} of ${compact(d.aiQuota)} tokens used (${Math.round(quotaShare * 100)}%) this period${
+            d.aiGranted > 0 ? `, ${compact(d.aiGranted)} recharged` : ""
           }`}
         />
         <Stat
-          label="AI today"
-          value={`${Math.round(todayShare * 100)}%`}
-          note={`${compact(d.aiUsedToday)} of ${compact(d.aiDailyLimit)} tokens (resets 00:00 UTC)`}
+          label="AI left today"
+          value={d.aiDailyLimit > 0 ? compact(Math.max(0, d.aiDailyLimit - d.aiUsedToday)) : "no cap"}
+          note={`${compact(d.aiUsedToday)} of ${compact(d.aiDailyLimit)} tokens used (${Math.round(todayShare * 100)}%, resets 00:00 UTC)`}
         />
         <Stat
           label="AI cost, 30 days"
@@ -370,6 +370,15 @@ function BudgetForm({
     <Section title={`AI budget, ${budget.period} (USD)`}>
       <div className="mb-3 text-sm">
         Spent <b>{usd(budget.usedUsd)}</b> of <b>{budget.limitUsd > 0 ? usd(budget.limitUsd) : "no cap"}</b>
+        {budget.limitUsd > 0 && (
+          <>
+            {" "}
+            · left{" "}
+            <b className={budget.usedUsd >= budget.limitUsd * 0.8 ? "text-destructive" : "text-success"}>
+              {usd(Math.max(0, budget.limitUsd - budget.usedUsd))}
+            </b>
+          </>
+        )}
         {budget.custom && <span className="text-muted-foreground"> (set for this customer)</span>}
         {budget.limitUsd > 0 && budget.usedUsd >= budget.limitUsd && (
           <b className="ml-2 text-destructive">Stopped: the budget is used up.</b>

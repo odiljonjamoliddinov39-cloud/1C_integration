@@ -4,7 +4,7 @@ What runs where (TD §3):
 
 ```
 DigitalOcean droplet (https://<ip-with-dashes>.sslip.io)      Accountant's Windows PC
-  Caddy (HTTPS) → API (accounts, sign-in, licenses)  ◀──────  1C Platform.exe ──COM──▶ 1C
+  Caddy (HTTPS) → API (accounts, sign-in, licenses)  ◀──────  AI Accounting Assistant.exe ──COM──▶ 1C
   PostgreSQL, daily backups                                    (the books stay on the PC)
 ```
 
@@ -72,7 +72,7 @@ docker compose exec postgres psql -U platform platform -c \
 
 GitHub → **Actions → Desktop app (Windows .exe) → Run workflow**, with the address from step 2,
 e.g. `https://203-0-113-5.sslip.io`. When it finishes, download **platform-desktop-windows** from
-the run page. It contains `1C-Platform-Setup-0.1.<run number>.exe`.
+the run page. It contains `AI-Accounting-Assistant-Setup-0.1.<run number>.exe`.
 
 After that, every push to the default branch that changes the app builds it again (the address comes
 from the `PLATFORM_API_URL` repository variable, else from `DEPLOY_HOST`).
@@ -97,7 +97,7 @@ Click **More info → Run anyway**.
 
 ## 4. Try it
 
-1. Install and open **1C Platform**.
+1. Install and open **AI Accounting Assistant**.
 2. Click **Create one (prototype)**, enter your name, the firm name, email and a password of at
    least 10 characters. The account gets a 14-day trial and this PC is activated. The header shows
    _Trial · until …_.
@@ -105,7 +105,7 @@ Click **More info → Run anyway**.
    extension and the registered `comcntr.dll` (see `docs/phase-0.md`).
 
 To try the app without 1C, start it with the demo base: in PowerShell,
-`$env:PLATFORM_DEMO_1C=1; & "$env:LOCALAPPDATA\Programs\1C Platform\1C-Platform.exe"`.
+`$env:PLATFORM_DEMO_1C=1; & "$env:LOCALAPPDATA\Programs\AI Accounting Assistant\AI-Accounting-Assistant.exe"`.
 
 ## 5. Website on Vercel
 
@@ -119,7 +119,7 @@ The marketing site and customer cabinet (`apps/web`, Astro) are static pages on 
 3. Click **Deploy**. The site gets an address such as `https://1c-integration.vercel.app`; every push
    to the production branch (the repository's default branch) deploys again.
 
-The Download page links to `https://<server>/download/1C-Platform-Setup.exe`. The **Desktop app
+The Download page links to `https://<server>/download/AI-Accounting-Assistant-Setup.exe` (the old name `1C-Platform-Setup.exe` still works). The **Desktop app
 (Windows .exe)** workflow puts the installer there after each build (it uses the same deploy secrets).
 
 When the server address changes (a domain is bought), update the `destination` in

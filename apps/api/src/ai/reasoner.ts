@@ -8,7 +8,7 @@
  * A template is for one company; "Ask AI anyway" turns it off.
  */
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type {
@@ -20,7 +20,7 @@ import type {
 } from "@platform/shared";
 
 import type { Db } from "../db/client.js";
-import { aiTraces, queryTemplates, templateGroups, users } from "../db/schema.js";
+import { aiTraces, aiUsage, queryTemplates, templateGroups, users } from "../db/schema.js";
 import { type AiModel, usageOf } from "./model.js";
 import { sha } from "./traces.js";
 import { logUsage } from "./usage.js";
@@ -75,6 +75,8 @@ interface Group {
   questions: Map<string, number>;
   latest: string;
   hits: number;
+  /** Times the same questions were already answered by the model for this company (from the usage log). */
+  demand: number;
 }
 
 export class Reasoner {
@@ -126,7 +128,13 @@ export class Reasoner {
           })
           .returning();
         if (!row || row.status !== "pending" || row.attempts >= MAX_ATTEMPTS) continue;
-        if (!policy.reasoner || group.hits < policy.learnMinHits) continue;
+        if (!policy.reasoner) continue;
+        // Questions the usage log shows were already asked and paid for, again and again, need no
+        // further sightings: the history is the proof that they come back.
+        if (group.hits < policy.learnMinHits) {
+          group.demand = await this.demand(accountId, group);
+          if (group.demand < policy.learnMinHits) continue;
+        }
         decided += 1;
         if (await this.decide(accountId, policy, group, row.id)) made += 1;
       }
@@ -162,12 +170,36 @@ export class Reasoner {
           questions: new Map(),
           latest: row.question,
           hits: 0,
+          demand: 0,
         } satisfies Group);
       group.hits += 1;
       group.questions.set(row.question, (group.questions.get(row.question) ?? 0) + 1);
       groups.set(key, group);
     }
     return [...groups.values()];
+  }
+
+  /**
+   * How many times the model answered these very questions (any wording seen in the group) for this
+   * company: the first steps of questions in the usage log, which is as old as the service.
+   */
+  private async demand(accountId: string, group: Group): Promise<number> {
+    const asked = [...new Set([...group.questions.keys()].map((q) => q.trim().toLowerCase().slice(0, 200)))];
+    if (asked.length === 0) return 0;
+    const [row] = await this.db
+      .select({ n: count() })
+      .from(aiUsage)
+      .where(
+        and(
+          eq(aiUsage.accountId, accountId),
+          eq(aiUsage.company, group.company),
+          eq(aiUsage.feature, "chat"),
+          eq(aiUsage.route, "model"),
+          eq(aiUsage.firstStep, true),
+          inArray(sql`lower(btrim(${aiUsage.question}))`, asked),
+        ),
+      );
+    return row?.n ?? 0;
   }
 
   /** Asks Claude about one group; makes the template when it is reusable. Returns whether one was made. */
@@ -254,6 +286,7 @@ export class Reasoner {
       query: group.query,
       parameters: group.learnable.params.map((p: z.infer<typeof TemplateParam>) => `${p.name}: ${p.type}`),
       columns: group.learnable.columns.map((c: z.infer<typeof TemplateColumn>) => `${c.label} (${c.format})`),
+      times_the_assistant_already_answered_these_questions_before: group.demand,
       then_the_accountant_confirmed_a_card_of:
         group.learnable.action === null
           ? null

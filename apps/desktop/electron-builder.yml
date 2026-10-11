@@ -1,7 +1,7 @@
 # Windows installer (TD §4: electron-builder, NSIS). Code signing comes with releases.
 appId: uz.platform.desktop
-productName: 1C Platform
-executableName: 1C-Platform
+productName: AI Accounting Assistant
+executableName: AI-Accounting-Assistant
 directories:
   output: release
   buildResources: build
@@ -20,7 +20,7 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  artifactName: 1C-Platform-Setup-${version}.${ext}
+  artifactName: AI-Accounting-Assistant-Setup-${version}.${ext}
 nsis:
   oneClick: false
   perMachine: false

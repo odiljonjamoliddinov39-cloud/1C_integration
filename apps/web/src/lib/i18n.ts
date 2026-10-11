@@ -22,7 +22,7 @@ export function href(locale: Locale, path: string): string {
 
 const uz = {
   meta: {
-    title: "1C Platform — 1C ga qoʻlda kiritishsiz buxgalteriya",
+    title: "AI Accounting Assistant — 1C ga qoʻlda kiritishsiz buxgalteriya",
     description:
       "Hujjatlar 1C ga tekshirilgan holda tushadi, AI yordamchi esa hisob boʻyicha savollarga javob beradi. Oʻzbekiston buxgalterlari uchun.",
   },
@@ -191,7 +191,7 @@ const uz = {
     title: "Yuklab olish",
     subtitle: "Windows ilovasi 1C turgan kompyuterga oʻrnatiladi.",
     button: "Windows uchun yuklab olish",
-    file: "1C-Platform-Setup.exe · 64-bit",
+    file: "AI-Accounting-Assistant-Setup.exe · 64-bit",
     requirementsTitle: "Talablar",
     requirements: [
       "Windows 10 yoki 11, 64-bit",
@@ -267,7 +267,7 @@ type Dict = typeof uz;
 
 const ru: Dict = {
   meta: {
-    title: "1C Platform — бухгалтерия без ручного ввода в 1С",
+    title: "AI Accounting Assistant — бухгалтерия без ручного ввода в 1С",
     description:
       "Документы попадают в 1С уже проверенными, а ИИ-ассистент отвечает на вопросы по учёту. Для бухгалтеров Узбекистана.",
   },
@@ -436,7 +436,7 @@ const ru: Dict = {
     title: "Скачать",
     subtitle: "Windows-приложение ставится на компьютер, где стоит 1С.",
     button: "Скачать для Windows",
-    file: "1C-Platform-Setup.exe · 64-бит",
+    file: "AI-Accounting-Assistant-Setup.exe · 64-бит",
     requirementsTitle: "Требования",
     requirements: [
       "Windows 10 или 11, 64-бит",

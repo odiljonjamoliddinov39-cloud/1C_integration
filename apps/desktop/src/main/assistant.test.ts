@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AssistantEvent } from "../shared/ipc.js";
 import { AssistantService, auditToCsv } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
+import { TraceLog } from "./ai/backfill.js";
 import { CostEngine } from "./ai/engine.js";
 import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
@@ -366,6 +367,100 @@ describe("assistant", () => {
       await assistant.send({ companyId: company.id, text: "?" });
       expect(events.some((e) => e.type === "confirm")).toBe(false);
       expect(resultOf(proxy.requests)).toMatchObject({ status: "already_exists", invoice: { number: "7" } });
+    });
+
+    const markObject = (base: FakePlatform, object: string, referenced = false) => {
+      const ref = crypto.randomUUID();
+      base.objects.set(ref, { object, fields: {}, posted: false, deletionMark: true, version: 1 });
+      if (referenced) base.referenced.add(ref);
+      return ref;
+    };
+
+    it("removes the marked objects for good only after the user confirms the card", async () => {
+      const t = setup(proposeThenAnswer("propose_delete_marked", {}));
+      markObject(t.base, "Документ.СписаниеСРасчетногоСчета");
+      markObject(t.base, "Документ.СписаниеСРасчетногоСчета");
+      const stays = markObject(t.base, "Справочник.БанковскиеСчета", true);
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Удали помеченные на удаление" });
+      await answerCards(t.events, t.assistant, true);
+      expect(await sending).toEqual({ ok: true, data: null });
+
+      // The card showed what would go, by type, before anything was removed.
+      expect(t.events.find((e) => e.type === "confirm")).toMatchObject({
+        proposal: {
+          kind: "delete_marked",
+          preview: {
+            total: 3,
+            types: [expect.objectContaining({ count: 2 }), expect.objectContaining({ count: 1 })],
+          },
+        },
+      });
+      expect(t.events.find((e) => e.type === "decided")).toMatchObject({
+        outcome: { status: "removed", result: { total: 3, deleted: 2, kept: 1 } },
+      });
+      // What is still referenced stays, and the model is told exactly that.
+      expect([...t.base.objects.keys()]).toEqual([stays]);
+      expect(resultOf(t.proxy.requests)).toMatchObject({ status: "done", deleted: 2, kept: 1 });
+    });
+
+    it("removes nothing when the user cancels, and needs no card when nothing is marked", async () => {
+      const t = setup(proposeThenAnswer("propose_delete_marked", {}));
+      markObject(t.base, "Документ.СписаниеСРасчетногоСчета");
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Очисти базу" });
+      await answerCards(t.events, t.assistant, false);
+      await sending;
+      expect(t.base.objects.size).toBe(1);
+      expect(resultOf(t.proxy.requests)).toEqual({ status: "declined_by_user" });
+
+      const empty = setup(proposeThenAnswer("propose_delete_marked", {}));
+      empty.store.setAiEnabled(empty.company.id, true);
+      await empty.assistant.send({ companyId: empty.company.id, text: "Очисти базу" });
+      expect(empty.events.some((e) => e.type === "confirm")).toBe(false);
+      expect(resultOf(empty.proxy.requests)).toEqual({ status: "nothing_marked" });
+    });
+
+    it("shows who else has the base open, and reports a busy base when the removal is refused", async () => {
+      const t = setup(
+        proposeThenAnswer("propose_delete_marked", { types: ["Документ.СписаниеСРасчетногоСчета"] }),
+      );
+      markObject(t.base, "Документ.СписаниеСРасчетногоСчета");
+      markObject(t.base, "Справочник.БанковскиеСчета");
+      t.base.otherSessions = [
+        {
+          number: 2,
+          application: "Тонкий клиент",
+          user: "Admin",
+          computer: "DESKTOP-1",
+          startedAt: "2026-10-09T10:44:08",
+        },
+      ];
+      t.store.setAiEnabled(t.company.id, true);
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Удали помеченные списания" });
+      await answerCards(t.events, t.assistant, true);
+      await sending;
+      // Only the asked type was offered, with the other session named on the card.
+      expect(t.events.find((e) => e.type === "confirm")).toMatchObject({
+        proposal: {
+          preview: { total: 1, otherSessions: [expect.objectContaining({ computer: "DESKTOP-1" })] },
+        },
+      });
+      expect(t.events.find((e) => e.type === "decided")).toMatchObject({
+        outcome: { status: "failed", code: "BASE_BUSY" },
+      });
+      expect(t.base.objects.size).toBe(2);
+      expect(resultOf(t.proxy.requests)).toMatchObject({ error: "BASE_BUSY" });
+    });
+
+    it("does not offer the removal on a read-only license", async () => {
+      const t = setup(proposeThenAnswer("propose_delete_marked", {}), "read_only");
+      markObject(t.base, "Документ.СписаниеСРасчетногоСчета");
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "Удали помеченные" });
+      expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+      expect(t.base.objects.size).toBe(1);
+      expect(resultOf(t.proxy.requests)).toMatchObject({ error: "READ_ONLY" });
     });
 
     it("records a supplier's invoice the user confirms, as manual input", async () => {
@@ -1749,6 +1844,38 @@ describe("assistant", () => {
       ],
       text("Tayyor"),
     ];
+
+    it("teaches the engine from the chats saved before: each question once, and what a live question already taught is not repeated", async () => {
+      const t = setup([...oneQuery(), ...oneQuery()], "active", server({}));
+      // Two questions in a chat made before the engine learned from them (no trace log then).
+      await ask(t, "Какой остаток в кассе сегодня?");
+      await t.assistant.send({
+        companyId: t.company.id,
+        text: "Сальдо по счетам сегодня",
+      });
+      await vi.waitFor(() => expect(traces(t)).toHaveLength(2));
+      const before = traces(t).length;
+
+      const log = new TraceLog(join(t.dir, "traced.json"));
+      const later = new AssistantService({
+        store: t.store,
+        chats: t.chats,
+        session: t.session,
+        connector: new InProcessConnector(() => t.base),
+        emit: () => undefined,
+        traceLog: log,
+      });
+      expect(await later.backfillTraces()).toEqual({ sent: 2 });
+      expect(traces(t)).toHaveLength(before + 2);
+      expect(
+        traces(t)
+          .slice(before)
+          .map((x) => x.question),
+      ).toEqual(["Какой остаток в кассе сегодня?", "Сальдо по счетам сегодня"]);
+      // Replayed once.
+      expect(await later.backfillTraces()).toEqual({ sent: 0 });
+      expect(traces(t)).toHaveLength(before + 2);
+    });
 
     it("sends a trace of every finished question: the steps and how it ended, no data", async () => {
       const t = setup([...oneQuery(), text("Salom!")], "active", server({}));

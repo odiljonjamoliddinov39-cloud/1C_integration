@@ -1,32 +1,45 @@
 @import "tailwindcss";
 
+/* The AI Accounting Assistant palette (violet, teal and gold on deep indigo), like the desktop app and
+   the admin dashboard; dark mode follows the system. */
 @theme {
-  --color-background: oklch(0.99 0 0);
-  --color-foreground: oklch(0.2 0.02 260);
-  --color-muted: oklch(0.96 0.005 260);
-  --color-muted-foreground: oklch(0.48 0.02 260);
-  --color-border: oklch(0.91 0.005 260);
-  --color-card: oklch(1 0 0);
-  --color-primary: oklch(0.5 0.17 260);
-  --color-primary-foreground: oklch(0.99 0 0);
-  --color-destructive: oklch(0.58 0.2 27);
-  --color-success: oklch(0.6 0.14 150);
-  --color-warning: oklch(0.72 0.15 75);
+  --color-background: #f8f8fd;
+  --color-foreground: #1b1840;
+  --color-muted: #eeeef9;
+  --color-muted-foreground: #5f5e82;
+  --color-border: #e4e4f2;
+  --color-card: #ffffff;
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #ea580c;
+  --color-teal: #0d9488;
+  --color-destructive: #dc2626;
+  --color-success: #0d9488;
+  --color-warning: #f59e0b;
+  --color-ink: #1b1840;
+  --color-ink-foreground: #f1f0ff;
+  --color-ink-muted: #a9a7d8;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-background: oklch(0.18 0.01 260);
-    --color-foreground: oklch(0.95 0.005 260);
-    --color-muted: oklch(0.24 0.01 260);
-    --color-muted-foreground: oklch(0.72 0.01 260);
-    --color-border: oklch(0.3 0.01 260);
-    --color-card: oklch(0.21 0.01 260);
-    --color-primary: oklch(0.65 0.15 260);
+    --color-background: #12102b;
+    --color-foreground: #ecebff;
+    --color-muted: #221f4d;
+    --color-muted-foreground: #a9a7d8;
+    --color-border: #302d63;
+    --color-card: #1b1840;
+    --color-primary: #7c75ff;
+    --color-primary-foreground: #12102b;
+    --color-teal: #2dd4bf;
+    --color-ink: #0e0c24;
   }
 }
 
 body {
   background: var(--color-background);
   color: var(--color-foreground);
+  font-family: system-ui, "Segoe UI", sans-serif;
 }

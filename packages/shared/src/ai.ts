@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   ChangeInput,
+  DeleteMarkedInput,
   GetObjectInput,
   InvoiceReceivedDraft,
   RunQueryInput,
@@ -189,6 +190,7 @@ export const AI_TOOLS = {
   propose_invoices_issued: InvoicesIssuedInput,
   propose_invoice_received: InvoiceReceivedDraft,
   propose_invoices_received: InvoicesReceivedInput,
+  propose_delete_marked: DeleteMarkedInput,
   report_findings: ReportFindingsInput,
 } as const;
 export type AiToolName = keyof typeof AI_TOOLS;
@@ -200,6 +202,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoices_issued",
   "propose_invoice_received",
   "propose_invoices_received",
+  "propose_delete_marked",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
 /** Tools the app runs itself (over attached files, or several 1C calls), not one 1C function. */

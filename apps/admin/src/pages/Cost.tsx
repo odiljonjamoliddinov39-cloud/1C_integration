@@ -78,7 +78,7 @@ export function CostPage() {
             {r.byAccount.length === 0 ? (
               <Empty>No AI use in this period.</Empty>
             ) : (
-              <Table head={["Customer", "Cost", "Questions", "Requests", "This month", "Cap"]}>
+              <Table head={["Customer", "Cost", "Questions", "Requests", "Used this month", "Cap", "Left"]}>
                 {r.byAccount.map((a) => (
                   <tr key={a.accountId}>
                     <Td>
@@ -90,7 +90,16 @@ export function CostPage() {
                     <Td>{a.questions}</Td>
                     <Td>{a.requests}</Td>
                     <Td>{usd(a.monthUsd)}</Td>
-                    <Td>{a.limitUsd === null ? "policy" : a.limitUsd === 0 ? "none" : usd(a.limitUsd)}</Td>
+                    <Td>{a.capUsd > 0 ? usd(a.capUsd) : "none"}</Td>
+                    <Td>
+                      {a.leftUsd === null ? (
+                        <span className="text-muted-foreground">no cap</span>
+                      ) : (
+                        <b className={a.leftUsd <= a.capUsd * 0.2 ? "text-destructive" : "text-success"}>
+                          {usd(a.leftUsd)}
+                        </b>
+                      )}
+                    </Td>
                   </tr>
                 ))}
               </Table>

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore } from "react";
 
+import { Logo } from "@/components/Logo";
 import { api, getToken, onTokenChange, setToken } from "@/lib/api";
 import { href, useRoute } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -43,59 +44,70 @@ function Shell() {
   const nav = me.data?.role === "owner" ? [...NAV, { path: "admins", label: "Admins" } as const] : NAV;
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-border bg-card">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-2">
-          <span className="mr-4 flex items-center gap-2 font-semibold">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs text-primary-foreground">
-              1C
-            </span>
-            Admin
-          </span>
+    <div className="min-h-screen lg:flex">
+      <aside className="bg-sidebar text-sidebar-foreground lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col">
+        <div className="flex items-center gap-3 px-5 py-4 lg:py-6">
+          <Logo size={40} className="shrink-0" />
+          <div className="min-w-0">
+            <div className="text-sm leading-tight font-bold">AI Accounting Assistant</div>
+            <div className="text-xs font-semibold tracking-wider text-amber-300 uppercase">Admin</div>
+          </div>
+        </div>
+        <nav className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:overflow-y-auto">
           {nav.map((item) => (
             <a
               key={item.path}
               href={href(item.path)}
               aria-current={section === item.path ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm hover:bg-muted",
-                section === item.path && "bg-muted font-medium",
+                "rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors",
+                section === item.path
+                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
+                  : "text-sidebar-foreground/85 hover:bg-white/10",
               )}
             >
               {item.label}
             </a>
           ))}
-          <span className="ml-auto text-sm text-muted-foreground">
-            {me.data?.email} {me.data && `(${me.data.role})`}
-          </span>
-          <button className="rounded-md px-3 py-1.5 text-sm hover:bg-muted" onClick={() => setToken(null)}>
+        </nav>
+        <div className="flex items-center gap-3 border-t border-white/10 px-5 py-3 lg:flex-col lg:items-stretch lg:py-4">
+          <div className="min-w-0 text-xs text-sidebar-muted">
+            <div className="truncate font-semibold text-sidebar-foreground">{me.data?.email}</div>
+            {me.data && <div>{me.data.role}</div>}
+          </div>
+          <button
+            className="ml-auto rounded-xl border border-white/15 px-3 py-2 text-sm font-semibold text-pink-300 hover:bg-white/10 lg:ml-0"
+            onClick={() => setToken(null)}
+          >
             Sign out
           </button>
         </div>
-      </header>
-      <main className="mx-auto max-w-7xl p-4">
-        {!me.data ? null : section === "customers" && id ? (
-          <CustomerPage id={id} me={me.data} />
-        ) : section === "customers" ? (
-          <CustomersPage />
-        ) : section === "usage" ? (
-          <UsagePage />
-        ) : section === "cost" ? (
-          <CostPage />
-        ) : section === "ai" ? (
-          <AiModelPage me={me.data} />
-        ) : section === "limits" ? (
-          <PoliciesPage me={me.data} />
-        ) : section === "templates" ? (
-          <TemplatesPage me={me.data} />
-        ) : section === "audit" ? (
-          <AuditPage />
-        ) : section === "admins" && me.data.role === "owner" ? (
-          <AdminsPage me={me.data} />
-        ) : (
-          <OverviewPage />
-        )}
-      </main>
+      </aside>
+      <div className="min-w-0 flex-1">
+        <main className="mx-auto max-w-7xl p-4 lg:p-8">
+          {!me.data ? null : section === "customers" && id ? (
+            <CustomerPage id={id} me={me.data} />
+          ) : section === "customers" ? (
+            <CustomersPage />
+          ) : section === "usage" ? (
+            <UsagePage />
+          ) : section === "cost" ? (
+            <CostPage />
+          ) : section === "ai" ? (
+            <AiModelPage me={me.data} />
+          ) : section === "limits" ? (
+            <PoliciesPage me={me.data} />
+          ) : section === "templates" ? (
+            <TemplatesPage me={me.data} />
+          ) : section === "audit" ? (
+            <AuditPage />
+          ) : section === "admins" && me.data.role === "owner" ? (
+            <AdminsPage me={me.data} />
+          ) : (
+            <OverviewPage />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

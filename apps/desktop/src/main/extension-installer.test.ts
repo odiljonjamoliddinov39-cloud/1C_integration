@@ -129,6 +129,13 @@ describe("PlatformAPI installer", () => {
   });
 
   it("explains rights problems and passes other messages on", () => {
+    // 1C 8.3.18's wording for a base held open by another session, with who holds it.
+    const locked = explainLog(
+      "Ошибка исключительной блокировки информационной базы. Активны сеансы: компьютер: DESKTOP-KKQGLVV, сеанс: 2, начат: 08.10.2026 в 22:55:03, приложение: Тонкий клиент",
+    );
+    expect(locked.code).toBe("EXTENSION_BASE_BUSY");
+    expect(locked.message).toContain("DESKTOP-KKQGLVV, сеанс: 2");
+    expect(locked.message).toContain("1cv8c.exe");
     expect(explainLog("Неправильное имя или пароль пользователя").code).toBe("EXTENSION_NO_RIGHTS");
     expect(explainLog("Ошибка проверки модуля").message).toContain("Ошибка проверки модуля");
     expect(explainLog("").message).toContain("without a message");

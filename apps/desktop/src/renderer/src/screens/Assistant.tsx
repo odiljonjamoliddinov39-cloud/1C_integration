@@ -56,19 +56,23 @@ function kindOf(name: string): AttachmentKind {
   if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) return "image";
   if (extension === ".xlsx") return "spreadsheet";
   if (extension === ".docx") return "document";
+  if (extension === ".zip") return "archive";
   return "text";
 }
+
+/** Errors about an attached file; their message names the file and what is wrong with it. */
+const FILE_ERRORS = ["FILE_TYPE", "FILE_TOO_LARGE", "FILE_UNREADABLE"];
 
 const sizeText = (bytes: number) =>
   bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export function AssistantScreen() {
+export function AssistantScreen({ initialCompanyId = null }: { initialCompanyId?: string | null }) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialCompanyId);
   const [transcripts, setTranscripts] = useState<Transcripts>({});
 
   useEffect(
@@ -99,15 +103,15 @@ export function AssistantScreen() {
   const setTranscript = (next: Transcript) => setTranscripts((all) => ({ ...all, [company.id]: next }));
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full flex-col px-6 py-4">
+    <div className="flex h-full min-h-[32rem] w-full flex-col px-8 py-6">
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{t("assistant.title")}</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t("assistant.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("assistant.subtitle")}</p>
         </div>
         <select
           aria-label={t("assistant.company")}
-          className="ml-auto h-9 rounded-lg border border-border bg-card px-2 text-sm"
+          className="ml-auto h-10 rounded-xl border border-warning/70 bg-card px-3 text-sm font-semibold"
           value={company.id}
           onChange={(e) => setSelectedId(e.target.value)}
         >
@@ -279,12 +283,14 @@ function ChatList({
     new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(new Date(iso));
 
   return (
-    <Card className="flex w-60 shrink-0 flex-col p-2">
-      <Button size="sm" variant="outline" disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
+    <Card className="flex w-64 shrink-0 flex-col p-3">
+      <Button disabled={transcript.busy} onClick={() => onOpen(NEW_CHAT)}>
         + {t("assistant.newChat")}
       </Button>
       <AuditStart busy={transcript.busy} onStart={onAudit} />
-      <div className="mt-2 px-1 text-xs font-medium text-muted-foreground">{t("assistant.history")}</div>
+      <div className="mt-4 px-1 text-xs font-bold tracking-wider text-muted-foreground uppercase">
+        {t("assistant.history")}
+      </div>
       <nav aria-label={t("assistant.history")} className="mt-1 flex-1 space-y-0.5 overflow-y-auto">
         {(chats.data ?? []).length === 0 && (
           <p className="px-1 py-2 text-xs text-muted-foreground">{t("assistant.noChats")}</p>
@@ -293,8 +299,8 @@ function ChatList({
           <div
             key={chat.id}
             className={cn(
-              "group flex items-start gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-muted",
-              chat.id === transcript.chatId && "bg-muted",
+              "group flex items-start gap-1 rounded-xl px-2.5 py-2 text-sm hover:bg-muted",
+              chat.id === transcript.chatId && "bg-primary/10",
             )}
           >
             <button
@@ -339,7 +345,7 @@ function AuditStart({ busy, onStart }: { busy: boolean; onStart: (from: string, 
   const [to, setTo] = useState(today);
   if (!open) {
     return (
-      <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => setOpen(true)}>
+      <Button variant="teal" className="mt-2" disabled={busy} onClick={() => setOpen(true)}>
         {t("audit.start")}
       </Button>
     );
@@ -764,7 +770,7 @@ function Chat({
           <PaperclipIcon />
         </Button>
         <textarea
-          className="min-h-11 flex-1 resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm"
+          className="min-h-11 flex-1 resize-none rounded-xl border border-primary/50 bg-card px-3 py-2 text-sm outline-none focus:border-primary"
           rows={2}
           maxLength={4000}
           placeholder={t("assistant.placeholder")}
@@ -787,7 +793,12 @@ function Chat({
             {t("assistant.stop")}
           </Button>
         ) : (
-          <Button type="submit" disabled={!text.trim() && files.length === 0}>
+          <Button
+            type="submit"
+            variant="accent"
+            className="h-auto px-5"
+            disabled={!text.trim() && files.length === 0}
+          >
             {t("assistant.send")}
           </Button>
         )}
@@ -823,7 +834,14 @@ function PaperclipIcon() {
 }
 
 function FileIcon({ kind }: { kind: AttachmentKind }) {
-  const label = { image: "IMG", pdf: "PDF", spreadsheet: "XLS", document: "DOC", text: "TXT" }[kind];
+  const label = {
+    image: "IMG",
+    pdf: "PDF",
+    spreadsheet: "XLS",
+    document: "DOC",
+    text: "TXT",
+    archive: "ZIP",
+  }[kind];
   return (
     <span className="rounded bg-muted px-1 font-mono text-[10px] font-semibold text-muted-foreground">
       {label}
@@ -874,7 +892,7 @@ function EntryView({
             </div>
           )}
           {entry.text && (
-            <div className="rounded-lg bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground">
+            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm whitespace-pre-wrap text-primary-foreground shadow-sm">
               {entry.text}
             </div>
           )}
@@ -882,8 +900,16 @@ function EntryView({
       );
     case "assistant":
       return (
-        <div className="markdown max-w-full text-sm">
-          <Markdown remarkPlugins={[remarkGfm]}>{entry.text}</Markdown>
+        <div className="flex gap-3">
+          <span
+            aria-hidden="true"
+            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sidebar text-[10px] font-bold text-amber-300"
+          >
+            AI
+          </span>
+          <div className="markdown min-w-0 flex-1 text-sm">
+            <Markdown remarkPlugins={[remarkGfm]}>{entry.text}</Markdown>
+          </div>
         </div>
       );
     case "note":
@@ -934,6 +960,9 @@ function EntryView({
       return (
         <div className={cn("rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive")}>
           {known === `errors.${entry.code}` ? entry.message : known}
+          {FILE_ERRORS.includes(entry.code) && known !== entry.message && (
+            <div className="mt-1 text-xs opacity-80">{entry.message}</div>
+          )}
         </div>
       );
     }
@@ -974,6 +1003,33 @@ function ProposalCard({
         <BatchBody proposal={proposal} outcome={outcome} />
       ) : proposal.kind === "change" ? (
         <ChangeBody preview={proposal.preview} />
+      ) : proposal.kind === "delete_marked" ? (
+        <>
+          <div>
+            <div className="font-semibold">{t("assistant.proposal.removeTitle")}</div>
+            <div className="text-muted-foreground">
+              {t("assistant.proposal.removeTotal", { count: proposal.preview.total })}
+            </div>
+          </div>
+          <table className="w-full text-xs tabular-nums">
+            <tbody>
+              {proposal.preview.types.map((group) => (
+                <tr key={group.type} className="border-t border-border">
+                  <td className="py-1">{group.presentation}</td>
+                  <td className="py-1 text-right font-medium">{group.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {proposal.preview.otherSessions.length > 0 && (
+            <div className="rounded-lg bg-amber-100 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+              {t("assistant.proposal.removeBusy")}{" "}
+              {proposal.preview.otherSessions
+                .map((s) => `${s.computer} · ${s.application} · #${s.number}`)
+                .join("; ")}
+            </div>
+          )}
+        </>
       ) : proposal.kind === "invoice_issued" ? (
         <>
           <div>
@@ -1020,7 +1076,12 @@ function ProposalCard({
             <tbody>
               {proposal.invoice.lines.map((line, i) => (
                 <tr key={i} className="border-t border-border">
-                  <td className="py-1">{line.item.name ?? line.item.ikpu ?? line.item.ref}</td>
+                  <td className="py-1">
+                    {line.item.name ?? line.item.ikpu ?? line.item.ref}
+                    {line.kind === "service" && (
+                      <span className="ml-1 text-muted-foreground">({t("assistant.proposal.service")})</span>
+                    )}
+                  </td>
                   <td className="py-1 text-right">{money(line.quantity)}</td>
                   <td className="py-1 text-right">{money(line.price)}</td>
                   <td className="py-1 text-right">{line.vatRate}%</td>
@@ -1040,24 +1101,44 @@ function ProposalCard({
         </>
       )}
       {proposal.kind !== "change" && proposal.kind !== "batch" && (
-        <p className="text-xs text-muted-foreground">
+        <p
+          className={cn(
+            "text-xs",
+            proposal.kind === "delete_marked" ? "font-medium text-destructive" : "text-muted-foreground",
+          )}
+        >
           {t(
             proposal.kind === "invoice_issued"
               ? "assistant.proposal.note"
-              : "assistant.proposal.noteReceived",
+              : proposal.kind === "delete_marked"
+                ? "assistant.proposal.noteRemove"
+                : "assistant.proposal.noteReceived",
           )}
         </p>
       )}
       {outcome === null ? (
         <div className="flex gap-2">
-          <Button size="sm" disabled={sent} onClick={() => decide(true)}>
-            {sent && proposal.kind === "batch"
-              ? t("assistant.proposal.batchApplying")
-              : proposal.kind === "batch"
-                ? t("assistant.proposal.batchApply", {
-                    count: proposal.items.filter((item) => item.preview).length,
-                  })
-                : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
+          <Button
+            size="sm"
+            disabled={sent}
+            className={
+              proposal.kind === "delete_marked"
+                ? "bg-destructive text-white hover:bg-destructive/90"
+                : undefined
+            }
+            onClick={() => decide(true)}
+          >
+            {proposal.kind === "delete_marked"
+              ? sent
+                ? t("assistant.proposal.removing")
+                : t("assistant.proposal.remove", { count: proposal.preview.total })
+              : sent && proposal.kind === "batch"
+                ? t("assistant.proposal.batchApplying")
+                : proposal.kind === "batch"
+                  ? t("assistant.proposal.batchApply", {
+                      count: proposal.items.filter((item) => item.preview).length,
+                    })
+                  : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -1069,6 +1150,19 @@ function ProposalCard({
             number: outcome.document.number,
             date: day(outcome.document.date),
           })}
+        </div>
+      ) : outcome.status === "removed" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.removed", {
+            deleted: outcome.result.deleted,
+            total: outcome.result.total,
+          })}
+          {outcome.result.kept > 0 && (
+            <div className="mt-1 font-normal text-foreground">
+              {t("assistant.proposal.removeKept", { count: outcome.result.kept })}
+              {outcome.result.reasons[0] ? ` ${outcome.result.reasons[0]}` : ""}
+            </div>
+          )}
         </div>
       ) : outcome.status === "batch" ? (
         <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">

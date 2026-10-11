@@ -6,6 +6,8 @@
 import type {
   AuditFinding,
   ChangePreview,
+  DeleteMarkedPreview,
+  DeleteMarkedResult,
   CreateInvoiceResult,
   InvoiceReceivedDraft,
   ObjectState,
@@ -48,6 +50,36 @@ export const RegisterAccountInput = SignInInput.extend({
   accountName: z.string().trim().min(1),
 });
 export type RegisterAccountInput = z.infer<typeof RegisterAccountInput>;
+
+/** A key E-IMZO shows on this PC (never its password). */
+export interface DidoxKeyView {
+  serialNumber: string;
+  tin: string;
+  commonName: string;
+  organization: string;
+  validTo: string | null;
+}
+
+export const DidoxTestInput = z.object({
+  /** Didox's address; the development server when empty. */
+  baseUrl: z.string().trim().max(200).optional(),
+  /** The partner key Didox gave (header api-key). */
+  apiKey: z.string().trim().max(200).optional(),
+  /** The key (hex serial number) to sign with when E-IMZO shows several. */
+  serialNumber: z.string().trim().max(100).optional(),
+});
+export type DidoxTestInput = z.infer<typeof DidoxTestInput>;
+
+export interface DidoxTestStep {
+  name: "eimzo" | "keys" | "login" | "profile" | "documents" | "archive";
+  ok: boolean;
+  /** What was found, or why it failed; the answers of Didox in full are cut at a few lines. */
+  detail: string;
+}
+export interface DidoxTestResult {
+  baseUrl: string;
+  steps: DidoxTestStep[];
+}
 
 /** Result of reaching 1C; never throws across the bridge. */
 export type ConnectorStatus =
@@ -118,6 +150,7 @@ export const ATTACHMENTS = {
     ".txt",
     ".xml",
     ".json",
+    ".zip",
   ],
   maxFiles: 5,
   maxBytes: 10 * 1024 * 1024,
@@ -189,7 +222,7 @@ export interface AuditView {
   finished: boolean;
 }
 
-export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text";
+export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "document" | "text" | "archive";
 
 /** An attached file as the chat shows it; its content goes to the model, not to the screen. */
 export interface AttachmentInfo {
@@ -227,13 +260,16 @@ export type Proposal =
   | { kind: "change"; preview: ChangePreview }
   | { kind: "batch"; title: string; items: BatchItem[] }
   | { kind: "invoice_issued"; sale: SaleSummary }
-  | { kind: "invoice_received"; invoice: InvoiceReceivedDraft };
+  | { kind: "invoice_received"; invoice: InvoiceReceivedDraft }
+  /** The marked objects, by type, to be removed for good; and who else has the base open. */
+  | { kind: "delete_marked"; preview: DeleteMarkedPreview };
 
 export type ProposalOutcome =
   | { status: "declined" }
   | { status: "created"; document: CreateInvoiceResult }
   | { status: "applied"; state: ObjectState }
   | { status: "batch"; results: BatchItemResult[] }
+  | { status: "removed"; result: DeleteMarkedResult }
   | { status: "failed"; code: string; message: string };
 
 /** What the assistant is doing, pushed from the main process while it answers. */
@@ -300,6 +336,17 @@ export interface PlatformBridge {
     remove(id: string): Promise<void>;
     /** Loads this app's PlatformAPI extension into the company's 1C base (1C Designer, batch mode). */
     updateExtension(id: string): Promise<Result<CompanyView>>;
+    /**
+     * Loads the extension into a base that is not connected yet (the connect dialog found none), then
+     * checks the base again; the result is a check like testConnection's.
+     */
+    installExtension(input: ConnectionInput): Promise<ConnectionTestResult>;
+  };
+  didox: {
+    /** The keys E-IMZO shows (it must be running on this PC). */
+    keys(): Promise<Result<DidoxKeyView[]>>;
+    /** Signs in to Didox with the key and reads what it answers, step by step; E-IMZO asks for the password. */
+    test(input: DidoxTestInput): Promise<Result<DidoxTestResult>>;
   };
   assistant: {
     /** Turns the assistant on or off for a company (on only after the user agreed). */

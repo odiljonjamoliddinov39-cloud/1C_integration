@@ -27,35 +27,52 @@ const nav = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>{title ? `${title} · 1C Platform` : t.meta.title}</title>
+    <title>{title ? `${title} · AI Accounting Assistant` : t.meta.title}</title>
     <meta name="description" content={t.meta.description} />
     <link rel="alternate" hreflang="uz" href={href("uz", path)} />
     <link rel="alternate" hreflang="ru" href={href("ru", path)} />
   </head>
   <body class="flex min-h-screen flex-col antialiased">
-    <header class="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur">
+    <header class="sticky top-0 z-10 border-b border-border bg-background/85 backdrop-blur-lg">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-        <a href={href(locale, "/")} class="flex items-center gap-2 font-semibold">
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">1C</span>
-          1C Platform
+        <a href={href(locale, "/")} class="flex items-center gap-2.5 text-lg font-bold tracking-tight">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="36" height="36" aria-hidden="true">
+            <rect x="6" y="12" width="32" height="40" rx="10" fill="#7C3AED" />
+            <rect x="26" y="12" width="32" height="40" rx="10" fill="#0D9488" />
+            <path d="M36 12h2v40h-2a10 10 0 0 1-10-10V22a10 10 0 0 1 10-10z" fill="#1B1840" />
+            <path d="M32 22C32.9 29 34 30.1 41 31C34 31.9 32.9 33 32 40C31.1 33 30 31.9 23 31C30 30.1 31.1 29 32 22Z" fill="#FCD34D" />
+          </svg>
+          AI Accounting Assistant
         </a>
-        <nav class="order-3 flex w-full gap-4 overflow-x-auto text-sm text-muted-foreground md:order-none md:w-auto">
+        <nav class="order-3 flex w-full gap-5 overflow-x-auto text-sm font-medium text-muted-foreground md:order-none md:w-auto">
           {nav.map(([p, label]) => <a class="whitespace-nowrap hover:text-foreground" href={href(locale, p)}>{label}</a>)}
         </nav>
         <div class="ml-auto flex items-center gap-3 text-sm">
-          <a class="rounded-md px-2 py-1 text-muted-foreground uppercase hover:text-foreground" href={href(other, path)} hreflang={other}>{other}</a>
-          <a class="hover:text-primary" href={href(locale, "/login")}>{t.nav.login}</a>
-          <a class="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground hover:opacity-90" href={href(locale, "/signup")}>{t.nav.signup}</a>
+          <a class="rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-muted-foreground uppercase hover:text-foreground" href={href(other, path)} hreflang={other}>{other}</a>
+          <a class="font-medium hover:text-primary" href={href(locale, "/login")}>{t.nav.login}</a>
+          <a class="rounded-xl bg-primary px-4 py-2 font-semibold text-primary-foreground shadow-md shadow-primary/25 hover:opacity-90" href={href(locale, "/signup")}>{t.nav.signup}</a>
         </div>
       </div>
     </header>
     <main class="flex-1">
       <slot />
     </main>
-    <footer class="border-t border-border">
-      <div class="mx-auto flex max-w-6xl flex-wrap gap-4 px-4 py-6 text-sm text-muted-foreground">
-        <span>© 2026 1C Platform · {t.footer.tagline}</span>
-        <span class="ml-auto rounded-full bg-warning/20 px-2 py-0.5 text-xs text-foreground">{t.footer.prototype}</span>
+    <footer class="bg-ink text-ink-foreground">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-8 text-sm">
+        <span class="flex items-center gap-2.5 font-bold">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
+            <rect x="6" y="12" width="32" height="40" rx="10" fill="#7C3AED" />
+            <rect x="26" y="12" width="32" height="40" rx="10" fill="#0D9488" />
+            <path d="M36 12h2v40h-2a10 10 0 0 1-10-10V22a10 10 0 0 1 10-10z" fill="#1B1840" />
+            <path d="M32 22C32.9 29 34 30.1 41 31C34 31.9 32.9 33 32 40C31.1 33 30 31.9 23 31C30 30.1 31.1 29 32 22Z" fill="#FCD34D" />
+          </svg>
+          AI Accounting Assistant
+        </span>
+        <span class="text-ink-muted">© 2026 · {t.footer.tagline}</span>
+        <nav class="flex flex-wrap gap-4 text-ink-muted">
+          {nav.map(([p, label]) => <a class="hover:text-ink-foreground" href={href(locale, p)}>{label}</a>)}
+        </nav>
+        <span class="ml-auto rounded-full bg-amber-300/20 px-3 py-1 text-xs text-amber-200">{t.footer.prototype}</span>
       </div>
     </footer>
   </body>

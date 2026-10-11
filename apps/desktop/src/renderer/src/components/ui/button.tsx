@@ -4,11 +4,14 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary",
+  "inline-flex items-center justify-center gap-2 rounded-xl text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:opacity-90",
+        default: "bg-primary text-primary-foreground shadow-sm hover:opacity-90",
+        accent: "bg-accent text-accent-foreground shadow-sm hover:opacity-90",
+        tint: "bg-primary/10 text-primary hover:bg-primary/15",
+        teal: "bg-teal/10 text-teal hover:bg-teal/15",
         outline: "border border-border bg-card hover:bg-muted",
         ghost: "hover:bg-muted",
         destructive: "text-destructive hover:bg-muted",

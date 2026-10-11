@@ -1,4 +1,4 @@
-# 1C Accounting Automation Platform
+# AI Accounting Assistant
 
 Removes manual data entry from accounting in Uzbekistan. Data flows from the tax portal, EDO
 operators and banks straight into 1C, checked and correct, and an AI assistant audits the books.
@@ -44,7 +44,14 @@ Desktop app ──question + 1C rows──▶ control system /v1/ai/chat ──�
 - Desktop: `apps/desktop/src/main/assistant.ts` (the tool loop) and `screens/Assistant.tsx`.
 - Files: PDF and images go to the model as they are (photos scaled to 1568 px); Excel (.xlsx), Word
   (.docx), CSV and text files are read on the PC and sent as text (`main/attachments.ts`). Up to 5
-  files of 10 MB per question; the server accepts files inline only.
+  files of 10 MB per question; the server accepts files inline only. A `.zip` is opened on the PC
+  (`main/zip.ts`, nothing is written to disk): each supported file in it is read as if attached on
+  its own, named `archive.zip/path`; archives inside it are opened too (up to 3 levels, 60 files,
+  30 MB unpacked: Didox packs every document into its own zip); a PDF that comes with an XML of the same document is
+  skipped (the XML has the data), and the pages and pictures of one question are capped at about
+  10 MB; pages and pictures of earlier questions are dropped from the chat, leaving their names,
+  so a chat of scans does not hit the size limit; unsupported, damaged or excess files are listed in a note.
+  Password-protected and ZIP64 archives are refused with a message.
 - Chat history: each chat is saved on the PC, encrypted with Windows DPAPI like the 1C passwords,
   newest 200 per company (`main/chats.ts`); a reopened chat continues where it stopped.
 - The API key reaches the server from the `ANTHROPIC_API_KEY` repository secret on deploy
@@ -74,6 +81,12 @@ per account, $5 a day per user and 8 reads per question.
      Claude decides if it is one stable, reusable question and writes the title, the wordings and the
      column labels. Rules check what it returns (the query and parameters are the recorded ones; the
      wordings must pass the matcher's limits). The cost is on **AI cost** as feature `engine`.
+   - **The past teaches too.** The questions already asked are not wasted: (1) the app replays its
+     saved chats through the same rules once (`ai/backfill.ts`, a minute after start, only the
+     queries and column names go up, never figures; questions with files, cards or several queries
+     are left out); (2) a group needs only one sighting when the usage log (`ai_usage`, the same
+     data as the **AI cost** page's most expensive questions) shows the model answered the same
+     questions `learnMinHits` times already.
    - **Action templates**: a group of confirmed `propose_invoices_issued` cards whose sales were
      exactly one query's rows becomes a template that prepares the same card from the query's rows;
      the user still confirms it, and only then is anything written.

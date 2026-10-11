@@ -192,6 +192,24 @@ describe("desktop main handlers", () => {
     });
   });
 
+  it("installs the extension into a base that is still being connected, then checks it again", async () => {
+    const { handlers, installs, setInstallResult } = setup();
+    const installed = await handlers.installExtensionInto(connection);
+    expect(installed.status.ok).toBe(true);
+    expect(installed.organizations).toHaveLength(1);
+    expect(installs[0]).toMatchObject({ infobase: connection.infobase, password: "secret-1C" });
+
+    // A refused install is shown as a failed check, with 1C's reason.
+    setInstallResult({ ok: false, code: "EXTENSION_NO_RIGHTS", message: "needs an administrator" });
+    expect(await handlers.installExtensionInto(connection)).toMatchObject({
+      status: { ok: false, code: "EXTENSION_NO_RIGHTS", message: "needs an administrator" },
+      organizations: [],
+    });
+    expect(await handlers.installExtensionInto({ infobase: { kind: "file" } })).toMatchObject({
+      status: { ok: false, code: "VALIDATION" },
+    });
+  });
+
   it("keeps data across restarts", async () => {
     const { handlers, file } = setup();
     const org = (await handlers.testConnection(connection)).organizations[0]!;

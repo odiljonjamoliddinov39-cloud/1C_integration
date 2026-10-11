@@ -19,22 +19,52 @@ export function useUpdateState(): UpdateState {
   return state;
 }
 
+const DownloadIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14" />
+  </svg>
+);
+
 /** A new version downloading in the background, or ready to install with one click. */
 export function UpdateBanner({ state }: { state: UpdateState }) {
   const { t } = useTranslation();
-  if (state.status === "downloading")
-    return (
-      <div className="bg-muted px-6 py-2 text-sm text-muted-foreground">
-        {t("update.downloading", { version: state.version, percent: state.percent })}
-      </div>
-    );
-  if (state.status !== "ready") return null;
+  if (state.status !== "downloading" && state.status !== "ready") return null;
+  const ready = state.status === "ready";
   return (
-    <div className="flex items-center gap-3 bg-primary/10 px-6 py-2 text-sm">
-      <span>{t("update.ready", { version: state.version })}</span>
-      <Button size="sm" className="ml-auto" onClick={() => void window.platform.update.install()}>
-        {t("update.restart")}
-      </Button>
+    <div className="mx-6 mt-4 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+        <DownloadIcon />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">
+          {ready
+            ? t("update.ready", { version: state.version })
+            : t("update.downloading", { version: state.version, percent: state.percent })}
+        </div>
+        {!ready && (
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-sky-600 transition-all"
+              style={{ width: `${state.percent}%` }}
+            />
+          </div>
+        )}
+      </div>
+      {ready && (
+        <Button size="sm" onClick={() => void window.platform.update.install()}>
+          {t("update.restart")}
+        </Button>
+      )}
     </div>
   );
 }
@@ -44,7 +74,7 @@ export function VersionButton({ version, state }: { version: string; state: Upda
   const { t } = useTranslation();
   const [asked, setAsked] = useState(false);
   const label = `v${version}`;
-  if (state.status === "unsupported") return <span className="text-muted-foreground">{label}</span>;
+  if (state.status === "unsupported") return <span className="text-xs text-sidebar-muted">{label}</span>;
   const note =
     state.status === "checking"
       ? t("update.checking")
@@ -54,10 +84,9 @@ export function VersionButton({ version, state }: { version: string; state: Upda
           ? t("update.error")
           : null;
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="text-muted-foreground"
+    <button
+      type="button"
+      className="text-left text-xs text-sidebar-muted hover:text-sidebar-foreground disabled:opacity-60"
       title={state.status === "error" ? `${t("update.error")}: ${state.message}` : t("update.check")}
       disabled={state.status === "checking"}
       onClick={() => {
@@ -66,6 +95,6 @@ export function VersionButton({ version, state }: { version: string; state: Upda
       }}
     >
       {note ? `${label} · ${note}` : label}
-    </Button>
+    </button>
   );
 }

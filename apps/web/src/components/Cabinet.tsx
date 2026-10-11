@@ -84,7 +84,7 @@ export function Cabinet({ locale }: { locale: Locale }) {
           <h2 className="text-lg font-semibold">{t.devices}</h2>
           <a
             href={DOWNLOAD_URL}
-            className="ml-auto rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            className="ml-auto rounded-xl bg-primary shadow-md shadow-primary/25 px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             {t.download}
           </a>

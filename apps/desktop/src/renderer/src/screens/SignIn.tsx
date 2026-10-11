@@ -3,6 +3,8 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { errorText } from "@/components/ConnectorStatus";
+import { LanguageSelect } from "@/components/LanguageSelect";
+import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card, ErrorText } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -36,8 +38,12 @@ export function SignInScreen() {
   }
 
   return (
-    <div className="flex min-h-[80vh] items-center justify-center p-6">
-      <Card className="w-full max-w-sm p-6">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-linear-to-b from-indigo-50 to-background p-6">
+      <div className="flex items-center gap-3">
+        <Logo size={44} />
+        <span className="text-2xl font-bold tracking-tight">{t("appName")}</span>
+      </div>
+      <Card className="w-full max-w-sm p-6 shadow-lg">
         <h1 className="text-xl font-semibold">{creating ? t("signIn.createTitle") : t("signIn.title")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("signIn.subtitle")}</p>
         <form onSubmit={onSubmit} className="mt-5 space-y-3">
@@ -102,6 +108,9 @@ export function SignInScreen() {
           {creating ? t("signIn.haveAccount") : t("signIn.noAccount")}
         </button>
       </Card>
+      <div className="w-40">
+        <LanguageSelect className="border-border bg-card text-foreground" />
+      </div>
     </div>
   );
 }

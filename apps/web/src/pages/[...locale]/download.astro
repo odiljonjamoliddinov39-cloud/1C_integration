@@ -13,8 +13,8 @@ const nav = dict(locale).nav;
   <section class="mx-auto max-w-4xl px-4 py-14">
     <h1 class="text-4xl font-bold">{t.title}</h1>
     <p class="mt-3 text-muted-foreground">{t.subtitle}</p>
-    <div class="mt-8 flex flex-wrap items-center gap-4 rounded-2xl border border-border bg-card p-6">
-      <a href={DOWNLOAD_URL} class="rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.button}</a>
+    <div class="mt-8 flex flex-wrap items-center gap-4 rounded-3xl border border-border bg-card p-7 shadow-lg shadow-primary/10">
+      <a href={DOWNLOAD_URL} class="rounded-xl bg-primary shadow-md shadow-primary/25 px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.button}</a>
       <span class="text-sm text-muted-foreground">{t.file}</span>
       <span class="ml-auto text-sm">{t.noAccount} <a class="text-primary underline" href={href(locale, "/signup")}>{nav.signup}</a></span>
     </div>

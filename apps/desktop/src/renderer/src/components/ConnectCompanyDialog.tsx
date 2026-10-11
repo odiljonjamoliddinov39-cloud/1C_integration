@@ -45,6 +45,13 @@ export function ConnectCompanyDialog({
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
   });
+  const install = useMutation({
+    mutationFn: () => window.platform.companies.installExtension(connection()),
+    onSuccess: (result) => {
+      setTest(result);
+      setOrganizationRef(result.organizations[0]?.ref ?? "");
+    },
+  });
   const save = useMutation({
     mutationFn: () => {
       const organization = test?.organizations.find((o) => o.ref === organizationRef);
@@ -156,8 +163,26 @@ export function ConnectCompanyDialog({
           </div>
 
           {runTest.isPending && <div className="text-sm text-muted-foreground">{t("connect.testing")}</div>}
+          {install.isPending && (
+            <div className="text-sm text-muted-foreground">{t("connect.installing")}</div>
+          )}
           {test && !test.status.ok && (
             <ErrorText>{errorText(t, test.status.code, test.status.message)}</ErrorText>
+          )}
+          {/* The base is reachable but has no PlatformAPI: the app can load it itself. */}
+          {test && !test.status.ok && test.status.code === "NOT_FOUND" && !install.isPending && (
+            <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
+              <div>{t("connect.installHint")}</div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (window.confirm(t("connect.installConfirm"))) install.mutate();
+                }}
+              >
+                {t("connect.install")}
+              </Button>
+            </div>
           )}
           {test?.status.ok && (
             <div className="space-y-2 rounded-lg bg-success/10 p-3 text-sm">
@@ -199,7 +224,7 @@ export function ConnectCompanyDialog({
             <Button
               type="button"
               variant="outline"
-              disabled={runTest.isPending}
+              disabled={runTest.isPending || install.isPending}
               onClick={() => runTest.mutate()}
             >
               {t("connect.test")}

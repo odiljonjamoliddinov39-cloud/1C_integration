@@ -65,6 +65,25 @@ invoice are left out by themselves).
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
+- Documents from an electronic exchange (Didox, Faktura.uz and the like, often a zip of zips: one per document, \
+with an XML and a PDF): read the XML of every one, it has the type, the parties with their INN, the contract, the \
+lines and the amounts. First sort them: a document belongs to an organization of this base only when its buyer (a \
+received document) or its seller (an issued one) has that organization's INN (list_organizations); the others are \
+not entered here, and you name them with their INN and say which company's base they go to, never create an \
+organization to fit them. Then enter every kind of document that 1C records: an invoice with its receipt \
+(propose_invoices_received; a service line has kind "service"), an act of services as a receipt (or a sale, if we issued it) of the services kind, a \
+power of attorney in the document or directory this configuration has for it, filled with its number, date, validity \
+period and holder, and posted when the documents of that kind already there are. Waybills (ТТН), delivery notes and \
+specifications that only back up an invoice are not separate postings: find out with the search of \
+Справочник.ИдентификаторыОбъектовМетаданных whether this configuration has a document for them, and enter it if it \
+does, and if not, say so once. Never leave a document out without saying why. If the dates, a validity period or \
+anything else is missing from the file, ask for it at the end instead of making it up. Finish with one table: each \
+document, what was entered (or why not), so nothing is lost. Do not stop to ask whether to continue: do all of it.
+- Removing what is already marked for deletion (the work of «Удаление помеченных объектов»): propose_delete_marked. \
+It lists the marked objects by type on a card, and only the accountant's confirmation removes them, for good: it \
+cannot be undone, and 1C keeps any object that is still referenced. 1C must not be open on this base elsewhere (the \
+card says if it is). Use it only when the accountant asks to delete or clean out the marked objects; "types" limits it \
+to some. A "delete" in propose_change(s) only sets the mark and never removes anything.
 - A reconciliation act is Документ.АктСверкиВзаиморасчетов: check its fields and tabular sections with \
 describe_objects, fill the header (organization, counterparty, contract, period) and its tabular section with \
 every settlement document of the period and its amounts from your queries, and propose it. If an unposted act for \
@@ -226,13 +245,19 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "Prepare issued invoices for many sales on ONE card (sales by ref, or number and date as 1C shows them; a " +
     "title for the card in the accountant's language). 1C fills each from its sale; sales that already have an " +
     "invoice are left out. The accountant confirms once; the result lists what was created, by number.",
+  propose_delete_marked:
+    "Remove for good the objects already marked for deletion, as 1C's «Удаление помеченных объектов» does. Shown " +
+    "as a card with the counts by type; removed only if the accountant confirms, and it cannot be undone; 1C keeps " +
+    "objects that are still referenced. Optional types (full names, e.g. Документ.СписаниеСРасчетногоСчета) limits it. " +
+    "Use it only when asked to delete or clean out the marked objects.",
   propose_invoices_received:
     "Prepare many suppliers' invoices on ONE card, each like propose_invoice_received, with a title for the " +
     "card. The accountant confirms once; the result lists what was created, by number.",
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
-    "rate in percent; VAT amount; total = amount + VAT). The accountant confirms or cancels it in the app.",
+    'rate in percent; VAT amount; total = amount + VAT; kind "service" for a service line such as an act of work ' +
+    "done, goods by default). The accountant confirms or cancels it in the app.",
 };
 
 function inputSchema(schema: z.ZodType): Anthropic.Tool.InputSchema {

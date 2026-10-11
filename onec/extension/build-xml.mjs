@@ -136,9 +136,9 @@ ${contained}		</InternalInfo>
 			</UsePurposes>
 			<ScriptVariant>Russian</ScriptVariant>
 			<DefaultRoles/>
-			<Vendor>1C Platform</Vendor>
+			<Vendor>AI Accounting Assistant</Vendor>
 			<Version>${version}</Version>
-			<BriefInformation>${text("Platform API: обмен данными с приложением 1C Platform", "\t\t\t")}</BriefInformation>
+			<BriefInformation>${text("Platform API: обмен данными с приложением AI Accounting Assistant", "\t\t\t")}</BriefInformation>
 			<DetailedInformation/>
 			<Copyright/>
 			<VendorInformationAddress/>

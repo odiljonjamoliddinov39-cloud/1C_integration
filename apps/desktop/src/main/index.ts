@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,6 +11,7 @@ import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
 import { AssistantService } from "./assistant.js";
 import type { ShrinkImage } from "./attachments.js";
+import { TraceLog } from "./ai/backfill.js";
 import { ChatStore } from "./chats.js";
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
@@ -18,6 +20,7 @@ import { machineIdHash, newFallbackId } from "./machine-id.js";
 import { SessionService } from "./session.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
 import { type Updater, UpdateService, loadElectronUpdater } from "./updater.js";
+import { userDataFolder } from "./user-data.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +53,7 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    title: "1C Platform",
+    title: "AI Accounting Assistant",
     webPreferences: {
       preload: join(here, "../preload/index.cjs"), // sandboxed preloads must be CommonJS
       contextIsolation: true,
@@ -102,6 +105,9 @@ function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
 }
 
+// An installed app keeps its data across the rename.
+app.setPath("userData", userDataFolder(app.getPath("userData"), app.getPath("appData"), existsSync));
+
 void app.whenReady().then(async () => {
   const store = new LocalStore(join(app.getPath("userData"), "platform.json"), secrets);
   const connector = new WorkerConnector(onecWorkerPath, demo1C);
@@ -119,7 +125,10 @@ void app.whenReady().then(async () => {
     connector,
     emit: (event) => broadcast(CHANNELS.assistantEvent, event),
     shrinkImage,
+    traceLog: new TraceLog(join(app.getPath("userData"), "traced-chats.json")),
   });
+  // The questions already in the saved chats teach the engine too (a minute after start, in the background).
+  setTimeout(() => void assistant.backfillTraces().catch(() => undefined), 60_000).unref();
   const updates = new UpdateService({
     updater: await updater(),
     emit: (state) => broadcast(CHANNELS.updateChanged, state),
@@ -177,6 +186,9 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
   ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
+  ipcMain.handle(CHANNELS.installExtension, (_e, input: unknown) => handlers.installExtensionInto(input));
+  ipcMain.handle(CHANNELS.didoxKeys, () => handlers.didoxKeys());
+  ipcMain.handle(CHANNELS.didoxTest, (_e, input: unknown) => handlers.didoxTest(input));
   ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
     handlers.assistantEnable(id, enabled),
   );
