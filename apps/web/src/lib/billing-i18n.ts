@@ -64,6 +64,10 @@ const uz = {
         "Qanday toʻlayman?",
         "Payme orqali karta bilan yoki yuridik shaxslar uchun bank oʻtkazmasi bilan (hisob-faktura PDF).",
       ],
+      [
+        "AI savoli nima hisoblanadi?",
+        "Oddiy savol — 1 ta. Katta ish (masalan, koʻp hujjatni import qilish) koʻproq AI resursi sarflaydi va bir nechta savol hisoblanadi: har qoʻshimcha ~0,5 USD uchun yana 1 ta. Shablon va saqlangan javoblar hisoblanmaydi.",
+      ],
       ["Narx oʻzgarsa-chi?", "Joriy davr eski narxda qoladi, yangi narx keyingi davrdan boshlanadi."],
     ] as [string, string][],
   },
@@ -193,6 +197,10 @@ const ru: typeof uz = {
         "3 дня полный доступ сохраняется, приходят напоминания, затем аккаунт переходит на Бесплатный. Компании сверх лимита остаются в режиме чтения.",
       ],
       ["Как оплатить?", "Картой через Payme или банковским переводом для юридических лиц (счёт в PDF)."],
+      [
+        "Что считается вопросом к ИИ?",
+        "Обычный вопрос — это 1. Большая работа (например, импорт многих документов) тратит больше ресурсов ИИ и считается как несколько вопросов: ещё 1 за каждые дополнительные ~0,5 USD. Ответы по шаблонам и сохранённые ответы не считаются.",
+      ],
       ["Что если цена изменится?", "Текущий период остаётся по старой цене, новая действует со следующего."],
     ],
   },

@@ -20,7 +20,7 @@ import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createDb, runMigrations } from "./db/client.js";
-import { aiBudgets, aiTraces, aiUsage, plans, subscriptions } from "./db/schema.js";
+import { aiBudgets, aiPolicies, aiTraces, aiUsage, plans, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
 
 // Needs PostgreSQL (CI starts one). Each run gets a fresh database.
@@ -378,21 +378,20 @@ describe.skipIf(!available)("control system API", () => {
     }
   });
 
-  it("stops the assistant at the daily cap and a suspended subscription", async () => {
+  it("stops the assistant at a plan's daily USD limit per user, and at a suspended subscription", async () => {
     const reg = (await post("/v1/auth/register", account)).json();
     const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
     const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
     const ids = { accountId: reg.me.account.id, userId: reg.me.user.id };
 
-    // Cache reads count a tenth: five caps' worth of them is half a day.
-    await db.db
-      .insert(aiUsage)
-      .values({ ...ids, ...usage, inputTokens: 0, cacheReadTokens: 5 * config.AI_DAILY_TOKENS });
+    // No hidden token cap: a day of heavy reading does not stop an account that has no USD limit.
+    await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: 50_000_000, costUsd: 40 });
     expect((await post("/v1/ai/chat", chat, reg.accessToken)).statusCode).toBe(200);
-    await db.sql`TRUNCATE ai_usage`;
 
-    await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
-    expect((await post("/v1/ai/chat", chat, reg.accessToken)).json().code).toBe("AI_DAILY_LIMIT");
+    await db.db.insert(aiPolicies).values({ planId: null, policy: { dailyLimitUsdPerUser: 5 } });
+    const stopped = await post("/v1/ai/chat", chat, reg.accessToken);
+    expect(stopped.statusCode).toBe(429);
+    expect(stopped.json().code).toBe("AI_USER_DAILY_LIMIT");
 
     await db.sql`TRUNCATE ai_usage`;
     await db.db.update(subscriptions).set({ status: "suspended" });
@@ -582,38 +581,16 @@ describe.skipIf(!available)("control system API", () => {
       expect((await post("/v1/admin/login", boss)).statusCode).toBe(200);
     });
 
-    it("recharges AI tokens: a customer stopped by the daily cap goes on at once", async () => {
+    it("records an AI token recharge with its reason in the audit log", async () => {
       const customer = (await post("/v1/auth/register", account)).json();
-      const ids = { accountId: customer.me.account.id, userId: customer.me.user.id };
-      const usage = { model: "m", outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
-      const chat = { company: "X", messages: [{ role: "user", content: "?" }] };
-      const ask = async () => {
-        const res = await post("/v1/ai/chat", chat, customer.accessToken);
-        return res.statusCode === 200 ? "answered" : (res.json().code as string);
-      };
       const token = await adminLogin();
       const id = customer.me.account.id;
-
-      await db.db.insert(aiUsage).values({ ...ids, ...usage, inputTokens: config.AI_DAILY_TOKENS });
-      expect(await ask()).toBe("AI_DAILY_LIMIT");
-      const before = (await call("GET", `/v1/admin/accounts/${id}`, token)).json();
-      expect(before).toMatchObject({
-        aiUsedToday: config.AI_DAILY_TOKENS,
-        aiDailyLimit: config.AI_DAILY_TOKENS,
-      });
-
       const res = await call("POST", `/v1/admin/accounts/${id}/recharge`, token, {
         tokens: 500_000,
         reason: "paid 50 000 so'm",
       });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toMatchObject({
-        aiGranted: 500_000,
-        aiQuota: before.aiQuota + 500_000,
-        aiDailyLimit: config.AI_DAILY_TOKENS + 500_000,
-      });
-      expect(await ask()).toBe("answered");
-
+      expect(res.json()).toMatchObject({ aiGranted: 500_000 });
       expect((await call("POST", `/v1/admin/accounts/${id}/recharge`, token, { tokens: 0 })).statusCode).toBe(
         400,
       );

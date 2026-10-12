@@ -52,6 +52,17 @@ Counters (`usage_counters`) are keyed by where the month started: Free counts ca
 plan counts from its period start (a yearly plan still gets its monthly limits each month), a trial
 counts the whole trial. "Reset" is therefore automatic.
 
+## What counts as an AI question
+
+A question is 1. A heavy job (a big import that reads many documents) counts as more: one more for each
+further `AI_QUESTION_UNIT_USD` (default 0.50) of real AI cost, charged as the cost builds up
+(`ai_question_charges`). The answer in progress is never cut; if it takes the account over its limit,
+the next question is refused. Set `AI_QUESTION_UNIT_USD=0` to count every question as 1.
+
+There is no separate daily token cap any more. The limits are the plan's questions per month and a
+dollar fence per plan (monthly per account, daily per user), seeded at about 40% of each plan's price
+and edited in Admin → AI limits.
+
 ## Rules from the design (section 10)
 
 A repeated webhook (same `provider_txn_id`) returns the stored result and applies nothing. A payment

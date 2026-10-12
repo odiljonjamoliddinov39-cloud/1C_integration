@@ -42,6 +42,11 @@ const Env = z.object({
     .transform((v) => v?.trim() || undefined),
   /** The scheduled billing jobs (reminders, grace, move to Free): "off" in tests. */
   BILLING_JOBS: z.enum(["on", "off"]).default("on"),
+  /**
+   * A heavy job counts as more than one AI question: one more for each further this many dollars of
+   * real AI cost (an ordinary question, under it, is 1). 0: every question counts as 1.
+   */
+  AI_QUESTION_UNIT_USD: z.coerce.number().min(0).default(0.5),
   /** How long a computed set of limits is reused (0: never; tests use 0). */
   ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */

@@ -588,3 +588,23 @@ export const templateGroups = pgTable(
   },
   (t) => [uniqueIndex("template_groups_key").on(t.accountId, t.company, t.groupKey)],
 );
+
+/**
+ * What one question has cost so far and how many "questions" it has been charged: an ordinary one is
+ * 1, a heavy job (a big import) one more for each further AI_QUESTION_UNIT_USD of real cost. Steps of
+ * the same question find their row by question_key.
+ */
+export const aiQuestionCharges = pgTable(
+  "ai_question_charges",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    questionKey: text("question_key").notNull(),
+    units: integer("units").notNull().default(1),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }).notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_question_charges_key_idx").on(t.accountId, t.questionKey, t.createdAt)],
+);

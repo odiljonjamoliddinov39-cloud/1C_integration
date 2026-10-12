@@ -3,6 +3,8 @@
  * tools, calls Claude with our key, streams the answer back and records the tokens per account.
  * The API key never reaches the desktop app.
  */
+import { createHash } from "node:crypto";
+
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessageParam, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import {
@@ -24,10 +26,9 @@ import { loopGuard, loopNote } from "./loop.js";
 import { type AiModel, usageOf } from "./model.js";
 import { policyFor } from "./policy.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock } from "./prompt.js";
-import { aiLimits } from "./quota.js";
 import { routeModel, withoutThinking } from "./router.js";
 import { type ModelChoice, aiChoiceFor } from "./settings.js";
-import { isFirstStep, logUsage, questionOf } from "./usage.js";
+import { isFirstStep, logUsage, questionOf, questionStart } from "./usage.js";
 
 /** A chat larger than this has its older 1C results cleared, keeping the latest few. */
 const CLEAR_FROM_TOKENS = 40_000;
@@ -50,6 +51,15 @@ const COMPACTION_BETA = "compact-2026-01-12";
 
 /** What the API says when a chat no longer fits the model. */
 const TOO_LONG = /prompt is too long|too many (input )?tokens|context (window|length)/i;
+
+/** The same for every step of one question: who, which company, and the question itself. */
+function questionKey(userId: string, input: AiChatInput): string {
+  const start = questionStart(input.messages);
+  return createHash("sha256")
+    .update(`${userId}|${input.company}|${start}|${questionOf(input.messages) ?? ""}`)
+    .digest("hex")
+    .slice(0, 32);
+}
 
 export class AiProxy {
   /** Each is off after the API refused it once, until the server restarts. */
@@ -81,24 +91,11 @@ export class AiProxy {
     const policy = await policyFor(this.db, effectivePlan.id);
     const admission = await checkBudget(this.db, policy, { accountId, userId });
     if (this.config.PLAN_LIMITS === "off") return admission;
-    const limits = await aiLimits(
-      this.db,
-      accountId,
-      { startsAt: subscription.startsAt, planQuota: 0 },
-      this.config.AI_DAILY_TOKENS,
-    );
-    if (limits.usedToday >= limits.dailyLimit) {
-      throw new HttpError(
-        429,
-        "AI_DAILY_LIMIT",
-        "Today's assistant limit is used up; it resets at midnight UTC",
-      );
-    }
     // The plan's allowance is in questions: counted when a new one reaches the model (the first
     // step of an answer, not an audit), so the answer in progress is never cut.
     const audit = input?.tools?.includes("report_findings") ?? false;
     if (input && !audit && isFirstStep(input.messages)) {
-      const warning = await this.billingService.takeAiQuestion(accountId);
+      const warning = await this.billingService.takeAiQuestion(accountId, questionKey(userId, input));
       if (warning) admission.warnings.push(warning);
     }
     return admission;
@@ -224,6 +221,12 @@ export class AiProxy {
       },
       usageOf(message),
     ).catch((error: unknown) => this.log.error(error, "AI usage was not recorded"));
+    // A heavy job is worth more than one question: charge what it has cost so far.
+    if (!audit) {
+      await this.billingService
+        .chargeAiCost(who.accountId, questionKey(who.userId, input), usageOf(message).costUsd)
+        .catch((error: unknown) => this.log.error(error, "AI question cost was not charged"));
+    }
   }
 
   /**
