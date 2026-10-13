@@ -63,7 +63,8 @@ describe("chat store", () => {
     expect(store.load(company, chats[0]!.id)).toBeNull();
     expect(store.load(company, chats[1]!.id)).toBeNull();
     expect(store.load(company, chats.at(-1)!.id)).not.toBeNull();
-  });
+    // Many small encrypted files: on a slow Windows runner the default 5 s is too tight.
+  }, 30_000);
 
   it("refuses ids that are not UUIDs, so no id points outside its folder", () => {
     const store = new ChatStore(mkdtempSync(join(tmpdir(), "chats-")), secrets);
