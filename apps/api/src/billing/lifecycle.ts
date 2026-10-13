@@ -7,7 +7,7 @@ import { and, eq, lt, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
-import { invoices, plans, subscriptions, usageCounters } from "../db/schema.js";
+import { aiQuestionCharges, invoices, plans, subscriptions, usageCounters } from "../db/schema.js";
 import type { Billing } from "./entitlements.js";
 import { type Invoicing, invoiceNumber } from "./invoicing.js";
 import { DAY_MS, FREE_END, addDays, daysBetween } from "./period.js";
@@ -133,6 +133,7 @@ export class Lifecycle {
     }
     // Counters of closed months are only history.
     await this.db.delete(usageCounters).where(lt(usageCounters.periodStart, addDays(now, -400)));
+    await this.db.delete(aiQuestionCharges).where(lt(aiQuestionCharges.createdAt, addDays(now, -7)));
     return { reminders, renewalInvoices };
   }
 

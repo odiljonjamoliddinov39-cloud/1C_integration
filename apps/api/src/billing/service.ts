@@ -16,7 +16,7 @@ import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
-import { addons, companies, plans, usageCounters, users } from "../db/schema.js";
+import { addons, aiQuestionCharges, companies, plans, usageCounters, users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Billing } from "./entitlements.js";
 
@@ -297,7 +297,10 @@ export class BillingService {
    * Refused at 100%; the answer that is already being written is never cut, because only the first
    * step of a question comes through here. Returns the warning to show at 80%, once per period.
    */
-  async takeAiQuestion(accountId: string): Promise<{ code: string; message: string } | null> {
+  async takeAiQuestion(
+    accountId: string,
+    questionKey?: string,
+  ): Promise<{ code: string; message: string } | null> {
     const { entitlements, counterStart } = await this.billing.get(accountId);
     const limit = entitlements.aiQuestionsPerMonth;
     const value = await this.bump(accountId, "ai_questions", 1, this.enforced() ? limit : null);
@@ -310,6 +313,8 @@ export class BillingService {
           : `You used all ${limit} free AI questions this month. Upgrade to continue.`,
       );
     }
+    // The question's cost is followed from here, so a heavy job is charged more than one (chargeAiCost).
+    if (questionKey) await this.db.insert(aiQuestionCharges).values({ accountId, questionKey });
     if (!this.enforced() || limit <= 0 || value < Math.ceil(limit * 0.8)) return null;
     const warned = await this.db
       .update(usageCounters)
@@ -327,6 +332,38 @@ export class BillingService {
       code: "AI_QUESTIONS_WARNING",
       message: `You have used ${value} of ${limit} AI questions this period.`,
     };
+  }
+
+  /**
+   * A step of a question has cost this much. A question is worth 1, and one more for every further
+   * AI_QUESTION_UNIT_USD it costs, so a big import counts as several. Charged as the cost builds up;
+   * the answer in progress is never cut: if this takes the account over its limit, the next question
+   * is the one that is refused.
+   */
+  async chargeAiCost(accountId: string, questionKey: string, costUsd: number): Promise<void> {
+    const unit = this.config.AI_QUESTION_UNIT_USD;
+    if (!this.enforced() || unit <= 0 || costUsd <= 0) return;
+    const since = new Date(Date.now() - 12 * 3_600_000);
+    const [row] = await this.db
+      .select()
+      .from(aiQuestionCharges)
+      .where(
+        and(
+          eq(aiQuestionCharges.accountId, accountId),
+          eq(aiQuestionCharges.questionKey, questionKey),
+          sql`${aiQuestionCharges.createdAt} > ${since.toISOString()}::timestamptz`,
+        ),
+      )
+      .orderBy(desc(aiQuestionCharges.createdAt))
+      .limit(1);
+    if (!row) return;
+    const cost = row.costUsd + costUsd;
+    const units = Math.max(1, Math.ceil(cost / unit - 1e-9));
+    await this.db
+      .update(aiQuestionCharges)
+      .set({ costUsd: cost, units: Math.max(units, row.units) })
+      .where(eq(aiQuestionCharges.id, row.id));
+    if (units > row.units) await this.bump(accountId, "ai_questions", units - row.units, null);
   }
 
   /** Throws when the plan has no Excel export (the desktop also greys the button out). */

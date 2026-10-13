@@ -52,6 +52,17 @@ Counters (`usage_counters`) are keyed by where the month started: Free counts ca
 plan counts from its period start (a yearly plan still gets its monthly limits each month), a trial
 counts the whole trial. "Reset" is therefore automatic.
 
+## What counts as an AI question
+
+A question is 1. A heavy job (a big import that reads many documents) counts as more: one more for each
+further `AI_QUESTION_UNIT_USD` (default 0.50) of real AI cost, charged as the cost builds up
+(`ai_question_charges`). The answer in progress is never cut; if it takes the account over its limit,
+the next question is refused. Set `AI_QUESTION_UNIT_USD=0` to count every question as 1.
+
+There is no separate daily token cap any more. The limits are the plan's questions per month and a
+dollar fence per plan (monthly per account, daily per user), seeded at about 40% of each plan's price
+and edited in Admin → AI limits.
+
 ## Rules from the design (section 10)
 
 A repeated webhook (same `provider_txn_id`) returns the stored result and applies nothing. A payment
@@ -64,12 +75,12 @@ is refused per account and per INN of the first company. A price change applies 
 ## Switching it on
 
 The tables and the four plans arrive with the deploy, and existing accounts are moved: one still inside
-its period keeps Business until that date, one that ended goes to Free (no trial left). **Nothing is
-enforced until `PLAN_LIMITS=on`** (the deploy default stays `off`, so the server can go out before the
-desktop app that shows the limit dialogs). Turn it on once that app is released:
+its period keeps Business until that date, one that ended goes to Free (no trial left). **Limits are enforced
+when `PLAN_LIMITS=on`**, which is now the deploy default (set `PLAN_LIMITS=off` in the server's `.env`
+to stop enforcing; use is still counted):
 
-1. Set `PLAN_LIMITS=on` and `SITE_URL=https://<the site>` in the server's environment (the Upgrade
-   button opens `SITE_URL/cabinet`).
+1. `SITE_URL` (default `https://1c-integration.vercel.app` in `deploy/docker-compose.yml`; override it in
+   the server's `.env`) is where the Upgrade button leads: `SITE_URL/cabinet`.
 2. For card payments set `PAYME_MERCHANT_ID`, `PAYME_KEY` and `PAYME_TEST=true` (sandbox). Without them
    only bank transfer is offered; set `BANK_REQUISITES` (lines separated by `|`) for the printed invoice.
 

@@ -59,6 +59,7 @@ import type {
   ChatView,
   Proposal,
   ProposalOutcome,
+  ElapsedParts,
   Result,
   UiLanguage,
 } from "../shared/ipc.js";
@@ -159,6 +160,14 @@ export interface AssistantDeps {
 const READ_ONLY_MESSAGE =
   "This company is over the plan's limit: its data is visible, but imports and the assistant are off. Upgrade the plan or choose which companies stay active.";
 
+/** Where a task's time went (see ElapsedParts). */
+interface TaskTiming {
+  modelMs: number;
+  onecMs: number;
+  steps: number;
+  tools: { tool: string; ms: number }[];
+}
+
 /** What one question runs under: the limits in force, and what kind of question it is. */
 interface Run {
   policy: AiPolicy;
@@ -185,6 +194,8 @@ export class AssistantService {
   private readonly checked = new Map<string, Set<string>>();
   /** Per company: time the current task's cards waited for the user, left out of its work time. */
   private readonly cardWaitMs = new Map<string, number>();
+  /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
+  private readonly timing = new Map<string, TaskTiming>();
 
   private readonly engine: CostEngine;
 
@@ -428,6 +439,7 @@ export class AssistantService {
   ): Promise<Result<null>> {
     const started = Date.now();
     this.cardWaitMs.set(companyId, 0);
+    this.timing.set(companyId, { modelMs: 0, onecMs: 0, steps: 0, tools: [] });
     try {
       return await work();
     } catch (e) {
@@ -436,7 +448,22 @@ export class AssistantService {
     } finally {
       const waited = this.cardWaitMs.get(companyId) ?? 0;
       this.cardWaitMs.delete(companyId);
-      emit({ type: "elapsed", ms: Math.max(0, Date.now() - started - waited) });
+      const timing = this.timing.get(companyId);
+      this.timing.delete(companyId);
+      const parts: ElapsedParts | undefined =
+        timing && timing.steps > 0
+          ? {
+              modelMs: timing.modelMs,
+              onecMs: timing.onecMs,
+              steps: timing.steps,
+              slowest: timing.tools.sort((a, b) => b.ms - a.ms).slice(0, 3),
+            }
+          : undefined;
+      emit({
+        type: "elapsed",
+        ms: Math.max(0, Date.now() - started - waited),
+        ...(parts ? { parts } : {}),
+      });
       this.running.delete(companyId);
       this.save(chat);
     }
@@ -453,6 +480,7 @@ export class AssistantService {
     const history = chat.messages;
     const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
     for (let turn = 0; turn < maxTurns; turn++) {
+      const stepStarted = Date.now();
       const answer = await this.turnWithRetries(
         {
           company: companyName,
@@ -464,6 +492,11 @@ export class AssistantService {
         emit,
         signal,
       );
+      const timing = this.timing.get(chat.companyId);
+      if (timing) {
+        timing.modelMs += Date.now() - stepStarted;
+        timing.steps += 1;
+      }
       if (answer.content.length > 0) history.push({ role: "assistant", content: answer.content });
 
       const toolUses = answer.content.flatMap((block) => {
@@ -503,9 +536,21 @@ export class AssistantService {
       // Every tool_use gets a tool_result, even when stopped, so the conversation stays valid.
       const results: AiContentBlock[] = [];
       for (const use of toolUses) {
+        const toolStarted = Date.now();
+        const waitedBefore = this.cardWaitMs.get(chat.companyId) ?? 0;
         const result = signal.aborted
           ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
           : await this.runTool(chat, use, emit, signal, run);
+        // Time in 1C: what the tool took, without the card waiting for the user.
+        const toolMs = Math.max(
+          0,
+          Date.now() - toolStarted - ((this.cardWaitMs.get(chat.companyId) ?? 0) - waitedBefore),
+        );
+        const timing = this.timing.get(chat.companyId);
+        if (timing) {
+          timing.onecMs += toolMs;
+          timing.tools.push({ tool: use.name, ms: toolMs });
+        }
         // A card the user declined: the rest of the question runs on the default model.
         if (isDeclined(result)) run.escalate = true;
         if (!signal.aborted) {

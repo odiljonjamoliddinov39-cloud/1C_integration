@@ -60,6 +60,7 @@ describe.skipIf(!available)("tariffs", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let db: ReturnType<typeof createDb>;
   let lifecycle: Lifecycle;
+  let config: ReturnType<typeof loadConfig>;
 
   beforeAll(async () => {
     await admin.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
@@ -67,7 +68,7 @@ describe.skipIf(!available)("tariffs", () => {
     const url = ADMIN_URL.replace(/\/[^/]*$/, `/${TEST_DB}`);
     db = createDb(url);
     await runMigrations(db.db);
-    const config = loadConfig({
+    config = loadConfig({
       DATABASE_URL: url,
       JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
@@ -909,5 +910,53 @@ describe.skipIf(!available)("tariffs", () => {
         .statusCode,
     ).toBe(403);
     await db.sql`DELETE FROM admins WHERE email = 'support@platform.uz'`;
+  });
+
+  it("counts a heavy job as several AI questions, one more for each further 0.50 USD it costs", async () => {
+    // Each model step of this one costs about $0.40 (200 000 input tokens at $2 per million).
+    const heavyModel = {
+      async turn(_p: BetaMessageStreamParams, { onText }: { onText: (text: string) => void }) {
+        onText("ok");
+        return {
+          model: "claude-sonnet-5-5",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "ok" }],
+          usage: {
+            input_tokens: 200_000,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        } as unknown as BetaMessage;
+      },
+    };
+    const heavy = await buildApp(db.db, config, { aiModel: heavyModel });
+    try {
+      const { token } = await register();
+      const step = (messages: unknown[]) =>
+        heavy.inject({
+          method: "POST",
+          url: "/v1/ai/chat",
+          payload: { company: "X", messages } as object,
+          headers: { authorization: `Bearer ${token}` },
+        });
+      const used = async () => (await entitlements(token)).usage.aiQuestions as number;
+      const asked = [{ role: "user", content: "import the Didox contracts" }];
+      const reading = (n: number) => [
+        { role: "assistant", content: [{ type: "tool_use", id: `t${n}`, name: "x", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: `t${n}`, content: "rows" }] },
+      ];
+      expect((await step(asked)).statusCode).toBe(200);
+      expect(await used()).toBe(1); // $0.40: still one question
+      expect((await step([...asked, ...reading(1)])).statusCode).toBe(200);
+      expect(await used()).toBe(2); // $0.80
+      expect((await step([...asked, ...reading(1), ...reading(2)])).statusCode).toBe(200);
+      expect(await used()).toBe(3); // $1.20
+      // A different question starts again at one.
+      expect((await step([{ role: "user", content: "another question" }])).statusCode).toBe(200);
+      expect(await used()).toBe(4);
+    } finally {
+      await heavy.close();
+    }
   });
 });
