@@ -32,6 +32,7 @@ import type {
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
+import { AI_ALERT_KEY } from "../ai/alert.js";
 import type { Db } from "../db/client.js";
 import {
   accounts,
@@ -462,7 +463,15 @@ export class AdminService {
         costUsdToday: usage.find((d) => d.date === today)?.costUsd ?? 0,
       },
       usage,
+      aiAlert: await this.aiAlert(),
     };
+  }
+
+  /** The AI provider's refusal that is still unresolved (its credit ran out), if any. */
+  private async aiAlert(): Promise<Overview["aiAlert"]> {
+    const row = await this.db.query.appSettings.findFirst({ where: eq(appSettings.key, AI_ALERT_KEY) });
+    const v = row?.value as { code?: string; message?: string; at?: string } | undefined;
+    return v?.code && v.message && v.at ? { code: v.code, message: v.message, at: v.at } : null;
   }
 
   /** AI use per account over the last `days` days, most expensive first. */

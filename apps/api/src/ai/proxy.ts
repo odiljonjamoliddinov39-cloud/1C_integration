@@ -16,7 +16,10 @@ import {
 } from "@platform/shared";
 
 import type { Config } from "../config.js";
+import { eq } from "drizzle-orm";
+
 import type { Db } from "../db/client.js";
+import { appSettings } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { BillingService } from "../billing/service.js";
 import type { Service } from "../service.js";
@@ -28,6 +31,7 @@ import { policyFor } from "./policy.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock } from "./prompt.js";
 import { routeModel, withoutThinking } from "./router.js";
 import { type ModelChoice, aiChoiceFor } from "./settings.js";
+import { AI_ALERT_KEY } from "./alert.js";
 import { isFirstStep, logUsage, questionOf, questionStart } from "./usage.js";
 
 /** A chat larger than this has its older 1C results cleared, keeping the latest few. */
@@ -101,6 +105,31 @@ export class AiProxy {
     return admission;
   }
 
+  /** Set while the provider is refusing us (its credit ran out): shown on the admin overview. */
+  /** undefined: not known since start-up (an alert may be left from before), so the first success clears it. */
+  private alert: string | null | undefined = undefined;
+
+  private async raiseAlert(code: string, message: string): Promise<void> {
+    // The customer sees a plain "unavailable"; this is for us, to be fixed at the provider.
+    this.log.error({ code, message }, "The AI provider refused our requests: fix it at the provider");
+    if (this.alert === code) return;
+    this.alert = code;
+    const value = { code, message: message.slice(0, 500), at: new Date().toISOString() };
+    await this.db
+      .insert(appSettings)
+      .values({ key: AI_ALERT_KEY, value })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } })
+      .catch(() => undefined);
+  }
+
+  private async clearAlert(): Promise<void> {
+    this.alert = null;
+    await this.db
+      .delete(appSettings)
+      .where(eq(appSettings.key, AI_ALERT_KEY))
+      .catch(() => undefined);
+  }
+
   /** One model turn, written to `send` as events. Never throws: failures become an error event. */
   async turn(
     who: { accountId: string; userId: string },
@@ -123,7 +152,7 @@ export class AiProxy {
       model: this.config.AI_MODEL,
       effort: this.config.AI_EFFORT,
     }));
-    const routed = routeModel(choice, policy, input, audit);
+    const routed = routeModel(choice, policy, input, audit, this.config.AI_IMPORT_EFFORT);
     const loop = loopGuard(policy, input.messages, audit);
     const digest = await latestDigest(this.db, who.accountId, input.company).catch(() => null);
     const today = new Date().toISOString().slice(0, 10);
@@ -201,8 +230,10 @@ export class AiProxy {
       }
     } catch (error) {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
+      if (isProviderBilling(error)) await this.raiseAlert("AI_PROVIDER_BILLING", errorText(error));
       return send(toErrorEvent(error));
     }
+    if (this.alert !== null) await this.clearAlert();
     send({
       type: "message",
       content: message.content as unknown as Extract<AiEvent, { type: "message" }>["content"],
@@ -282,7 +313,30 @@ export function assertInlineFiles(input: AiChatInput): void {
   for (const message of input.messages) check(message.content);
 }
 
+/** The provider's own words when the account behind our key has no credit (or a spend limit is hit). */
+const PROVIDER_BILLING = /credit balance|purchase credits|plans\s*&\s*billing|spend limit|billing/i;
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isProviderBilling(error: unknown): boolean {
+  return (
+    (error instanceof Anthropic.BadRequestError ||
+      error instanceof Anthropic.PermissionDeniedError ||
+      error instanceof Anthropic.AuthenticationError) &&
+    PROVIDER_BILLING.test(error.message)
+  );
+}
+
 function toErrorEvent(error: unknown): AiEvent {
+  if (isProviderBilling(error)) {
+    return {
+      type: "error",
+      code: "AI_OUT_OF_SERVICE",
+      message: "The AI service is temporarily unavailable. We are fixing it; try again later.",
+    };
+  }
   if (error instanceof Anthropic.APIUserAbortError) {
     return { type: "error", code: "AI_ABORTED", message: "Stopped" };
   }

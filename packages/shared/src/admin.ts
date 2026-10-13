@@ -195,6 +195,8 @@ export const Overview = z.object({
     costUsdToday: z.number(),
   }),
   usage: z.array(UsageDay),
+  /** The AI provider refused our requests (e.g. its credit ran out); null when all is well. */
+  aiAlert: z.object({ code: z.string(), message: z.string(), at: z.string() }).nullable().default(null),
 });
 export type Overview = z.infer<typeof Overview>;
 

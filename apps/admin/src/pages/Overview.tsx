@@ -14,6 +14,18 @@ export function OverviewPage() {
   if (!o) return null;
   return (
     <div className="space-y-4">
+      {o.aiAlert && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="font-semibold">
+            The AI provider is refusing our requests: customers cannot use the assistant
+          </div>
+          <div className="mt-1">{o.aiAlert.message}</div>
+          <div className="mt-1 text-xs">
+            Since {new Date(o.aiAlert.at).toLocaleString("en-GB")}. Fix it at the provider (credit or
+            billing); this clears itself after the next successful answer.
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Customers" value={o.accounts} note={`${o.newAccounts7d} new in 7 days`} />
         <Stat
