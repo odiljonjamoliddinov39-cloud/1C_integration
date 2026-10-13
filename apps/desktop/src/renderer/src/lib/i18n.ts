@@ -117,6 +117,7 @@ const en = {
     stop: "Stop",
     thinking: "Working…",
     elapsed: "Worked for {{time}}",
+    elapsedParts: "AI {{model}} · 1C {{onec}} · {{steps}} steps",
     route: {
       template: "Answered from the template “{{title}}” · no AI used",
       cache: "Answered from a saved answer ({{age}} ago) · no AI used",
@@ -519,6 +520,7 @@ const ru: Dict = {
     stop: "Остановить",
     thinking: "Работаю…",
     elapsed: "Время работы: {{time}}",
+    elapsedParts: "ИИ {{model}} · 1С {{onec}} · шагов: {{steps}}",
     route: {
       template: "Ответ по шаблону «{{title}}» · без ИИ",
       cache: "Сохранённый ответ ({{age}} назад) · без ИИ",
@@ -920,6 +922,7 @@ const uz: Dict = {
     stop: "Toʻxtatish",
     thinking: "Ishlayapman…",
     elapsed: "Ishlash vaqti: {{time}}",
+    elapsedParts: "AI {{model}} · 1C {{onec}} · qadamlar: {{steps}}",
     route: {
       template: "“{{title}}” shabloni bo‘yicha javob · AI ishlatilmadi",
       cache: "Saqlangan javob ({{age}} oldin) · AI ishlatilmadi",

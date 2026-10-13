@@ -1171,7 +1171,11 @@ describe("assistant", () => {
         { kind: "user", text: "Tekshir" },
         { kind: "note", text: "Sentyabr bank hujjatlarini tekshiryapman" },
         { kind: "assistant", text: "Hammasi mos." },
-        { kind: "elapsed", ms: expect.any(Number) },
+        {
+          kind: "elapsed",
+          ms: expect.any(Number),
+          parts: { modelMs: expect.any(Number), onecMs: expect.any(Number), steps: 1, slowest: [] },
+        },
       ]);
     });
 

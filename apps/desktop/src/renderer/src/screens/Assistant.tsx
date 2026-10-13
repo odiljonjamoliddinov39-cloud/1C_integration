@@ -950,6 +950,12 @@ function EntryView({
       return (
         <div className="text-xs text-muted-foreground">
           {t("assistant.elapsed", { time: durationText(entry.ms, t) })}
+          {entry.parts &&
+            ` · ${t("assistant.elapsedParts", {
+              model: durationText(entry.parts.modelMs, t),
+              onec: durationText(entry.parts.onecMs, t),
+              steps: entry.parts.steps,
+            })}`}
         </div>
       );
     case "notice": {

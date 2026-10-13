@@ -276,6 +276,17 @@ export type ProposalOutcome =
   | { status: "removed"; result: DeleteMarkedResult }
   | { status: "failed"; code: string; message: string };
 
+export interface ElapsedParts {
+  /** Waiting for the AI service, all steps. */
+  modelMs: number;
+  /** Running tools in 1C (queries, checks of cards, writing), cards waiting for the user not counted. */
+  onecMs: number;
+  /** Model steps. */
+  steps: number;
+  /** The slowest tool calls, so a slow one can be named. */
+  slowest: { tool: string; ms: number }[];
+}
+
 /** What the assistant is doing, pushed from the main process while it answers. */
 export type AssistantEvent = { companyId: string } & (
   | { type: "text"; text: string }
@@ -292,7 +303,8 @@ export type AssistantEvent = { companyId: string } & (
   /** The audit's state, whole, each time a check starts, moves on or finishes. */
   | { type: "audit"; audit: AuditView }
   /** After a task (answered, failed or stopped): how long the assistant worked on it. */
-  | { type: "elapsed"; ms: number }
+  /** Where the time went, when the task was a conversation: the model, 1C, and the number of steps. */
+  | { type: "elapsed"; ms: number; parts?: ElapsedParts }
   /** A heads-up that is not a failure, e.g. the AI budget is almost used (AI_BUDGET_WARNING). */
   | { type: "notice"; code: string; message: string }
   /** The next answer did not come from the model: from a query template, or from the answer cache. */

@@ -2,7 +2,14 @@
  * What a chat looks like on screen. The main process builds it from the same events the window
  * gets, so a saved chat reopens exactly as it was shown.
  */
-import type { AssistantEvent, AttachmentInfo, AuditView, Proposal, ProposalOutcome } from "./ipc.js";
+import type {
+  AssistantEvent,
+  AttachmentInfo,
+  AuditView,
+  ElapsedParts,
+  Proposal,
+  ProposalOutcome,
+} from "./ipc.js";
 
 export type ChatEntry =
   | { kind: "user"; text: string; files?: AttachmentInfo[] }
@@ -13,7 +20,7 @@ export type ChatEntry =
   | { kind: "proposal"; id: string; proposal: Proposal; outcome: ProposalOutcome | null }
   | { kind: "error"; code: string; message: string }
   /** How long the assistant worked on the task, not counting cards waiting for the user. */
-  | { kind: "elapsed"; ms: number }
+  | { kind: "elapsed"; ms: number; parts?: ElapsedParts }
   /** An audit of the base: its checks and what they found. */
   | { kind: "audit"; audit: AuditView }
   | { kind: "notice"; code: string; message: string }
@@ -59,7 +66,7 @@ export function applyEvent(entries: ChatEntry[], event: EntryEvent): ChatEntry[]
         e.kind === "proposal" && e.id === event.id ? { ...e, outcome: event.outcome } : e,
       );
     case "elapsed":
-      return [...entries, { kind: "elapsed", ms: event.ms }];
+      return [...entries, { kind: "elapsed", ms: event.ms, ...(event.parts ? { parts: event.parts } : {}) }];
     case "audit": {
       const at = entries.findLastIndex((e) => e.kind === "audit");
       const entry: ChatEntry = { kind: "audit", audit: event.audit };
