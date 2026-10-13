@@ -266,6 +266,11 @@ export const AiChatInput = z.object({
    * model, when the policy has one), else "work". Absent: "work".
    */
   task: z.enum(["lookup", "work"]).optional(),
+  /**
+   * "import": the question came with files to enter into 1C (documents read from archives, photos,
+   * spreadsheets): mostly careful transcription, so the proxy may think less (AI_IMPORT_EFFORT).
+   */
+  kind: z.enum(["import"]).optional(),
   /** The app asks for the default model for this step (e.g. the user rejected the last answer). */
   escalate: z.boolean().optional(),
   messages: z.array(AiMessage).min(1).max(20_000),

@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 
+import Anthropic from "@anthropic-ai/sdk";
+
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
@@ -957,6 +959,68 @@ describe.skipIf(!available)("tariffs", () => {
       expect(await used()).toBe(4);
     } finally {
       await heavy.close();
+    }
+  });
+
+  it("tells customers the AI is unavailable (not the provider's billing text), and alerts the admin until it works again", async () => {
+    const broken = {
+      async turn() {
+        throw new Anthropic.BadRequestError(
+          400,
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: "Your credit balance is too low to access the Anthropic API.",
+            },
+          },
+          "400 Your credit balance is too low to access the Anthropic API.",
+          new Headers(),
+        );
+      },
+    };
+    const down = await buildApp(db.db, config, { aiModel: broken });
+    try {
+      const { token } = await register();
+      const res = await down.inject({
+        method: "POST",
+        url: "/v1/ai/chat",
+        payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const events = res.body
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as { type: string; code?: string; message?: string });
+      const error = events.find((e) => e.type === "error");
+      expect(error?.code).toBe("AI_OUT_OF_SERVICE");
+      expect(error?.message).not.toMatch(/credit|anthropic/i);
+      const adminToken_ = (
+        await call("POST", "/v1/admin/login", undefined, {
+          email: "boss@platform.uz",
+          password: "admin-password-123",
+        })
+      ).json().accessToken as string;
+      const overview = (await call("GET", "/v1/admin/overview", adminToken_)).json();
+      expect(overview.aiAlert).toMatchObject({ code: "AI_PROVIDER_BILLING" });
+      expect(overview.aiAlert.message).toContain("credit balance");
+
+      // The same server, once the provider answers again, clears the alert.
+      const ok = await buildApp(db.db, config, { aiModel: fakeModel });
+      try {
+        const res2 = await ok.inject({
+          method: "POST",
+          url: "/v1/ai/chat",
+          payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(res2.statusCode).toBe(200);
+        expect((await call("GET", "/v1/admin/overview", adminToken_)).json().aiAlert).toBeNull();
+      } finally {
+        await ok.close();
+      }
+    } finally {
+      await down.close();
     }
   });
 });

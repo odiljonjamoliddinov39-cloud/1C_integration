@@ -172,6 +172,8 @@ interface TaskTiming {
 interface Run {
   policy: AiPolicy;
   task: "lookup" | "work";
+  /** The question came with files to enter into 1C: the server may think less (AI_IMPORT_EFFORT). */
+  import: boolean;
   /** Set once the user declined an answer: the rest of the question runs on the default model. */
   escalate: boolean;
   /** What was done for this question: the engine learns from it when it ends. */
@@ -270,6 +272,7 @@ export class AssistantService {
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
+          import: attached.blocks.length > 0,
           escalate: false,
           trace: new TraceBuilder(),
         };
@@ -486,6 +489,7 @@ export class AssistantService {
           company: companyName,
           tools: CHAT_TOOLS,
           task: run.task,
+          ...(run.import ? { kind: "import" as const } : {}),
           ...(run.escalate ? { escalate: true } : {}),
           messages: history,
         },
@@ -657,6 +661,7 @@ export class AssistantService {
       return this.converse(chat, company.name, emit, abort.signal, {
         policy,
         task: "work",
+        import: false,
         escalate: false,
         trace: new TraceBuilder(),
       });

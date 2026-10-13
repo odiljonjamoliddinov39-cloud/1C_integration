@@ -28,11 +28,20 @@ export function toolStepFailed(messages: AiMessage[]): boolean {
   );
 }
 
+const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/** The lower of two efforts. */
+export function lowerEffort(a: ModelChoice["effort"], b: ModelChoice["effort"]): ModelChoice["effort"] {
+  return EFFORT_ORDER.indexOf(a) <= EFFORT_ORDER.indexOf(b) ? a : b;
+}
+
 export function routeModel(
   choice: ModelChoice,
   policy: AiPolicy,
   input: AiChatInput,
   audit: boolean,
+  /** The most effort a question with files to enter may use. */
+  importEffort: ModelChoice["effort"] = "max",
 ): Routed {
   const simple =
     policy.simpleModel !== null &&
@@ -42,7 +51,11 @@ export function routeModel(
     !toolStepFailed(input.messages);
   return simple && policy.simpleModel
     ? { model: policy.simpleModel, effort: null, simple: true }
-    : { model: choice.model, effort: choice.effort, simple: false };
+    : {
+        model: choice.model,
+        effort: input.kind === "import" && !audit ? lowerEffort(choice.effort, importEffort) : choice.effort,
+        simple: false,
+      };
 }
 
 /** The simple model takes no thinking blocks from earlier turns of another model. */
