@@ -493,6 +493,39 @@ describe("assistant", () => {
       expect(base.documents[0]!.externalId).toMatch(/^chat-/);
     });
 
+    it("saves what it creates from attached files unposted, unless the question asks to post", async () => {
+      const create = {
+        action: "create",
+        object: "Документ.ПоступлениеТоваровУслуг",
+        fields: { Номер: "9" },
+        post: true,
+      };
+      const file = { name: "esf.xml", data: new TextEncoder().encode("<a>\n  <b>1</b>\n</a>") };
+      for (const [text, posted] of [
+        ["введи документ из файла", false],
+        ["введи и проведи документ из файла", true],
+      ] as const) {
+        const { assistant, store, company, events, proxy, base } = setup(
+          proposeThenAnswer("propose_change", create),
+        );
+        store.setAiEnabled(company.id, true);
+        const sending = assistant.send({ companyId: company.id, text, files: [file] });
+        await answerCards(events, assistant, true);
+        await sending;
+        const ref = resultOf(proxy.requests).object.ref as string;
+        expect(base.objects.get(ref)?.posted).toBe(posted);
+      }
+      // Without files, the model's own choice stands.
+      const { assistant, store, company, events, proxy, base } = setup(
+        proposeThenAnswer("propose_change", create),
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "введи документ" });
+      await answerCards(events, assistant, true);
+      await sending;
+      expect(base.objects.get(resultOf(proxy.requests).object.ref as string)?.posted).toBe(true);
+    });
+
     it("adds, changes and marks a directory item for deletion, each after its own confirmation", async () => {
       const create = {
         action: "create",

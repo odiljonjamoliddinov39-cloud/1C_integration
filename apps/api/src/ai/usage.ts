@@ -19,6 +19,11 @@ export interface UsageContext {
   toolCalls: number;
   firstStep: boolean;
   question: string | null;
+  /** How long the model call took (see TurnTiming); absent for answers that never reached the model. */
+  durationMs?: number;
+  firstTokenMs?: number | null;
+  attempts?: number;
+  rateLimited?: number;
 }
 
 const QUESTION_CHARS = 200;

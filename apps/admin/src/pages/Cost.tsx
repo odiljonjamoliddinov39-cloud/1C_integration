@@ -155,7 +155,9 @@ export function CostPage() {
             {r.topQuestions.length === 0 ? (
               <Empty>No questions yet.</Empty>
             ) : (
-              <Table head={["Question", "Customer", "Cost", "Steps", "1C reads", "Last asked"]}>
+              <Table
+                head={["Question", "Customer", "Cost", "Steps", "AI time", "429s", "1C reads", "Last asked"]}
+              >
                 {r.topQuestions.map((q, i) => (
                   <tr key={i}>
                     <Td className="max-w-md truncate" title={q.question}>
@@ -164,6 +166,10 @@ export function CostPage() {
                     <Td>{q.accountName}</Td>
                     <Td>{usd(q.costUsd)}</Td>
                     <Td>{q.steps}</Td>
+                    <Td>
+                      {q.seconds === null ? "—" : `${Math.floor(q.seconds / 60)} min ${q.seconds % 60} s`}
+                    </Td>
+                    <Td>{q.rateLimited > 0 ? q.rateLimited : "—"}</Td>
                     <Td>{q.toolCalls}</Td>
                     <Td>{dateTime(q.lastAt)}</Td>
                   </tr>

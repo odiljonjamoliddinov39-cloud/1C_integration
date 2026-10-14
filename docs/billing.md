@@ -68,6 +68,15 @@ instead of `AI_EFFORT` (`high`), since thinking is most of the wait on a long im
 `AI_EFFORT` to turn this off. If the AI provider refuses our requests (e.g. its credit ran out),
 customers see "temporarily unavailable" and the admin overview shows a red alert until an answer works.
 
+Measuring: every model step records how long it took, the wait for its first word, the calls made to
+the API and the 429s among them (`ai_usage`); Admin → AI cost shows the AI time and 429s per expensive
+question. A question the AI could not answer at all is not charged: the question it took is given back.
+
+Imports are saved unposted: what the assistant creates from attached files is written unposted unless
+the question itself asks for posting. XML documents (Didox ЭСФ) are sent without the indentation between
+tags. The files stay in the chat until the question ends, because a job in several cards needs them for
+each card; they are cached, so resending them is cheap.
+
 ## Rules from the design (section 10)
 
 A repeated webhook (same `provider_txn_id`) returns the stored result and applies nothing. A payment

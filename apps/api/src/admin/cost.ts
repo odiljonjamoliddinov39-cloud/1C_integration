@@ -109,9 +109,12 @@ export async function costReport(db: Db, days: number): Promise<CostReport> {
     steps: number;
     tool_calls: number;
     last_at: Date;
+    seconds: number | null;
+    rate_limited: number | null;
   }>(sql`
     select u.question, a.name as account, sum(u.cost_usd)::float8 as cost, count(*)::int as steps,
-      sum(u.tool_calls)::int as tool_calls, max(u.created_at) as last_at
+      sum(u.tool_calls)::int as tool_calls, max(u.created_at) as last_at,
+      (sum(u.duration_ms) / 1000.0)::float8 as seconds, sum(u.rate_limited)::int as rate_limited
     from ai_usage u join accounts a on a.id = u.account_id
     where u.created_at >= ${weekAgo}::timestamptz and u.question is not null and u.route = 'model' and u.feature = 'chat'
     group by u.account_id, a.name, u.question order by cost desc limit 20`);
@@ -167,6 +170,8 @@ export async function costReport(db: Db, days: number): Promise<CostReport> {
       costUsd: round(r.cost),
       steps: r.steps,
       toolCalls: r.tool_calls,
+      seconds: r.seconds === null ? null : Math.round(r.seconds),
+      rateLimited: r.rate_limited ?? 0,
       lastAt: new Date(r.last_at).toISOString(),
     })),
     alert: {

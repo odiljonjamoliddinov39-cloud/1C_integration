@@ -1,6 +1,8 @@
 /**
  * The one place that calls the Claude API. Tests replace it with a fake.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 
@@ -9,6 +11,18 @@ export interface TurnCallbacks {
   onText: (text: string) => void;
   /** The model's short notes between tool calls ("checking September's payments…"), as written. */
   onProgress?: (text: string) => void;
+  /** Called once with the turn's timing when it finished. */
+  onTiming?: (timing: TurnTiming) => void;
+}
+
+/** What one turn cost in time: the whole call, the wait for its first word, and the API's retries. */
+export interface TurnTiming {
+  durationMs: number;
+  firstTokenMs: number | null;
+  /** Calls made to the API for this turn (more than 1: the SDK retried). */
+  attempts: number;
+  /** Of them, answered 429 (rate limited) and waited out. */
+  rateLimited: number;
 }
 
 export interface AiModel {
@@ -16,27 +30,49 @@ export interface AiModel {
   turn(params: BetaMessageStreamParams, callbacks: TurnCallbacks, signal: AbortSignal): Promise<BetaMessage>;
 }
 
+/** Counts what the SDK does behind one turn: its calls and the 429s it waited out. */
+const calls = new AsyncLocalStorage<{ attempts: number; rateLimited: number }>();
+
 export function claudeModel(apiKey: string): AiModel {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({
+    apiKey,
+    fetch: async (input, init) => {
+      const store = calls.getStore();
+      if (store) store.attempts += 1;
+      const response = await fetch(input, init);
+      if (store && response.status === 429) store.rateLimited += 1;
+      return response;
+    },
+  });
   return {
-    async turn(params, { onText, onProgress }, signal) {
-      const stream = client.beta.messages.stream(params, { signal });
-      stream.on("text", onText);
-      // With display "updates", thinking blocks carry only the model's progress notes; a new note
-      // starts on a new line.
-      if (onProgress) {
-        let wrote = false;
-        stream.on("streamEvent", (event) => {
-          if (wrote && event.type === "content_block_start" && event.content_block.type === "thinking") {
-            onProgress("\n");
-          }
+    async turn(params, { onText, onProgress, onTiming }, signal) {
+      const started = Date.now();
+      const counts = { attempts: 0, rateLimited: 0 };
+      let firstTokenMs: number | null = null;
+      return calls.run(counts, async () => {
+        const stream = client.beta.messages.stream(params, { signal });
+        stream.on("text", (delta) => {
+          firstTokenMs ??= Date.now() - started;
+          onText(delta);
         });
-        stream.on("thinking", (delta) => {
-          if (delta) wrote = true;
-          onProgress(delta);
-        });
-      }
-      return stream.finalMessage();
+        // With display "updates", thinking blocks carry only the model's progress notes; a new note
+        // starts on a new line.
+        if (onProgress) {
+          let wrote = false;
+          stream.on("streamEvent", (event) => {
+            if (wrote && event.type === "content_block_start" && event.content_block.type === "thinking") {
+              onProgress("\n");
+            }
+          });
+          stream.on("thinking", (delta) => {
+            if (delta) wrote = true;
+            onProgress(delta);
+          });
+        }
+        const message = await stream.finalMessage();
+        onTiming?.({ durationMs: Date.now() - started, firstTokenMs, ...counts });
+        return message;
+      });
     },
   };
 }
