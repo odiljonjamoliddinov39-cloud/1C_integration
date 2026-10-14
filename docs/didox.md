@@ -152,3 +152,38 @@ Not wired into the app yet: no settings screen, no assistant tool.
 - A sent document is a legal act. Sending stays behind an explicit card, and the first version
   sends only invoices and acts that were issued from 1C.
 - Didox may change the API; the client is one module so the change stays in one place.
+
+## Importing Didox archives with no AI doing the reading
+
+A zip from Didox's "download" (a zip of zips: for each document a JSON, its PDF picture, signatures
+and a readme) is read by the desktop app itself (`apps/desktop/src/main/didox/`), not by the model:
+
+1. **Read** (`document.ts`). The JSON of an invoice, act, contract, free-form document or
+   reconciliation act becomes one record. Money is in whole tiyin (Didox sends numbers, strings and
+   floats with noise like `892.8600000000000136`). Every line is checked: quantity × price against the
+   amount, the amount's VAT, amount + VAT against the total. The supplier's figures are never changed;
+   what does not add up is named. An act that repeats an invoice (same seller and number) is left out
+   and checked against it; the PDFs, `.p7s` signatures and readme are not sent.
+2. **Summary.** The model gets one compact text per attachment (the buyer once, documents by seller,
+   a line per goods line, `OK` or `CHECK` per document), about a tenth of what the pages cost, and is
+   told not to recalculate what is marked OK. Documents that are not entries in 1C (contracts,
+   free-form, reconciliations) are listed, not sent.
+3. **Enter** (`resolve.ts`, tool `propose_didox_invoices`). The model sends only a title. The app asks
+   1C, in four queries for the whole batch, for the counterparties (by INN), the contracts (by number and
+   date) and the items (by exact name, else by IKPU code), then puts every document it is certain of on
+   one card. The Didox document id is the `externalId`, so entering the same document again creates
+   nothing. What it cannot settle comes back to the model as short problems with candidates; the model
+   answers with references and calls the tool again.
+
+**IKPU is a kind of goods, not an item**: every size of a diaper has the same code. A goods line is
+matched only when the supplier's name also fits (same words, and no volume or size the item has and the
+supplier's name lacks); a service is free text under a category code, so one candidate is enough. The
+1C extension (0.7.0) follows the same rule when asked by IKPU: several items with the code is
+`ITEM_AMBIGUOUS` with the candidates, never the first one found. It also finds a contract by number and
+date (`CONTRACT_NOT_FOUND` / `CONTRACT_AMBIGUOUS` list the counterparty's contracts).
+
+The attribute that holds the IKPU code is found in the nomenclature's metadata by its name or its title
+("Код из классификатора" under ЭДО on the form). If a configuration has none, only exact names match.
+
+Documents whose buyer is not this base's company are named and not entered. An act with no invoice is
+for the model to enter as a receipt of services.

@@ -10,6 +10,7 @@ import mammoth from "mammoth";
 import readXlsxFile from "read-excel-file/node";
 
 import type { AssistantFile, AttachmentInfo } from "../shared/ipc.js";
+import { type DidoxDocument, batchOf, describeBatch, parseDidoxDocument } from "./didox/document.js";
 import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
 import { ZipError, readZip } from "./zip.js";
 
@@ -61,6 +62,8 @@ export interface ReadAttachments {
   info: AttachmentInfo[];
   /** Spreadsheets and CSV files, whole, for read_attachment. */
   tables: TableFile[];
+  /** Didox documents read by the program, whole, for propose_didox_invoices. */
+  didox: DidoxDocument[];
 }
 
 export async function readAttachments(
@@ -70,6 +73,7 @@ export async function readAttachments(
   const blocks: AiContentBlock[] = [];
   const info: AttachmentInfo[] = [];
   const tables: TableFile[] = [];
+  const didox: DidoxDocument[] = [];
   const budget: Budget = { sent: 0 };
   for (const file of files) {
     if (extensionOf(file.name) === ".zip") {
@@ -77,6 +81,7 @@ export async function readAttachments(
       blocks.push(...archive.blocks);
       info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
       tables.push(...archive.tables);
+      didox.push(...archive.didox);
       continue;
     }
     const read = await readOne(file, shrink);
@@ -84,14 +89,20 @@ export async function readAttachments(
     blocks.push(read.block);
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
     if (read.table) tables.push(read.table);
+    if (read.didox) didox.push(read.didox);
   }
-  return { blocks, info, tables };
+  return { blocks, info, tables, didox };
 }
 
 async function readOne(
   { name, data }: AssistantFile,
   shrink?: ShrinkImage,
-): Promise<{ block: AiContentBlock; kind: AttachmentInfo["kind"]; table?: TableFile }> {
+): Promise<{
+  block: AiContentBlock;
+  kind: AttachmentInfo["kind"];
+  table?: TableFile;
+  didox?: DidoxDocument;
+}> {
   const extension = extensionOf(name);
   const image = imageType(data);
   if (image) return { block: imageBlock(data, image, shrink, name), kind: "image" };
@@ -125,7 +136,13 @@ async function readOne(
   if (extension === ".xml") {
     return { block: textBlock(name, minifyXml(decodeText(data))), kind: "text" };
   }
-  if ([".txt", ".json", ".md"].includes(extension)) {
+  if (extension === ".json") {
+    const text = decodeText(data);
+    const didox = didoxFromJson(text);
+    if (didox) return { block: didoxBlock(name, [didox]), kind: "text", didox };
+    return { block: textBlock(name, text), kind: "text" };
+  }
+  if ([".txt", ".md"].includes(extension)) {
     return { block: textBlock(name, decodeText(data)), kind: "text" };
   }
   if (extension === ".xls" || extension === ".doc") {
@@ -186,12 +203,42 @@ export function dropPages<T extends { role: string; content: unknown }>(messages
   });
 }
 
+/** A Didox document read from JSON text, or null when the text is some other JSON. */
+function didoxFromJson(text: string): DidoxDocument | null {
+  try {
+    return parseDidoxDocument(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/** What the model reads in place of Didox's JSON and PDF: the documents, checked, in a few lines each. */
+function didoxBlock(title: string, documents: DidoxDocument[]): AiContentBlock {
+  return {
+    type: "document",
+    source: { type: "text", media_type: "text/plain", data: describeBatch(batchOf(documents)) },
+    title: `${title} (Didox documents)`,
+  };
+}
+
+/** The name of a document's files without the extension and Didox's "_original" suffix. */
+const documentStem = (entryName: string) =>
+  entryName
+    .replace(/\.[^./]+$/, "")
+    .replace(/-\d+$/, "")
+    .replace(/_original$/i, "")
+    .toLowerCase();
+
 /** What is collected while an archive, and the archives inside it, are read. */
 interface Walk {
   budget: Budget;
   blocks: AiContentBlock[];
   tables: TableFile[];
   read: string[];
+  /** Didox documents, read by the program: they go as one summary, not as files. */
+  didox: DidoxDocument[];
+  /** Pictures, signatures and notes that come with Didox documents and are not sent. */
+  leftOut: number;
   skipped: string[];
   /** Bytes unpacked so far, files and archives inside archives alike. */
   total: number;
@@ -209,10 +256,20 @@ async function readArchive(
   { name, data }: AssistantFile,
   budget: Budget,
   shrink?: ShrinkImage,
-): Promise<{ blocks: AiContentBlock[]; tables: TableFile[] }> {
-  const walk: Walk = { budget, blocks: [], tables: [], read: [], skipped: [], total: 0, supported: 0 };
+): Promise<{ blocks: AiContentBlock[]; tables: TableFile[]; didox: DidoxDocument[] }> {
+  const walk: Walk = {
+    budget,
+    blocks: [],
+    tables: [],
+    read: [],
+    didox: [],
+    leftOut: 0,
+    skipped: [],
+    total: 0,
+    supported: 0,
+  };
   await walkArchive(name, "", data, 1, walk, shrink);
-  if (walk.read.length === 0) {
+  if (walk.read.length === 0 && walk.didox.length === 0) {
     const inside =
       walk.skipped.length > 0
         ? ` Found: ${walk.skipped.slice(0, 8).join("; ")}${walk.skipped.length > 8 ? "; …" : ""}.`
@@ -225,12 +282,21 @@ async function readArchive(
       : new AttachmentError("FILE_UNREADABLE", `${name}: no file in the archive could be read.${inside}`);
   }
   const note = [
-    `Archive ${name}: ${walk.read.length} file(s) read: ${walk.read.join(", ")}.`,
+    walk.didox.length > 0
+      ? `Archive ${name}: ${walk.didox.length} Didox document(s) read by the program${
+          walk.leftOut > 0 ? ` (${walk.leftOut} PDF copies, signatures and notes with them are not sent)` : ""
+        }${walk.read.length > 0 ? `; ${walk.read.length} other file(s) read: ${walk.read.join(", ")}` : ""}.`
+      : `Archive ${name}: ${walk.read.length} file(s) read: ${walk.read.join(", ")}.`,
     walk.skipped.length > 0 ? `Not read: ${walk.skipped.join("; ")}.` : "",
   ]
     .filter(Boolean)
     .join("\n");
-  return { blocks: [{ type: "text", text: note }, ...walk.blocks], tables: walk.tables };
+  const didox = walk.didox.length > 0 ? [didoxBlock(name, walk.didox)] : [];
+  return {
+    blocks: [{ type: "text", text: note }, ...didox, ...walk.blocks],
+    tables: walk.tables,
+    didox: walk.didox,
+  };
 }
 
 async function walkArchive(
@@ -252,6 +318,21 @@ async function walkArchive(
     );
     return;
   }
+  // Didox's own JSON is read here, with no AI. Its PDF is the picture of the same document, and
+  // its signatures and readme say nothing about the amounts, so none of them is sent.
+  const didoxJson = new Map<string, DidoxDocument>();
+  for (const entry of entries) {
+    if (entry.directory || isNoise(entry.name) || extensionOf(entry.name) !== ".json") continue;
+    if (entry.size > ATTACHMENT_FILE_BYTES) continue;
+    try {
+      const parsed = didoxFromJson(decodeText(entry.read()));
+      if (parsed) didoxJson.set(entry.name, parsed);
+    } catch {
+      // not readable: it is reported below like any other file
+    }
+  }
+  const didoxStems = new Set([...didoxJson.keys()].map(documentStem));
+
   // A document that comes both as XML and as PDF is read from the XML: it has all the data and is
   // small, while the PDF is only its picture.
   const stem = (entryName: string) => entryName.replace(/\.[^./]+$/, "").toLowerCase();
@@ -265,6 +346,21 @@ async function walkArchive(
     if (entry.directory || isNoise(entry.name)) continue;
     const path = `${inside}${entry.name}`;
     const extension = extensionOf(entry.name);
+    const parsed = didoxJson.get(entry.name);
+    if (parsed) {
+      walk.didox.push(parsed);
+      walk.supported += 1;
+      continue;
+    }
+    if (didoxJson.size > 0) {
+      const picture = extension === ".pdf" && didoxStems.has(documentStem(entry.name));
+      const signature = extension === ".p7s" || /(^|\/)readme\.txt$/i.test(entry.name);
+      if (picture || signature) {
+        walk.leftOut += 1;
+        if (picture) walk.supported += 1;
+        continue;
+      }
+    }
     if (extension === ".pdf" && pictureOfXml(entry.name)) {
       walk.supported += 1;
       walk.skipped.push(`${path} (the XML of the same document is read instead)`);

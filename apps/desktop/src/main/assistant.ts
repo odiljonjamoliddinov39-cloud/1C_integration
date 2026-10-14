@@ -33,6 +33,7 @@ import {
   type CreateInvoiceResult,
   type DeleteMarkedPreview,
   type DeleteMarkedResult,
+  type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
   type ObjectState,
@@ -71,6 +72,8 @@ import type { BillingState } from "./billing.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
+import { type DidoxDocument, batchOf, didoxKey } from "./didox/document.js";
+import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
@@ -206,6 +209,8 @@ export class AssistantService {
    * unposted, whatever the model asks, unless the accountant asked for posting in the question.
    */
   private readonly unposted = new Set<string>();
+  /** What was learned from each base about its nomenclature (which attribute holds the IKPU code). */
+  private readonly resolverCache = new Map<string, ResolverCache>();
   /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
   private readonly timing = new Map<string, TaskTiming>();
 
@@ -261,6 +266,7 @@ export class AssistantService {
       { kind: "user", text: text.trim(), ...(attached.info.length > 0 ? { files: attached.info } : {}) },
     ];
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
+    if (attached.didox.length > 0) chat.didox = mergeDidox(chat.didox ?? [], attached.didox);
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
     if (rejectTemplate) void this.engine.reject(rejectTemplate);
@@ -953,6 +959,7 @@ export class AssistantService {
     input: unknown,
     emit: Emit,
     signal: AbortSignal,
+    origins?: DidoxOrigin[],
   ): Promise<ToolResult> {
     const companyId = chat.companyId;
     const session = await this.deps.session.view();
@@ -963,6 +970,9 @@ export class AssistantService {
         message: "The license is read-only: no documents can be created",
       };
     }
+    if (tool === "propose_didox_invoices") {
+      return this.proposeDidox(chat, input as DidoxInvoicesInput, emit, signal);
+    }
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
@@ -972,7 +982,15 @@ export class AssistantService {
       tool === "propose_invoices_received"
     ) {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
-      const prepared = await this.prepareBatch(chat.companyId, chat.id, tool, input, connection, signal);
+      const prepared = await this.prepareBatch(
+        chat.companyId,
+        chat.id,
+        tool,
+        input,
+        connection,
+        signal,
+        origins,
+      );
       if (!("entries" in prepared)) return prepared;
       const { title, entries } = prepared;
       proposal = { kind: "batch", title, items: entries.map((entry) => entry.item) };
@@ -1115,6 +1133,7 @@ export class AssistantService {
     input: unknown,
     connection: ReturnType<LocalStore["connection"]>,
     signal: AbortSignal,
+    origins?: DidoxOrigin[],
   ): Promise<{ title: string; entries: BatchEntry[] } | ToolResult> {
     const stopped = { ok: false, code: "STOPPED", message: "Stopped by the user" } as const;
     const entries: BatchEntry[] = [];
@@ -1218,18 +1237,23 @@ export class AssistantService {
         });
       }
     } else {
-      for (const invoice of (input as InvoicesReceivedInput).invoices) {
+      for (const [index, invoice] of (input as InvoicesReceivedInput).invoices.entries()) {
         const object = "Документ.СчетФактураПолученный";
         const total = invoice.lines.reduce((sum, line) => sum + line.total, 0);
-        // One id per invoice of a confirmed card, as for a single one.
-        const externalId = `chat-${randomUUID()}`;
+        // One id per invoice of a confirmed card, as for a single one. A Didox document keeps its own
+        // id, so that the same document entered again is found by 1C and not made twice.
+        const origin = origins?.[index];
+        const externalId = origin?.externalId ?? `chat-${randomUUID()}`;
         entries.push({
           item: {
             action: "create",
             object,
             preview: draftPreview(object, `${invoice.number} · ${invoice.date}`, [
               ["Номер", invoice.number],
-              ["Контрагент", invoice.counterparty.inn ?? invoice.counterparty.ref ?? null],
+              [
+                "Контрагент",
+                origin?.counterparty ?? invoice.counterparty.inn ?? invoice.counterparty.ref ?? null,
+              ],
               ["Сумма", Math.round(total * 100) / 100],
             ]),
             error: null,
@@ -1239,7 +1263,7 @@ export class AssistantService {
               object,
               await this.deps.connector.tool(connection, "createInvoiceReceived", {
                 ...invoice,
-                source: "manual",
+                source: origin ? "didox" : "manual",
                 externalId,
               }),
             ),
@@ -1257,6 +1281,113 @@ export class AssistantService {
     }
     const title = (input as { title: string }).title;
     return { title, entries };
+  }
+
+  /**
+   * Invoices from the Didox documents read from the attached files. The program looks the
+   * counterparties, contracts and items up in 1C; what is certain goes on one card, and the model
+   * is told only what it must settle, with candidates: it answers with references and calls again.
+   */
+  private async proposeDidox(
+    chat: StoredChat,
+    input: DidoxInvoicesInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const read = chat.didox ?? [];
+    if (read.length === 0) {
+      return {
+        ok: false,
+        code: "NO_DIDOX",
+        message:
+          "No Didox documents were read from the files attached to this chat. Attach the Didox archive (or its JSON files), or enter the invoices with propose_invoices_received.",
+      };
+    }
+    emit({ type: "tool", name: "propose_didox_invoices", detail: describe("propose_didox_invoices", input) });
+    const done = new Set(chat.didoxDone ?? []);
+    const wanted = input.documents ? new Set(input.documents) : null;
+    const all = batchOf(read).postable;
+    const postable = all.filter((d) => d.kind === "invoice");
+    // An act without an invoice is a receipt of services, not a received invoice: the model enters it.
+    const actsOnly = all.filter((d) => d.kind === "act").map((d) => didoxKey(d));
+    const unknown = (input.documents ?? []).filter((key) => !postable.some((d) => didoxKey(d) === key));
+    const docs = postable.filter((d) => (!wanted || wanted.has(didoxKey(d))) && !done.has(didoxKey(d)));
+    if (docs.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: done.size > 0 ? "all_entered" : "nothing_to_enter",
+          alreadyEntered: [...done],
+          ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
+          ...(actsOnly.length > 0 ? { actsWithoutInvoice: actsOnly } : {}),
+        },
+      };
+    }
+
+    const connection = this.deps.store.connection(chat.companyId);
+    const cache = this.resolverCache.get(chat.companyId) ?? {};
+    this.resolverCache.set(chat.companyId, cache);
+    const resolved = await resolveDocuments(
+      docs,
+      {
+        companyInn: this.deps.store.company(chat.companyId).inn,
+        cache,
+        overrides: {
+          items: input.items,
+          counterparties: input.counterparties,
+          contracts: input.contracts,
+        },
+      },
+      {
+        query: (query) => this.deps.connector.tool(connection, "run_query", query),
+        describe: (objects) => this.deps.connector.tool(connection, "describe_objects", { objects }),
+      },
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+
+    const attention = {
+      needsAttention: summarizeProblems(resolved.problems),
+      ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
+      ...(actsOnly.length > 0
+        ? {
+            actsWithoutInvoice: actsOnly,
+            actsNote: "Acts that have no invoice: enter each as a receipt of services.",
+          }
+        : {}),
+    };
+    if (resolved.ready.length === 0) {
+      return {
+        ok: true,
+        data: { status: "needs_attention", ...attention, next: DIDOX_NEXT },
+      };
+    }
+    const result = await this.propose(
+      chat,
+      "propose_invoices_received",
+      { title: input.title, invoices: resolved.ready.map((r) => r.draft) },
+      emit,
+      signal,
+      resolved.ready.map(({ doc }) => ({
+        externalId: doc.id || `${didoxKey(doc)}/${doc.date}`,
+        counterparty: doc.seller.name,
+      })),
+    );
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    if (data?.status === "done" || data?.status === "already_exists") {
+      const entered = new Set(chat.didoxDone ?? []);
+      for (const { n } of data.applied ?? []) {
+        const doc = resolved.ready[n - 1]?.doc;
+        if (doc) entered.add(didoxKey(doc));
+      }
+      chat.didoxDone = [...entered];
+      this.save(chat);
+    }
+    const hasAttention = resolved.problems.length > 0 || unknown.length > 0 || actsOnly.length > 0;
+    return {
+      ok: true,
+      data: { ...(data ?? {}), ...(hasAttention ? { ...attention, next: DIDOX_NEXT } : {}) },
+    };
   }
 
   /** A document created from files is saved unposted (the accountant posts it after checking), not as the model asked. */
@@ -1402,6 +1533,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_invoices_received") {
     const batch = input as { title: string; invoices: unknown[] };
     return `${batch.invoices.length} · ${batch.title}`;
+  }
+  if (name === "propose_didox_invoices") {
+    const batch = input as { title: string; documents?: string[] };
+    return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
   }
   if (name === "propose_delete_marked") {
     const types = (input as { types?: string[] }).types;
@@ -1574,6 +1709,40 @@ export function auditToCsv(view: AuditView): string {
 }
 
 /** One item of a batch card and how to write it; apply is null when it is left out. */
+/** Where a received invoice of a card comes from, when it is a Didox document. */
+interface DidoxOrigin {
+  externalId: string;
+  /** The supplier's name, for the card. */
+  counterparty: string;
+}
+
+const DIDOX_NEXT =
+  "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_invoices again with items / counterparties / contracts (references only); documents already entered are not offered again.";
+
+/** What the model is told of the problems: grouped by document, the candidates few, the list capped. */
+function summarizeProblems(problems: Problem[]) {
+  const limit = 40;
+  return {
+    count: problems.length,
+    problems: problems.slice(0, limit).map((p) => ({
+      document: p.document,
+      ...(p.line ? { line: p.line } : {}),
+      code: p.code,
+      message: p.message,
+      ...(p.candidates ? { candidates: p.candidates.slice(0, 5) } : {}),
+    })),
+    ...(problems.length > limit ? { more: problems.length - limit } : {}),
+  };
+}
+
+/** The documents read now replace those of the same key read before. */
+function mergeDidox(before: DidoxDocument[], added: DidoxDocument[]): DidoxDocument[] {
+  const key = (d: DidoxDocument) => `${d.kind}|${didoxKey(d)}`;
+  const map = new Map(before.map((d) => [key(d), d]));
+  for (const d of added) map.set(key(d), d);
+  return [...map.values()];
+}
+
 interface BatchEntry {
   item: BatchItem;
   change?: ChangeInput;
