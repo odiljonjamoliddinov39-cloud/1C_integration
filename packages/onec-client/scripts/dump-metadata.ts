@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { connectFromArgs, run } from "./connect.js";
 
 const OBJECTS = [
+  "Документ.ПоступлениеТоваровУслуг",
   "Документ.СчетФактураПолученный",
   "Документ.СчетФактураВыданный",
   "Документ.ПоступлениеНаРасчетныйСчет",

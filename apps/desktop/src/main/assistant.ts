@@ -1238,7 +1238,7 @@ export class AssistantService {
       }
     } else {
       for (const [index, invoice] of (input as InvoicesReceivedInput).invoices.entries()) {
-        const object = "Документ.СчетФактураПолученный";
+        const object = "Документ.ПоступлениеТоваровУслуг";
         const total = invoice.lines.reduce((sum, line) => sum + line.total, 0);
         // One id per invoice of a confirmed card, as for a single one. A Didox document keeps its own
         // id, so that the same document entered again is found by 1C and not made twice.
