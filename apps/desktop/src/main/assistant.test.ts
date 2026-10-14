@@ -1135,7 +1135,8 @@ describe("assistant", () => {
     ]);
     store.setAiEnabled(company.id, true);
     const sending = assistant.send({ companyId: company.id, text: "A ni qo'sh" });
-    // The accountant takes 300 ms to answer the card.
+    // The accountant takes 1.5 s to answer the card: far longer than the work itself, even on a slow runner,
+    // so the time counted can only be below the bound if the wait was left out.
     await new Promise<void>((resolve) => {
       const timer = setInterval(() => {
         const card = events.find((e) => e.type === "confirm");
@@ -1144,14 +1145,14 @@ describe("assistant", () => {
         setTimeout(() => {
           assistant.decide(card.companyId, card.id, false);
           resolve();
-        }, 300);
+        }, 1500);
       }, 1);
     });
     await sending;
     const types = events.map((e) => e.type);
     expect(types.slice(-2)).toEqual(["done", "elapsed"]);
     const elapsed = events.at(-1);
-    expect(elapsed?.type === "elapsed" && elapsed.ms).toBeLessThan(250);
+    expect(elapsed?.type === "elapsed" && elapsed.ms).toBeLessThan(1000);
   });
 
   describe("audit", () => {
