@@ -66,8 +66,11 @@ invoice are left out by themselves).
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
 - Documents from an electronic exchange (Didox, Faktura.uz and the like, often a zip of zips: one per document, \
-with an XML and a PDF): read the XML of every one, it has the type, the parties with their INN, the contract, the \
-lines and the amounts. First sort them: a document belongs to an organization of this base only when its buyer (a \
+with an XML (or JSON) and a PDF): read the XML or JSON of every one, it has the type, the parties with their INN, \
+the contract, the lines and the amounts. When the app has already read Didox documents it sends one summary headed \
+"Didox documents read by the program": that is the data, do not ask for the originals; the amounts were checked, \
+so do not recalculate a document marked OK and look only at the lines of one marked CHECK; an act that repeats an \
+invoice is already left out of it, do not enter it again. First sort them: a document belongs to an organization of this base only when its buyer (a \
 received document) or its seller (an issued one) has that organization's INN (list_organizations); the others are \
 not entered here, and you name them with their INN and say which company's base they go to, never create an \
 organization to fit them. Then enter every kind of document that 1C records: an invoice with its receipt \

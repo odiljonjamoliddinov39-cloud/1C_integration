@@ -352,6 +352,107 @@ describe("attachments", () => {
   });
 });
 
+describe("Didox archives", () => {
+  const json = (value: unknown) => bytes(JSON.stringify(value));
+  const line = (total: string) => ({
+    ordno: 1,
+    name: "Услуга",
+    catalogcode: "10701001004000000",
+    catalogname: "Аренда",
+    packagename: "услуга (раз)",
+    count: "1",
+    summa: total,
+    deliverysum: total,
+    vatrate: 0,
+    vatsum: 0,
+    deliverysumwithvat: total,
+  });
+  const invoice = (number: string, total: string) => ({
+    facturadoc: { facturano: number, facturadate: "2026-01-01" },
+    sellertin: "312318957",
+    seller: { name: "HYDRO DRILL" },
+    buyertin: "311012912",
+    buyer: { name: "TEXMASH IMPORT" },
+    productlist: { products: [line(total)] },
+  });
+  const act = (number: string, total: string) => ({
+    actdoc: { actno: number, actdate: "2026-01-01" },
+    sellertin: "312318957",
+    sellername: "HYDRO DRILL",
+    buyertin: "311012912",
+    buyername: "TEXMASH IMPORT",
+    productlist: {
+      products: [{ ...line(total), totalsumwithoutvat: total, totalsum: total }],
+    },
+  });
+  /** What Didox's download gives for one document: the JSON, its PDF picture, signatures and a readme. */
+  const download = (id: string, document: unknown) =>
+    zip([
+      { name: `${id}.json`, data: json(document) },
+      { name: `${id}.pdf`, data: bytes("%PDF-1.7 picture") },
+      { name: `${id}-2.p7s`, data: bytes("signature") },
+      { name: "readme.txt", data: bytes("Данный архив был создан системой Didox") },
+    ]);
+
+  it("reads the JSON, drops the PDF, signatures and readme, and sends one summary", async () => {
+    const { blocks, info } = await readAttachments([
+      {
+        name: "Didox.zip",
+        data: zip([
+          { name: "inv-24.zip", data: download("AAA", invoice("24", "1320000")) },
+          { name: "act-24.zip", data: download("BBB", act("24", "1320000")) },
+          { name: "inv-25.zip", data: download("CCC", invoice("25", "500")) },
+        ]),
+      },
+    ]);
+    expect(info).toEqual([{ name: "Didox.zip", kind: "archive", size: expect.any(Number) }]);
+    expect(blocks).toHaveLength(2);
+    expect(noteOf(blocks[0])).toBe(
+      "Archive Didox.zip: 3 Didox document(s) read by the program (9 PDF copies, signatures and notes with them are not sent).",
+    );
+    const summary = textOf(blocks[1]);
+    expect(summary).toContain("2 to post, 1 act(s) repeat an invoice and are left out");
+    expect(summary).toContain("INVOICE 24 of 2026-01-01");
+    expect(summary).toContain("INVOICE 25 of 2026-01-01");
+    expect(summary).toContain("All 2 document(s) add up.");
+    expect(summary).not.toContain("picture");
+    expect(summary).not.toContain("Данный архив");
+  });
+
+  it("names the lines that do not add up", async () => {
+    const wrong = invoice("24", "100");
+    wrong.productlist.products[0]!.deliverysumwithvat = "130";
+    const { blocks } = await readAttachments([
+      { name: "Didox.zip", data: zip([{ name: "one.zip", data: download("AAA", wrong) }]) },
+    ]);
+    expect(textOf(blocks[1])).toContain("CHECK line 1: 100.00 + 0.00 = 100.00, the document says 130.00");
+  });
+
+  it("reads a Didox JSON that is attached by itself, and other JSON as text", async () => {
+    const { blocks } = await readAttachments([
+      { name: "inv.json", data: json(invoice("24", "100")) },
+      { name: "package.json", data: json({ name: "x" }) },
+    ]);
+    expect(textOf(blocks[0])).toContain("INVOICE 24 of 2026-01-01");
+    expect(textOf(blocks[1])).toBe('{"name":"x"}');
+  });
+
+  it("keeps reading other files of the archive next to the Didox ones", async () => {
+    const { blocks } = await readAttachments([
+      {
+        name: "Mixed.zip",
+        data: zip([
+          { name: "one.zip", data: download("AAA", invoice("24", "100")) },
+          { name: "notes.txt", data: bytes("hello") },
+        ]),
+      },
+    ]);
+    expect(noteOf(blocks[0])).toContain("1 Didox document(s) read by the program");
+    expect(noteOf(blocks[0])).toContain("1 other file(s) read: notes.txt");
+    expect(textOf(blocks[2])).toBe("hello");
+  });
+});
+
 describe("minifyXml", () => {
   it("takes out the indentation between tags and nothing that holds data", () => {
     const xml =
