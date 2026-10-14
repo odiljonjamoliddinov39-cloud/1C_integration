@@ -58,7 +58,11 @@ app. The preview lists the objects marked for deletion by type (never the Platfo
 reference control (an object still referred to stays, and the answer says how many and why); with another
 session open it answers `BASE_BUSY` and names the sessions. The app calls it only after the user confirmed a
 card, and records the result in PlatformLog (`delete_marked`). `"delete"` in `ApplyChange` still only sets the
-mark. Version 0.7.0: a contract can be given by its number and date (`CONTRACT_NOT_FOUND` / `CONTRACT_AMBIGUOUS` list the
+mark. Version 0.7.1: a received invoice is entered as **Документ.ПоступлениеТоваровУслуг** (the receipt with the Товары / Услуги
+tables, which is where this configuration keeps the lines; the invoice is linked to it), not as a СчетФактураПолученный with
+lines. Names that are not checked on a live base are lists, the first one the document has is used; the warehouse and the
+«Счет учета» / «Счет НДС» of a line are taken from the last posted receipt of the same supplier; a document, table or column
+that is missing is `DOCUMENT_NOT_FOUND` / `DOCUMENT_STRUCTURE` and the message lists what the document really has. 0.7.0: a contract can be given by its number and date (`CONTRACT_NOT_FOUND` / `CONTRACT_AMBIGUOUS` list the
 counterparty's contracts), and an IKPU code shared by several items is `ITEM_AMBIGUOUS` with the candidates instead of the
 first one found (an IKPU code names a kind of goods, not one item). 0.6.0: invoice lines can be services.
 

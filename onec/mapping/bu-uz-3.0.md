@@ -4,7 +4,13 @@ What `PlatformAPI_Map.bsl` assumes. Each name is **to verify** until it has been
 against the real metadata (`pnpm --filter @platform/onec-client metadata ...`, which writes
 `*.metadata.json` next to this file). Once a name is confirmed, mark it ✔ here.
 
-## Счет-фактура полученный (phase 0)
+## Поступление товаров и услуг (a received invoice is entered as this; 0.7.1)
+
+The configuration keeps the lines of a supplier's invoice in `Документ.ПоступлениеТоваровУслуг` (tables Товары / Услуги), the
+invoice is a document linked to it. The names below are what the extension tries (first existing wins); none is verified yet.
+The older table is kept for reference.
+
+## Счет-фактура полученный (phase 0, not used for entering any more)
 
 | Purpose                          | 1C name                                                                         | Status    |
 | -------------------------------- | ------------------------------------------------------------------------------- | --------- |
