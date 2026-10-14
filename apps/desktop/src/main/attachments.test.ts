@@ -4,7 +4,7 @@ import { crc32, deflateRawSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { AttachmentError, decodeText, dropPages, readAttachments } from "./attachments.js";
+import { AttachmentError, decodeText, dropPages, minifyXml, readAttachments } from "./attachments.js";
 import { readTable } from "./tables.js";
 
 const fixture = (name: string) => new Uint8Array(readFileSync(join(import.meta.dirname, "fixtures", name)));
@@ -349,5 +349,15 @@ describe("attachments", () => {
       expect(note).toContain("f61.txt (the archive has more than is read at once)");
       expect(blocks).toHaveLength(61);
     });
+  });
+});
+
+describe("minifyXml", () => {
+  it("takes out the indentation between tags and nothing that holds data", () => {
+    const xml =
+      '<?xml version="1.0"?>\n<Factura>\n  <No>12</No>\n  <Note>two  words\n  here</Note>\n</Factura>\n';
+    expect(minifyXml(xml)).toBe(
+      '<?xml version="1.0"?><Factura><No>12</No><Note>two  words\n  here</Note></Factura>',
+    );
   });
 });

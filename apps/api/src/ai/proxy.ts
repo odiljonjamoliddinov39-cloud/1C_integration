@@ -26,7 +26,7 @@ import type { Service } from "../service.js";
 import { type Admission, checkBudget } from "./budget.js";
 import { latestDigest } from "./digest.js";
 import { loopGuard, loopNote } from "./loop.js";
-import { type AiModel, usageOf } from "./model.js";
+import { type AiModel, type TurnTiming, usageOf } from "./model.js";
 import { policyFor } from "./policy.js";
 import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock } from "./prompt.js";
 import { routeModel, withoutThinking } from "./router.js";
@@ -175,7 +175,7 @@ export class AiProxy {
         {
           type: "text",
           text:
-            contextBlock(input.company, today, canChange, audit) +
+            contextBlock(input.company, today, canChange, audit, input.kind === "import") +
             (loop.capped ? `\n\n${loopNote(loop.calls)}` : ""),
         },
       ],
@@ -196,9 +196,13 @@ export class AiProxy {
             ...(routed.effort ? { output_config: { effort: routed.effort } } : {}),
           }),
     };
+    let timing: TurnTiming | null = null;
     const handlers = {
       onText: (text: string) => send({ type: "text", text }),
       onProgress: (text: string) => send({ type: "progress", text }),
+      onTiming: (t: TurnTiming) => {
+        timing = t;
+      },
     };
     let message;
     try {
@@ -231,6 +235,12 @@ export class AiProxy {
     } catch (error) {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
       if (isProviderBilling(error)) await this.raiseAlert("AI_PROVIDER_BILLING", errorText(error));
+      // A question that never got an answer is not charged: give back the one taken for it.
+      if (!audit && isFirstStep(input.messages) && !(error instanceof Anthropic.APIUserAbortError)) {
+        await this.billingService
+          .refundAiQuestion(who.accountId, questionKey(who.userId, input))
+          .catch((e: unknown) => this.log.error(e, "AI question was not refunded"));
+      }
       return send(toErrorEvent(error));
     }
     if (this.alert !== null) await this.clearAlert();
@@ -249,6 +259,14 @@ export class AiProxy {
         toolCalls: message.content.filter((block) => block.type === "tool_use").length,
         firstStep: isFirstStep(input.messages),
         question: questionOf(input.messages),
+        ...(timing
+          ? {
+              durationMs: (timing as TurnTiming).durationMs,
+              firstTokenMs: (timing as TurnTiming).firstTokenMs,
+              attempts: (timing as TurnTiming).attempts,
+              rateLimited: (timing as TurnTiming).rateLimited,
+            }
+          : {}),
       },
       usageOf(message),
     ).catch((error: unknown) => this.log.error(error, "AI usage was not recorded"));

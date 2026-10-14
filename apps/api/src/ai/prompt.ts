@@ -278,7 +278,13 @@ export function digestBlock(digest: string): string {
 }
 
 /** The part of the system prompt that changes per conversation. */
-export function contextBlock(company: string, today: string, canChange = true, audit = false): string {
+export function contextBlock(
+  company: string,
+  today: string,
+  canChange = true,
+  audit = false,
+  importFiles = false,
+): string {
   const lines = [`The accountant is working with the company "${company}". Today is ${today}.`];
   if (audit) {
     lines.push(
@@ -290,6 +296,13 @@ export function contextBlock(company: string, today: string, canChange = true, a
       "This copy of the app is an older version and has no tools to change 1C. If the accountant asks to create, " +
         "change or delete something, say that the app needs its update: close and reopen it, then press " +
         '"Restart and update" in the bar at the top; until then, explain how to do it in 1C.',
+    );
+  }
+  if (importFiles && !audit) {
+    lines.push(
+      "Files came with this question to be entered into 1C. Save what you create from them unposted (never " +
+        'set "post": true) unless the accountant\'s message itself asks for posting: they check the documents and ' +
+        "post them in 1C. Keep tool calls compact: use batch defaults and send only what differs per document.",
     );
   }
   return lines.join("\n");

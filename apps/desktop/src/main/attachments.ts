@@ -122,7 +122,10 @@ async function readOne(
       throw unreadable(name);
     }
   }
-  if ([".txt", ".xml", ".json", ".md"].includes(extension)) {
+  if (extension === ".xml") {
+    return { block: textBlock(name, minifyXml(decodeText(data))), kind: "text" };
+  }
+  if ([".txt", ".json", ".md"].includes(extension)) {
     return { block: textBlock(name, decodeText(data)), kind: "text" };
   }
   if (extension === ".xls" || extension === ".doc") {
@@ -135,6 +138,14 @@ async function readOne(
     "FILE_TYPE",
     `${name}: this kind of file is not supported (PDF, images, Excel, Word and text files are)`,
   );
+}
+
+/**
+ * An XML document with the indentation and line breaks between its tags taken out. Nothing that holds
+ * data changes, but a pretty-printed ЭСФ is a third smaller, and every step of a question sends it again.
+ */
+export function minifyXml(xml: string): string {
+  return xml.replace(/>\s+</g, "><").replace(/^\s+|\s+$/g, "");
 }
 
 const extensionOf = (name: string) => name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";

@@ -168,6 +168,11 @@ interface TaskTiming {
   tools: { tool: string; ms: number }[];
 }
 
+/** The question itself asks for posted documents ("проведи", "post", "o'tkaz"). */
+export function asksToPost(question: string): boolean {
+  return /провед|проводк|\bpost(ed|ing)?\b|o['ʻ‘’]tkaz/iu.test(question);
+}
+
 /** What one question runs under: the limits in force, and what kind of question it is. */
 interface Run {
   policy: AiPolicy;
@@ -196,6 +201,11 @@ export class AssistantService {
   private readonly checked = new Map<string, Set<string>>();
   /** Per company: time the current task's cards waited for the user, left out of its work time. */
   private readonly cardWaitMs = new Map<string, number>();
+  /**
+   * Companies whose current question brings files to enter into 1C: what it creates is saved
+   * unposted, whatever the model asks, unless the accountant asked for posting in the question.
+   */
+  private readonly unposted = new Set<string>();
   /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
   private readonly timing = new Map<string, TaskTiming>();
 
@@ -269,6 +279,7 @@ export class AssistantService {
             return this.answerFree(chat, question, free, emit);
           }
         }
+        if (attached.blocks.length > 0 && !asksToPost(question)) this.unposted.add(companyId);
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
@@ -453,6 +464,7 @@ export class AssistantService {
       this.cardWaitMs.delete(companyId);
       const timing = this.timing.get(companyId);
       this.timing.delete(companyId);
+      this.unposted.delete(companyId);
       const parts: ElapsedParts | undefined =
         timing && timing.steps > 0
           ? {
@@ -960,7 +972,7 @@ export class AssistantService {
       tool === "propose_invoices_received"
     ) {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
-      const prepared = await this.prepareBatch(chat.id, tool, input, connection, signal);
+      const prepared = await this.prepareBatch(chat.companyId, chat.id, tool, input, connection, signal);
       if (!("entries" in prepared)) return prepared;
       const { title, entries } = prepared;
       proposal = { kind: "batch", title, items: entries.map((entry) => entry.item) };
@@ -984,7 +996,7 @@ export class AssistantService {
       proposal = { kind: "delete_marked", preview: found };
       create = () => this.deps.connector.tool(connection, "deleteMarked", input);
     } else if (tool === "propose_change") {
-      const change = input as ChangeInput;
+      const change = this.unpostedIfImport(companyId, input as ChangeInput);
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
       if (!preview.ok) return preview;
@@ -1097,6 +1109,7 @@ export class AssistantService {
    * issued invoices for many sales, or many suppliers' invoices.
    */
   private async prepareBatch(
+    chatCompanyId: string,
     chatId: string,
     tool: "propose_changes" | "propose_invoices_issued" | "propose_invoices_received",
     input: unknown,
@@ -1124,7 +1137,7 @@ export class AssistantService {
           });
           continue;
         }
-        const change = item.change;
+        const change = this.unpostedIfImport(chatCompanyId, item.change);
         const preview = await this.deps.connector.tool(connection, "previewChange", change);
         const shown = preview.ok ? (preview.data as ChangePreview) : null;
         entries.push({
@@ -1244,6 +1257,12 @@ export class AssistantService {
     }
     const title = (input as { title: string }).title;
     return { title, entries };
+  }
+
+  /** A document created from files is saved unposted (the accountant posts it after checking), not as the model asked. */
+  private unpostedIfImport(companyId: string, change: ChangeInput): ChangeInput {
+    if (!this.unposted.has(companyId) || change.action !== "create" || !change.post) return change;
+    return { ...change, post: false };
   }
 
   /** check_changes: what 1C would say about a few changes, without a card and without writing. */

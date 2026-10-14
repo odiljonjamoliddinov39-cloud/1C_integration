@@ -362,6 +362,11 @@ export const aiUsage = pgTable(
     firstStep: boolean("first_step").notNull().default(false),
     /** The question this step belongs to, cut to 200 characters (for "most expensive questions"). */
     question: text("question"),
+    /** How long the model call took, and until its first word; calls to the API made, 429s among them. */
+    durationMs: integer("duration_ms"),
+    firstTokenMs: integer("first_token_ms"),
+    attempts: integer("attempts"),
+    rateLimited: integer("rate_limited"),
     createdAt: createdAt(),
   },
   (t) => [

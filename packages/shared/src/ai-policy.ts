@@ -355,6 +355,10 @@ export const CostReport = z.object({
       costUsd: z.number(),
       steps: z.number(),
       toolCalls: z.number(),
+      /** Time spent waiting for the model over all its steps; null for steps logged before timing existed. */
+      seconds: z.number().nullable(),
+      /** Calls the API answered with 429 (rate limit) and the SDK waited out. */
+      rateLimited: z.number(),
       lastAt: z.string(),
     }),
   ),

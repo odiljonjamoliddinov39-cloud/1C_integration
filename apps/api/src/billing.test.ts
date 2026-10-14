@@ -14,6 +14,7 @@ import { Billing } from "./billing/entitlements.js";
 import { Invoicing } from "./billing/invoicing.js";
 import { Lifecycle } from "./billing/lifecycle.js";
 import {
+  aiUsage,
   billingEvents,
   companies,
   invoices,
@@ -995,6 +996,8 @@ describe.skipIf(!available)("tariffs", () => {
       const error = events.find((e) => e.type === "error");
       expect(error?.code).toBe("AI_OUT_OF_SERVICE");
       expect(error?.message).not.toMatch(/credit|anthropic/i);
+      // The question never got an answer: it is not charged.
+      expect((await entitlements(token)).usage.aiQuestions).toBe(0);
       const adminToken_ = (
         await call("POST", "/v1/admin/login", undefined, {
           email: "boss@platform.uz",
@@ -1021,6 +1024,51 @@ describe.skipIf(!available)("tariffs", () => {
       }
     } finally {
       await down.close();
+    }
+  });
+
+  it("records how long each model step took, and the calls and 429s behind it", async () => {
+    const timed = {
+      async turn(
+        _p: BetaMessageStreamParams,
+        { onText, onTiming }: { onText: (text: string) => void; onTiming?: (t: object) => void },
+      ) {
+        onText("ok");
+        onTiming?.({ durationMs: 1234, firstTokenMs: 321, attempts: 3, rateLimited: 2 });
+        return {
+          model: "claude-sonnet-5-5",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "ok" }],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        } as unknown as BetaMessage;
+      },
+    };
+    const timedApp = await buildApp(db.db, config, { aiModel: timed });
+    try {
+      const { token } = await register();
+      await timedApp.inject({
+        method: "POST",
+        url: "/v1/ai/chat",
+        payload: { company: "X", messages: [{ role: "user", content: "?" }] },
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const [row] = await db.db.select().from(aiUsage);
+      expect(row).toMatchObject({ durationMs: 1234, firstTokenMs: 321, attempts: 3, rateLimited: 2 });
+      const adminToken_ = (
+        await call("POST", "/v1/admin/login", undefined, {
+          email: "boss@platform.uz",
+          password: "admin-password-123",
+        })
+      ).json().accessToken as string;
+      const cost = (await call("GET", "/v1/admin/ai-cost?days=7", adminToken_)).json();
+      expect(cost.topQuestions[0]).toMatchObject({ seconds: 1, rateLimited: 2 });
+    } finally {
+      await timedApp.close();
     }
   });
 });

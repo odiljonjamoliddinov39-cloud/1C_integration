@@ -335,6 +335,34 @@ export class BillingService {
   }
 
   /**
+   * The AI could not answer the first step of a question (the provider refused, was busy or broke):
+   * the customer is not charged for it. Gives back what takeAiQuestion took, and the charge row.
+   */
+  async refundAiQuestion(accountId: string, questionKey: string): Promise<void> {
+    if (!this.enforced()) return;
+    const since = new Date(Date.now() - 12 * 3_600_000);
+    const [row] = await this.db
+      .select()
+      .from(aiQuestionCharges)
+      .where(
+        and(
+          eq(aiQuestionCharges.accountId, accountId),
+          eq(aiQuestionCharges.questionKey, questionKey),
+          sql`${aiQuestionCharges.createdAt} > ${since.toISOString()}::timestamptz`,
+        ),
+      )
+      .orderBy(desc(aiQuestionCharges.createdAt))
+      .limit(1);
+    // A question that already got an answer for some steps (cost was charged) is not refunded.
+    if (!row || row.costUsd > 0) return;
+    const { counterStart } = await this.billing.get(accountId);
+    await this.db.delete(aiQuestionCharges).where(eq(aiQuestionCharges.id, row.id));
+    await this.db.execute(sql`
+      update usage_counters set ai_questions = greatest(0, ai_questions - ${row.units})
+      where account_id = ${accountId} and period_start = ${counterStart.toISOString()}::timestamptz`);
+  }
+
+  /**
    * A step of a question has cost this much. A question is worth 1, and one more for every further
    * AI_QUESTION_UNIT_USD it costs, so a big import counts as several. Charged as the cost builds up;
    * the answer in progress is never cut: if this takes the account over its limit, the next question
