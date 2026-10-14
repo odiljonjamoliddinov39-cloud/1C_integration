@@ -145,6 +145,36 @@ export const InvoicesReceivedInput = z.object({
 });
 export type InvoicesReceivedInput = z.infer<typeof InvoicesReceivedInput>;
 
+const Ref = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "1C reference (UUID)");
+
+/**
+ * Invoices from the Didox documents the app has read from the attached files: the app builds them
+ * itself and looks the counterparty, the contract and the items up in 1C. Only what it could not
+ * settle comes back to the model, and the model answers with references, never with the invoices.
+ */
+export const DidoxInvoicesInput = z.object({
+  /** For the card's title, in the accountant's language, e.g. "Hisob-fakturalar HYDRO DRILL: 12". */
+  title: z.string().trim().min(1).max(200),
+  /** Documents as the summary names them ("312318957/24"); absent: every one that is ready. */
+  documents: z.array(z.string().min(1).max(80)).max(500).optional(),
+  /** The model's answers to what the app could not settle: an item for a line, a counterparty, a contract. */
+  items: z
+    .array(z.object({ document: z.string().min(1).max(80), line: z.number().int().min(1), ref: Ref }))
+    .max(3000)
+    .optional(),
+  counterparties: z
+    .array(z.object({ document: z.string().min(1).max(80), ref: Ref }))
+    .max(500)
+    .optional(),
+  contracts: z
+    .array(z.object({ document: z.string().min(1).max(80), ref: Ref }))
+    .max(500)
+    .optional(),
+});
+export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -190,6 +220,7 @@ export const AI_TOOLS = {
   propose_invoices_issued: InvoicesIssuedInput,
   propose_invoice_received: InvoiceReceivedDraft,
   propose_invoices_received: InvoicesReceivedInput,
+  propose_didox_invoices: DidoxInvoicesInput,
   propose_delete_marked: DeleteMarkedInput,
   report_findings: ReportFindingsInput,
 } as const;
@@ -202,6 +233,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoices_issued",
   "propose_invoice_received",
   "propose_invoices_received",
+  "propose_didox_invoices",
   "propose_delete_marked",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];

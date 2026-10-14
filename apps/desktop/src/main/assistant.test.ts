@@ -866,6 +866,175 @@ describe("assistant", () => {
       expect(new Set(base.documents.map((d) => d.externalId)).size).toBe(2);
     });
 
+    it("enters Didox invoices from attached files: the program looks 1C up, and the model settles only what is uncertain", async () => {
+      const didoxLine = (name: string, code: string) => ({
+        ordno: 1,
+        name,
+        catalogcode: code,
+        catalogname: "Товары",
+        packagename: "шт.",
+        count: "10",
+        summa: "1000",
+        deliverysum: "10000",
+        vatrate: 12,
+        vatsum: "1200",
+        deliverysumwithvat: "11200",
+      });
+      const didoxInvoice = (number: string, line: Record<string, unknown>) =>
+        new TextEncoder().encode(
+          JSON.stringify({
+            facturaid: `didox-${number}`,
+            facturadoc: { facturano: number, facturadate: "2026-10-13" },
+            contractdoc: { contractno: "17", contractdate: "2026-01-08" },
+            sellertin: "123456789",
+            seller: { name: "ООО Поставщик" },
+            buyertin: "300000001",
+            buyer: { name: "ООО «Тест»" },
+            productlist: { products: [line] },
+          }),
+        );
+      const call = (input: unknown) => () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "d1", name: "propose_didox_invoices", input }],
+        },
+      ];
+      const itemRefs = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      const contractRef = crypto.randomUUID();
+      let second: unknown;
+      const { assistant, store, company, events, proxy, base } = setup([
+        call({ title: "Didox: 2" }),
+        (input) => {
+          second = input.messages.at(-1);
+          return call({
+            title: "Didox: 1",
+            items: [{ document: "123456789/664", line: 1, ref: itemRefs[1] }],
+          })();
+        },
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      base.items = [
+        { ref: itemRefs[0]!, name: "Жидкое мыло CRISTAL 480 мл", ikpu: "03401001002241001" },
+        { ref: itemRefs[1]!, name: "Подгузники Mini 40 шт", ikpu: "09619002001000000" },
+        { ref: itemRefs[2]!, name: "Подгузники Midi 34 шт", ikpu: "09619002001000000" },
+      ];
+      base.contracts = [
+        {
+          ref: contractRef,
+          ownerRef: base.counterparties[0]!.ref,
+          number: "17",
+          date: "2026-01-08T00:00:00",
+        },
+      ];
+      base.metadata = [
+        {
+          fullName: "Справочник.Номенклатура",
+          synonym: "Номенклатура",
+          attributes: [{ name: "КодИКПУ", synonym: "Код из классификатора", types: ["Строка"] }],
+          tabularSections: [],
+        },
+      ];
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.counterparties
+              .filter((c) => values(input).includes(c.inn))
+              .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /ДоговорыКонтрагентов КАК Т ГДЕ/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.contracts
+              .map((c) => [
+                base.counterparties.find((cp) => cp.ref === c.ownerRef)?.inn ?? "",
+                ref("Справочник.ДоговорыКонтрагентов", c.ref, c.number ?? ""),
+                c.number ?? "",
+                c.date ?? "",
+              ])
+              .filter((row) => values(input).includes(row[0])),
+            truncated: false,
+          }),
+        },
+        {
+          match: /Т\.Наименование В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.items
+              .filter((i) => values(input).includes(i.name))
+              .map((i) => [i.name, ref("Справочник.Номенклатура", i.ref, i.name)]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /Т\.КодИКПУ В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.items
+              .filter((i) => values(input).includes(i.ikpu))
+              .map((i) => [i.ikpu, ref("Справочник.Номенклатура", i.ref, i.name), i.name]),
+            truncated: false,
+          }),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Didox fakturalarini kirit",
+        files: [
+          {
+            name: "663.json",
+            data: didoxInvoice("663", didoxLine("Жидкое мыло CRISTAL 480 мл", "03401001002241001")),
+          },
+          {
+            name: "664.json",
+            data: didoxInvoice(
+              "664",
+              didoxLine("Подгузники детские размер 5 Junior 13 шт", "09619002001000000"),
+            ),
+          },
+        ],
+      });
+      // Both cards, one after the other: the certain invoice first, the settled one after the model's answer.
+      const answered = new Set<string>();
+      const timer = setInterval(() => {
+        for (const e of events) {
+          if (e.type === "confirm" && !answered.has(e.id)) {
+            answered.add(e.id);
+            assistant.decide(e.companyId, e.id, true);
+          }
+        }
+      }, 1);
+      await sending;
+      clearInterval(timer);
+
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(2);
+      expect(base.documents.map((d) => [d.supplierNumber, d.source, d.externalId])).toEqual([
+        ["663", "didox", "didox-663"],
+        ["664", "didox", "didox-664"],
+      ]);
+      expect(base.documents[0]).toMatchObject({
+        counterpartyRef: base.counterparties[0]!.ref,
+        contractRef,
+        lines: [{ itemRef: itemRefs[0], quantity: 10, price: 1000, amount: 10000, vatAmount: 1200 }],
+      });
+      expect(base.documents[1]?.lines[0]?.itemRef).toBe(itemRefs[1]);
+      // The model was told about the uncertain line only, with the candidates, not given the invoices to write.
+      const told = JSON.stringify(second);
+      expect(told).toContain("ITEM_CHOOSE");
+      expect(told).toContain("123456789/664");
+      expect(told).not.toContain("123456789/663");
+      expect(proxy.requests).toHaveLength(3);
+    });
+
     it("checks changes in 1C without a card when asked for a dry run", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("check_changes", {

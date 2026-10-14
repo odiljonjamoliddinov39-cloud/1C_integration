@@ -15,6 +15,7 @@ import {
   type GetObjectInput,
   type InvoiceIssuedInput,
   type InvoiceReceivedInput,
+  type MetadataObject,
   type Organization,
   type OtherSession,
   type PlatformFunction,
@@ -64,7 +65,9 @@ export class FakePlatform implements PlatformTransport {
   items: { ref: string; name: string; ikpu: string }[] = [
     { ref: randomUUID(), name: "Вода питьевая 19л", ikpu: "10202001001000000" },
   ];
-  contracts: { ref: string; ownerRef: string }[] = [];
+  contracts: { ref: string; ownerRef: string; number?: string; date?: string }[] = [];
+  /** Objects GetMetadata describes, by full name. */
+  metadata: MetadataObject[] = [];
   /** Change-prohibition date (YYYY-MM-DD); documents on or before it are refused. */
   closedUntil: string | null = null;
   documents: FakeDocument[] = [];
@@ -72,7 +75,7 @@ export class FakePlatform implements PlatformTransport {
    * Demo answers to RunQuery, picked by what the query reads (first match wins). A real 1C runs
    * the query itself; this only lets the assistant be tried without 1C.
    */
-  queryAnswers: { match: RegExp; answer: () => QueryResult }[] = [
+  queryAnswers: { match: RegExp; answer: (input: RunQueryInput) => QueryResult }[] = [
     {
       match: /Хозрасчетный/i,
       answer: () => ({
@@ -189,8 +192,11 @@ export class FakePlatform implements PlatformTransport {
         };
       case "GetOrganizations":
         return this.organizations;
-      case "GetMetadata":
-        return [];
+      case "GetMetadata": {
+        const names = (parse(arg) as { objects?: string[] } | string[] | undefined) ?? [];
+        const wanted = Array.isArray(names) ? names : (names.objects ?? []);
+        return this.metadata.filter((o) => wanted.includes(o.fullName));
+      }
       case "RunQuery":
         return this.runQuery(parse(arg) as RunQueryInput);
       case "CreateInvoiceReceived":
@@ -384,7 +390,7 @@ export class FakePlatform implements PlatformTransport {
       throw new Failure("QUERY_ERROR", "{(1, 1)}: Ожидается ключевое слово ВЫБРАТЬ");
     }
     const found = this.queryAnswers.find((q) => q.match.test(input.query));
-    const result = found ? found.answer() : { columns: [], rows: [], truncated: false };
+    const result = found ? found.answer(input) : { columns: [], rows: [], truncated: false };
     const limit = input.limit ?? 200;
     return { ...result, rows: result.rows.slice(0, limit), truncated: result.rows.length > limit };
   }
@@ -423,10 +429,17 @@ export class FakePlatform implements PlatformTransport {
         inn: input.counterparty.inn ?? null,
       });
     }
-    if (
-      input.contract &&
-      !this.contracts.some((c) => c.ref === input.contract?.ref && c.ownerRef === cp.ref)
-    ) {
+    const contract = input.contract
+      ? this.contracts.find(
+          (c) =>
+            c.ownerRef === cp.ref &&
+            (input.contract?.ref
+              ? c.ref === input.contract.ref
+              : c.number === input.contract?.number &&
+                (!input.contract?.date || c.date === input.contract.date)),
+        )
+      : undefined;
+    if (input.contract && !contract) {
       throw new Failure("CONTRACT_NOT_FOUND", "Contract not found for this counterparty");
     }
     if (this.closedUntil && input.date <= this.closedUntil) {
@@ -459,7 +472,7 @@ export class FakePlatform implements PlatformTransport {
       source: input.source,
       organizationRef: org.ref,
       counterpartyRef: cp.ref,
-      contractRef: input.contract?.ref,
+      contractRef: contract?.ref,
       supplierNumber: input.number,
       lines,
       posted: false,

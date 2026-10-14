@@ -62,6 +62,8 @@ export interface ReadAttachments {
   info: AttachmentInfo[];
   /** Spreadsheets and CSV files, whole, for read_attachment. */
   tables: TableFile[];
+  /** Didox documents read by the program, whole, for propose_didox_invoices. */
+  didox: DidoxDocument[];
 }
 
 export async function readAttachments(
@@ -71,6 +73,7 @@ export async function readAttachments(
   const blocks: AiContentBlock[] = [];
   const info: AttachmentInfo[] = [];
   const tables: TableFile[] = [];
+  const didox: DidoxDocument[] = [];
   const budget: Budget = { sent: 0 };
   for (const file of files) {
     if (extensionOf(file.name) === ".zip") {
@@ -78,6 +81,7 @@ export async function readAttachments(
       blocks.push(...archive.blocks);
       info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
       tables.push(...archive.tables);
+      didox.push(...archive.didox);
       continue;
     }
     const read = await readOne(file, shrink);
@@ -85,14 +89,20 @@ export async function readAttachments(
     blocks.push(read.block);
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
     if (read.table) tables.push(read.table);
+    if (read.didox) didox.push(read.didox);
   }
-  return { blocks, info, tables };
+  return { blocks, info, tables, didox };
 }
 
 async function readOne(
   { name, data }: AssistantFile,
   shrink?: ShrinkImage,
-): Promise<{ block: AiContentBlock; kind: AttachmentInfo["kind"]; table?: TableFile }> {
+): Promise<{
+  block: AiContentBlock;
+  kind: AttachmentInfo["kind"];
+  table?: TableFile;
+  didox?: DidoxDocument;
+}> {
   const extension = extensionOf(name);
   const image = imageType(data);
   if (image) return { block: imageBlock(data, image, shrink, name), kind: "image" };
@@ -129,7 +139,7 @@ async function readOne(
   if (extension === ".json") {
     const text = decodeText(data);
     const didox = didoxFromJson(text);
-    if (didox) return { block: didoxBlock(name, [didox]), kind: "text" };
+    if (didox) return { block: didoxBlock(name, [didox]), kind: "text", didox };
     return { block: textBlock(name, text), kind: "text" };
   }
   if ([".txt", ".md"].includes(extension)) {
@@ -246,7 +256,7 @@ async function readArchive(
   { name, data }: AssistantFile,
   budget: Budget,
   shrink?: ShrinkImage,
-): Promise<{ blocks: AiContentBlock[]; tables: TableFile[] }> {
+): Promise<{ blocks: AiContentBlock[]; tables: TableFile[]; didox: DidoxDocument[] }> {
   const walk: Walk = {
     budget,
     blocks: [],
@@ -282,7 +292,11 @@ async function readArchive(
     .filter(Boolean)
     .join("\n");
   const didox = walk.didox.length > 0 ? [didoxBlock(name, walk.didox)] : [];
-  return { blocks: [{ type: "text", text: note }, ...didox, ...walk.blocks], tables: walk.tables };
+  return {
+    blocks: [{ type: "text", text: note }, ...didox, ...walk.blocks],
+    tables: walk.tables,
+    didox: walk.didox,
+  };
 }
 
 async function walkArchive(

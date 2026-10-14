@@ -331,6 +331,7 @@ describe("batchOf and describeBatch", () => {
     expect(text).toContain("2 to post, 1 for reference only");
     expect(text.match(/Buyer in all/g)).toHaveLength(1);
     expect(text).toContain('SELLER "TEST SELLER" MCHJ (INN 312318957): 2 document(s)');
+    expect(text).toContain("INVOICE 24 of 2026-01-01 [312318957/24]");
     expect(text).toContain("1|Услуга|10403003014000001|услуга (сум)|1|892.86|12|107.14|1000.00");
     expect(text).toContain("sum without VAT 892.86, VAT 107.14, total 1000.00 — OK");
     expect(text).toContain("CHECK line 1: 2 × 100.00 = 200.00, the document says 250.00");

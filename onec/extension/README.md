@@ -58,7 +58,9 @@ app. The preview lists the objects marked for deletion by type (never the Platfo
 reference control (an object still referred to stays, and the answer says how many and why); with another
 session open it answers `BASE_BUSY` and names the sessions. The app calls it only after the user confirmed a
 card, and records the result in PlatformLog (`delete_marked`). `"delete"` in `ApplyChange` still only sets the
-mark. Version 0.6.0 (invoice lines can be services).
+mark. Version 0.7.0: a contract can be given by its number and date (`CONTRACT_NOT_FOUND` / `CONTRACT_AMBIGUOUS` list the
+counterparty's contracts), and an IKPU code shared by several items is `ITEM_AMBIGUOUS` with the candidates instead of the
+first one found (an IKPU code names a kind of goods, not one item). 0.6.0: invoice lines can be services.
 
 **Issued invoices** (`CreateInvoiceIssued`) are made on the basis of a sale (Реализация товаров и
 услуг) with the configuration's own filling, as its «Выписать счет-фактуру» button does, and saved

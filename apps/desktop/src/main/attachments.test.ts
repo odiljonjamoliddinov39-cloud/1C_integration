@@ -412,8 +412,8 @@ describe("Didox archives", () => {
     );
     const summary = textOf(blocks[1]);
     expect(summary).toContain("2 to post, 1 act(s) repeat an invoice and are left out");
-    expect(summary).toContain("INVOICE 24 of 2026-01-01");
-    expect(summary).toContain("INVOICE 25 of 2026-01-01");
+    expect(summary).toContain("INVOICE 24 of 2026-01-01 [312318957/24]");
+    expect(summary).toContain("INVOICE 25 of 2026-01-01 [312318957/25]");
     expect(summary).toContain("All 2 document(s) add up.");
     expect(summary).not.toContain("picture");
     expect(summary).not.toContain("Данный архив");
@@ -433,7 +433,7 @@ describe("Didox archives", () => {
       { name: "inv.json", data: json(invoice("24", "100")) },
       { name: "package.json", data: json({ name: "x" }) },
     ]);
-    expect(textOf(blocks[0])).toContain("INVOICE 24 of 2026-01-01");
+    expect(textOf(blocks[0])).toContain("INVOICE 24 of 2026-01-01 [312318957/24]");
     expect(textOf(blocks[1])).toBe('{"name":"x"}');
   });
 

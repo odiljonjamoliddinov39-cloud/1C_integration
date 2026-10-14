@@ -167,6 +167,7 @@ const en = {
       check_changes: "Checking in 1C:",
       propose_invoices_issued: "Finding the sales:",
       propose_invoices_received: "Preparing invoices:",
+      propose_didox_invoices: "Preparing invoices from Didox:",
       propose_delete_marked: "Checking what is marked for deletion:",
     },
     proposal: {
@@ -571,6 +572,7 @@ const ru: Dict = {
       check_changes: "Проверяю в 1С:",
       propose_invoices_issued: "Ищу реализации:",
       propose_invoices_received: "Готовлю счета-фактуры:",
+      propose_didox_invoices: "Готовлю счета-фактуры из Didox:",
       propose_delete_marked: "Проверяю, что помечено на удаление:",
     },
     proposal: {
@@ -974,6 +976,7 @@ const uz: Dict = {
       check_changes: "1C da tekshiryapman:",
       propose_invoices_issued: "Sotuvlarni topyapman:",
       propose_invoices_received: "Hisob-fakturalarni tayyorlayapman:",
+      propose_didox_invoices: "Didox hisob-fakturalarini tayyorlayapman:",
       propose_delete_marked: "Oʻchirishga belgilanganlarni tekshiryapman:",
     },
     proposal: {

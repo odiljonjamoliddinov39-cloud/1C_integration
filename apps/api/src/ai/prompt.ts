@@ -70,7 +70,12 @@ with an XML (or JSON) and a PDF): read the XML or JSON of every one, it has the 
 the contract, the lines and the amounts. When the app has already read Didox documents it sends one summary headed \
 "Didox documents read by the program": that is the data, do not ask for the originals; the amounts were checked, \
 so do not recalculate a document marked OK and look only at the lines of one marked CHECK; an act that repeats an \
-invoice is already left out of it, do not enter it again. First sort them: a document belongs to an organization of this base only when its buyer (a \
+invoice is already left out of it, do not enter it again. For these, enter the invoices with propose_didox_invoices (title only): it looks everything up in 1C and returns \
+only what it could not settle (a missing counterparty or contract, an item that is not certain). Settle those: \
+pick from the candidates when one is clearly right, create what is missing (a counterparty, an item) with \
+propose_changes and pass its ref back, ask the accountant when you cannot tell; then call propose_didox_invoices \
+again with the references. Documents of another company are named in the problems: say so, do not enter them. \
+First sort them: a document belongs to an organization of this base only when its buyer (a \
 received document) or its seller (an issued one) has that organization's INN (list_organizations); the others are \
 not entered here, and you name them with their INN and say which company's base they go to, never create an \
 organization to fit them. Then enter every kind of document that 1C records: an invoice with its receipt \
@@ -256,6 +261,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
   propose_invoices_received:
     "Prepare many suppliers' invoices on ONE card, each like propose_invoice_received, with a title for the " +
     "card. The accountant confirms once; the result lists what was created, by number.",
+  propose_didox_invoices:
+    "Prepare received invoices from the Didox documents the app already read from the attached files (the summary " +
+    '"Didox documents read by the program"), on ONE card with a title. The app builds the invoices itself and looks ' +
+    "the counterparty, the contract and the items up in 1C: send only the title (and documents, a list of keys such " +
+    'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
+    "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
+    "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +

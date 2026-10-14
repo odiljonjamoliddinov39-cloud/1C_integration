@@ -50,6 +50,8 @@ export interface DidoxIssue {
 
 export interface DidoxDocument {
   kind: DidoxKind;
+  /** Didox's own id of the document (facturaid, actid, ...): what makes a second import of it a duplicate. */
+  id: string;
   number: string;
   /** YYYY-MM-DD. */
   date: string;
@@ -123,6 +125,7 @@ export function parseDidoxDocument(value: unknown): DidoxDocument | null {
   const notes: string[] = [];
   const doc: DidoxDocument = {
     kind,
+    id: str(json.facturaid) || str(json.actid) || str(json.contractid) || str(json.documentid),
     number: "",
     date: "",
     seller: { tin: str(json.sellertin), name: str(record(json.seller).name) || str(json.sellername) },
@@ -258,6 +261,9 @@ function check(doc: DidoxDocument) {
   }
 }
 
+/** How a document is named to the model and in what the model sends back: "312318957/24". */
+export const didoxKey = (d: { seller: DidoxParty; number: string }) => `${d.seller.tin}/${d.number}`;
+
 /** What documents of one archive come to: those that become entries in 1C, and those that do not. */
 export interface DidoxBatch {
   /** Invoices, and acts that have no invoice. */
@@ -348,7 +354,7 @@ export function describeBatch(batch: DidoxBatch): string {
     out.push("", `SELLER ${name} (INN ${tin}): ${docs.length} document(s)`);
     for (const d of docs) {
       out.push(
-        `${label(d).toUpperCase()} ${d.number} of ${d.date}${
+        `${label(d).toUpperCase()} ${d.number} of ${d.date} [${didoxKey(d)}]${
           d.contract ? `, contract ${d.contract.number} of ${d.contract.date}` : ""
         }${only ? "" : `, buyer ${d.buyer.name} (INN ${d.buyer.tin})`}${
           d.notes.length > 0 ? `, ${d.notes.join("; ")}` : ""
