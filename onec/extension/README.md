@@ -58,7 +58,11 @@ app. The preview lists the objects marked for deletion by type (never the Platfo
 reference control (an object still referred to stays, and the answer says how many and why); with another
 session open it answers `BASE_BUSY` and names the sessions. The app calls it only after the user confirmed a
 card, and records the result in PlatformLog (`delete_marked`). `"delete"` in `ApplyChange` still only sets the
-mark. Version 0.7.2 (from the real structure of ПоступлениеТоваровУслуг that 0.7.1 reported): «Всего» is not a column of the
+mark. Version 0.7.3: the received invoice (СчетФактураПолученный, with ДокументОснование and the ДокументыОснования row) is made
+on the basis of the receipt right after it, unposted, with the supplier's number and date, the total and the VAT, «НДС
+предъявлен к вычету» and the deduction term of the supplier's last invoice; if it cannot be made the receipt stays and
+the result carries `invoiceError`. The receipt also gets the document currency, the rate and the multiplicity from the
+supplier's last posted receipt (0.7.2 left them to the model). Version 0.7.2 (from the real structure of ПоступлениеТоваровУслуг that 0.7.1 reported): «Всего» is not a column of the
 tables (the form computes it); the warehouse and the settlement accounts of the header (6010 / 4310, advance method) come
 from the last posted receipt of the supplier; a service line gets its «Счет затрат» the same way; a line gets the unit of its
 item. Version 0.7.1: a received invoice is entered as **Документ.ПоступлениеТоваровУслуг** (the receipt with the Товары / Услуги
