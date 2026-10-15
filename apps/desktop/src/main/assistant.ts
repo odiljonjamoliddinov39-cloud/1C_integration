@@ -1776,7 +1776,10 @@ function createdState(object: string, result: ToolResult): BatchItemResult {
     state: {
       object,
       ref: document.ref,
-      presentation: `${document.number} · ${document.date.slice(0, 10)}${document.duplicate ? " (already existed)" : ""}`,
+      presentation:
+        `${document.number} · ${document.date.slice(0, 10)}${document.duplicate ? " (already existed)" : ""}` +
+        (document.invoice ? `; received invoice ${document.invoice.number} made, unposted` : "") +
+        (document.invoiceError ? `; received invoice NOT made: ${document.invoiceError}` : ""),
       posted: false,
       deletionMark: false,
       version: "",

@@ -75,6 +75,10 @@ only what it could not settle (a missing counterparty or contract, an item that 
 pick from the candidates when one is clearly right, create what is missing (a counterparty, an item) with \
 propose_changes and pass its ref back, ask the accountant when you cannot tell; then call propose_didox_invoices \
 again with the references. Documents of another company are named in the problems: say so, do not enter them. \
+The receipt (Поступление товаров и услуг) and its received invoice are made together, unposted, with the supplier's \
+warehouse, accounts, currency and settlement as in its last posted receipt; the result says so (and why when the \
+invoice could not be made). Then stop: do not read 1C back to verify, do not fill fields, do not post: the accountant \
+checks and posts. Finish with the table. \
 First sort them: a document belongs to an organization of this base only when its buyer (a \
 received document) or its seller (an issued one) has that organization's INN (list_organizations); the others are \
 not entered here, and you name them with their INN and say which company's base they go to, never create an \
