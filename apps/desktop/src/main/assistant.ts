@@ -1459,7 +1459,9 @@ export class AssistantService {
       ...(resolved.problems.length > 0 ? { needsAttention: summarizeBankProblems(resolved.problems) } : {}),
       ...(resolved.notes.length > 0
         ? {
-            notes: resolved.notes.slice(0, 20).map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),
+            notes: resolved.notes
+              .slice(0, 20)
+              .map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),
             notesAbout:
               "Decided by the program, not blocking: mention these to the accountant in the final answer.",
           }
