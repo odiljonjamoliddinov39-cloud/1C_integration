@@ -1100,10 +1100,10 @@ describe("assistant", () => {
           }),
         },
         {
-          match: /ПЕРВЫЕ 1 Т\.Ссылка/,
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
           answer: () => ({
             columns: [],
-            rows: [[ref("Документ.ПоступлениеНаРасчетныйСчет", earlierPayment, "старый")]],
+            rows: [[ref("Документ.ПоступлениеНаРасчетныйСчет", earlierPayment, "старый"), "старое"]],
             truncated: false,
           }),
         },
@@ -1137,7 +1137,7 @@ describe("assistant", () => {
       expect(made.map((o) => o.fields.СуммаДокумента)).toEqual([1000, 2000, 3000, 4000, 5000]);
       expect(made.every((o) => !o.posted)).toBe(true);
       expect(made[2]).toMatchObject({
-        fields: { Date: "2026-09-03", НазначениеПлатежа: "Оплата 3", НомерВходящегоДокумента: "103" },
+        fields: { Дата: "2026-09-03", НазначениеПлатежа: "Оплата 3", НомерВходящегоДокумента: "103" },
         tables: { РасшифровкаПлатежа: [{ СуммаПлатежа: 3000, СуммаВзаиморасчетов: 3000 }] },
       });
       expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);

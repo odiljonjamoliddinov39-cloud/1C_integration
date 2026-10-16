@@ -27,18 +27,17 @@ export interface BankProblem {
   /** The sheet rows it concerns. */
   rows: number[];
   code:
-    | "CHECK"
-    | "BANK_ACCOUNT_NOT_FOUND"
-    | "BANK_ACCOUNT_AMBIGUOUS"
-    | "NO_INN"
-    | "COUNTERPARTY_NOT_FOUND"
-    | "COUNTERPARTY_AMBIGUOUS"
-    | "NO_TEMPLATE"
-    | "BAD_TEMPLATE";
+    "CHECK" | "NO_INN" | "COUNTERPARTY_NOT_FOUND" | "COUNTERPARTY_AMBIGUOUS" | "NO_TEMPLATE" | "BAD_TEMPLATE";
   message: string;
   /** Who it is about: the name and INN as the statement writes them. */
   counterparty?: string;
   candidates?: BankCandidate[];
+}
+
+/** Something the program decided for itself that the accountant should know, e.g. a contract it could not find. */
+export interface BankNote {
+  rows: number[];
+  message: string;
 }
 
 /** What the model decided for what the program could not: references only. */
@@ -54,14 +53,16 @@ export interface BankResolved {
   /** Payments already in 1C (same date, counterparty and amount): left out. */
   alreadyIn1c: number[];
   problems: BankProblem[];
+  notes: BankNote[];
 }
 
 export interface BankCache {
-  /** Templates found so far: "object|counterparty" → the snapshot. */
-  templates: Map<string, Template | null>;
+  /** Posted documents of a kind, newest first: "object|INN" (or "object|*" for all) → ref and purpose. */
+  lists: Map<string, { ref: string; purpose: string }[]>;
+  snapshots: Map<string, Template | null>;
 }
 
-interface Template {
+export interface Template {
   object: string;
   ref: string;
   fields: Record<string, unknown>;
@@ -80,6 +81,10 @@ const FIELD_NAMES = {
   number: ["НомерВходящегоДокумента", "НомерПлатежногоДокумента", "НомерВходящего", "НомерДокументаБанка"],
   incomingDate: ["ДатаВходящегоДокумента", "ДатаПлатежногоДокумента", "ДатаВходящего"],
   bankAccount: ["БанковскийСчет"],
+  counterpartyAccount: ["СчетКонтрагента"],
+  counterparty: ["Контрагент"],
+  contract: ["ДоговорКонтрагента"],
+  date: ["Дата", "Date"],
 };
 
 /** Standard attributes a copy must not carry over: 1C makes them itself. */
@@ -114,21 +119,76 @@ function writable(value: unknown): unknown {
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
 
+const refIn = (value: unknown): string | null => refOf(value);
+
+/**
+ * What kind of payment a purpose is, by its words: digits and punctuation are dropped, so
+ * "00634SmartVista - Выручка … 483,610.84 сум" and the same text with other figures are one kind.
+ */
+export const shapeOf = (purpose: string) =>
+  purpose
+    .toLowerCase()
+    .replace(/[\d\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 30);
+
+/** The contract a payment purpose names ("Договор 4/28 от 01.01.2026г", "по дог. № 17 от 08.01.2026"). */
+export function contractMention(purpose: string): { number: string; date: string } | null {
+  const found =
+    /(?:догов\p{L}*|дог\.?|dog\p{L}*|шартном\p{L}*)(?:\s*номер\p{L}*)?\s*(?:№|N\b|no\b)?\.?\s*([\p{L}\d][\p{L}\d\-/.]*?)\s*(?:от|dan|ot)?\s*(\d{2})\.(\d{2})\.(\d{4})/iu.exec(
+      purpose,
+    );
+  if (!found) return null;
+  return { number: found[1] ?? "", date: `${found[4]}-${found[3]}-${found[2]}` };
+}
+
+const normalNumber = (n: string) =>
+  n
+    .toLowerCase()
+    .replace(/[\s№#]/g, "")
+    .replace(/^0+/, "");
+
+export interface CopyContext {
+  /** The counterparty this payment is with, when known. */
+  counterparty?: string | null;
+  contract?: string | null;
+  ownAccount?: string | null;
+  counterpartyAccount?: string | null;
+}
+
 /** The copied document with this payment's own date, amount, number and purpose, or why it cannot be made. */
 export function copyTemplate(
   template: Template,
   payment: BankPayment,
-  ownAccount: string | null,
+  context: CopyContext | string | null = {},
 ): { ok: true; change: ChangeInput } | { ok: false; message: string } {
+  const ctx: CopyContext = typeof context === "string" ? { ownAccount: context } : (context ?? {});
   const amountKey = first(FIELD_NAMES.amount, template.fields);
   if (!amountKey) return { ok: false, message: `${template.object} has no ${FIELD_NAMES.amount[0]} to set` };
   const oldTotal = parsePositive(template.fields[amountKey]);
   if (!(oldTotal > 0)) return { ok: false, message: "the earlier payment has no amount to copy from" };
   const amount = payment.amount / 100;
 
+  const counterpartyKey = first(FIELD_NAMES.counterparty, template.fields);
+  const templateCounterparty = counterpartyKey ? refIn(template.fields[counterpartyKey]) : null;
+  const otherCounterparty = Boolean(
+    ctx.counterparty && templateCounterparty && ctx.counterparty !== templateCounterparty,
+  );
+  if (otherCounterparty && !ctx.contract) {
+    return {
+      ok: false,
+      message:
+        "the document to copy is another counterparty's and the payment purpose names no contract of this one that 1C has",
+    };
+  }
+
+  const theirAccountKey = first(FIELD_NAMES.counterpartyAccount, template.fields);
   const fields: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(template.fields)) {
-    if (!NOT_COPIED.has(name)) fields[name] = writable(value);
+    // Another counterparty's bank account is worse than an empty one.
+    if (NOT_COPIED.has(name) || (otherCounterparty && name === theirAccountKey)) continue;
+    fields[name] = writable(value);
   }
   fields[amountKey] = amount;
   const purposeKey = first(FIELD_NAMES.purpose, template.fields);
@@ -138,8 +198,13 @@ export function copyTemplate(
   const incomingKey = first(FIELD_NAMES.incomingDate, template.fields);
   if (incomingKey) fields[incomingKey] = payment.date;
   const accountKey = first(FIELD_NAMES.bankAccount, template.fields);
-  if (accountKey && ownAccount) fields[accountKey] = { ref: ownAccount };
-  fields.Date = payment.date;
+  if (accountKey && ctx.ownAccount) fields[accountKey] = { ref: ctx.ownAccount };
+  if (counterpartyKey && ctx.counterparty) fields[counterpartyKey] = { ref: ctx.counterparty };
+  if (theirAccountKey && ctx.counterpartyAccount) fields[theirAccountKey] = { ref: ctx.counterpartyAccount };
+  const contractKey = first(FIELD_NAMES.contract, template.fields);
+  if (contractKey && ctx.contract) fields[contractKey] = { ref: ctx.contract };
+  // The date is the standard attribute: its name is the one the earlier document was read with.
+  fields[first(FIELD_NAMES.date, template.fields) ?? "Дата"] = payment.date;
 
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const [name, rows] of Object.entries(template.tables)) {
@@ -177,6 +242,7 @@ export function copyTemplate(
           ? round2((value * amount) / oldTotal)
           : writable(value);
     }
+    if (ctx.contract && "ДоговорКонтрагента" in row) scaled["ДоговорКонтрагента"] = { ref: ctx.contract };
     tables[name] = [scaled];
   }
   return {
@@ -193,9 +259,12 @@ export function copyTemplate(
 
 const day = (date: string) => date.slice(0, 10);
 
-/** The two bank documents a day apart or an INN-less payment cannot be told apart from a copy: only exact matches are "already in 1C". */
+/** Only exact matches are "already in 1C": the same day, counterparty and amount. */
 const sameKey = (date: string, counterparty: string, amount: number) =>
   `${day(date)}|${counterparty}|${Math.round(amount * 100)}`;
+
+const label = (p: BankPayment) =>
+  p.inn ? `${p.counterparty} (INN ${p.inn})` : p.counterparty || "(no name)";
 
 export async function resolvePayments(
   statement: BankStatement,
@@ -203,11 +272,41 @@ export async function resolvePayments(
   deps: BankDeps,
 ): Promise<BankResolved> {
   const overrides = options.overrides ?? {};
-  const cache = options.cache ?? { templates: new Map() };
+  const cache = options.cache ?? { lists: new Map(), snapshots: new Map() };
   const problems: BankProblem[] = [];
+  const notes: BankNote[] = [];
   const alreadyIn1c: number[] = [];
   const wanted = options.only ? new Set(options.only) : null;
   let payments = statement.payments.filter((p) => !wanted || wanted.has(p.row));
+  const nothing = (): BankResolved => ({ ready: [], alreadyIn1c, problems, notes });
+
+  const grouped = new Map<string, BankProblem>();
+  const addProblem = (
+    p: BankPayment,
+    code: BankProblem["code"],
+    message: string,
+    candidates?: BankCandidate[],
+  ) => {
+    const key = `${code}|${message}|${p.inn || p.counterparty}`;
+    const existing = grouped.get(key);
+    if (existing) existing.rows.push(p.row);
+    else {
+      const created: BankProblem = {
+        rows: [p.row],
+        code,
+        message,
+        counterparty: label(p),
+        ...(candidates ? { candidates } : {}),
+      };
+      grouped.set(key, created);
+      problems.push(created);
+    }
+  };
+  const addNote = (rows: number[], message: string) => {
+    const existing = notes.find((n) => n.message === message);
+    if (existing) existing.rows.push(...rows);
+    else notes.push({ rows, message });
+  };
 
   // 1. Payments the program's own checks stop.
   const stopped = new Map<number, string[]>();
@@ -216,17 +315,12 @@ export async function resolvePayments(
       stopped.set(issue.row, [...(stopped.get(issue.row) ?? []), issue.message]);
   }
   for (const p of payments.filter((x) => stopped.has(x.row))) {
-    problems.push({
-      rows: [p.row],
-      code: "CHECK",
-      message: (stopped.get(p.row) ?? []).join("; "),
-      counterparty: label(p),
-    });
+    addProblem(p, "CHECK", (stopped.get(p.row) ?? []).join("; "));
   }
   payments = payments.filter((p) => !stopped.has(p.row));
-  if (payments.length === 0) return { ready: [], alreadyIn1c, problems };
+  if (payments.length === 0) return nothing();
 
-  // 2. The organization's own bank account.
+  // 2. The organization's own bank account. Not finding it is not a stop: the copied document keeps its own.
   let ownAccount: string | null = overrides.ownAccount ?? null;
   if (!ownAccount && statement.account) {
     const rows = await lookup(
@@ -237,21 +331,17 @@ export async function resolvePayments(
     );
     const found = (rows ?? []).flatMap(({ cells }) => {
       const ref = refOf(cells[0]);
-      return ref ? [{ ref, name: textOf(cells[1]) }] : [];
+      return ref ? [ref] : [];
     });
     const [only] = found;
-    if (found.length === 1 && only) ownAccount = only.ref;
+    if (found.length === 1 && only) ownAccount = only;
     else if (rows) {
-      problems.push({
-        rows: payments.map((p) => p.row),
-        code: found.length === 0 ? "BANK_ACCOUNT_NOT_FOUND" : "BANK_ACCOUNT_AMBIGUOUS",
-        message:
-          found.length === 0
-            ? `no bank account ${statement.account} in 1C: pass ownAccount (the reference of the organization's account)`
-            : `${found.length} bank accounts have the number ${statement.account}: pass ownAccount`,
-        candidates: found,
-      });
-      return { ready: [], alreadyIn1c, problems };
+      addNote(
+        payments.map((p) => p.row),
+        found.length === 0
+          ? `no bank account ${statement.account} in 1C: each document keeps the account of the payment it was copied from`
+          : `${found.length} bank accounts have the number ${statement.account}: each document keeps the account of the payment it was copied from`,
+      );
     }
   }
 
@@ -272,29 +362,8 @@ export async function resolvePayments(
       byInn.set(String(cells[0]), [...(byInn.get(String(cells[0])) ?? []), { ref, name: textOf(cells[2]) }]);
   }
 
-  const withCounterparty: { payment: BankPayment; counterparty: string }[] = [];
-  const grouped = new Map<string, BankProblem>();
-  const addProblem = (
-    p: BankPayment,
-    code: BankProblem["code"],
-    message: string,
-    candidates?: BankCandidate[],
-  ) => {
-    const key = `${code}|${p.inn || p.counterparty}`;
-    const existing = grouped.get(key);
-    if (existing) existing.rows.push(p.row);
-    else {
-      const created: BankProblem = {
-        rows: [p.row],
-        code,
-        message,
-        counterparty: label(p),
-        ...(candidates ? { candidates } : {}),
-      };
-      grouped.set(key, created);
-      problems.push(created);
-    }
-  };
+  // A payment with no INN (acquiring, bank fees) is copied from a payment of the same kind: no counterparty is needed.
+  const withCounterparty: { payment: BankPayment; counterparty: string | null }[] = [];
   for (const p of payments) {
     const chosen = overrides.counterparties?.find((o) => o.row === p.row);
     if (chosen) {
@@ -302,11 +371,7 @@ export async function resolvePayments(
       continue;
     }
     if (p.inn === "") {
-      addProblem(
-        p,
-        "NO_INN",
-        "the statement has no INN for this counterparty: find it in 1C by name, or answer with counterparties",
-      );
+      withCounterparty.push({ payment: p, counterparty: null });
       continue;
     }
     if (!counterpartyRows) {
@@ -326,7 +391,7 @@ export async function resolvePayments(
         matches,
       );
   }
-  if (withCounterparty.length === 0) return { ready: [], alreadyIn1c, problems };
+  if (withCounterparty.length === 0) return nothing();
 
   // 4. Payments already in 1C: the same day, counterparty and amount in the same kind of document.
   const dates = withCounterparty.map((x) => x.payment.date).sort();
@@ -342,72 +407,159 @@ export async function resolvePayments(
     const outcome = await deps.query(query);
     if (!outcome.ok) continue;
     for (const cells of (outcome.data as { rows?: unknown[][] }).rows ?? []) {
-      const ref = refOf(cells[0]);
-      if (ref && typeof cells[2] === "number")
-        existing.add(`${direction}|${sameKey(String(cells[1]), ref, cells[2])}`);
+      if (typeof cells[2] === "number")
+        existing.add(`${direction}|${sameKey(String(cells[1]), refOf(cells[0]) ?? "", cells[2])}`);
     }
   }
 
-  // 5. A copy of the counterparty's newest payment, per payment.
+  // 5. The contracts the purposes name, and the counterparties' bank accounts, by INN.
+  const mentions = new Map<number, { number: string; date: string }>();
+  for (const { payment } of withCounterparty) {
+    const mention = payment.inn ? contractMention(payment.purpose) : null;
+    if (mention) mentions.set(payment.row, mention);
+  }
+  const contractInns = [
+    ...new Set(withCounterparty.filter(({ payment }) => mentions.has(payment.row)).map((x) => x.payment.inn)),
+  ];
+  const contractsOf = new Map<string, { ref: string; number: string; date: string }[]>();
+  for (const { cells } of contractInns.length
+    ? ((await lookup(
+        deps,
+        (ph) =>
+          `ВЫБРАТЬ Т.Владелец.ИНН КАК ИНН, Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ Т.Владелец.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
+        contractInns,
+      )) ?? [])
+    : []) {
+    const ref = refOf(cells[1]);
+    if (ref) {
+      const list = contractsOf.get(String(cells[0])) ?? [];
+      list.push({ ref, number: String(cells[2] ?? ""), date: day(String(cells[3] ?? "")) });
+      contractsOf.set(String(cells[0]), list);
+    }
+  }
+  const accountInns = [
+    ...new Set(withCounterparty.filter((x) => x.payment.inn && x.payment.account).map((x) => x.payment.inn)),
+  ];
+  const accountsOf = new Map<string, string>();
+  for (const { cells } of accountInns.length
+    ? ((await lookup(
+        deps,
+        (ph) =>
+          `ВЫБРАТЬ Т.Владелец.ИНН КАК ИНН, Т.Ссылка КАК Ссылка, Т.НомерСчета КАК НомерСчета ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.Владелец.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
+        accountInns,
+      )) ?? [])
+    : []) {
+    const ref = refOf(cells[1]);
+    if (ref) accountsOf.set(`${String(cells[0])}|${String(cells[2] ?? "").replace(/\D/g, "")}`, ref);
+  }
+
+  // 6. A copy of the counterparty's newest payment of the same kind, per payment.
   const ready: BankResolved["ready"] = [];
   for (const { payment, counterparty } of withCounterparty) {
-    if (existing.has(`${payment.direction}|${sameKey(payment.date, counterparty, payment.amount / 100)}`)) {
+    if (
+      existing.has(`${payment.direction}|${sameKey(payment.date, counterparty ?? "", payment.amount / 100)}`)
+    ) {
       alreadyIn1c.push(payment.row);
       continue;
     }
     const object = OBJECT[payment.direction];
     const asked = overrides.templates?.find((o) => o.row === payment.row);
-    const cacheKey = `${asked?.ref ?? `${object}|${counterparty}`}`;
-    let template = cache.templates.get(cacheKey);
-    if (template === undefined) {
-      template = await findTemplate(deps, object, counterparty, asked?.ref);
-      cache.templates.set(cacheKey, template);
-    }
+    const template = asked
+      ? await snapshot(deps, cache, object, asked.ref)
+      : await findTemplate(deps, cache, object, payment);
     if (!template) {
       addProblem(
         payment,
         "NO_TEMPLATE",
-        `no earlier posted ${object.replace("Документ.", "")} for this counterparty to copy: answer with templates (a posted document of the same kind) or enter it with propose_changes`,
+        `no earlier posted ${object.replace("Документ.", "")} of this kind to copy: answer with templates (a posted document of the same kind) or enter it with propose_changes`,
       );
       continue;
     }
-    const made = copyTemplate(template, payment, ownAccount);
+
+    let contract: string | null = null;
+    const mention = mentions.get(payment.row);
+    if (mention) {
+      const list = contractsOf.get(payment.inn) ?? [];
+      const match = list.filter(
+        (c) => normalNumber(c.number) === normalNumber(mention.number) && c.date === mention.date,
+      );
+      const [only] = match;
+      if (match.length === 1 && only) contract = only.ref;
+      else {
+        addNote(
+          [payment.row],
+          `the purpose names contract ${mention.number} of ${mention.date.split("-").reverse().join(".")}, which 1C ${list.length === 0 ? "does not have for this counterparty" : `does not have (it has ${list.map((c) => `${c.number} of ${c.date.split("-").reverse().join(".")}`).join(", ")})`}: the contract of the payment it was copied from is used`,
+        );
+      }
+    }
+    const made = copyTemplate(template, payment, {
+      counterparty,
+      contract,
+      ownAccount,
+      counterpartyAccount: accountsOf.get(`${payment.inn}|${payment.account}`) ?? null,
+    });
     if (!made.ok) {
       addProblem(payment, "BAD_TEMPLATE", made.message);
       continue;
     }
     ready.push({ payment, change: made.change });
   }
-  return { ready, alreadyIn1c, problems };
+  return { ready, alreadyIn1c, problems, notes };
 }
 
-const label = (p: BankPayment) =>
-  p.inn ? `${p.counterparty} (INN ${p.inn})` : p.counterparty || "(no name)";
+async function snapshot(
+  deps: BankDeps,
+  cache: BankCache,
+  object: string,
+  ref: string,
+): Promise<Template | null> {
+  const key = `${object}|${ref}`;
+  if (cache.snapshots.has(key)) return cache.snapshots.get(key) ?? null;
+  const outcome = await deps.getObject(object, ref);
+  let template: Template | null = null;
+  if (outcome.ok) {
+    const data = outcome.data as {
+      fields?: Record<string, unknown>;
+      tables?: Record<string, Record<string, unknown>[]>;
+    };
+    template = { object, ref, fields: data.fields ?? {}, tables: data.tables ?? {} };
+  }
+  cache.snapshots.set(key, template);
+  return template;
+}
 
-/** The newest posted document of this kind for the counterparty, read whole; or the one the model named. */
+/**
+ * The document to copy for a payment. With an INN: the counterparty's newest posted payment of the
+ * same kind, preferring one whose purpose says the same kind of thing (a fee, not a refund). With
+ * none (acquiring, bank fees): the newest posted payment whose purpose has the same words.
+ */
 async function findTemplate(
   deps: BankDeps,
+  cache: BankCache,
   object: string,
-  counterparty: string,
-  named?: string,
+  payment: BankPayment,
 ): Promise<Template | null> {
-  let ref = named ?? null;
-  if (!ref) {
+  const key = `${object}|${payment.inn || "*"}`;
+  let list = cache.lists.get(key);
+  if (!list) {
     const outcome = await deps.query({
-      query: `ВЫБРАТЬ ПЕРВЫЕ 1 Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент = &к УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
-      params: { к: counterparty },
-      limit: 1,
+      query: payment.inn
+        ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.ИНН = &инн УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
+        : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+      ...(payment.inn ? { params: { инн: payment.inn } } : {}),
+      limit: payment.inn ? 20 : 300,
       refs: true,
     });
-    if (!outcome.ok) return null;
-    ref = refOf((outcome.data as { rows?: unknown[][] }).rows?.[0]?.[0]);
+    list = outcome.ok
+      ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+          const ref = refOf(cells[0]);
+          return ref ? [{ ref, purpose: String(cells[1] ?? "") }] : [];
+        })
+      : [];
+    cache.lists.set(key, list);
   }
-  if (!ref) return null;
-  const snapshot = await deps.getObject(object, ref);
-  if (!snapshot.ok) return null;
-  const data = snapshot.data as {
-    fields?: Record<string, unknown>;
-    tables?: Record<string, Record<string, unknown>[]>;
-  };
-  return { object, ref, fields: data.fields ?? {}, tables: data.tables ?? {} };
+  const shape = shapeOf(payment.purpose);
+  const same = shape.length >= 8 ? list.find((c) => shapeOf(c.purpose) === shape) : undefined;
+  const chosen = same ?? (payment.inn ? list[0] : undefined);
+  return chosen ? snapshot(deps, cache, object, chosen.ref) : null;
 }
