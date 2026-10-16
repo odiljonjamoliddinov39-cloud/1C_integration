@@ -175,6 +175,33 @@ export const DidoxInvoicesInput = z.object({
 });
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
+/**
+ * Payments of a bank statement the app has read from the attached file: the app builds the
+ * documents itself (a copy of the counterparty's newest payment, with this payment's date, amount,
+ * number and purpose). Only what it could not settle comes back, and the model answers with
+ * references and sheet rows.
+ */
+export const BankPaymentsInput = z.object({
+  /** For the card's title, in the accountant's language, e.g. "Bank ko'chirmasi 01–15.09: 42 ta to'lov". */
+  title: z.string().trim().min(1).max(200),
+  /** The statement's file name when several are attached; absent: the newest. */
+  file: z.string().min(1).max(300).optional(),
+  /** Sheet rows to take; absent: every payment. */
+  rows: z.array(z.number().int().min(1)).max(5000).optional(),
+  /** The organization's own bank account (a reference), when the app could not find it by number. */
+  ownAccount: Ref.optional(),
+  counterparties: z
+    .array(z.object({ row: z.number().int().min(1), ref: Ref }))
+    .max(2000)
+    .optional(),
+  /** A posted payment document to copy for a row, when the counterparty has no earlier payment. */
+  templates: z
+    .array(z.object({ row: z.number().int().min(1), ref: Ref }))
+    .max(2000)
+    .optional(),
+});
+export type BankPaymentsInput = z.infer<typeof BankPaymentsInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -221,6 +248,7 @@ export const AI_TOOLS = {
   propose_invoice_received: InvoiceReceivedDraft,
   propose_invoices_received: InvoicesReceivedInput,
   propose_didox_invoices: DidoxInvoicesInput,
+  propose_bank_payments: BankPaymentsInput,
   propose_delete_marked: DeleteMarkedInput,
   report_findings: ReportFindingsInput,
 } as const;
@@ -234,6 +262,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoice_received",
   "propose_invoices_received",
   "propose_didox_invoices",
+  "propose_bank_payments",
   "propose_delete_marked",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];

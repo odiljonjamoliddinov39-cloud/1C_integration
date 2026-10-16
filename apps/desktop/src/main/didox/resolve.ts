@@ -177,15 +177,15 @@ export function draftOf(
 // --- Looking up 1C ---------------------------------------------------------------------------
 
 const CHUNK = 150;
-const chunks = <T>(list: T[], size = CHUNK): T[][] =>
+export const chunks = <T>(list: T[], size = CHUNK): T[][] =>
   Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
 
-interface Row {
+export interface Row {
   cells: unknown[];
 }
 
 /** Rows of a query that takes a list of values as parameters (a list in a 1C query is spelled out). */
-async function lookup(
+export async function lookup(
   deps: ResolverDeps,
   text: (placeholders: string) => string,
   values: string[],
@@ -209,11 +209,11 @@ async function lookup(
   return rows;
 }
 
-const refOf = (cell: unknown): string | null =>
+export const refOf = (cell: unknown): string | null =>
   cell && typeof cell === "object" && typeof (cell as { ref?: unknown }).ref === "string"
     ? (cell as { ref: string }).ref
     : null;
-const textOf = (cell: unknown): string =>
+export const textOf = (cell: unknown): string =>
   typeof cell === "string"
     ? cell
     : cell && typeof cell === "object" && typeof (cell as { name?: unknown }).name === "string"

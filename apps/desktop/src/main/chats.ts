@@ -12,6 +12,7 @@ import type { ChatSummary } from "../shared/ipc.js";
 import type { ChatEntry } from "../shared/transcript.js";
 import type { SecretBox } from "./store.js";
 import type { DidoxDocument } from "./didox/document.js";
+import type { BankStatement } from "./bank/statement.js";
 import type { TableFile } from "./tables.js";
 
 /** Older chats beyond this many per company are deleted. */
@@ -28,6 +29,10 @@ export interface StoredChat extends ChatSummary {
   didox?: DidoxDocument[];
   /** Keys of the Didox documents already entered into 1C from this chat. */
   didoxDone?: string[];
+  /** Bank statements read from the files attached to this chat, whole, for propose_bank_payments. */
+  bank?: BankStatement[];
+  /** Payments already entered into 1C from this chat, as "file#row". */
+  bankDone?: string[];
 }
 
 // Ids become file names: only UUIDs, so no id can point outside the chats folder.

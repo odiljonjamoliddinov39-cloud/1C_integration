@@ -11,6 +11,7 @@ import readXlsxFile from "read-excel-file/node";
 
 import type { AssistantFile, AttachmentInfo } from "../shared/ipc.js";
 import { type DidoxDocument, batchOf, describeBatch, parseDidoxDocument } from "./didox/document.js";
+import { type BankStatement, describeBankStatement, parseBankStatement } from "./bank/statement.js";
 import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
 import { ZipError, readZip } from "./zip.js";
 
@@ -64,6 +65,8 @@ export interface ReadAttachments {
   tables: TableFile[];
   /** Didox documents read by the program, whole, for propose_didox_invoices. */
   didox: DidoxDocument[];
+  /** Bank statements read by the program, whole, for propose_bank_payments. */
+  bank: BankStatement[];
 }
 
 export async function readAttachments(
@@ -74,6 +77,7 @@ export async function readAttachments(
   const info: AttachmentInfo[] = [];
   const tables: TableFile[] = [];
   const didox: DidoxDocument[] = [];
+  const bank: BankStatement[] = [];
   const budget: Budget = { sent: 0 };
   for (const file of files) {
     if (extensionOf(file.name) === ".zip") {
@@ -82,6 +86,7 @@ export async function readAttachments(
       info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
       tables.push(...archive.tables);
       didox.push(...archive.didox);
+      bank.push(...archive.tables.flatMap((table) => parseBankStatement(table) ?? []));
       continue;
     }
     const read = await readOne(file, shrink);
@@ -90,8 +95,9 @@ export async function readAttachments(
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
     if (read.table) tables.push(read.table);
     if (read.didox) didox.push(read.didox);
+    if (read.bank) bank.push(read.bank);
   }
-  return { blocks, info, tables, didox };
+  return { blocks, info, tables, didox, bank };
 }
 
 async function readOne(
@@ -102,6 +108,7 @@ async function readOne(
   kind: AttachmentInfo["kind"];
   table?: TableFile;
   didox?: DidoxDocument;
+  bank?: BankStatement;
 }> {
   const extension = extensionOf(name);
   const image = imageType(data);
@@ -119,11 +126,17 @@ async function readOne(
   }
   if (extension === ".xlsx" || extension === ".xlsm") {
     const table = await spreadsheet(data, name);
-    return { block: tableBlock(table), kind: "spreadsheet", table };
+    const bank = parseBankStatement(table);
+    return bank && isWorthSummarising(bank)
+      ? { block: bankBlock(bank), kind: "spreadsheet", table, bank }
+      : { block: tableBlock(table), kind: "spreadsheet", table };
   }
   if (extension === ".csv" || extension === ".tsv") {
     const table = { name, sheets: [{ name, rows: parseCsv(decodeText(data)) }] };
-    return { block: tableBlock(table), kind: "text", table };
+    const bank = parseBankStatement(table);
+    return bank && isWorthSummarising(bank)
+      ? { block: bankBlock(bank), kind: "text", table, bank }
+      : { block: tableBlock(table), kind: "text", table };
   }
   if (extension === ".docx") {
     try {
@@ -484,6 +497,28 @@ async function spreadsheet(data: Uint8Array, name: string): Promise<TableFile> {
       name: sheet,
       rows: rows.map((row) => row.map(cellText)),
     })),
+  };
+}
+
+/** A statement of a few payments is as cheap to send as it is to summarise: the model reads it whole. */
+const isWorthSummarising = (bank: BankStatement) => bank.payments.length >= 5;
+
+/**
+ * A bank statement the program has read: the model gets the totals and the exceptions, and enters
+ * the payments with propose_bank_payments; the file itself stays on the PC for read_attachment.
+ */
+function bankBlock(bank: BankStatement): AiContentBlock {
+  return {
+    type: "document",
+    source: {
+      type: "text",
+      media_type: "text/plain",
+      data:
+        `${describeBankStatement(bank)}\n` +
+        `The rows are not sent. To enter the payments call propose_bank_payments (title only); ` +
+        `to look at rows use read_attachment (file "${bank.fileName}", columns by letter).`,
+    },
+    title: bank.fileName,
   };
 }
 
