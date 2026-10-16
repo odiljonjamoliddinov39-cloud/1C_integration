@@ -27,6 +27,23 @@ An attached Excel or CSV bank statement is read by the program (`apps/desktop/sr
    A payment is not copied when the earlier one was split over several contracts, is in a foreign
    currency, or its breakdown does not add up to its amount.
 
+## What the first real run showed (13.10.2026 statement, 26 payments)
+
+The model entered them by hand in 20 minutes because the tool failed: the copied document was written
+with an English `Date` field, which 1C does not have (its standard attribute is `Дата`). Also found:
+
+- the earlier payment was looked up with a reference as a query parameter, which a query cannot compare;
+  it is now looked up by the counterparty's INN (`Т.Контрагент.ИНН = &инн`),
+- acquiring (`SmartVista - Выручка …`) and bank-fee (`погашение Дебетовый оборот`) rows have no
+  counterparty to copy from: they are copied from the newest posted payment whose purpose has the same
+  words (digits and punctuation ignored, `shapeOf`); with an INN, a same-kind payment is preferred too,
+- the purpose names the contract ("Договор 4/28 от 01.01.2026г"): it is looked up in 1C by number and date
+  and used in the document and its breakdown; when 1C does not have it, the earlier payment's contract
+  stays and a note says so,
+- the counterparty's bank account (`СчетКонтрагента`) is taken from 1C by the number in the statement,
+  and another counterparty's account is never carried over,
+- not finding the organization's own bank account no longer stops the payments (a note instead).
+
 Not verified against a real base yet: the attribute names (`БанковскийСчета.НомерСчета`,
 `НомерВходящегоДокумента`, `НазначениеПлатежа`, `СуммаДокумента`, the breakdown columns) are the
 usual ones of Бухгалтерия для Узбекистана 3.0, and are set only when the copied document has them.

@@ -60,9 +60,11 @@ breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма �
 Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example. \
 When the app has read a bank statement from an attached file it sends a summary headed "Bank statement … read by the \
 program" (totals by month, the columns it took, rows to look at) and no rows: enter the payments with \
-propose_bank_payments (title only). It finds the account and the counterparties and copies each counterparty's last \
-posted payment with this payment's date, amount, number and purpose, so the contract and the accounts are the \
-company's own; the documents are left unposted. It returns only what it could not settle (a counterparty with no INN \
+propose_bank_payments (title only) FIRST, before reading 1C yourself: it finds the account and the counterparties and \
+copies each counterparty's last posted payment (for rows with no INN, such as acquiring or bank fees, the last one of \
+the same kind) with this payment's date, amount, number and purpose, and takes the contract the purpose names, so \
+the contract and the accounts are the company's own; the documents are left unposted. Its notes are what the program \
+decided on its own (a contract the purpose names that 1C does not have): report them in your answer. It returns only what it could not settle (a counterparty with no INN \
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
 counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
