@@ -147,6 +147,8 @@ export class FakePlatform implements PlatformTransport {
     {
       object: string;
       fields: Record<string, unknown>;
+      /** Tabular sections: kept as written and returned by GetObject. */
+      tables?: Record<string, Record<string, unknown>[]>;
       posted: boolean;
       deletionMark: boolean;
       version: number;
@@ -214,7 +216,7 @@ export class FakePlatform implements PlatformTransport {
         const found = this.objects.get(input.ref);
         if (!found || found.object !== input.object)
           throw new Failure("NOT_FOUND", `${input.object} not found`);
-        return { ...this.state(input.ref), fields: found.fields, tables: {} };
+        return { ...this.state(input.ref), fields: found.fields, tables: found.tables ?? {} };
       }
       case "PreviewChange":
         return this.prepareChange(parse(arg) as ChangeInput).preview;
@@ -353,6 +355,7 @@ export class FakePlatform implements PlatformTransport {
       this.objects.set(ref, {
         object: input.object,
         fields,
+        ...(input.tables || existing?.tables ? { tables: input.tables ?? existing?.tables ?? {} } : {}),
         posted: input.action === "delete" ? false : input.action === "undelete" ? wasPosted : willPost,
         deletionMark,
         version: (existing?.version ?? 0) + 1,

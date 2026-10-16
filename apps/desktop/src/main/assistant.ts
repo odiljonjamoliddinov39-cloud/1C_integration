@@ -33,6 +33,7 @@ import {
   type CreateInvoiceResult,
   type DeleteMarkedPreview,
   type DeleteMarkedResult,
+  type BankPaymentsInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -72,6 +73,8 @@ import type { BillingState } from "./billing.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
+import { type BankCandidate, type BankProblem, resolvePayments } from "./bank/resolve.js";
+import type { BankStatement } from "./bank/statement.js";
 import { type DidoxDocument, batchOf, didoxKey } from "./didox/document.js";
 import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
@@ -267,6 +270,7 @@ export class AssistantService {
     ];
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (attached.didox.length > 0) chat.didox = mergeDidox(chat.didox ?? [], attached.didox);
+    if (attached.bank.length > 0) chat.bank = mergeBank(chat.bank ?? [], attached.bank);
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
     if (rejectTemplate) void this.engine.reject(rejectTemplate);
@@ -973,6 +977,9 @@ export class AssistantService {
     if (tool === "propose_didox_invoices") {
       return this.proposeDidox(chat, input as DidoxInvoicesInput, emit, signal);
     }
+    if (tool === "propose_bank_payments") {
+      return this.proposeBank(chat, input as BankPaymentsInput, emit, signal);
+    }
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
@@ -1390,6 +1397,100 @@ export class AssistantService {
     };
   }
 
+  /**
+   * Payments of a bank statement read from the attached file. The program finds the bank account
+   * and the counterparties and copies each counterparty's newest payment with this payment's date,
+   * amount, number and purpose; what is certain goes on one card, and the model is told only what
+   * it must settle.
+   */
+  private async proposeBank(
+    chat: StoredChat,
+    input: BankPaymentsInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const statements = chat.bank ?? [];
+    const statement = input.file
+      ? statements.find((s) => s.fileName.toLowerCase() === input.file?.toLowerCase())
+      : statements.at(-1);
+    if (!statement) {
+      return {
+        ok: false,
+        code: "NO_BANK_STATEMENT",
+        message:
+          statements.length === 0
+            ? "No bank statement was read from the files attached to this chat. Attach the statement (Excel or CSV), or enter the payments with propose_changes."
+            : `No statement "${input.file}". Read: ${statements.map((s) => s.fileName).join(", ")}`,
+      };
+    }
+    emit({ type: "tool", name: "propose_bank_payments", detail: describe("propose_bank_payments", input) });
+    const done = new Set(chat.bankDone ?? []);
+    const doneKey = (row: number) => `${statement.fileName}#${row}`;
+    const only = (input.rows ?? statement.payments.map((p) => p.row)).filter(
+      (row) => !done.has(doneKey(row)),
+    );
+    if (only.length === 0) {
+      return { ok: true, data: { status: done.size > 0 ? "all_entered" : "nothing_to_enter" } };
+    }
+
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const resolved = await resolvePayments(
+      statement,
+      {
+        companyInn: this.deps.store.company(chat.companyId).inn,
+        only,
+        overrides: {
+          ...(input.ownAccount ? { ownAccount: input.ownAccount } : {}),
+          ...(input.counterparties ? { counterparties: input.counterparties } : {}),
+          ...(input.templates ? { templates: input.templates } : {}),
+        },
+      },
+      {
+        query: (query) => run("run_query", query),
+        describe: (objects) => run("describe_objects", { objects }),
+        getObject: (object, ref) => run("get_object", { object, ref }),
+      },
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+
+    const attention = {
+      ...(resolved.problems.length > 0 ? { needsAttention: summarizeBankProblems(resolved.problems) } : {}),
+      ...(resolved.alreadyIn1c.length > 0
+        ? { alreadyIn1c: { count: resolved.alreadyIn1c.length, rows: resolved.alreadyIn1c.slice(0, 50) } }
+        : {}),
+    };
+    if (resolved.ready.length === 0) {
+      return { ok: true, data: { status: "needs_attention", ...attention, next: BANK_NEXT } };
+    }
+    const proposal = {
+      title: input.title,
+      changes: resolved.ready.map(({ change }) => change),
+    };
+    let result = await this.propose(chat, "propose_changes", proposal, emit, signal);
+    // 1C's filling check is not the model's to fix here: the same payments go on the card with the warnings.
+    if (!result.ok && result.code === "FILL_CHECK") {
+      result = await this.propose(chat, "propose_changes", proposal, emit, signal);
+    }
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    if (data?.status === "done") {
+      const entered = new Set(chat.bankDone ?? []);
+      for (const { n } of data.applied ?? []) {
+        const payment = resolved.ready[n - 1]?.payment;
+        if (payment) entered.add(doneKey(payment.row));
+      }
+      chat.bankDone = [...entered];
+      this.save(chat);
+    }
+    const hasAttention = resolved.problems.length > 0;
+    return {
+      ok: true,
+      data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
+    };
+  }
+
   /** A document created from files is saved unposted (the accountant posts it after checking), not as the model asked. */
   private unpostedIfImport(companyId: string, change: ChangeInput): ChangeInput {
     if (!this.unposted.has(companyId) || change.action !== "create" || !change.post) return change;
@@ -1537,6 +1638,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_didox_invoices") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
+  }
+  if (name === "propose_bank_payments") {
+    const batch = input as { title: string; rows?: number[] };
+    return `${batch.rows ? `${batch.rows.length} · ` : ""}${batch.title}`;
   }
   if (name === "propose_delete_marked") {
     const types = (input as { types?: string[] }).types;
@@ -1719,6 +1824,26 @@ interface DidoxOrigin {
 const DIDOX_NEXT =
   "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_invoices again with items / counterparties / contracts (references only); documents already entered are not offered again.";
 
+const BANK_NEXT =
+  "Settle these (find the counterparty in 1C by name, create what is missing with propose_changes, or ask the accountant) and call propose_bank_payments again with counterparties / templates / ownAccount (references and sheet rows only); payments already entered are not offered again.";
+
+/** What the model is told of the bank problems: grouped by counterparty, the rows and candidates few. */
+function summarizeBankProblems(problems: BankProblem[]) {
+  const limit = 40;
+  return {
+    count: problems.length,
+    problems: problems.slice(0, limit).map((p) => ({
+      rows: p.rows.slice(0, 20),
+      ...(p.rows.length > 20 ? { moreRows: p.rows.length - 20 } : {}),
+      code: p.code,
+      ...(p.counterparty ? { counterparty: p.counterparty } : {}),
+      message: p.message,
+      ...(p.candidates ? { candidates: p.candidates.slice(0, 5) as BankCandidate[] } : {}),
+    })),
+    ...(problems.length > limit ? { more: problems.length - limit } : {}),
+  };
+}
+
 /** What the model is told of the problems: grouped by document, the candidates few, the list capped. */
 function summarizeProblems(problems: Problem[]) {
   const limit = 40;
@@ -1736,6 +1861,12 @@ function summarizeProblems(problems: Problem[]) {
 }
 
 /** The documents read now replace those of the same key read before. */
+function mergeBank(before: BankStatement[], added: BankStatement[]): BankStatement[] {
+  const map = new Map(before.map((s) => [s.fileName.toLowerCase(), s]));
+  for (const s of added) map.set(s.fileName.toLowerCase(), s);
+  return [...map.values()];
+}
+
 function mergeDidox(before: DidoxDocument[], added: DidoxDocument[]): DidoxDocument[] {
   const key = (d: DidoxDocument) => `${d.kind}|${didoxKey(d)}`;
   const map = new Map(before.map((d) => [key(d), d]));

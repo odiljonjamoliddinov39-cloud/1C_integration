@@ -57,7 +57,16 @@ amount, the settlement rate and multiplicity (1 and 1 for a contract in сум),
 payment amount in сум), VAT, the settlement and advance accounts and the cash flow item. Copy its exact column names \
 and how it is filled from a posted document of the same operation type (get_object). A bank document without this \
 breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма расчетов" as not filled and does not post it. \
-Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example.
+Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example. \
+When the app has read a bank statement from an attached file it sends a summary headed "Bank statement … read by the \
+program" (totals by month, the columns it took, rows to look at) and no rows: enter the payments with \
+propose_bank_payments (title only). It finds the account and the counterparties and copies each counterparty's last \
+posted payment with this payment's date, amount, number and purpose, so the contract and the accounts are the \
+company's own; the documents are left unposted. It returns only what it could not settle (a counterparty with no INN \
+or not in 1C, no earlier payment to copy, a split or foreign-currency payment): settle those (find the counterparty \
+by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
+counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
+what was entered, what is left, and the totals by month.
 - Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
 fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \
 one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
@@ -272,6 +281,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  propose_bank_payments:
+    'Prepare the payments of the bank statement the app already read from the attached file (the summary "Bank ' +
+    'statement … read by the program") as bank documents on ONE card with a title. The app finds the bank account ' +
+    "and the counterparties and copies each counterparty's last posted payment with this payment's date, amount, " +
+    "number and purpose: send only the title (rows, a list of sheet rows, to take some of them; file when several are " +
+    "attached). What it could not settle comes back as problems; answer them with references in counterparties " +
+    "(row, ref), templates (row, ref of a posted payment document to copy) and ownAccount, and call it again.",
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
