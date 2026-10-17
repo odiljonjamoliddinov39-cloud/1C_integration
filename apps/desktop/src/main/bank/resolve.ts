@@ -111,16 +111,29 @@ const MONEY_COLUMNS = ["СуммаПлатежа", "СуммаВзаиморас
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const first = (keys: string[], have: Record<string, unknown>) => keys.find((k) => k in have);
 
-/** A reference as GetObject writes it, back into what a change accepts. */
+/**
+ * A reference as GetObject writes it, back into what a change accepts: {type, ref, name}. A reference
+ * keeps its type (a field that allows several types asks for it); an enumeration is written by the
+ * value's NAME, which GetObject gives as `ref` (its `name` is the presentation, "Оплата покупателя",
+ * which 1C does not know as a value).
+ */
 function writable(value: unknown): unknown {
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    const v = value as { type?: unknown; ref?: unknown; name?: unknown };
+    const v = value as { type?: unknown; ref?: unknown };
     if (typeof v.ref === "string" && typeof v.type === "string") {
-      // An enumeration is written by the value's name.
-      return v.type.startsWith("Перечисление") ? String(v.name ?? v.ref) : { ref: v.ref };
+      return v.type.startsWith("Перечисление") ? v.ref : { type: v.type, ref: v.ref };
     }
   }
   return value;
+}
+
+/** A reference to put in a field: with the type the earlier document had there, else the usual one. */
+function refTo(existing: unknown, ref: string, fallbackType: string): { type: string; ref: string } {
+  const type =
+    existing && typeof existing === "object" && typeof (existing as { type?: unknown }).type === "string"
+      ? (existing as { type: string }).type
+      : fallbackType;
+  return { type, ref };
 }
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
@@ -217,11 +230,27 @@ export function copyTemplate(
   const incomingKey = first(FIELD_NAMES.incomingDate, template.fields);
   if (incomingKey) fields[incomingKey] = payment.date;
   const accountKey = first(FIELD_NAMES.bankAccount, template.fields);
-  if (accountKey && ctx.ownAccount) fields[accountKey] = { ref: ctx.ownAccount };
-  if (counterpartyKey && ctx.counterparty) fields[counterpartyKey] = { ref: ctx.counterparty };
-  if (theirAccountKey && ctx.counterpartyAccount) fields[theirAccountKey] = { ref: ctx.counterpartyAccount };
+  if (accountKey && ctx.ownAccount)
+    fields[accountKey] = refTo(template.fields[accountKey], ctx.ownAccount, "Справочник.БанковскиеСчета");
+  if (counterpartyKey && ctx.counterparty)
+    fields[counterpartyKey] = refTo(
+      template.fields[counterpartyKey],
+      ctx.counterparty,
+      "Справочник.Контрагенты",
+    );
+  if (theirAccountKey && ctx.counterpartyAccount)
+    fields[theirAccountKey] = refTo(
+      template.fields[theirAccountKey],
+      ctx.counterpartyAccount,
+      "Справочник.БанковскиеСчета",
+    );
   const contractKey = first(FIELD_NAMES.contract, template.fields);
-  if (contractKey && ctx.contract) fields[contractKey] = { ref: ctx.contract };
+  if (contractKey && ctx.contract)
+    fields[contractKey] = refTo(
+      template.fields[contractKey],
+      ctx.contract,
+      "Справочник.ДоговорыКонтрагентов",
+    );
   // The date is the standard attribute: its name is the one the earlier document was read with.
   fields[first(FIELD_NAMES.date, template.fields) ?? "Дата"] = payment.date;
 
@@ -261,7 +290,12 @@ export function copyTemplate(
           ? round2((value * amount) / oldTotal)
           : writable(value);
     }
-    if (ctx.contract && "ДоговорКонтрагента" in row) scaled["ДоговорКонтрагента"] = { ref: ctx.contract };
+    if (ctx.contract && "ДоговорКонтрагента" in row)
+      scaled["ДоговорКонтрагента"] = refTo(
+        row["ДоговорКонтрагента"],
+        ctx.contract,
+        "Справочник.ДоговорыКонтрагентов",
+      );
     tables[name] = [scaled];
   }
   return {
