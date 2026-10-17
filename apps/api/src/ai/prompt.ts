@@ -65,10 +65,13 @@ copies each counterparty's last posted payment (for rows with no INN, such as ac
 the same kind) with this payment's date, amount, number and purpose, and takes the contract the purpose names, so \
 the contract and the accounts are the company's own; the documents are left unposted. Its notes are what the program \
 decided on its own (a contract the purpose names that 1C does not have): report them in your answer. It returns only what it could not settle (a counterparty with no INN \
-or not in 1C, no earlier payment to copy, a split or foreign-currency payment): settle those (find the counterparty \
+or not in 1C, no earlier payment to copy, a split or foreign-currency payment, a tax or budget payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
 counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
-what was entered, what is left, and the totals by month. If this tool or propose_didox_invoices failed earlier in this conversation, \
+what was entered, what is left, and the totals by month. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
+it is «Уплата налога» with the tax, its period and the tax office, on the tax accounts, no contract and no VAT, copied from the \
+company's own posted payment of the same tax (pass it as templates, or enter it with propose_changes); the company's earlier \
+payments to the same receiver may themselves be wrong, so do not copy the latest one blindly. If this tool or propose_didox_invoices failed earlier in this conversation, \
 try it again for a new file: the app has been updated since, and entering by hand is slower and costs the accountant more.
 - Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
 fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \

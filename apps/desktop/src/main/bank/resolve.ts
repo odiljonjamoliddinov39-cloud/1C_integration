@@ -27,7 +27,13 @@ export interface BankProblem {
   /** The sheet rows it concerns. */
   rows: number[];
   code:
-    "CHECK" | "NO_INN" | "COUNTERPARTY_NOT_FOUND" | "COUNTERPARTY_AMBIGUOUS" | "NO_TEMPLATE" | "BAD_TEMPLATE";
+    | "CHECK"
+    | "NO_INN"
+    | "COUNTERPARTY_NOT_FOUND"
+    | "COUNTERPARTY_AMBIGUOUS"
+    | "NO_TEMPLATE"
+    | "BAD_TEMPLATE"
+    | "TAX_PAYMENT";
   message: string;
   /** Who it is about: the name and INN as the statement writes them. */
   counterparty?: string;
@@ -148,6 +154,19 @@ const normalNumber = (n: string) =>
     .toLowerCase()
     .replace(/[\s№#]/g, "")
     .replace(/^0+/, "");
+
+/**
+ * A payment to the budget: the treasury or the tax office as the receiver, or a tax named in the purpose.
+ * It is not a supplier payment. Copying the counterparty's last payment would repeat however the company
+ * entered the earlier ones, and those are often «Оплата поставщику» on 4220, not «Уплата налога».
+ */
+export function isTaxPayment(payment: BankPayment): boolean {
+  if (payment.direction !== "out") return false;
+  const who =
+    /moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
+  const what = /(?<!\p{L})(солиқ\p{L}*|soliq\p{L}*|налог\p{L}*|инпс|inps|ндфл|жшдс|jshds)(?!\p{L})/iu;
+  return who.test(payment.counterparty) || what.test(payment.purpose);
+}
 
 export interface CopyContext {
   /** The counterparty this payment is with, when known. */
@@ -464,6 +483,15 @@ export async function resolvePayments(
     }
     const object = OBJECT[payment.direction];
     const asked = overrides.templates?.find((o) => o.row === payment.row);
+    // A tax payment is copied only from a document the model names (the company's own correct tax payment).
+    if (!asked && isTaxPayment(payment)) {
+      addProblem(
+        payment,
+        "TAX_PAYMENT",
+        "looks like a tax or budget payment: it needs the «Уплата налога» operation, the tax, its period and the tax office, not a copy of an earlier supplier payment. Answer with templates (a posted «Уплата налога» document of the company, for the same tax) or enter it with propose_changes",
+      );
+      continue;
+    }
     const template = asked
       ? await snapshot(deps, cache, object, asked.ref)
       : await findTemplate(deps, cache, object, payment);
