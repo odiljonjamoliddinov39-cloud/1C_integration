@@ -50,7 +50,12 @@ const earlier = (over: Record<string, unknown> = {}) => ({
     Номер: "0000-000007",
     Дата: "2026-08-01T00:00:00",
     Проведен: true,
-    ВидОперации: ref("Перечисление.ВидыОперацийПоступлениеНаРасчетныйСчет", "Оплата", "Оплата"),
+    // An enumeration: its value NAME is `ref`, its presentation (what 1C does not know as a value) is `name`.
+    ВидОперации: ref(
+      "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
+      "ОплатаПокупателя",
+      "Оплата покупателя",
+    ),
     Организация: ref("Справочник.Организации", "66666666-6666-4666-8666-666666666666", "CRYSTAL"),
     БанковскийСчет: ref("Справочник.БанковскиеСчета", "77777777-7777-4777-8777-777777777777", "старый"),
     Контрагент: ref("Справочник.Контрагенты", NAVRUZ, "NAVRO'Z-PTK"),
@@ -192,9 +197,9 @@ describe("copying the counterparty's last payment", () => {
         НазначениеПлатежа: "Оплата по договору №17",
         НомерВходящегоДокумента: "101",
         ДатаВходящегоДокумента: "2026-09-01",
-        БанковскийСчет: { ref: OWN },
-        Контрагент: { ref: NAVRUZ },
-        ВидОперации: "Оплата",
+        БанковскийСчет: { type: "Справочник.БанковскиеСчета", ref: OWN },
+        Контрагент: { type: "Справочник.Контрагенты", ref: NAVRUZ },
+        ВидОперации: "ОплатаПокупателя",
       },
     });
     // 1C's own name of the date, never an English one it does not have.
@@ -208,8 +213,8 @@ describe("copying the counterparty's last payment", () => {
         СуммаВзаиморасчетов: 500_000,
         СуммаНДС: 53_571.43,
         КурсВзаиморасчетов: 1,
-        ДоговорКонтрагента: { ref: CONTRACT_17 },
-        СчетРасчетов: { ref: "99999999-9999-4999-8999-999999999999" },
+        ДоговорКонтрагента: { type: "Справочник.ДоговорыКонтрагентов", ref: CONTRACT_17 },
+        СчетРасчетов: { type: "ПланСчетов.Хозрасчетный", ref: "99999999-9999-4999-8999-999999999999" },
       }),
     ]);
   });
@@ -458,6 +463,7 @@ describe("bank payments for 1C", () => {
     ]);
     // The copied document keeps its own account.
     expect(missing.ready[0]?.change.fields?.БанковскийСчет).toEqual({
+      type: "Справочник.БанковскиеСчета",
       ref: "77777777-7777-4777-8777-777777777777",
     });
 
@@ -466,7 +472,10 @@ describe("bank payments for 1C", () => {
     expect(ambiguous.ready).toHaveLength(1);
     const chosen = await resolvePayments(statement([payment()]), { overrides: { ownAccount: OWN } }, two.d);
     expect(chosen.notes).toEqual([]);
-    expect(chosen.ready[0]?.change.fields?.БанковскийСчет).toEqual({ ref: OWN });
+    expect(chosen.ready[0]?.change.fields?.БанковскийСчет).toEqual({
+      type: "Справочник.БанковскиеСчета",
+      ref: OWN,
+    });
 
     const twins = deps({
       counterparties: [

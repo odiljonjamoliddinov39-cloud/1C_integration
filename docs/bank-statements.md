@@ -54,6 +54,14 @@ to be told «Dm — это налог»). They come back as `TAX_PAYMENT`; the m
 (operation «Уплата налога», tax, period, tax office, accounts 4450/4460…, no contract, no VAT).
 Not built yet: choosing the tax and the period from the purpose by itself.
 
+## The 15.10 run: enumerations and reference types
+
+The copy wrote the operation type (`ВидОперации`, an enumeration) by its presentation ("Оплата
+покупателя"). GetObject gives an enumeration value as `{type, ref: <value name>, name: <presentation>}`
+and a change takes the value NAME, so 1C refused every document and the model went exploring by hand.
+Now the name (`ref`) is written. References keep their `type` too (a field that allows several types
+asks for it), including the counterparty, contract and bank accounts the program sets itself.
+
 Not verified against a real base yet: the attribute names (`БанковскийСчета.НомерСчета`,
 `НомерВходящегоДокумента`, `НазначениеПлатежа`, `СуммаДокумента`, the breakdown columns) are the
 usual ones of Бухгалтерия для Узбекистана 3.0, and are set only when the copied document has them.
