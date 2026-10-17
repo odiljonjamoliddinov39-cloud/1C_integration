@@ -68,7 +68,8 @@ decided on its own (a contract the purpose names that 1C does not have): report 
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
 counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
-what was entered, what is left, and the totals by month.
+what was entered, what is left, and the totals by month. If this tool or propose_didox_invoices failed earlier in this conversation, \
+try it again for a new file: the app has been updated since, and entering by hand is slower and costs the accountant more.
 - Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
 fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \
 one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
