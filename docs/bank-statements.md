@@ -44,6 +44,16 @@ with an English `Date` field, which 1C does not have (its standard attribute is 
   and another counterparty's account is never carried over,
 - not finding the organization's own bank account no longer stops the payments (a note instead).
 
+## Tax and budget payments
+
+A payment to the treasury or tax office (receiver name, or a tax named in the purpose) is not copied from
+the counterparty's last payment: in the 14.10 run the company's earlier payments to the Ministry of
+Finance were all «Оплата поставщику» on 4220, so a copy would have repeated the mistake (the model had
+to be told «Dm — это налог»). They come back as `TAX_PAYMENT`; the model answers with a posted
+«Уплата налога» document of the same tax as the template, or enters it with `propose_changes`
+(operation «Уплата налога», tax, period, tax office, accounts 4450/4460…, no contract, no VAT).
+Not built yet: choosing the tax and the period from the purpose by itself.
+
 Not verified against a real base yet: the attribute names (`БанковскийСчета.НомерСчета`,
 `НомерВходящегоДокумента`, `НазначениеПлатежа`, `СуммаДокумента`, the breakdown columns) are the
 usual ones of Бухгалтерия для Узбекистана 3.0, and are set only when the copied document has them.

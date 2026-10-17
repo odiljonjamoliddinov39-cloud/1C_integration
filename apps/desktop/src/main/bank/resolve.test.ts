@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { RunQueryInput } from "@platform/shared";
 
-import { type BankDeps, contractMention, copyTemplate, resolvePayments, shapeOf } from "./resolve.js";
+import {
+  type BankDeps,
+  contractMention,
+  copyTemplate,
+  isTaxPayment,
+  resolvePayments,
+  shapeOf,
+} from "./resolve.js";
 import { type BankPayment, type BankStatement } from "./statement.js";
 
 const OWN = "11111111-1111-4111-8111-111111111111";
@@ -469,6 +476,47 @@ describe("bank payments for 1C", () => {
     });
     const dup = await resolvePayments(statement([payment()]), {}, twins.d);
     expect(dup.problems[0]).toMatchObject({ code: "COUNTERPARTY_AMBIGUOUS", candidates: expect.any(Array) });
+  });
+
+  it("does not copy a supplier payment for a payment to the budget, unless the model names the tax document", async () => {
+    const treasury = payment({
+      row: 6,
+      direction: "out",
+      counterparty: "O‘zbekiston Respublikasi Iqtisodiyot Va Moliya Vazirligi",
+      purpose: "Mol-mulk solig'i 5929938.78",
+    });
+    const tax = payment({ row: 7, direction: "out", number: "9", purpose: "ЖШДС за сентябрь" });
+    const supplier = payment({
+      row: 8,
+      direction: "out",
+      number: "10",
+      purpose: "оплата за товары по договору 17",
+    });
+    expect([treasury, tax, supplier].map(isTaxPayment)).toEqual([true, true, false]);
+    expect(isTaxPayment(payment({ direction: "in", purpose: "налог" }))).toBe(false);
+
+    const { d } = deps({
+      docs: [
+        {
+          object: "Документ.СписаниеСРасчетногоСчета",
+          ref: OLD_OUT,
+          inn: "201607534",
+          purpose: "x",
+          snapshot: earlier(),
+        },
+      ],
+    });
+    const resolved = await resolvePayments(statement([treasury, tax, supplier]), {}, d);
+    expect(resolved.ready.map((r) => r.payment.row)).toEqual([8]);
+    expect(resolved.problems).toEqual([expect.objectContaining({ rows: [6, 7], code: "TAX_PAYMENT" })]);
+
+    const named = await resolvePayments(
+      statement([treasury]),
+      { overrides: { templates: [{ row: 6, ref: OLD_OUT }] } },
+      d,
+    );
+    expect(named.problems).toEqual([]);
+    expect(named.ready).toHaveLength(1);
   });
 
   it("takes only the rows asked for", async () => {
