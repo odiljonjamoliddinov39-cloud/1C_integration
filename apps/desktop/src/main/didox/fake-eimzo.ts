@@ -23,6 +23,8 @@ export class FakeEImzo {
   private keyedOrigins = new Set<string>();
   /** An E-IMZO that sends the PKCS#7 but not the signature value and signer serial a time stamp needs. */
   omitSignatureValue = false;
+  /** An E-IMZO without this function: it answers as an old version does. */
+  lacks = new Set<string>();
 
   /** The origin of each connection made, in order (undefined: no page, as a desktop app). */
   readonly origins: (string | undefined)[] = [];
@@ -63,6 +65,9 @@ export class FakeEImzo {
   };
 
   private answer(m: { plugin?: string; name: string; arguments?: unknown[] }): unknown {
+    if (this.lacks.has(m.name)) {
+      return { success: false, reason: "Функция не найдена или версия E-IMZO устарела. Обновите E-IMZO." };
+    }
     if (m.name === "apikey") return { success: true };
     if (m.name === "version") return { success: true, major: "6", minor: "0" };
     if (m.name === "list_all_certificates") return { success: true, certificates: this.certificates };

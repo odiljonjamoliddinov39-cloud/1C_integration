@@ -171,11 +171,13 @@ export class EImzoClient {
     }
     if (answer.success === false) {
       const reason = String(answer.reason ?? "E-IMZO refused the request");
+      // Which function refused, so that "function not found" says which one this E-IMZO lacks.
       throw new EImzoError(
         "EIMZO_FAILED",
-        this.asLocalPage && refusesApiKey(reason)
-          ? `${reason} (it refuses this app even with the E-IMZO guide's local keys: it needs an API key for this application, see docs/didox.md)`
-          : reason,
+        `${plugin}.${name}: ` +
+          (this.asLocalPage && refusesApiKey(reason)
+            ? `${reason} (it refuses this app even with the E-IMZO guide's local keys: it needs an API key for this application, see docs/didox.md)`
+            : reason),
       );
     }
     return answer;
@@ -363,7 +365,12 @@ export class EImzoSigner implements DidoxSigner {
       signed = await this.client.createPkcs7(await keyId(false), dataBase64);
     } catch (e) {
       // The key id lapsed (E-IMZO restarted, or 24 hours passed): open the key again, once.
-      if (!(e instanceof EImzoError && e.code === "EIMZO_FAILED" && /не найден|not found/i.test(e.message))) {
+      // "Ключ … не найден" (the id lapsed), not "Функция не найдена" (this E-IMZO lacks the function).
+      const lapsed =
+        e instanceof EImzoError &&
+        /не найден|not found/i.test(e.message) &&
+        !/функци|function/i.test(e.message);
+      if (!(e instanceof EImzoError && e.code === "EIMZO_FAILED" && lapsed)) {
         throw e;
       }
       signed = await this.client.createPkcs7(await keyId(true), dataBase64);

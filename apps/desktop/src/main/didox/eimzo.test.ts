@@ -59,6 +59,21 @@ describe("E-IMZO", () => {
     await expect(signer.pkcs7("x", async () => "t")).rejects.toThrow(/answered: success, pkcs7_64/);
   });
 
+  it("names the function an old E-IMZO lacks, and does not take that for a lapsed key", async () => {
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    eimzo.lacks.add("attach_timestamp_token_pkcs7");
+    const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
+    await expect(signer.pkcs7("x", async () => "token")).rejects.toThrow(
+      /pkcs7\.attach_timestamp_token_pkcs7: Функция не найдена/,
+    );
+    // The key was opened once: a missing function is not a lapsed key id.
+    eimzo.lacks.clear();
+    eimzo.lacks.add("create_pkcs7");
+    await expect(signer.pkcs7("x")).rejects.toThrow(/pkcs7\.create_pkcs7: Функция не найдена/);
+    expect(eimzo.messages.filter((m) => m.name === "load_key")).toHaveLength(1);
+  });
+
   it("opens the key again when E-IMZO no longer knows its id, once", async () => {
     const eimzo = new FakeEImzo();
     eimzo.certificates = [cert(ALIAS)];
