@@ -74,7 +74,13 @@ import type { BillingState } from "./billing.js";
 import type { ChatStore, StoredChat } from "./chats.js";
 import { readTable } from "./tables.js";
 import type { ConnectorRunner } from "./connector.js";
-import { type BankCandidate, type BankProblem, resolvePayments } from "./bank/resolve.js";
+import {
+  type BankCache,
+  type BankCandidate,
+  type BankProblem,
+  type BankResolved,
+  resolvePayments,
+} from "./bank/resolve.js";
 import type { BankStatement } from "./bank/statement.js";
 import { type DidoxDocument, batchOf, didoxKey } from "./didox/document.js";
 import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
@@ -1095,7 +1101,9 @@ export class AssistantService {
         ? 1
         : proposal.kind === "batch"
           ? // Posting or correcting documents that already exist is not a new document.
-            proposal.items.filter((item) => !item.error && item.action === "create").length
+            proposal.items.filter(
+              (item) => !item.error && item.action === "create" && item.object.startsWith("Документ."),
+            ).length
           : 0;
     if (documents > 0 && this.deps.billing) {
       const counted = await this.deps.billing.countImport(documents, this.deps.store.company(companyId).inn);
@@ -1451,26 +1459,105 @@ export class AssistantService {
     const connection = this.deps.store.connection(chat.companyId);
     const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
       this.deps.connector.tool(connection, name, args);
-    const resolved = await resolvePayments(
-      statement,
-      {
-        companyInn: this.deps.store.company(chat.companyId).inn,
-        only,
-        overrides: {
-          ...(input.ownAccount ? { ownAccount: input.ownAccount } : {}),
-          ...(input.counterparties ? { counterparties: input.counterparties } : {}),
-          ...(input.templates ? { templates: input.templates } : {}),
+    const bankDeps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const fresh = new Set<string>();
+    const madeNow: string[] = [];
+    let resolved: BankResolved;
+    // A counterparty the statement names and 1C lacks is created first (one card), then its contract
+    // (one card), then the payments: each round is looked up again, with no step of the model between.
+    for (let round = 0; ; round++) {
+      resolved = await resolvePayments(
+        statement,
+        {
+          companyInn: this.deps.store.company(chat.companyId).inn,
+          only,
+          cache,
+          createMissing: true,
+          fresh,
+          overrides: {
+            ...(input.ownAccount ? { ownAccount: input.ownAccount } : {}),
+            ...(input.counterparties ? { counterparties: input.counterparties } : {}),
+            ...(input.templates ? { templates: input.templates } : {}),
+          },
         },
-      },
-      {
-        query: (query) => run("run_query", query),
-        describe: (objects) => run("describe_objects", { objects }),
-        getObject: (object, ref) => run("get_object", { object, ref }),
-      },
-    );
+        bankDeps,
+      );
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      if (round >= 3) break;
+      if (resolved.missing.length > 0) {
+        const missing = resolved.missing;
+        const made = await this.proposeBatch(
+          chat,
+          {
+            title: `${input.title}: ${missing.length} ta yangi kontragent`,
+            changes: missing.map((m) => ({
+              action: "create" as const,
+              object: "Справочник.Контрагенты",
+              fields: { ИНН: m.inn, Наименование: m.name, НаименованиеПолное: m.name },
+            })),
+          },
+          emit,
+          signal,
+        );
+        if (!made.ok) return made;
+        const data = made.data as { status?: string; applied?: { n: number }[] } | null;
+        if (data?.status !== "done") return made;
+        const applied = (data.applied ?? []).flatMap(({ n }) => (missing[n - 1] ? [missing[n - 1]] : []));
+        for (const m of applied) {
+          if (m) {
+            fresh.add(m.inn);
+            madeNow.push(`${m.name} (INN ${m.inn})`);
+          }
+        }
+        if (applied.length === 0) break;
+        continue;
+      }
+      if (resolved.contractsToCreate.length > 0) {
+        const pending = resolved.contractsToCreate;
+        const made = await this.proposeBatch(
+          chat,
+          {
+            title: `${input.title}: ${pending.length} ta yangi shartnoma`,
+            changes: pending.map((c) => ({
+              action: "create" as const,
+              object: "Справочник.ДоговорыКонтрагентов",
+              fields: c.change.fields ?? {},
+            })),
+          },
+          emit,
+          signal,
+        );
+        if (!made.ok) return made;
+        const data = made.data as { status?: string; applied?: { n: number }[] } | null;
+        if (data?.status !== "done") return made;
+        for (const { n } of data.applied ?? []) {
+          const c = pending[n - 1];
+          if (c) madeNow.push(`contract ${c.label}`);
+        }
+        if ((data.applied ?? []).length === 0) break;
+        continue;
+      }
+      break;
+    }
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
 
     const attention = {
+      ...(madeNow.length > 0 ? { createdInThisRun: madeNow } : {}),
+      ...(resolved.missing.length + resolved.contractsToCreate.length > 0
+        ? {
+            notCreated: [
+              ...resolved.missing.map(
+                (m) => `counterparty ${m.name} (INN ${m.inn}), rows ${m.rows.join(", ")}`,
+              ),
+              ...resolved.contractsToCreate.map((c) => `contract ${c.label}, rows ${c.rows.join(", ")}`),
+            ],
+          }
+        : {}),
       ...(resolved.problems.length > 0 ? { needsAttention: summarizeBankProblems(resolved.problems) } : {}),
       ...(resolved.notes.length > 0
         ? {
@@ -1492,11 +1579,7 @@ export class AssistantService {
       title: input.title,
       changes: resolved.ready.map(({ change }) => change),
     };
-    let result = await this.propose(chat, "propose_changes", proposal, emit, signal);
-    // 1C's filling check is not the model's to fix here: the same payments go on the card with the warnings.
-    if (!result.ok && result.code === "FILL_CHECK") {
-      result = await this.propose(chat, "propose_changes", proposal, emit, signal);
-    }
+    const result = await this.proposeBatch(chat, proposal, emit, signal);
     if (!result.ok) return result;
     const data = result.data as { status?: string; applied?: { n: number }[] } | null;
     if (data?.status === "done") {
@@ -1513,6 +1596,23 @@ export class AssistantService {
       ok: true,
       data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
     };
+  }
+
+  /**
+   * A batch of changes on one card that the app made itself. 1C's filling check is for the accountant to
+   * see on the card, not for the model to chase: the first FILL_CHECK refusal is shown the second time.
+   */
+  private async proposeBatch(
+    chat: StoredChat,
+    proposal: ChangeBatchInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const first = await this.propose(chat, "propose_changes", proposal, emit, signal);
+    if (!first.ok && first.code === "FILL_CHECK") {
+      return this.propose(chat, "propose_changes", proposal, emit, signal);
+    }
+    return first;
   }
 
   /** A document this chat created and left unposted, so that "post them" needs no list from the model. */
@@ -1549,11 +1649,7 @@ export class AssistantService {
       title: input.title,
       changes: list.map((d) => ({ action: "update" as const, object: d.object, ref: d.ref, post: true })),
     };
-    let result = await this.propose(chat, "propose_changes", proposal, emit, signal);
-    // 1C's filling check on posting is for the accountant to see on the card, not for the model to chase.
-    if (!result.ok && result.code === "FILL_CHECK") {
-      result = await this.propose(chat, "propose_changes", proposal, emit, signal);
-    }
+    const result = await this.proposeBatch(chat, proposal, emit, signal);
     if (!result.ok) return result;
     const data = result.data as { status?: string; applied?: { n: number; object: ObjectState }[] } | null;
     if (data?.status === "done") {

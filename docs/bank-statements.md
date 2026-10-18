@@ -74,3 +74,15 @@ The chat remembers the documents it created in 1C and left unposted (`chat.creat
 took 15 s of model time and a long answer before). 1C's refusals (a closed period, a missing field) are on
 the card; what was posted is forgotten, what was refused stays for the next try. Posting or correcting
 documents that already exist is no longer counted against the plan's monthly import limit: only creations are.
+
+## A counterparty the statement names and 1C lacks
+
+With an INN of 9 digits and a name the tool creates it: a card for the new counterparties (INN, name,
+full name), then, for the payments whose purpose names a contract, a card for the contracts (the contract
+of the company's latest payment of the same kind is copied: its kind, currency, settlement rules; the
+owner, number, date and name are the new one's; the expiry date is left empty), then the payments, copied
+from that latest payment of the same kind (a note says so: operation, accounts and VAT are to be checked).
+Each round is looked up again with no step of the model between, so a new supplier costs two more clicks and
+no more model time. Not created: a 14-digit INN (a person), a row with no name, a purpose that names no contract
+(the payment comes back as `NEW_COUNTERPARTY`). Creating directory items is not counted against the plan's
+import limit (only documents are).

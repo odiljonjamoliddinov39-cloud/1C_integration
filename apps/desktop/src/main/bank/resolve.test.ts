@@ -533,6 +533,161 @@ describe("bank payments for 1C", () => {
     expect(named.ready).toHaveLength(1);
   });
 
+  it("offers to create a counterparty the statement names, then its contract, then the payment", async () => {
+    const NEW_CP = "cccccccc-0000-4ccc-8ccc-cccccccccccc";
+    const NEW_CONTRACT = "dddddddd-0000-4ddd-8ddd-dddddddddddd";
+    const purpose = "Оплата по договору № 183 от 15.10.2026 за товары";
+    const row = payment({
+      row: 9,
+      direction: "out",
+      inn: "999999999",
+      counterparty: "Sam active group 786 mchj",
+      purpose,
+    });
+    // The company's usual supplier payment: it has a contract, whose kind and settlement rules are copied.
+    const contractDoc: Doc = {
+      object: "Справочник.ДоговорыКонтрагентов",
+      ref: CONTRACT_17,
+      inn: "",
+      purpose: "",
+      snapshot: {
+        fields: {
+          Код: "000000017",
+          Наименование: "№17 от 08.01.2026",
+          Владелец: ref("Справочник.Контрагенты", NAVRUZ, "NAVRO'Z-PTK"),
+          ВидДоговора: ref("Перечисление.ВидыДоговоровКонтрагентов", "СПоставщиком", "С поставщиком"),
+          ВалютаВзаиморасчетов: ref("Справочник.Валюты", "eeeeeeee-0000-4eee-8eee-eeeeeeeeeeee", "UZS"),
+          СрокДействия: "2026-12-31T00:00:00",
+          Номер: "17",
+          Дата: "2026-01-08T00:00:00",
+        },
+        tables: {},
+      } as never,
+    };
+    const supplierDoc: Doc = {
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: OLD_OUT,
+      inn: "201607534",
+      purpose: "x",
+      snapshot: earlier(),
+    };
+
+    // Round 1: nobody is in 1C yet: the counterparty is offered, and its payment waits.
+    const first = deps({ docs: [supplierDoc, contractDoc], counterparties: [] });
+    const one = await resolvePayments(statement([row]), { createMissing: true }, first.d);
+    expect(one.missing).toEqual([{ inn: "999999999", name: "Sam active group 786 mchj", rows: [9] }]);
+    expect(one.problems).toEqual([]);
+    expect(one.ready).toEqual([]);
+    // A person's INN (14 digits) or a row with no name is not created from a statement.
+    const person = await resolvePayments(
+      statement([
+        payment({ row: 4, inn: "12345678901234", counterparty: "Person" }),
+        payment({ row: 5, counterparty: " " }),
+      ]),
+      { createMissing: true },
+      first.d,
+    );
+    expect(person.missing).toEqual([]);
+
+    // Round 2: the counterparty exists now: its contract is offered, made like the company's other contracts.
+    const created = deps({
+      docs: [supplierDoc, contractDoc],
+      counterparties: [["999999999", NEW_CP, "Sam active group 786 mchj"]],
+    });
+    const two = await resolvePayments(
+      statement([row]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      created.d,
+    );
+    expect(two.ready).toEqual([]);
+    expect(two.problems).toEqual([]);
+    expect(two.contractsToCreate).toHaveLength(1);
+    expect(two.contractsToCreate[0]?.change).toMatchObject({
+      action: "create",
+      object: "Справочник.ДоговорыКонтрагентов",
+      fields: {
+        Владелец: { type: "Справочник.Контрагенты", ref: NEW_CP },
+        Номер: "183",
+        Дата: "2026-10-15",
+        Наименование: "№183 от 15.10.2026",
+        ВидДоговора: "СПоставщиком",
+        ВалютаВзаиморасчетов: { type: "Справочник.Валюты" },
+      },
+    });
+    const fields = two.contractsToCreate[0]?.change.fields ?? {};
+    for (const copied of ["Код", "СрокДействия"]) expect(fields).not.toHaveProperty(copied);
+
+    // Round 3: the contract exists: the payment is made, with the new counterparty and its contract.
+    const done = deps({
+      docs: [supplierDoc, contractDoc],
+      counterparties: [["999999999", NEW_CP, "Sam active group 786 mchj"]],
+      contracts: [["999999999", NEW_CONTRACT, "183", "2026-10-15T00:00:00"]],
+    });
+    const three = await resolvePayments(
+      statement([row]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      done.d,
+    );
+    expect(three.contractsToCreate).toEqual([]);
+    expect(three.ready).toHaveLength(1);
+    expect(three.ready[0]?.change.fields).toMatchObject({
+      Контрагент: { ref: NEW_CP },
+      ДоговорКонтрагента: { ref: NEW_CONTRACT },
+      СуммаДокумента: 1_500_000,
+    });
+    expect(three.notes).toEqual([
+      expect.objectContaining({ rows: [9], message: expect.stringContaining("new counterparty") }),
+    ]);
+
+    // No contract named in the purpose: nothing is invented.
+    const bare = await resolvePayments(
+      statement([{ ...row, purpose: "за товары" }]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      created.d,
+    );
+    expect(bare.problems).toEqual([expect.objectContaining({ rows: [9], code: "NEW_COUNTERPARTY" })]);
+  });
+
+  it("looks past payments that cannot be copied to find the company's usual one for a new counterparty", async () => {
+    const NEW_CP = "cccccccc-0000-4ccc-8ccc-cccccccccccc";
+    const one = earlier().tables.РасшифровкаПлатежа[0] ?? {};
+    // Twelve newer payments split over two contracts (not copyable), then one that is.
+    const split: Doc[] = Array.from({ length: 12 }, (_, i) => ({
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`,
+      inn: "201607534",
+      purpose: "x",
+      snapshot: { ...earlier(), tables: { РасшифровкаПлатежа: [one, one] } } as never,
+    }));
+    const usual: Doc = {
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: OLD_OUT,
+      inn: "201607534",
+      purpose: "x",
+      snapshot: earlier(),
+    };
+    const { d } = deps({
+      docs: [...split, usual],
+      counterparties: [["999999999", NEW_CP, "NEW LTD"]],
+      contracts: [["999999999", "dddddddd-0000-4ddd-8ddd-dddddddddddd", "5", "2026-10-15T00:00:00"]],
+    });
+    const resolved = await resolvePayments(
+      statement([
+        payment({
+          row: 9,
+          direction: "out",
+          inn: "999999999",
+          counterparty: "NEW LTD",
+          purpose: "Договор 5 от 15.10.2026",
+        }),
+      ]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      d,
+    );
+    expect(resolved.problems).toEqual([]);
+    expect(resolved.ready).toHaveLength(1);
+  });
+
   it("takes only the rows asked for", async () => {
     const { d } = deps();
     const resolved = await resolvePayments(
