@@ -114,6 +114,17 @@ describe("bank statement", () => {
     ]);
   });
 
+  it("reads an INN of only zeros as no INN", () => {
+    const statement = parseBankStatement(
+      file([
+        ["Дата", "№", "Корреспондент", "ИНН", "Дебет", "Кредит", "Назначение"],
+        ["01.09.2026", "1", "AMERHANOVA-VINERA", "000000000", "", "126 000,00", "Оплата"],
+      ]),
+    );
+    expect(statement?.payments[0]).toMatchObject({ counterparty: "AMERHANOVA-VINERA", inn: "" });
+    expect(statement?.issues).toEqual([]);
+  });
+
   it("is not a statement when there is no date and amount heading", () => {
     expect(
       parseBankStatement(

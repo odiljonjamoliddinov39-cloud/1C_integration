@@ -128,10 +128,14 @@ const tiyin = (n: number) => Math.round(n * 100);
 
 const digits = (text: string) => text.replace(/\D/g, "");
 
-/** An INN is 9 digits (a company) or 14 (a person). Excel sometimes writes it as 3.0321E+8: not usable. */
+/**
+ * An INN is 9 digits (a company) or 14 (a person). Excel sometimes writes it as 3.0321E+8: not usable.
+ * Banks write 000000000 for a payer with no INN: that is no INN, or two such payers would be one
+ * counterparty in 1C.
+ */
 const innOf = (text: string) => {
   const d = digits(text);
-  return /e\+/i.test(text) ? "" : d;
+  return /e\+/i.test(text) || /^0+$/.test(d) ? "" : d;
 };
 
 export function parseBankStatement(file: TableFile): BankStatement | null {

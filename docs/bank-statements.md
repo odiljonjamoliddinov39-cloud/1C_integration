@@ -7,7 +7,8 @@ An attached Excel or CSV bank statement is read by the program (`apps/desktop/sr
    Дебет is read as money out of the account, Кредит as money in (or the sign of one amount column);
    the summary says which, and which heading was taken for which column. Rows without a date
    (totals, balances) are ignored. Checks: no amount, both sides filled, negative amount, duplicate,
-   INN that is not 9 or 14 digits, no document number.
+   INN that is not 9 or 14 digits, no document number. An INN of only zeros (what a bank writes for a payer
+   with none) is read as no INN: it never matches or creates a counterparty.
 2. **What the model gets** is the summary only (totals by month and direction, the columns taken, the
    rows to look at), not the rows. The file stays on the PC for `read_attachment`. A statement of
    fewer than 5 payments is sent whole as before.
