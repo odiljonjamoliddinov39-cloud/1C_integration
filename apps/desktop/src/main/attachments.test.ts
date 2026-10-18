@@ -89,6 +89,33 @@ describe("attachments", () => {
     expect(text).toContain("Сумма договора: 12 000 000 сум");
   });
 
+  it("reads a bank's text export (fields between ~, no headings) as a statement", async () => {
+    const line = (i: number, credit: boolean) =>
+      [
+        `${String(10 + i)}.10.2026`,
+        String(100 + i),
+        credit ? "" : `${i * 1000},00`,
+        `COMPANY ${i}`,
+        `2020800090000000000${i}`,
+        "00444",
+        "20208000100438330001",
+        "00014",
+        "303212825",
+        `${String(10 + i)}.10.2026`,
+        credit ? `${i * 2000},50` : "",
+        "Bank",
+        `20000000${i}`,
+        `Оплата по счету ${i} за товары и услуги`,
+      ].join("~");
+    const text = Array.from({ length: 6 }, (_, i) => line(i + 1, i % 2 === 0)).join("\r\n");
+    const { blocks, info } = await readAttachments([{ name: "doc.txt", data: bytes(text) }]);
+    expect(info[0]?.kind).toBe("text");
+    const read = textOf(blocks[0]);
+    expect(read).toContain("Bank statement doc.txt");
+    expect(read).toContain("6 payments");
+    expect(read).toContain("found by what the cells hold");
+  });
+
   it("reads CSV files saved by 1C in Windows-1251 as well as UTF-8", async () => {
     // "Сумма;100" in Windows-1251
     const cp1251 = new Uint8Array([0xd1, 0xf3, 0xec, 0xec, 0xe0, 0x3b, 0x31, 0x30, 0x30]);

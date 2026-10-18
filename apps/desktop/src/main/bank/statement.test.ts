@@ -45,7 +45,107 @@ const debitCredit = file([
   ["Итого", "", "", "", "", "", "250 100,50", "1 500 000,00", ""],
 ]);
 
+/** A bank's text export as the client-bank offers it: chosen fields, in the bank's order, no headings. */
+const EXPORT_ROWS = [
+  [
+    "16.10.2026",
+    "91",
+    "",
+    "NAVRO'Z-PTK",
+    "20208000900000000001",
+    "00444",
+    "20208000100438330001",
+    "00014",
+    "303212825",
+    "16.10.2026",
+    "126 000,00",
+    "Hamkorbank ATB",
+    "201607534",
+    "001112023 йил шартномага асосан махсулотлари олиш учун утказилди",
+  ],
+  [
+    "16.10.2026",
+    "92",
+    "250 000,50",
+    "HYDRO DRILL",
+    "20208000900000000002",
+    "00444",
+    "20208000100438330001",
+    "00014",
+    "303212825",
+    "16.10.2026",
+    "",
+    "Asakabank",
+    "312318957",
+    "За услуги бурения скважины по договору",
+  ],
+  [
+    "17.10.2026",
+    "93",
+    "",
+    "CENTER MARKET OK",
+    "20208000900000000003",
+    "00444",
+    "20208000100438330001",
+    "00014",
+    "303212825",
+    "17.10.2026",
+    "1 000 000,00",
+    "Hamkorbank ATB",
+    "301122334",
+    "Оплата по договору №5/30 от 09.12.2025",
+  ],
+];
+
 describe("bank statement", () => {
+  it("finds the columns by what the cells hold when the file has no headings (a bank's text export)", () => {
+    const statement = parseBankStatement({
+      name: "doc.txt",
+      sheets: [{ name: "doc.txt", rows: EXPORT_ROWS }],
+    });
+    expect(statement?.inferred).toBe(true);
+    // The organization's own account is the one that is the same on every row.
+    expect(statement?.account).toBe("20208000100438330001");
+    expect(statement?.payments).toMatchObject([
+      {
+        date: "2026-10-16",
+        number: "91",
+        direction: "in",
+        amount: 12_600_000,
+        counterparty: "NAVRO'Z-PTK",
+        inn: "201607534",
+        account: "20208000900000000001",
+      },
+      { number: "92", direction: "out", amount: 25_000_050, counterparty: "HYDRO DRILL", inn: "312318957" },
+      { number: "93", direction: "in", amount: 100_000_000, inn: "301122334" },
+    ]);
+    expect(statement?.payments[0]?.purpose).toContain("шартномага");
+    expect(statement?.convention).toContain("no headings");
+    expect(describeBankStatement(statement as never)).toContain("found by what the cells hold");
+  });
+
+  it("finds a statement whose headings it does not know by the data too", () => {
+    const statement = parseBankStatement(
+      file([
+        ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+        ...EXPORT_ROWS.map((r) => [
+          r[0] ?? "",
+          r[1] ?? "",
+          r[2] ?? "",
+          r[3] ?? "",
+          r[12] ?? "",
+          r[10] ?? "",
+          r[13] ?? "",
+        ]),
+      ]),
+    );
+    expect(statement?.payments.map((p) => [p.direction, p.amount])).toEqual([
+      ["in", 12_600_000],
+      ["out", 25_000_050],
+      ["in", 100_000_000],
+    ]);
+  });
+
   it("finds the columns by their headings and reads each payment in whole tiyin", () => {
     const statement = parseBankStatement(debitCredit);
     expect(statement?.account).toBe("20208000100438330001");

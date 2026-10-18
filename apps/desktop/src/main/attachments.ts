@@ -156,7 +156,17 @@ async function readOne(
     return { block: textBlock(name, text), kind: "text" };
   }
   if ([".txt", ".md"].includes(extension)) {
-    return { block: textBlock(name, decodeText(data)), kind: "text" };
+    const text = decodeText(data);
+    // A bank's text export (fields between ~ or | or ;, perhaps no headings): read as a statement.
+    if (extension === ".txt") {
+      const rows = parseCsv(text);
+      if (rows.filter((row) => row.length >= 4).length >= 2) {
+        const table = { name, sheets: [{ name, rows }] };
+        const bank = parseBankStatement(table);
+        if (bank && isWorthSummarising(bank)) return { block: bankBlock(bank), kind: "text", table, bank };
+      }
+    }
+    return { block: textBlock(name, text), kind: "text" };
   }
   if (extension === ".xls" || extension === ".doc") {
     throw new AttachmentError(
