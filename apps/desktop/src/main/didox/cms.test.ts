@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { attachTimestampToken, describeBer } from "./cms.js";
+import { attachTimestampToken, describeBer, readTimestampToken, stampsSignature } from "./cms.js";
 
 // A real CMS signature as `openssl cms -sign -stream` writes it (BER, indefinite lengths, like E-IMZO's),
 // made with a throwaway key, and a real RFC 3161 time stamp token (`openssl ts`) from a throwaway TSA.
@@ -58,5 +58,27 @@ describe("attaching a time stamp token to a PKCS#7", () => {
     expect(() => attachTimestampToken(SIGNED, Buffer.from("not der").toString("base64"))).toThrow(
       /time stamp token/,
     );
+  });
+
+  describe("reading a time stamp token", () => {
+    // The token stamps the data {"authId":"abc"} (sha256), as the throwaway TSA was asked.
+    const stamped = Buffer.from('{"authId":"abc"}').toString("hex");
+
+    it("reads what the token says it stamps, and compares it with a signature", () => {
+      const token = readTimestampToken(TOKEN);
+      expect(token).toMatchObject({ wasResponse: false, algorithm: "sha256" });
+      expect(stampsSignature(token as never, stamped)).toBe("yes");
+      expect(stampsSignature(token as never, "00ff")).toBe("no");
+    });
+
+    it("unwraps a TimeStampResp (a status, then the token) into the token itself", () => {
+      const response = readTimestampToken(fixture("cms-timestamp-response.b64"));
+      expect(response?.wasResponse).toBe(true);
+      expect(response?.contentInfo).toBe(TOKEN);
+    });
+
+    it("says nothing about what is not a token", () => {
+      expect(readTimestampToken(Buffer.from("not a token").toString("base64"))).toBeNull();
+    });
   });
 });
