@@ -352,6 +352,11 @@ describe("bank payments for 1C", () => {
       [5, "Документ.СписаниеСРасчетногоСчета"],
     ]);
     expect(resolved.problems).toEqual([expect.objectContaining({ rows: [6], code: "NO_TEMPLATE" })]);
+    // The counterparty of a row with no INN is the earlier payment's: the note says whose.
+    expect(resolved.notes).toEqual([
+      expect.objectContaining({ rows: [4], message: expect.stringContaining(`"NAVRO'Z-PTK"`) }),
+      expect.objectContaining({ rows: [5], message: expect.stringContaining("no INN") }),
+    ]);
   });
 
   it("uses the contract the purpose names, and says so when 1C does not have it", async () => {
