@@ -44,7 +44,13 @@ export interface DidoxConfig {
 
 export const DIDOX_DEV_URL = "https://devapi.goodsign.biz/";
 
-export type DidoxErrorCode = "DIDOX_AUTH" | "DIDOX_HTTP" | "DIDOX_NETWORK" | "DIDOX_RESPONSE";
+export type DidoxErrorCode =
+  | "DIDOX_AUTH"
+  | "DIDOX_HTTP"
+  | "DIDOX_NETWORK"
+  | "DIDOX_RESPONSE"
+  /** This Didox has no time stamp service (the route answers 404/405): not a refusal of the signature. */
+  | "DIDOX_NO_TIMESTAMP";
 
 export class DidoxError extends Error {
   constructor(
@@ -152,7 +158,17 @@ export class DidoxClient {
     const authId = textField(authIdBody, ["authId", "authid", "id"]);
     if (!authId) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no authId");
     this.stamped = "";
-    const pkcs7 = await signer.pkcs7(JSON.stringify({ authId }), (signed) => this.timestampToken(signed));
+    const data = JSON.stringify({ authId });
+    let pkcs7: string;
+    try {
+      pkcs7 = await signer.pkcs7(data, (signed) => this.timestampToken(signed));
+    } catch (e) {
+      // A Didox with no time stamp service (the production one answers 405 there) may not ask for a stamp:
+      // sign without, and let the sign-in say whether it wants one.
+      if (!(e instanceof DidoxError && e.code === "DIDOX_NO_TIMESTAMP")) throw e;
+      this.stamped = "no time stamp: this Didox has no /v1/dsvs/gettimestamp";
+      pkcs7 = await signer.pkcs7(data);
+    }
     let loginBody: unknown;
     try {
       loginBody = await this.request("POST", "/v1/auth/login", {
@@ -226,6 +242,13 @@ export class DidoxClient {
           throw e;
         seen.push(`${label}: ${e.message}`);
       }
+    }
+    // Every shape met a missing route (404/405, a web server's page): there is no time stamp service here.
+    if (seen.length === attempts.length && seen.every((line) => /answered (404|405|501)\b/.test(line))) {
+      throw new DidoxError(
+        "DIDOX_NO_TIMESTAMP",
+        `Didox has no time stamp service (${seen[0]?.slice(0, 120)})`,
+      );
     }
     throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp token (${seen.join("; ")})`);
   }

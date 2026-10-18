@@ -181,4 +181,25 @@ describe("DidoxClient", () => {
       );
     });
   });
+
+  describe("a Didox with no time stamp service", () => {
+    it("signs without a time stamp and signs in, when the sign-in does not ask for one", async () => {
+      const { server, signer, client } = setup();
+      server.hasTimestampEndpoint = false;
+      server.requiresTimestamp = false;
+      await client.login();
+      expect(client.signedIn).toBe(true);
+      // Signed twice: with a stamp tried first, then without.
+      expect(signer.signed).toHaveLength(2);
+    });
+
+    it("says so when the sign-in then asks for a time stamp after all", async () => {
+      const { server, client } = setup();
+      server.hasTimestampEndpoint = false;
+      const error = await client.login().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DidoxError);
+      expect((error as DidoxError).message).toContain("timestamp is required");
+      expect((error as DidoxError).message).toContain("this Didox has no /v1/dsvs/gettimestamp");
+    });
+  });
 });
