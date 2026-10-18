@@ -134,7 +134,7 @@ export class DidoxClient {
     });
     const authId = textField(authIdBody, ["authId", "authid", "id"]);
     if (!authId) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no authId");
-    const pkcs7 = await signer.pkcs7(JSON.stringify({ authId }));
+    const pkcs7 = await this.withTimestamp(await signer.pkcs7(JSON.stringify({ authId })));
     const loginBody = await this.request("POST", "/v1/auth/login", {
       auth: false,
       body: { serialNumber, pkcs7 },
@@ -142,6 +142,30 @@ export class DidoxClient {
     const value = textField(loginBody, ["token", "userKey", "user-key", "user_key"]);
     if (!value) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no token");
     this.token = { value, expiresAt: Date.now() + TOKEN_LIFETIME_MS };
+  }
+
+  /**
+   * Didox refuses a signature with no time stamp ("Eimzo fail … timestamp is required"). E-IMZO does
+   * not stamp; the time stamp token is attached by a server (E-IMZO-SERVER's /frontend/timestamp/pkcs7:
+   * the PKCS#7 in, the PKCS#7 with the token out), which for Didox is /v1/dsvs/gettimestamp. The collection
+   * does not show its body, so the PKCS#7 goes as the plain text E-IMZO-SERVER takes, then as JSON.
+   */
+  async withTimestamp(pkcs7: string): Promise<string> {
+    const names = ["pkcs7b64", "pkcs7", "pkcs7_64", "pkcs7Attached"];
+    const failures: string[] = [];
+    for (const body of [{ text: pkcs7 }, { body: { pkcs7 } }]) {
+      try {
+        const answer = await this.request("POST", "/v1/dsvs/gettimestamp", { auth: false, ...body });
+        const stamped = textField(answer, names);
+        if (stamped) return stamped;
+        failures.push(`no signature in the answer: ${JSON.stringify(answer).slice(0, 200)}`);
+      } catch (e) {
+        if (!(e instanceof DidoxError) || e.status === undefined || e.status < 400 || e.status >= 500)
+          throw e;
+        failures.push(e.message);
+      }
+    }
+    throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp for the signature (${failures.join("; ")})`);
   }
 
   /** The profile of the signed-in company. */
@@ -227,7 +251,7 @@ export class DidoxClient {
   private async request(
     method: "GET" | "POST",
     path: string,
-    options: { auth?: boolean; body?: unknown } = {},
+    options: { auth?: boolean; body?: unknown; text?: string } = {},
   ): Promise<unknown> {
     const auth = options.auth ?? true;
     if (auth && !this.signedIn && this.signer) await this.login();
@@ -238,6 +262,9 @@ export class DidoxClient {
       if (options.body !== undefined) {
         headers["Content-Type"] = "application/json";
         init.body = JSON.stringify(options.body);
+      } else if (options.text !== undefined) {
+        headers["Content-Type"] = "text/plain";
+        init.body = options.text;
       }
       let response: Response;
       try {

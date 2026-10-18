@@ -32,6 +32,8 @@ export class FakeDidox {
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
   private issued = 0;
+  /** Takes the PKCS#7 for the time stamp only as JSON, not as plain text (the collection does not say which). */
+  timestampAsJson = false;
   /** Makes the next authorized request answer 401, as a token that lapsed. */
   expireTokens(): void {
     this.tokens.clear();
@@ -42,7 +44,9 @@ export class FakeDidox {
     const headers = Object.fromEntries(
       Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]),
     );
-    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
+    const asText = typeof init?.body === "string" && headers["content-type"] === "text/plain";
+    const body =
+      typeof init?.body === "string" ? (asText ? init.body : (JSON.parse(init.body) as unknown)) : undefined;
     this.requests.push({ method: init?.method ?? "GET", url, headers, body });
     const json = (value: unknown, status = 200) =>
       new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -53,9 +57,18 @@ export class FakeDidox {
     }
     const path = url.pathname;
     if (path.startsWith("/v1/auth/authId/")) return json({ authId: `auth-${path.split("/").pop()}` });
+    if (path === "/v1/dsvs/gettimestamp") {
+      const pkcs7 = typeof body === "string" ? body : (body as { pkcs7?: string } | undefined)?.pkcs7;
+      if (!pkcs7 || (typeof body === "string") === this.timestampAsJson)
+        return json({ error: "bad body" }, 400);
+      return json({ status: 1, pkcs7b64: Buffer.from(`TS:${pkcs7}`).toString("base64") });
+    }
     if (path === "/v1/auth/login") {
       const sent = body as { serialNumber?: string; pkcs7?: string } | undefined;
       if (!sent?.pkcs7) return json({ error: "no signature" }, 400);
+      if (!Buffer.from(sent.pkcs7, "base64").toString().startsWith("TS:")) {
+        return json({ error: "Unauthorized. Invalid signature: Eimzo fail. timestamp is required" }, 401);
+      }
       const token = `token-${++this.issued}`;
       this.tokens.add(token);
       return json({ token });
