@@ -5,6 +5,7 @@
  * by E-IMZO itself in its own window; this app never sees it.
  */
 import type { DidoxSigner, Stamper } from "./client.js";
+import { attachTimestampToken } from "./cms.js";
 
 export const EIMZO_URL = "ws://127.0.0.1:64646/service/cryptapi";
 
@@ -383,6 +384,20 @@ export class EImzoSigner implements DidoxSigner {
       );
     }
     const token = await stamp({ pkcs7: signed.pkcs7, signatureHex: signed.signatureHex });
-    return this.client.attachTimestamp(signed.pkcs7, signed.signerSerial, token);
+    try {
+      return await this.client.attachTimestamp(signed.pkcs7, signed.signerSerial, token);
+    } catch (e) {
+      // An E-IMZO without attach_timestamp_token_pkcs7 ("Функция не найдена"): the token is put in here.
+      if (!(e instanceof EImzoError && /функци|function/i.test(e.message))) throw e;
+      try {
+        return attachTimestampToken(signed.pkcs7, token);
+      } catch (inside) {
+        const why = inside instanceof Error ? inside.message : String(inside);
+        throw new EImzoError(
+          "EIMZO_FAILED",
+          `${e.message} (and attaching the time stamp here failed: ${why})`,
+        );
+      }
+    }
   }
 }

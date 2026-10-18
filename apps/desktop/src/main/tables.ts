@@ -34,12 +34,36 @@ export function cellText(value: unknown): string {
     .trim();
 }
 
-/** CSV or TSV, with ; , or tab between cells (1C saves ;), and "quoted" cells. */
+/**
+ * The character between cells: the one that splits the first lines into the same number of cells, most
+ * often (1C saves ; and a bank's text export may use ~ or |, whatever the bank set; not guessed from one line).
+ */
+export function detectDelimiter(text: string): string {
+  const lines = text
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .slice(0, 40);
+  let best = ";";
+  let bestScore = -1;
+  for (const d of [";", "\t", "~", "|", ","]) {
+    const counts = lines.map((line) => line.split(d).length - 1);
+    const modal = [...new Set(counts)].reduce(
+      (m, c) => (counts.filter((x) => x === c).length > counts.filter((x) => x === m).length ? c : m),
+      0,
+    );
+    // Lines agreeing on the count come first, then the number of cells.
+    const score = modal === 0 ? 0 : counts.filter((x) => x === modal).length * 1000 + modal;
+    if (score > bestScore) {
+      best = d;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/** CSV, TSV or text with ; , tab ~ or | between cells, and "quoted" cells. */
 export function parseCsv(text: string): string[][] {
-  const firstLine = text.slice(0, text.indexOf("\n") >>> 0);
-  const delimiter = [";", "\t", ","].reduce((best, d) =>
-    firstLine.split(d).length > firstLine.split(best).length ? d : best,
-  );
+  const delimiter = detectDelimiter(text);
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";

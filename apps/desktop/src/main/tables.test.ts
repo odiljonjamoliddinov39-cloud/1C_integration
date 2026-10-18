@@ -42,6 +42,11 @@ describe("attached tables", () => {
       ["Дата", "Сумма", "Назначение"],
       ["05.01.2026", "1 500,00", 'Оплата; по "договору"'],
     ]);
+    // A bank's text export: ~ between fields, whatever the bank set.
+    expect(parseCsv("16.10.2026~91~126 000,00~NAVRO'Z, PTK\n17.10.2026~92~5,5~A\n")).toEqual([
+      ["16.10.2026", "91", "126 000,00", "NAVRO'Z, PTK"],
+      ["17.10.2026", "92", "5,5", "A"],
+    ]);
     expect([0, 25, 26, 27, 701].map(columnLetter)).toEqual(["A", "Z", "AA", "AB", "ZZ"]);
   });
 

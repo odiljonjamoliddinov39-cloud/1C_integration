@@ -111,3 +111,23 @@ name, it is created under the zeros the bank wrote (the one card of new counterp
 statement finds it by name again. Two or more counterparties of the same name come back as
 `COUNTERPARTY_AMBIGUOUS`. Not looked up by name: a bank fee (the purpose says commission) and an acquiring
 receipt, which stay on the no-INN route (copied from a payment of the same kind).
+
+## Banks change their exports: columns are found by the data
+
+A bank's client-bank lets the user choose the fields, their order, the separator and the encoding (a text
+export with `~` between fields in Windows-1251, no headings), and banks rename their columns. So the
+program does not depend on a template:
+
+- **The separator** of a text/CSV file is the character that splits its first lines into the same number of
+  cells most often (`;` `~` `|` tab `,`), and a `.txt` file is tried as a statement too; Windows-1251 is read.
+- **Headings are used when it knows them.** When there are none, or in words it does not know, the columns
+  are found by what the cells hold: a date column; 20-digit accounts and 9/14-digit INNs, where the one that
+  is the same on every row is the organization's own and the one that varies is the counterparty's; amounts
+  (one column, or two of which one is empty on every row: the first is read as Дебет = out, the second as
+  Кредит = in); the longest text is the purpose, the other text with the most different values the
+  counterparty's name; a short whole number that differs on every row is the bank document's number.
+- Such a table must also have a counterparty's account or INN, or a Дебет/Кредит pair, to be taken for a
+  bank statement (a list of dates, names and amounts is not).
+- The one thing the data cannot say is which of the two amount columns is money out: the summary tells the
+  model that the columns were found by their data and the totals In / Out are shown, so a reversed reading
+  is seen before anything is entered.
