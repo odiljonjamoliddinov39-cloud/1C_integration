@@ -1511,8 +1511,10 @@ export class AssistantService {
         const applied = (data.applied ?? []).flatMap(({ n }) => (missing[n - 1] ? [missing[n - 1]] : []));
         for (const m of applied) {
           if (m) {
-            fresh.add(m.inn);
-            madeNow.push(`${m.name} (INN ${m.inn})`);
+            fresh.add(m.key);
+            madeNow.push(
+              m.key.startsWith("name:") ? `${m.name} (no INN in the statement)` : `${m.name} (INN ${m.inn})`,
+            );
           }
         }
         if (applied.length === 0) break;
@@ -1553,7 +1555,8 @@ export class AssistantService {
         ? {
             notCreated: [
               ...resolved.missing.map(
-                (m) => `counterparty ${m.name} (INN ${m.inn}), rows ${m.rows.join(", ")}`,
+                (m) =>
+                  `counterparty ${m.name} (${m.key.startsWith("name:") ? "no INN in the statement" : `INN ${m.inn}`}), rows ${m.rows.join(", ")}`,
               ),
               ...resolved.contractsToCreate.map((c) => `contract ${c.label}, rows ${c.rows.join(", ")}`),
             ],

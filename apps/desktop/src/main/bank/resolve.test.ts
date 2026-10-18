@@ -90,6 +90,8 @@ interface Doc {
   object: string;
   ref: string;
   inn: string;
+  /** The counterparty's name, for a base looked up by name. */
+  name?: string;
   purpose: string;
   snapshot: ReturnType<typeof earlier>;
 }
@@ -145,12 +147,13 @@ function deps(
         );
       }
       if (q.includes("Справочник.Контрагенты")) {
+        // Asked by name (the bank wrote no INN): the first column is the name, as in the query.
+        const byName = q.includes("Т.Наименование В");
+        const asked = Object.values(input.params ?? {});
         return rows(
-          (opts.counterparties ?? [["201607534", NAVRUZ, "NAVRO'Z-PTK"]]).map(([inn, id, name]) => [
-            inn,
-            ref("Справочник.Контрагенты", id, name),
-            name,
-          ]),
+          (opts.counterparties ?? [["201607534", NAVRUZ, "NAVRO'Z-PTK"]])
+            .filter(([, , name]) => !byName || asked.includes(name))
+            .map(([inn, id, name]) => [byName ? name : inn, ref("Справочник.Контрагенты", id, name), name]),
         );
       }
       if (q.includes("ПЕРВЫЕ")) {
@@ -158,9 +161,15 @@ function deps(
           ? "Документ.СписаниеСРасчетногоСчета"
           : "Документ.ПоступлениеНаРасчетныйСчет";
         const byInn = q.includes("Контрагент.ИНН =");
+        const byName = q.includes("Контрагент.Наименование =");
         return rows(
           docs
-            .filter((x) => x.object === object && (!byInn || x.inn === input.params?.инн))
+            .filter(
+              (x) =>
+                x.object === object &&
+                (!byInn || x.inn === input.params?.инн) &&
+                (!byName || x.name === input.params?.имя),
+            )
             .map((x) => [ref(x.object, x.ref, "старый"), x.purpose]),
         );
       }
@@ -575,7 +584,9 @@ describe("bank payments for 1C", () => {
     // Round 1: nobody is in 1C yet: the counterparty is offered, and its payment waits.
     const first = deps({ docs: [supplierDoc, contractDoc], counterparties: [] });
     const one = await resolvePayments(statement([row]), { createMissing: true }, first.d);
-    expect(one.missing).toEqual([{ inn: "999999999", name: "Sam active group 786 mchj", rows: [9] }]);
+    expect(one.missing).toEqual([
+      { inn: "999999999", name: "Sam active group 786 mchj", rows: [9], key: "999999999" },
+    ]);
     expect(one.problems).toEqual([]);
     expect(one.ready).toEqual([]);
     // A person's INN (14 digits) or a row with no name is not created from a statement.
@@ -686,6 +697,64 @@ describe("bank payments for 1C", () => {
     );
     expect(resolved.problems).toEqual([]);
     expect(resolved.ready).toHaveLength(1);
+  });
+
+  it("finds a payer by name when the bank wrote no INN (nine zeros), and creates it by name when 1C lacks it", async () => {
+    const NEW_CP = "cccccccc-0000-4ccc-8ccc-cccccccccccc";
+    const NAME = '"AMERHANOVA-VINERA" hususiy tadbirkor';
+    const person = payment({
+      row: 6,
+      inn: "",
+      innZero: true,
+      counterparty: NAME,
+      purpose: "Оплата за товар",
+    });
+    const docs: Doc[] = [
+      {
+        object: "Документ.ПоступлениеНаРасчетныйСчет",
+        ref: OLD_IN,
+        inn: "000000000",
+        name: NAME,
+        purpose: "старое",
+        snapshot: earlier({ Контрагент: ref("Справочник.Контрагенты", NEW_CP, NAME) }),
+      },
+    ];
+    // In 1C by name: its own earlier payment is the template, and no INN is asked for.
+    const there = deps({ docs, counterparties: [["000000000", NEW_CP, NAME]] });
+    const found = await resolvePayments(statement([person]), { createMissing: true }, there.d);
+    expect(found.missing).toEqual([]);
+    expect(found.problems).toEqual([]);
+    expect(found.ready).toHaveLength(1);
+    expect(found.ready[0]?.change.fields).toMatchObject({ Контрагент: { ref: NEW_CP } });
+    expect(found.notes).toEqual([]);
+    expect(there.seen.some((q) => q.params?.инн !== undefined)).toBe(false);
+
+    // Not in 1C: offered for creation under the zeros the bank wrote, by name.
+    const nowhere = deps({ docs, counterparties: [] });
+    const offered = await resolvePayments(statement([person]), { createMissing: true }, nowhere.d);
+    expect(offered.missing).toEqual([
+      { inn: "000000000", name: NAME, rows: [6], key: `name:${NAME.toLowerCase()}` },
+    ]);
+    // Two payers with zeros are two counterparties, not one.
+    const other = payment({ row: 7, inn: "", innZero: true, counterparty: "OTHER PERSON", purpose: "x" });
+    const two = await resolvePayments(statement([person, other]), { createMissing: true }, nowhere.d);
+    expect(two.missing.map((m) => m.name)).toEqual([NAME, "OTHER PERSON"]);
+    // Without leave to create, it is said by name.
+    const stopped = await resolvePayments(statement([person]), {}, nowhere.d);
+    expect(stopped.problems).toEqual([
+      expect.objectContaining({ code: "COUNTERPARTY_NOT_FOUND", message: expect.stringContaining("name") }),
+    ]);
+    // A bank fee with zeros is not a counterparty to create.
+    const fee = payment({
+      row: 8,
+      direction: "out",
+      inn: "",
+      innZero: true,
+      counterparty: "Банк",
+      purpose: "Комиссия банка за услуги",
+    });
+    const feed = await resolvePayments(statement([fee]), { createMissing: true }, nowhere.d);
+    expect(feed.missing).toEqual([]);
   });
 
   it("books an acquiring receipt gross and its commission as a document of its own", async () => {

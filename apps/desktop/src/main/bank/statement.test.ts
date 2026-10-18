@@ -114,14 +114,18 @@ describe("bank statement", () => {
     ]);
   });
 
-  it("reads an INN of only zeros as no INN", () => {
+  it("reads an INN of only zeros as no INN, and remembers that the bank wrote zeros", () => {
     const statement = parseBankStatement(
       file([
         ["Дата", "№", "Корреспондент", "ИНН", "Дебет", "Кредит", "Назначение"],
         ["01.09.2026", "1", "AMERHANOVA-VINERA", "000000000", "", "126 000,00", "Оплата"],
       ]),
     );
-    expect(statement?.payments[0]).toMatchObject({ counterparty: "AMERHANOVA-VINERA", inn: "" });
+    expect(statement?.payments[0]).toMatchObject({
+      counterparty: "AMERHANOVA-VINERA",
+      inn: "",
+      innZero: true,
+    });
     expect(statement?.issues).toEqual([]);
   });
 
