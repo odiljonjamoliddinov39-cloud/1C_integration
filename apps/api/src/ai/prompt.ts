@@ -68,7 +68,7 @@ decided on its own (a contract the purpose names that 1C does not have): report 
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment, a tax or budget payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
 counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
-what was entered, what is left, and the totals by month. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
+what was entered, what is left, and the totals by month. To post what this chat has entered (the accountant says "проведи", "перевед", "post"), call propose_post_created with a title only: do not list the documents yourself, and stop after it. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
 it is «Уплата налога» with the tax, its period and the tax office, on the tax accounts, no contract and no VAT, copied from the \
 company's own posted payment of the same tax (pass it as templates, or enter it with propose_changes); the company's earlier \
 payments to the same receiver may themselves be wrong, so do not copy the latest one blindly. If this tool or propose_didox_invoices failed earlier in this conversation, \
@@ -287,6 +287,11 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  propose_post_created:
+    "Post (проведение) the documents THIS chat created and left unposted (a bank statement's payments, a batch of " +
+    "documents), on ONE card with a title. The app knows which they are: send only the title (objects, full names, " +
+    'to post only some kinds). Use it when the accountant asks to post them ("проведи", "перевед", "post all") ' +
+    "instead of listing the documents yourself. 1C's refusals are on the card.",
   propose_bank_payments:
     'Prepare the payments of the bank statement the app already read from the attached file (the summary "Bank ' +
     'statement … read by the program") as bank documents on ONE card with a title. The app finds the bank account ' +

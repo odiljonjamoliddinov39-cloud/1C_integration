@@ -1148,6 +1148,65 @@ describe("assistant", () => {
       });
     });
 
+    it("posts what the chat created with one command and no list from the model", async () => {
+      const call = (id: string, name: string, input: unknown) => () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id, name, input }],
+        },
+      ];
+      let told: unknown;
+      const { assistant, store, company, events, proxy, base } = setup([
+        call("c1", "propose_changes", {
+          title: "2 ta to'lov",
+          defaults: { action: "create", object: "Документ.СписаниеСРасчетногоСчета", post: false },
+          changes: [
+            { fields: { Номер: "A1", СуммаДокумента: 100 } },
+            { fields: { Номер: "A2", СуммаДокумента: 200 } },
+          ],
+        }),
+        call("c2", "propose_post_created", { title: "2 ta hujjatni o'tkazish" }),
+        (input) => {
+          told = input.messages.at(-1);
+          return call("c3", "propose_post_created", { title: "again" })();
+        },
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({ companyId: company.id, text: "Kirit va o'tkaz" });
+      const answered = new Set<string>();
+      const timer = setInterval(() => {
+        for (const e of events) {
+          if (e.type === "confirm" && !answered.has(e.id)) {
+            answered.add(e.id);
+            assistant.decide(e.companyId, e.id, true);
+          }
+        }
+      }, 1);
+      await sending;
+      clearInterval(timer);
+
+      const documents = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.СписаниеСРасчетногоСчета",
+      );
+      expect(documents).toHaveLength(2);
+      expect(documents.every((d) => d.posted)).toBe(true);
+      // Two cards: the creation and the posting. The posting card is made by the app: updates, no list from the model.
+      const cards = events.filter((e) => e.type === "confirm");
+      expect(cards).toHaveLength(2);
+      expect(cards[1]).toMatchObject({
+        proposal: {
+          kind: "batch",
+          title: "2 ta hujjatni o'tkazish",
+          items: [{ action: "update" }, { action: "update" }],
+        },
+      });
+      // Asked again, there is nothing left to post and no third card.
+      expect(JSON.stringify(told)).toContain('\\"status\\":\\"done\\"');
+      expect(JSON.stringify(proxy.requests.at(-1)?.messages.at(-1))).toContain("nothing_to_post");
+    });
+
     it("checks changes in 1C without a card when asked for a dry run", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("check_changes", {

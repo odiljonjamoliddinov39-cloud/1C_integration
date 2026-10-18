@@ -169,6 +169,7 @@ const en = {
       propose_invoices_received: "Preparing invoices:",
       propose_didox_invoices: "Preparing invoices from Didox:",
       propose_bank_payments: "Preparing the bank statement payments:",
+      propose_post_created: "Preparing to post the documents:",
       propose_delete_marked: "Checking what is marked for deletion:",
     },
     proposal: {
@@ -575,6 +576,7 @@ const ru: Dict = {
       propose_invoices_received: "Готовлю счета-фактуры:",
       propose_didox_invoices: "Готовлю счета-фактуры из Didox:",
       propose_bank_payments: "Готовлю платежи из банковской выписки:",
+      propose_post_created: "Готовлю проведение документов:",
       propose_delete_marked: "Проверяю, что помечено на удаление:",
     },
     proposal: {
@@ -980,6 +982,7 @@ const uz: Dict = {
       propose_invoices_received: "Hisob-fakturalarni tayyorlayapman:",
       propose_didox_invoices: "Didox hisob-fakturalarini tayyorlayapman:",
       propose_bank_payments: "Bank ko'chirmasidagi to'lovlarni tayyorlayapman:",
+      propose_post_created: "Hujjatlarni o'tkazishga tayyorlayapman:",
       propose_delete_marked: "Oʻchirishga belgilanganlarni tekshiryapman:",
     },
     proposal: {
