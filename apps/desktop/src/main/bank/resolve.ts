@@ -103,6 +103,9 @@ const OBJECT = {
   out: "Документ.СписаниеСРасчетногоСчета",
 } as const;
 
+/** The number of the contract made for a new counterparty when the purpose names none ("without a number"). */
+const NEUTRAL_NUMBER = "б/н";
+
 const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
 /** What the bank writes in a payment for its own fees: not a counterparty to look up or create by name. */
@@ -598,9 +601,26 @@ export async function resolvePayments(
 
   // 5. The contracts the purposes name, and the counterparties' bank accounts, by INN or name.
   const mentions = new Map<number, { number: string; date: string }>();
+  // A counterparty created in this run whose purposes name no contract gets a neutral one, "№б/н от <its
+  // earliest payment's date>", as an accountant would open it; one contract per counterparty.
+  const neutralDate = new Map<string, string>();
   for (const { payment } of withCounterparty) {
-    const mention = whoOf(payment) ? contractMention(payment.purpose) : null;
-    if (mention) mentions.set(payment.row, mention);
+    const who = whoOf(payment);
+    if (!who || !options.fresh?.has(who.key) || contractMention(payment.purpose)) continue;
+    const date = neutralDate.get(who.key);
+    if (!date || payment.date < date) neutralDate.set(who.key, payment.date);
+  }
+  const neutral = new Set<number>();
+  for (const { payment } of withCounterparty) {
+    const who = whoOf(payment);
+    if (!who) continue;
+    const named = contractMention(payment.purpose);
+    const date = named ? undefined : neutralDate.get(who.key);
+    if (named) mentions.set(payment.row, named);
+    else if (date) {
+      mentions.set(payment.row, { number: NEUTRAL_NUMBER, date });
+      neutral.add(payment.row);
+    }
   }
   const contractsOf = new Map<string, { ref: string; number: string; date: string }[]>();
   for (const { key, cells } of await lookupByWho(
@@ -710,7 +730,10 @@ export async function resolvePayments(
           : "";
       addNote(
         [payment.row],
-        `new counterparty "${payment.counterparty}": the operation, accounts and VAT come from the latest payment of the same kind${name ? ` (to "${name}")` : ""}; check them`,
+        `new counterparty "${payment.counterparty}": the operation, accounts and VAT come from the latest payment of the same kind${name ? ` (to "${name}")` : ""}; check them` +
+          (neutral.has(payment.row)
+            ? `. The purpose names no contract, so its contract is the neutral "№${NEUTRAL_NUMBER} от ${day(payment.date).split("-").reverse().join(".")}"; check its kind and expiry`
+            : ""),
       );
     } else if (mention) {
       const list = contractsOf.get(who?.key ?? "") ?? [];
@@ -924,6 +947,12 @@ async function contractChange(
     if (!NOT_COPIED_ITEM.has(name)) fields[name] = writable(value);
   }
   const [y, m, d] = mention.date.split("-");
+  // The kind follows the direction of the money, whichever contract the template payment had.
+  const kind = earlier.fields["ВидДоговора"];
+  const kindName = kind && typeof kind === "object" ? (kind as { ref?: unknown }).ref : null;
+  if (kindName === "СПокупателем" || kindName === "СПоставщиком") {
+    fields["ВидДоговора"] = payment.direction === "in" ? "СПокупателем" : "СПоставщиком";
+  }
   fields["Владелец"] = refTo(earlier.fields["Владелец"], owner, "Справочник.Контрагенты");
   fields["Номер"] = mention.number;
   fields["Дата"] = mention.date;

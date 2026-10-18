@@ -650,13 +650,34 @@ describe("bank payments for 1C", () => {
       expect.objectContaining({ rows: [9], message: expect.stringContaining("new counterparty") }),
     ]);
 
-    // No contract named in the purpose: nothing is invented.
+    // No contract named in the purpose: a neutral one is made, "№б/н от <the earliest payment's date>".
+    const bareRow = { ...row, purpose: "за товары", date: "2026-10-15" };
     const bare = await resolvePayments(
-      statement([{ ...row, purpose: "за товары" }]),
+      statement([bareRow, { ...bareRow, row: 10, date: "2026-10-17" }]),
       { createMissing: true, fresh: new Set(["999999999"]) },
       created.d,
     );
-    expect(bare.problems).toEqual([expect.objectContaining({ rows: [9], code: "NEW_COUNTERPARTY" })]);
+    expect(bare.problems).toEqual([]);
+    expect(bare.ready).toEqual([]);
+    expect(bare.contractsToCreate).toHaveLength(1);
+    expect(bare.contractsToCreate[0]).toMatchObject({
+      rows: [9, 10],
+      change: { fields: { Номер: "б/н", Дата: "2026-10-15", Наименование: "№б/н от 15.10.2026" } },
+    });
+    // Once it exists, both payments use it, and the accountant is told.
+    const neutralDone = deps({
+      docs: [supplierDoc, contractDoc],
+      counterparties: [["999999999", NEW_CP, "Sam active group 786 mchj"]],
+      contracts: [["999999999", NEW_CONTRACT, "б/н", "2026-10-15T00:00:00"]],
+    });
+    const used = await resolvePayments(
+      statement([bareRow, { ...bareRow, row: 10, date: "2026-10-17" }]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      neutralDone.d,
+    );
+    expect(used.ready).toHaveLength(2);
+    expect(used.ready[1]?.change.fields).toMatchObject({ ДоговорКонтрагента: { ref: NEW_CONTRACT } });
+    expect(used.notes[0]?.message).toContain("neutral");
   });
 
   it("looks past payments that cannot be copied to find the company's usual one for a new counterparty", async () => {
