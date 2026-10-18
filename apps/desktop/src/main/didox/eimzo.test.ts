@@ -69,6 +69,33 @@ describe("E-IMZO", () => {
     expect(Buffer.from(signed, "base64").toString()).toContain("SIGNED(key-2)");
   });
 
+  it("goes on as a local page with the guide's keys when E-IMZO refuses a call for want of an API key", async () => {
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    eimzo.requireApiKey = true;
+    const client = new EImzoClient({ connect: eimzo.connect });
+    expect(await client.listCertificates()).toHaveLength(1);
+    // The first call went bare and was refused; then the key and the call travelled together as from localhost.
+    expect(eimzo.origins).toEqual([undefined, "http://localhost"]);
+    expect(eimzo.messages.map((m) => m.name)).toEqual([
+      "list_all_certificates",
+      "apikey",
+      "list_all_certificates",
+    ]);
+    expect(eimzo.messages[1]?.arguments).toEqual(expect.arrayContaining(["localhost", "127.0.0.1"]));
+    // Every later call is made that way at once.
+    await client.listCertificates();
+    expect(eimzo.origins).toEqual([undefined, "http://localhost", "http://localhost"]);
+  });
+
+  it("does not use the guide's keys when E-IMZO takes the calls without one", async () => {
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    await new EImzoClient({ connect: eimzo.connect }).listCertificates();
+    expect(eimzo.messages.map((m) => m.name)).toEqual(["list_all_certificates"]);
+    expect(eimzo.origins).toEqual([undefined]);
+  });
+
   it("sends the API keys once, before the first call", async () => {
     const eimzo = new FakeEImzo();
     eimzo.certificates = [cert(ALIAS)];

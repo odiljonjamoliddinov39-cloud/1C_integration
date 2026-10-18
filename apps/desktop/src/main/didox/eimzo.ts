@@ -28,9 +28,32 @@ export interface SocketLike {
   send(data: string): void;
   close(): void;
 }
-export type Connect = (url: string) => SocketLike;
+/** `origin`: the page address E-IMZO sees the call coming from (it binds its API keys to a domain). */
+export type Connect = (url: string, origin?: string) => SocketLike;
 
-const defaultConnect: Connect = (url) => new WebSocket(url) as unknown as SocketLike;
+/** Node's WebSocket (undici) takes request headers as an option; a desktop app has no page, so no Origin. */
+const defaultConnect: Connect = (url, origin) =>
+  (origin
+    ? new (WebSocket as unknown as new (url: string, init: { headers: Record<string, string> }) => unknown)(
+        url,
+        { headers: { Origin: origin } },
+      )
+    : new WebSocket(url)) as SocketLike;
+
+/**
+ * The API keys for `localhost` and `127.0.0.1` that E-IMZO's own integration guide publishes for a local
+ * page. Some E-IMZO installations refuse any call without a key for the caller's domain ("API-key для
+ * домена null недействителен": a desktop app has no domain). Then the calls are made as if from a local
+ * page, with these keys; used only after E-IMZO has refused without them.
+ */
+const GUIDE_API_KEYS = [
+  "localhost",
+  "96D0C1491615C82B9A54D9989779DF825B690748224C2B04F500F370D51827CE2644D8D4A82C18184D73AB8530BB8ED537269603F61DB0D03D2104ABF789970B",
+  "127.0.0.1",
+  "A7BCFA5D490B351BE0754130DF03A068F855DB4333D43921125B9CF2670EF6A40370C646B90401955E1F7BC9CDBF59CE0B2C5467D820BE189C845D0B79CFC96F",
+];
+const GUIDE_ORIGIN = "http://localhost";
+const refusesApiKey = (reason: unknown) => /api-?key/i.test(String(reason ?? ""));
 
 export interface EImzoCertificate {
   /** Where the key lives; handed back to load_key. */
@@ -85,6 +108,8 @@ export class EImzoClient {
   private readonly connect: Connect;
   private readonly timeoutMs: number;
   private keyed = false;
+  /** E-IMZO refused a call for want of an API key: every call goes as from a local page, with the guide's keys. */
+  private asLocalPage = false;
 
   constructor(private readonly options: EImzoOptions = {}) {
     this.url = options.url ?? EIMZO_URL;
@@ -93,11 +118,14 @@ export class EImzoClient {
   }
 
   /** One call: connect, send, take the answer, close. The timeout is long, as the user may be typing a password. */
-  private call(message: Record<string, unknown>): Promise<Answer> {
+  private call(
+    message: Record<string, unknown>,
+    local?: { origin: string; first: Record<string, unknown> },
+  ): Promise<Answer> {
     return new Promise((resolve, reject) => {
       let socket: SocketLike;
       try {
-        socket = this.connect(this.url);
+        socket = local ? this.connect(this.url, local.origin) : this.connect(this.url);
       } catch (e) {
         reject(unavailable(e));
         return;
@@ -118,8 +146,15 @@ export class EImzoClient {
         () => finish(() => reject(new EImzoError("EIMZO_TIMEOUT", "E-IMZO did not answer in time"))),
         this.timeoutMs,
       );
-      socket.onopen = () => socket.send(JSON.stringify(message));
-      socket.onmessage = (event) =>
+      // With `local`, the API key goes first on the same connection, then the call itself.
+      let keyPending = Boolean(local);
+      socket.onopen = () => socket.send(JSON.stringify(local ? local.first : message));
+      socket.onmessage = (event) => {
+        if (keyPending) {
+          keyPending = false;
+          socket.send(JSON.stringify(message));
+          return;
+        }
         finish(() => {
           try {
             resolve(JSON.parse(String(event.data)) as Answer);
@@ -127,6 +162,7 @@ export class EImzoClient {
             reject(new EImzoError("EIMZO_FAILED", "E-IMZO sent an answer that could not be read"));
           }
         });
+      };
       socket.onerror = (e) => finish(() => reject(unavailable(e)));
       socket.onclose = (event) =>
         finish(() =>
@@ -138,11 +174,31 @@ export class EImzoClient {
   /** A call that must succeed. */
   private async ask(plugin: string, name: string, args?: unknown[]): Promise<Answer> {
     await this.sendApiKeys();
-    const answer = await this.call({ plugin, name, ...(args ? { arguments: args } : {}) });
+    const message = { plugin, name, ...(args ? { arguments: args } : {}) };
+    let answer = await this.send(message);
+    if (answer.success === false && !this.asLocalPage && refusesApiKey(answer.reason)) {
+      this.asLocalPage = true;
+      answer = await this.send(message);
+    }
     if (answer.success === false) {
-      throw new EImzoError("EIMZO_FAILED", String(answer.reason ?? "E-IMZO refused the request"));
+      const reason = String(answer.reason ?? "E-IMZO refused the request");
+      throw new EImzoError(
+        "EIMZO_FAILED",
+        this.asLocalPage && refusesApiKey(reason)
+          ? `${reason} (it refuses this app even with the E-IMZO guide's local keys: it needs an API key for this application, see docs/didox.md)`
+          : reason,
+      );
     }
     return answer;
+  }
+
+  private send(message: Record<string, unknown>): Promise<Answer> {
+    return this.asLocalPage
+      ? this.call(message, {
+          origin: GUIDE_ORIGIN,
+          first: { name: "apikey", arguments: [...(this.options.apiKeys ?? []), ...GUIDE_API_KEYS] },
+        })
+      : this.call(message);
   }
 
   private async sendApiKeys(): Promise<void> {

@@ -15,11 +15,18 @@ export class FakeEImzo {
   forgotten = new Set<string>();
   private loaded = 0;
   down = false;
+  /** An E-IMZO that refuses every call but `version` unless the connection came from `http://localhost` and sent a key first. */
+  requireApiKey = false;
   /** An E-IMZO that sends the PKCS#7 but not the signature value and signer serial a time stamp needs. */
   omitSignatureValue = false;
 
-  readonly connect = (): SocketLike => {
+  /** The origin of each connection made, in order (undefined: no page, as a desktop app). */
+  readonly origins: (string | undefined)[] = [];
+
+  readonly connect = (_url?: string, origin?: string): SocketLike => {
     if (this.down) throw new Error("ECONNREFUSED");
+    this.origins.push(origin);
+    let keyed = false;
     const socket: SocketLike = {
       onopen: null,
       onmessage: null,
@@ -28,7 +35,16 @@ export class FakeEImzo {
       send: (text) => {
         const message = JSON.parse(text) as { plugin?: string; name: string; arguments?: unknown[] };
         this.messages.push(message);
-        queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(this.answer(message)) }));
+        let answer = this.answer(message);
+        if (message.name === "apikey" && this.requireApiKey) {
+          keyed = origin === "http://localhost" && (message.arguments ?? []).includes("localhost");
+          answer = keyed
+            ? { success: true }
+            : { success: false, reason: "API-key для домена null недействителен." };
+        } else if (this.requireApiKey && !keyed && message.name !== "version") {
+          answer = { success: false, reason: "API-key для домена null недействителен." };
+        }
+        queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(answer) }));
       },
       close: () => {},
     };
