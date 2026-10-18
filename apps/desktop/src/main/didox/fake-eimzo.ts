@@ -15,8 +15,12 @@ export class FakeEImzo {
   forgotten = new Set<string>();
   private loaded = 0;
   down = false;
-  /** An E-IMZO that refuses every call but `version` unless the connection came from `http://localhost` and sent a key first. */
+  /**
+   * An E-IMZO that refuses every call but `version` unless it came from `http://localhost` after a key was
+   * sent from there (E-IMZO keeps the key for the domain, across connections).
+   */
   requireApiKey = false;
+  private keyedOrigins = new Set<string>();
   /** An E-IMZO that sends the PKCS#7 but not the signature value and signer serial a time stamp needs. */
   omitSignatureValue = false;
 
@@ -26,7 +30,8 @@ export class FakeEImzo {
   readonly connect = (_url?: string, origin?: string): SocketLike => {
     if (this.down) throw new Error("ECONNREFUSED");
     this.origins.push(origin);
-    let keyed = false;
+    // Like the real one, a connection is good for one call: it is closed after the answer.
+    let used = false;
     const socket: SocketLike = {
       onopen: null,
       onmessage: null,
@@ -34,15 +39,20 @@ export class FakeEImzo {
       onerror: null,
       send: (text) => {
         const message = JSON.parse(text) as { plugin?: string; name: string; arguments?: unknown[] };
+        if (used) {
+          queueMicrotask(() => socket.onclose?.({ code: 1000 }));
+          return;
+        }
+        used = true;
         this.messages.push(message);
         let answer = this.answer(message);
+        const refused = { success: false, reason: "API-key для домена null недействителен." };
         if (message.name === "apikey" && this.requireApiKey) {
-          keyed = origin === "http://localhost" && (message.arguments ?? []).includes("localhost");
-          answer = keyed
-            ? { success: true }
-            : { success: false, reason: "API-key для домена null недействителен." };
-        } else if (this.requireApiKey && !keyed && message.name !== "version") {
-          answer = { success: false, reason: "API-key для домена null недействителен." };
+          const keyed = origin === "http://localhost" && (message.arguments ?? []).includes("localhost");
+          if (keyed) this.keyedOrigins.add(origin ?? "");
+          answer = keyed ? { success: true } : refused;
+        } else if (this.requireApiKey && message.name !== "version" && !this.keyedOrigins.has(origin ?? "")) {
+          answer = refused;
         }
         queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(answer) }));
       },

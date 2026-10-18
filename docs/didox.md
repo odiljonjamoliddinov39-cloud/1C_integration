@@ -116,8 +116,9 @@ https page), send one JSON message, take one answer, close.
   Seen 2026-10-18: on one PC E-IMZO 6.4.7 took the calls with no key; on another it answered
   `API-key для домена null недействителен` to the first call (the desktop app sends no Origin). The app
   now meets that refusal by repeating the call as from a local page: an `Origin: http://localhost`
-  header and the guide's published `localhost`/`127.0.0.1` keys sent first on the same connection, and
-  goes on that way. Whether E-IMZO accepts those for a desktop app is to be seen; if not, the error says
+  header and the guide's published `localhost`/`127.0.0.1` keys set first, on a connection of their own (E-IMZO
+  closes a connection after one answer, so keys and call on one connection ended in "the connection closed",
+  seen on the first try), and goes on that way. Whether E-IMZO accepts those for a desktop app is to be seen; if not, the error says
   so, and НИЦ НТ has to be asked for a key for the application.
 - Test without a physical key: tray menu, Development, ID-card emulator (test only).
 

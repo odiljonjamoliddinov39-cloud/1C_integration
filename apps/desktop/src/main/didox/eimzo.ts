@@ -118,14 +118,11 @@ export class EImzoClient {
   }
 
   /** One call: connect, send, take the answer, close. The timeout is long, as the user may be typing a password. */
-  private call(
-    message: Record<string, unknown>,
-    local?: { origin: string; first: Record<string, unknown> },
-  ): Promise<Answer> {
+  private call(message: Record<string, unknown>, origin?: string): Promise<Answer> {
     return new Promise((resolve, reject) => {
       let socket: SocketLike;
       try {
-        socket = local ? this.connect(this.url, local.origin) : this.connect(this.url);
+        socket = origin ? this.connect(this.url, origin) : this.connect(this.url);
       } catch (e) {
         reject(unavailable(e));
         return;
@@ -146,15 +143,8 @@ export class EImzoClient {
         () => finish(() => reject(new EImzoError("EIMZO_TIMEOUT", "E-IMZO did not answer in time"))),
         this.timeoutMs,
       );
-      // With `local`, the API key goes first on the same connection, then the call itself.
-      let keyPending = Boolean(local);
-      socket.onopen = () => socket.send(JSON.stringify(local ? local.first : message));
-      socket.onmessage = (event) => {
-        if (keyPending) {
-          keyPending = false;
-          socket.send(JSON.stringify(message));
-          return;
-        }
+      socket.onopen = () => socket.send(JSON.stringify(message));
+      socket.onmessage = (event) =>
         finish(() => {
           try {
             resolve(JSON.parse(String(event.data)) as Answer);
@@ -162,7 +152,6 @@ export class EImzoClient {
             reject(new EImzoError("EIMZO_FAILED", "E-IMZO sent an answer that could not be read"));
           }
         });
-      };
       socket.onerror = (e) => finish(() => reject(unavailable(e)));
       socket.onclose = (event) =>
         finish(() =>
@@ -192,13 +181,18 @@ export class EImzoClient {
     return answer;
   }
 
-  private send(message: Record<string, unknown>): Promise<Answer> {
-    return this.asLocalPage
-      ? this.call(message, {
-          origin: GUIDE_ORIGIN,
-          first: { name: "apikey", arguments: [...(this.options.apiKeys ?? []), ...GUIDE_API_KEYS] },
-        })
-      : this.call(message);
+  /**
+   * One call. As a local page: the key is set on a connection of its own (E-IMZO closes a connection after
+   * one answer, and keeps the key for the page's domain), then the call goes on another from the same origin.
+   */
+  private async send(message: Record<string, unknown>): Promise<Answer> {
+    if (!this.asLocalPage) return this.call(message);
+    const keyed = await this.call(
+      { name: "apikey", arguments: [...(this.options.apiKeys ?? []), ...GUIDE_API_KEYS] },
+      GUIDE_ORIGIN,
+    );
+    if (keyed.success === false) return keyed;
+    return this.call(message, GUIDE_ORIGIN);
   }
 
   private async sendApiKeys(): Promise<void> {
