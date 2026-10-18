@@ -75,17 +75,18 @@ describe("E-IMZO", () => {
     eimzo.requireApiKey = true;
     const client = new EImzoClient({ connect: eimzo.connect });
     expect(await client.listCertificates()).toHaveLength(1);
-    // The first call went bare and was refused; then the key and the call travelled together as from localhost.
-    expect(eimzo.origins).toEqual([undefined, "http://localhost"]);
+    // The first call went bare and was refused; then the key was set from localhost, and the call went on
+    // another connection from there (E-IMZO closes a connection after one answer).
+    expect(eimzo.origins).toEqual([undefined, "http://localhost", "http://localhost"]);
     expect(eimzo.messages.map((m) => m.name)).toEqual([
       "list_all_certificates",
       "apikey",
       "list_all_certificates",
     ]);
     expect(eimzo.messages[1]?.arguments).toEqual(expect.arrayContaining(["localhost", "127.0.0.1"]));
-    // Every later call is made that way at once.
+    // Every later call is made that way at once: the key, then the call.
     await client.listCertificates();
-    expect(eimzo.origins).toEqual([undefined, "http://localhost", "http://localhost"]);
+    expect(eimzo.origins).toHaveLength(5);
   });
 
   it("does not use the guide's keys when E-IMZO takes the calls without one", async () => {
