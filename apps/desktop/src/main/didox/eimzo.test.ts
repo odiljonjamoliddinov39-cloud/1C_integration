@@ -39,6 +39,26 @@ describe("E-IMZO", () => {
     });
   });
 
+  it("has the signature time-stamped: the token is attached to the PKCS#7 by E-IMZO", async () => {
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
+    const stamped = await signer.pkcs7("x", async ({ signatureHex }) => `token-of-${signatureHex}`);
+    expect(Buffer.from(stamped, "base64").toString()).toContain("STAMPED(5a3c0f11,token-of-ab12)");
+    expect(eimzo.messages.find((m) => m.name === "attach_timestamp_token_pkcs7")).toMatchObject({
+      plugin: "pkcs7",
+      arguments: [expect.any(String), "5a3c0f11", "token-of-ab12"],
+    });
+  });
+
+  it("says what E-IMZO answered when it gives no signature value to time-stamp", async () => {
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    eimzo.omitSignatureValue = true;
+    const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
+    await expect(signer.pkcs7("x", async () => "t")).rejects.toThrow(/answered: success, pkcs7_64/);
+  });
+
   it("opens the key again when E-IMZO no longer knows its id, once", async () => {
     const eimzo = new FakeEImzo();
     eimzo.certificates = [cert(ALIAS)];

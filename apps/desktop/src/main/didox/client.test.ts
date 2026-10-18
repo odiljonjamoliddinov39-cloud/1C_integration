@@ -24,24 +24,48 @@ describe("DidoxClient", () => {
       "POST /v1/auth/login",
     ]);
     expect(signer.signed).toEqual([JSON.stringify({ authId: "auth-5A3C0F" })]);
-    // The signature goes to Didox with the time stamp Didox gave it: it refuses one without.
+    // The signature value goes to Didox for its time stamp; the PKCS#7 that comes back carries it.
     const signed = Buffer.from(`PKCS7:${JSON.stringify({ authId: "auth-5A3C0F" })}`).toString("base64");
-    expect(server.requests[1]?.body).toBe(signed);
+    const hex = Buffer.from(JSON.stringify({ authId: "auth-5A3C0F" })).toString("hex");
+    expect(server.requests[1]?.body).toMatchObject({ signature: hex });
+    const token = Buffer.from(`TST(${hex})`).toString("base64");
     expect(server.requests[2]?.body).toEqual({
       serialNumber: "5A3C0F",
-      pkcs7: Buffer.from(`TS:${signed}`).toString("base64"),
+      pkcs7: Buffer.from(`TS:${token}:${signed}`).toString("base64"),
     });
     // The sign-in itself carries no token.
     expect(server.requests[0]?.headers["user-key"]).toBeUndefined();
     expect(server.requests[0]?.headers["api-key"]).toBe("partner-key");
   });
 
-  it("asks for the time stamp with the PKCS#7 as JSON when the plain text is refused", async () => {
-    const { server, client } = setup();
-    server.timestampAsJson = true;
-    await client.login();
-    expect(client.signedIn).toBe(true);
-    expect(server.requests.filter((r) => r.url.pathname === "/v1/dsvs/gettimestamp")).toHaveLength(2);
+  it.each(["signature-text", "pkcs7-json", "pkcs7-text"] as const)(
+    "finds the shape the time stamp endpoint takes (%s) by trying the likely ones",
+    async (takes) => {
+      const { server, client } = setup();
+      server.timestampTakes = takes;
+      await client.login();
+      expect(client.signedIn).toBe(true);
+    },
+  );
+
+  it("shows what the time stamp endpoint answered when no shape gets a token", async () => {
+    const { server } = setup();
+    const refusing = new DidoxClient(
+      {
+        baseUrl: "https://didox.test/",
+        fetch: async (input, init) =>
+          String(input).includes("gettimestamp")
+            ? new Response('{"success":true,"timeStampTokenB64":"","isAttachedPkcs7":false}')
+            : server.fetch(input, init),
+      },
+      new FakeSigner(),
+    );
+    const error = await refusing.login().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DidoxError);
+    expect((error as DidoxError).message).toContain("no time stamp token");
+    expect((error as DidoxError).message).toContain(
+      'the PKCS#7 as text: {"success":true,"timeStampTokenB64":""',
+    );
   });
 
   it("signs in by itself on the first request, and lists documents with the filters as query", async () => {

@@ -56,10 +56,13 @@ Development server: `https://devapi.goodsign.biz/`. Requests carry `api-key` (a 
 1. `GET /v1/auth/authId/{serialNumber}`: the key's serial number in hex gives an `authId`.
 2. The app signs the JSON `{"authId": "..."}` with the key (PKCS#7).
    Didox refuses a signature with no time stamp (401 "Eimzo fail … timestamp is required", seen on a
-   real key 2026-10-18), and E-IMZO does not stamp, so the PKCS#7 first goes to
-   `POST /v1/dsvs/gettimestamp` (the Didox side of E-IMZO-SERVER's `/frontend/timestamp/pkcs7`: the
-   PKCS#7 in, the PKCS#7 with the time stamp token out; the app sends it as plain text, then as
-   `{"pkcs7"}` if that is refused, and reads `pkcs7b64`/`pkcs7` from the answer).
+   real key 2026-10-18), and E-IMZO does not stamp. So after signing, E-IMZO's `signature_hex` goes to
+   `POST /v1/dsvs/gettimestamp`, which answers `{"success":true,"timeStampTokenB64":"…",
+"isAttachedPkcs7":false}`, and E-IMZO attaches the token (`attach_timestamp_token_pkcs7`: the PKCS#7,
+   the signer's `signer_serial_number`, the token). What the endpoint takes is not in the collection and
+   it answers an empty token to what it does not understand (the PKCS#7 as plain text and as `{"pkcs7"}`
+   both did), so the app tries the signature as JSON, the signature as text, the PKCS#7 as JSON and as
+   text, and the first token wins; if none does, the error lists each answer.
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.

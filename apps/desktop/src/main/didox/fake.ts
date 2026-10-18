@@ -1,4 +1,4 @@
-import type { DidoxSigner } from "./client.js";
+import type { DidoxSigner, Stamper } from "./client.js";
 
 /** A signer that signs nothing real: for tests and the demo, where there is no E-IMZO. */
 export class FakeSigner implements DidoxSigner {
@@ -7,9 +7,12 @@ export class FakeSigner implements DidoxSigner {
   async serialNumber(): Promise<string> {
     return this.serial;
   }
-  async pkcs7(data: string): Promise<string> {
+  async pkcs7(data: string, stamp?: Stamper): Promise<string> {
     this.signed.push(data);
-    return Buffer.from(`PKCS7:${data}`).toString("base64");
+    const pkcs7 = Buffer.from(`PKCS7:${data}`).toString("base64");
+    if (!stamp) return pkcs7;
+    const token = await stamp({ pkcs7, signatureHex: Buffer.from(data).toString("hex") });
+    return Buffer.from(`TS:${token}:${pkcs7}`).toString("base64");
   }
 }
 
@@ -32,8 +35,8 @@ export class FakeDidox {
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
   private issued = 0;
-  /** Takes the PKCS#7 for the time stamp only as JSON, not as plain text (the collection does not say which). */
-  timestampAsJson = false;
+  /** What /v1/dsvs/gettimestamp understands; anything else gets the empty token the real one gives. */
+  timestampTakes: "signature-json" | "signature-text" | "pkcs7-json" | "pkcs7-text" = "signature-json";
   /** Makes the next authorized request answer 401, as a token that lapsed. */
   expireTokens(): void {
     this.tokens.clear();
@@ -58,15 +61,29 @@ export class FakeDidox {
     const path = url.pathname;
     if (path.startsWith("/v1/auth/authId/")) return json({ authId: `auth-${path.split("/").pop()}` });
     if (path === "/v1/dsvs/gettimestamp") {
-      const pkcs7 = typeof body === "string" ? body : (body as { pkcs7?: string } | undefined)?.pkcs7;
-      if (!pkcs7 || (typeof body === "string") === this.timestampAsJson)
-        return json({ error: "bad body" }, 400);
-      return json({ status: 1, pkcs7b64: Buffer.from(`TS:${pkcs7}`).toString("base64") });
+      const [what, how] = this.timestampTakes.split("-") as ["signature" | "pkcs7", "json" | "text"];
+      const sent = typeof body === "string" ? body : (body as Record<string, string> | undefined)?.[what];
+      const fits = (how === "text") === (typeof body === "string") && Boolean(sent);
+      const hex = what === "signature" && fits && /^[0-9a-f]+$/.test(String(sent));
+      const understood = fits && (what === "pkcs7" || hex);
+      return json({
+        success: true,
+        timeStampTokenB64: understood ? Buffer.from(`TST(${sent})`).toString("base64") : "",
+        isAttachedPkcs7: false,
+      });
     }
     if (path === "/v1/auth/login") {
       const sent = body as { serialNumber?: string; pkcs7?: string } | undefined;
       if (!sent?.pkcs7) return json({ error: "no signature" }, 400);
-      if (!Buffer.from(sent.pkcs7, "base64").toString().startsWith("TS:")) {
+      // The fake signer writes "TS:<token>:…", the fake E-IMZO "STAMPED(<serial>,<token>):…".
+      const stamp = /^(?:TS:|STAMPED\([^,]*,)([^:)]*)/.exec(
+        Buffer.from(sent.pkcs7, "base64").toString(),
+      )?.[1];
+      if (
+        !Buffer.from(stamp ?? "", "base64")
+          .toString()
+          .startsWith("TST(")
+      ) {
         return json({ error: "Unauthorized. Invalid signature: Eimzo fail. timestamp is required" }, 401);
       }
       const token = `token-${++this.issued}`;
