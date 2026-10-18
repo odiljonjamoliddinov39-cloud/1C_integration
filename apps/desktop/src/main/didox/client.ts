@@ -15,9 +15,22 @@
 export interface DidoxSigner {
   /** The key's serial number in hexadecimal. */
   serialNumber(): Promise<string>;
-  /** The data signed with the key, as PKCS#7 (base64). */
-  pkcs7(data: string): Promise<string>;
+  /**
+   * The data signed with the key, as PKCS#7 (base64). With `stamp`, the signature's time stamp token is
+   * asked of it and attached, as Didox wants.
+   */
+  pkcs7(data: string, stamp?: Stamper): Promise<string>;
 }
+
+/** What is known of a fresh signature, for asking the time stamp token for it. */
+export interface SignedData {
+  /** The PKCS#7 (base64) as E-IMZO made it. */
+  pkcs7: string;
+  /** The signature value in hexadecimal, as E-IMZO gives it next to the PKCS#7. */
+  signatureHex: string;
+}
+/** Asks for the time stamp token (base64) of a signature. */
+export type Stamper = (signed: SignedData) => Promise<string>;
 
 export interface DidoxConfig {
   /** The development server is the default; production is set when a company goes live. */
@@ -134,7 +147,7 @@ export class DidoxClient {
     });
     const authId = textField(authIdBody, ["authId", "authid", "id"]);
     if (!authId) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no authId");
-    const pkcs7 = await this.withTimestamp(await signer.pkcs7(JSON.stringify({ authId })));
+    const pkcs7 = await signer.pkcs7(JSON.stringify({ authId }), (signed) => this.timestampToken(signed));
     const loginBody = await this.request("POST", "/v1/auth/login", {
       auth: false,
       body: { serialNumber, pkcs7 },
@@ -145,27 +158,48 @@ export class DidoxClient {
   }
 
   /**
-   * Didox refuses a signature with no time stamp ("Eimzo fail … timestamp is required"). E-IMZO does
-   * not stamp; the time stamp token is attached by a server (E-IMZO-SERVER's /frontend/timestamp/pkcs7:
-   * the PKCS#7 in, the PKCS#7 with the token out), which for Didox is /v1/dsvs/gettimestamp. The collection
-   * does not show its body, so the PKCS#7 goes as the plain text E-IMZO-SERVER takes, then as JSON.
+   * Didox refuses a signature with no time stamp ("Eimzo fail … timestamp is required"), and E-IMZO does
+   * not stamp. /v1/dsvs/gettimestamp gives the token ({"success":true,"timeStampTokenB64":"…"}); E-IMZO
+   * attaches it to the PKCS#7 (attach_timestamp_token_pkcs7). The collection does not show what the
+   * endpoint takes, and it answers an empty token to what it does not understand, so the likely shapes
+   * are tried in turn and the first token wins; if none does, the error shows each answer.
    */
-  async withTimestamp(pkcs7: string): Promise<string> {
-    const names = ["pkcs7b64", "pkcs7", "pkcs7_64", "pkcs7Attached"];
-    const failures: string[] = [];
-    for (const body of [{ text: pkcs7 }, { body: { pkcs7 } }]) {
+  async timestampToken({ pkcs7, signatureHex }: SignedData): Promise<string> {
+    const attempts: [string, { body?: unknown; text?: string }][] = [
+      [
+        "the signature as JSON",
+        {
+          body: {
+            signature: signatureHex,
+            signatureHex,
+            signature_hex: signatureHex,
+            hex: signatureHex,
+            isAttachedPkcs7: false,
+          },
+        },
+      ],
+      ["the signature as text", { text: signatureHex }],
+      [
+        "the PKCS#7 as JSON",
+        { body: { pkcs7, pkcs7B64: pkcs7, pkcs7_64: pkcs7, data: pkcs7, isAttachedPkcs7: true } },
+      ],
+      ["the PKCS#7 as text", { text: pkcs7 }],
+    ];
+    const names = ["timeStampTokenB64", "timeStampToken", "tst", "token"];
+    const seen: string[] = [];
+    for (const [label, options] of attempts) {
       try {
-        const answer = await this.request("POST", "/v1/dsvs/gettimestamp", { auth: false, ...body });
-        const stamped = textField(answer, names);
-        if (stamped) return stamped;
-        failures.push(`no signature in the answer: ${JSON.stringify(answer).slice(0, 200)}`);
+        const answer = await this.request("POST", "/v1/dsvs/gettimestamp", { auth: false, ...options });
+        const token = textField(answer, names);
+        if (token) return token;
+        seen.push(`${label}: ${JSON.stringify(answer).slice(0, 160)}`);
       } catch (e) {
         if (!(e instanceof DidoxError) || e.status === undefined || e.status < 400 || e.status >= 500)
           throw e;
-        failures.push(e.message);
+        seen.push(`${label}: ${e.message}`);
       }
     }
-    throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp for the signature (${failures.join("; ")})`);
+    throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp token (${seen.join("; ")})`);
   }
 
   /** The profile of the signed-in company. */

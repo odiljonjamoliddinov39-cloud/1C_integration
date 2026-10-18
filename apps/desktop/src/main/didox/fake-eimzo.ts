@@ -15,6 +15,8 @@ export class FakeEImzo {
   forgotten = new Set<string>();
   private loaded = 0;
   down = false;
+  /** An E-IMZO that sends the PKCS#7 but not the signature value and signer serial a time stamp needs. */
+  omitSignatureValue = false;
 
   readonly connect = (): SocketLike => {
     if (this.down) throw new Error("ECONNREFUSED");
@@ -47,6 +49,14 @@ export class FakeEImzo {
       return {
         success: true,
         pkcs7_64: Buffer.from(`SIGNED(${id}):${String(m.arguments?.[0])}`).toString("base64"),
+        ...(this.omitSignatureValue ? {} : { signature_hex: "ab12", signer_serial_number: "5a3c0f11" }),
+      };
+    }
+    if (m.name === "attach_timestamp_token_pkcs7") {
+      const [pkcs7, serial, token] = (m.arguments ?? []).map(String);
+      return {
+        success: true,
+        pkcs7_64: Buffer.from(`STAMPED(${serial},${token}):${pkcs7}`).toString("base64"),
       };
     }
     return { success: false, reason: `unknown ${m.name}` };

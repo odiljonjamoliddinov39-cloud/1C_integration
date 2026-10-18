@@ -4,7 +4,7 @@
  * is one short connection that sends one JSON message and gets one answer. The key's password is asked
  * by E-IMZO itself in its own window; this app never sees it.
  */
-import type { DidoxSigner } from "./client.js";
+import type { DidoxSigner, Stamper } from "./client.js";
 
 export const EIMZO_URL = "ws://127.0.0.1:64646/service/cryptapi";
 
@@ -200,12 +200,33 @@ export class EImzoClient {
     return id;
   }
 
-  /** The data (base64) signed with the key, as a PKCS#7 document with the data inside. */
-  async createPkcs7(keyId: string, dataBase64: string): Promise<string> {
+  /**
+   * The data (base64) signed with the key, as a PKCS#7 document with the data inside, and what is
+   * needed to have the signature time-stamped (E-IMZO gives the signature and the signer's serial next
+   * to the document).
+   */
+  async createPkcs7(
+    keyId: string,
+    dataBase64: string,
+  ): Promise<{ pkcs7: string; signatureHex: string; signerSerial: string; answered: string[] }> {
     const answer = await this.ask("pkcs7", "create_pkcs7", [dataBase64, keyId, "no"]);
     const pkcs7 = typeof answer.pkcs7_64 === "string" ? answer.pkcs7_64 : null;
     if (!pkcs7) throw new EImzoError("EIMZO_FAILED", "E-IMZO sent no signature");
-    return pkcs7;
+    const text = (value: unknown) => (typeof value === "string" ? value : "");
+    return {
+      pkcs7,
+      signatureHex: text(answer.signature_hex),
+      signerSerial: text(answer.signer_serial_number),
+      answered: Object.keys(answer),
+    };
+  }
+
+  /** The PKCS#7 with a time stamp token (base64, from a time stamp server) attached to the signer's signature. */
+  async attachTimestamp(pkcs7: string, signerSerial: string, token: string): Promise<string> {
+    const answer = await this.ask("pkcs7", "attach_timestamp_token_pkcs7", [pkcs7, signerSerial, token]);
+    const stamped = typeof answer.pkcs7_64 === "string" ? answer.pkcs7_64 : null;
+    if (!stamped) throw new EImzoError("EIMZO_FAILED", "E-IMZO sent no PKCS#7 with the time stamp");
+    return stamped;
   }
 }
 
@@ -277,7 +298,7 @@ export class EImzoSigner implements DidoxSigner {
     return (await this.chosen()).serialNumber;
   }
 
-  async pkcs7(data: string): Promise<string> {
+  async pkcs7(data: string, stamp?: Stamper): Promise<string> {
     const certificate = await this.chosen();
     const dataBase64 = Buffer.from(data, "utf8").toString("base64");
     const keyId = async (fresh: boolean) => {
@@ -287,14 +308,24 @@ export class EImzoSigner implements DidoxSigner {
       this.key = { id, at: Date.now() };
       return id;
     };
+    let signed;
     try {
-      return await this.client.createPkcs7(await keyId(false), dataBase64);
+      signed = await this.client.createPkcs7(await keyId(false), dataBase64);
     } catch (e) {
       // The key id lapsed (E-IMZO restarted, or 24 hours passed): open the key again, once.
-      if (e instanceof EImzoError && e.code === "EIMZO_FAILED" && /не найден|not found/i.test(e.message)) {
-        return this.client.createPkcs7(await keyId(true), dataBase64);
+      if (!(e instanceof EImzoError && e.code === "EIMZO_FAILED" && /не найден|not found/i.test(e.message))) {
+        throw e;
       }
-      throw e;
+      signed = await this.client.createPkcs7(await keyId(true), dataBase64);
     }
+    if (!stamp) return signed.pkcs7;
+    if (!signed.signatureHex || !signed.signerSerial) {
+      throw new EImzoError(
+        "EIMZO_FAILED",
+        `E-IMZO gave no signature value or signer serial to time-stamp (it answered: ${signed.answered.join(", ")})`,
+      );
+    }
+    const token = await stamp({ pkcs7: signed.pkcs7, signatureHex: signed.signatureHex });
+    return this.client.attachTimestamp(signed.pkcs7, signed.signerSerial, token);
   }
 }
