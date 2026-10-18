@@ -70,6 +70,12 @@ E-IMZO устарела` (so Didox had given a token). The app then puts the tok
    is written with definite lengths; every signed byte is copied as it was. Checked with `openssl cms -verify`
    on a real BER signature and a real `openssl ts` token (the signature still verifies, the attribute is
    there); not yet with Didox's own verification.
+   Seen next (2026-10-18, the build with that attach): Didox still answered `Invalid signature: Eimzo fail …
+timestamp is required`. So the token is now read (`readTimestampToken`): a TimeStampResp is unwrapped to
+   its token, and the token's message imprint (what it says it stamps) is compared with the hash of the
+   signature value, so a token for other data is not used and the next request shape is tried. If Didox
+   still refuses, the error ends with `[time stamp from <shape>: …, sha256 imprint …, stamps the signature:
+yes/no/unknown]`.
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.
