@@ -33,7 +33,8 @@ export interface BankProblem {
     | "COUNTERPARTY_AMBIGUOUS"
     | "NO_TEMPLATE"
     | "BAD_TEMPLATE"
-    | "TAX_PAYMENT";
+    | "TAX_PAYMENT"
+    | "NEW_COUNTERPARTY";
   message: string;
   /** Who it is about: the name and INN as the statement writes them. */
   counterparty?: string;
@@ -54,7 +55,25 @@ export interface BankOverrides {
   templates?: { row: number; ref: string }[];
 }
 
+/** A counterparty the statement names (with INN and name) that 1C does not have: the tool offers to create it. */
+export interface MissingCounterparty {
+  inn: string;
+  name: string;
+  rows: number[];
+}
+
+/** A contract of a counterparty created a moment ago, named in the purposes, that 1C does not have yet. */
+export interface PendingContract {
+  rows: number[];
+  label: string;
+  change: ChangeInput;
+}
+
 export interface BankResolved {
+  /** Counterparties to create first; their payments wait for the next round. */
+  missing: MissingCounterparty[];
+  /** Contracts to create for counterparties created in this run; their payments wait for the next round. */
+  contractsToCreate: PendingContract[];
   ready: { payment: BankPayment; change: ChangeInput }[];
   /** Payments already in 1C (same date, counterparty and amount): left out. */
   alreadyIn1c: number[];
@@ -321,7 +340,16 @@ const label = (p: BankPayment) =>
 
 export async function resolvePayments(
   statement: BankStatement,
-  options: { companyInn?: string; overrides?: BankOverrides; cache?: BankCache; only?: number[] },
+  options: {
+    companyInn?: string;
+    overrides?: BankOverrides;
+    cache?: BankCache;
+    only?: number[];
+    /** Offer to create counterparties the statement names (INN and name) and 1C lacks. */
+    createMissing?: boolean;
+    /** INNs of counterparties created earlier in this run: they have no earlier payment to copy. */
+    fresh?: Set<string>;
+  },
   deps: BankDeps,
 ): Promise<BankResolved> {
   const overrides = options.overrides ?? {};
@@ -331,7 +359,16 @@ export async function resolvePayments(
   const alreadyIn1c: number[] = [];
   const wanted = options.only ? new Set(options.only) : null;
   let payments = statement.payments.filter((p) => !wanted || wanted.has(p.row));
-  const nothing = (): BankResolved => ({ ready: [], alreadyIn1c, problems, notes });
+  const missingByInn = new Map<string, MissingCounterparty>();
+  const pendingContracts = new Map<string, PendingContract>();
+  const nothing = (): BankResolved => ({
+    missing: [...missingByInn.values()],
+    contractsToCreate: [...pendingContracts.values()],
+    ready: [],
+    alreadyIn1c,
+    problems,
+    notes,
+  });
 
   const grouped = new Map<string, BankProblem>();
   const addProblem = (
@@ -434,9 +471,16 @@ export async function resolvePayments(
     const matches = byInn.get(p.inn) ?? [];
     const [only] = matches;
     if (matches.length === 1 && only) withCounterparty.push({ payment: p, counterparty: only.ref });
-    else if (matches.length === 0)
-      addProblem(p, "COUNTERPARTY_NOT_FOUND", `no counterparty with INN ${p.inn} in 1C: create it first`);
-    else
+    else if (matches.length === 0) {
+      // A company's INN is 9 digits; a person's (14) is not written here, and a nameless row cannot be created.
+      if (options.createMissing && p.inn.length === 9 && p.counterparty.trim() !== "") {
+        const known = missingByInn.get(p.inn);
+        if (known) known.rows.push(p.row);
+        else missingByInn.set(p.inn, { inn: p.inn, name: p.counterparty.trim(), rows: [p.row] });
+      } else {
+        addProblem(p, "COUNTERPARTY_NOT_FOUND", `no counterparty with INN ${p.inn} in 1C: create it first`);
+      }
+    } else
       addProblem(
         p,
         "COUNTERPARTY_AMBIGUOUS",
@@ -526,9 +570,12 @@ export async function resolvePayments(
       );
       continue;
     }
+    const fresh = Boolean(counterparty && payment.inn && options.fresh?.has(payment.inn));
     const template = asked
       ? await snapshot(deps, cache, object, asked.ref)
-      : await findTemplate(deps, cache, object, payment);
+      : fresh
+        ? await kindTemplate(deps, cache, object, payment)
+        : await findTemplate(deps, cache, object, payment);
     if (!template) {
       addProblem(
         payment,
@@ -540,7 +587,54 @@ export async function resolvePayments(
 
     let contract: string | null = null;
     const mention = mentions.get(payment.row);
-    if (mention) {
+    if (fresh && counterparty) {
+      const list = contractsOf.get(payment.inn) ?? [];
+      const have = mention
+        ? list.filter(
+            (c) => normalNumber(c.number) === normalNumber(mention.number) && c.date === mention.date,
+          )
+        : [];
+      if (have.length === 1 && have[0]) contract = have[0].ref;
+      else if (mention) {
+        // The counterparty was created a moment ago: its contract is made too, like the company's other contracts.
+        const key = `${payment.inn}|${normalNumber(mention.number)}|${mention.date}`;
+        const known = pendingContracts.get(key);
+        if (known) known.rows.push(payment.row);
+        else {
+          const change = await contractChange(deps, cache, template, payment, mention, counterparty);
+          if (!change) {
+            addProblem(
+              payment,
+              "NEW_COUNTERPARTY",
+              "the contract named in the purpose cannot be made from the earlier payment's contract: enter it with propose_changes",
+            );
+            continue;
+          }
+          pendingContracts.set(key, {
+            rows: [payment.row],
+            label: `№${mention.number} ${mention.date.split("-").reverse().join(".")} · ${payment.counterparty}`,
+            change,
+          });
+        }
+        continue;
+      } else {
+        addProblem(
+          payment,
+          "NEW_COUNTERPARTY",
+          "a counterparty created in this run, and the purpose names no contract: enter the payment with propose_changes",
+        );
+        continue;
+      }
+      const whose = template.fields["Контрагент"];
+      const name =
+        whose && typeof whose === "object" && typeof (whose as { name?: unknown }).name === "string"
+          ? (whose as { name: string }).name
+          : "";
+      addNote(
+        [payment.row],
+        `new counterparty "${payment.counterparty}": the operation, accounts and VAT come from the latest payment of the same kind${name ? ` (to "${name}")` : ""}; check them`,
+      );
+    } else if (mention) {
       const list = contractsOf.get(payment.inn) ?? [];
       const match = list.filter(
         (c) => normalNumber(c.number) === normalNumber(mention.number) && c.date === mention.date,
@@ -578,7 +672,14 @@ export async function resolvePayments(
     }
     ready.push({ payment, change: made.change });
   }
-  return { ready, alreadyIn1c, problems, notes };
+  return {
+    missing: [...missingByInn.values()],
+    contractsToCreate: [...pendingContracts.values()],
+    ready,
+    alreadyIn1c,
+    problems,
+    notes,
+  };
 }
 
 async function snapshot(
@@ -602,6 +703,108 @@ async function snapshot(
   return template;
 }
 
+/** Posted documents of a kind, newest first, with their purposes: of one counterparty by INN, or the newest of all. */
+async function loadList(
+  deps: BankDeps,
+  cache: BankCache,
+  object: string,
+  inn: string,
+): Promise<{ ref: string; purpose: string }[]> {
+  const key = `${object}|${inn || "*"}`;
+  const cached = cache.lists.get(key);
+  if (cached) return cached;
+  const outcome = await deps.query({
+    query: inn
+      ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.ИНН = &инн УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
+      : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+    ...(inn ? { params: { инн: inn } } : {}),
+    limit: inn ? 20 : 300,
+    refs: true,
+  });
+  const list = outcome.ok
+    ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+        const ref = refOf(cells[0]);
+        return ref ? [{ ref, purpose: String(cells[1] ?? "") }] : [];
+      })
+    : [];
+  cache.lists.set(key, list);
+  return list;
+}
+
+/** A made-up reference, to test that a template can be copied before any counterparty or contract exists. */
+const DUMMY = "00000000-0000-4000-8000-000000000000";
+
+/**
+ * For a counterparty with no earlier payment: the newest posted payment of the same kind that has a
+ * contract and can be copied (one breakdown row, in сум). Its operation, accounts and VAT are the
+ * company's usual ones for such a payment.
+ */
+async function kindTemplate(
+  deps: BankDeps,
+  cache: BankCache,
+  object: string,
+  payment: BankPayment,
+): Promise<Template | null> {
+  const list = await loadList(deps, cache, object, "");
+  for (const candidate of list.slice(0, 8)) {
+    const template = await snapshot(deps, cache, object, candidate.ref);
+    if (!template || !refOf(template.fields["ДоговорКонтрагента"])) continue;
+    if (copyTemplate(template, payment, { counterparty: DUMMY, contract: DUMMY }).ok) return template;
+  }
+  return null;
+}
+
+/** Fields of a directory item that 1C makes or that belong to this one item, never copied from another. */
+const NOT_COPIED_ITEM = new Set([
+  "Код",
+  "Code",
+  "Наименование",
+  "Description",
+  "Владелец",
+  "Owner",
+  "Родитель",
+  "Parent",
+  "ЭтоГруппа",
+  "IsFolder",
+  "ПометкаУдаления",
+  "DeletionMark",
+  "Предопределенный",
+  "Predefined",
+  "ИмяПредопределенныхДанных",
+  "Номер",
+  "Дата",
+  "СрокДействия",
+]);
+
+/**
+ * A new counterparty's contract, as the company makes its contracts: the contract of the template
+ * payment is copied (its kind, currency, settlement rules), and the owner, the number, the date and
+ * the name are this one's. The expiry date is left empty (the statement does not know it).
+ */
+async function contractChange(
+  deps: BankDeps,
+  cache: BankCache,
+  template: Template,
+  payment: BankPayment,
+  mention: { number: string; date: string },
+  owner: string,
+): Promise<ChangeInput | null> {
+  const contractRef = refOf(template.fields["ДоговорКонтрагента"]);
+  if (!contractRef) return null;
+  const earlier = await snapshot(deps, cache, "Справочник.ДоговорыКонтрагентов", contractRef);
+  if (!earlier) return null;
+  const fields: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(earlier.fields)) {
+    if (!NOT_COPIED_ITEM.has(name)) fields[name] = writable(value);
+  }
+  const [y, m, d] = mention.date.split("-");
+  fields["Владелец"] = refTo(earlier.fields["Владелец"], owner, "Справочник.Контрагенты");
+  fields["Номер"] = mention.number;
+  fields["Дата"] = mention.date;
+  fields["Наименование"] = `№${mention.number} от ${d}.${m}.${y}`;
+  return { action: "create", object: "Справочник.ДоговорыКонтрагентов", fields };
+}
+
 /**
  * The document to copy for a payment. With an INN: the counterparty's newest posted payment of the
  * same kind, preferring one whose purpose says the same kind of thing (a fee, not a refund). With
@@ -613,25 +816,7 @@ async function findTemplate(
   object: string,
   payment: BankPayment,
 ): Promise<Template | null> {
-  const key = `${object}|${payment.inn || "*"}`;
-  let list = cache.lists.get(key);
-  if (!list) {
-    const outcome = await deps.query({
-      query: payment.inn
-        ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.ИНН = &инн УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
-        : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
-      ...(payment.inn ? { params: { инн: payment.inn } } : {}),
-      limit: payment.inn ? 20 : 300,
-      refs: true,
-    });
-    list = outcome.ok
-      ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
-          const ref = refOf(cells[0]);
-          return ref ? [{ ref, purpose: String(cells[1] ?? "") }] : [];
-        })
-      : [];
-    cache.lists.set(key, list);
-  }
+  const list = await loadList(deps, cache, object, payment.inn);
   const shape = shapeOf(payment.purpose);
   const same = shape.length >= 8 ? list.find((c) => shapeOf(c.purpose) === shape) : undefined;
   const chosen = same ?? (payment.inn ? list[0] : undefined);

@@ -67,7 +67,7 @@ the contract and the accounts are the company's own; the documents are left unpo
 decided on its own (a contract the purpose names that 1C does not have): report them in your answer. It returns only what it could not settle (a counterparty with no INN \
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment, a tax or budget payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
-counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
+counterparties / templates / ownAccount. A counterparty that the statement names with its INN and name and 1C lacks is created by the tool itself (a card for the counterparties, one for their contracts named in the purposes, then the payments): do not create them yourself, and do not ask the accountant about them. Payments already in 1C are left out by themselves. Then stop and report \
 what was entered, what is left, and the totals by month, in a few lines: do not list the documents one by one (the card showed \
 them) and do not bring up open matters from earlier in the chat; say only the counts, the totals in and out, and what needs the accountant's attention. To post what this chat has entered (the accountant says "проведи", "перевед", "post"), call propose_post_created with a title only: do not list the documents yourself, and stop after it. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
 it is «Уплата налога» with the tax, its period and the tax office, on the tax accounts, no contract and no VAT, copied from the \

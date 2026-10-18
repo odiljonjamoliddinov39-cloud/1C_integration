@@ -1148,6 +1148,188 @@ describe("assistant", () => {
       });
     });
 
+    it("creates a counterparty and its contract the statement names, then enters its payments: three cards, no model step", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const supplier = crypto.randomUUID();
+      const contract = crypto.randomUUID();
+      const earlierPayment = crypto.randomUUID();
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "n1", name: "propose_bank_payments", input: { title: "Vypiska: 5" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      // The company's usual supplier payment and its contract.
+      base.objects.set(contract, {
+        object: "Справочник.ДоговорыКонтрагентов",
+        fields: {
+          Код: "000000017",
+          Наименование: "№17 от 08.01.2026",
+          Владелец: ref("Справочник.Контрагенты", supplier, "Старый поставщик"),
+          ВидДоговора: ref("Перечисление.ВидыДоговоровКонтрагентов", "СПоставщиком", "С поставщиком"),
+          Номер: "17",
+        },
+        posted: false,
+        deletionMark: false,
+        version: 1,
+      });
+      base.objects.set(supplier, {
+        object: "Справочник.Контрагенты",
+        fields: { ИНН: "201607534", Наименование: "Старый поставщик" },
+        posted: false,
+        deletionMark: false,
+        version: 1,
+      });
+      base.objects.set(earlierPayment, {
+        object: "Документ.СписаниеСРасчетногоСчета",
+        fields: {
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", supplier, "Старый поставщик"),
+          ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 1000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      const none = () => ({ columns: [], rows: [], truncated: false });
+      base.queryAnswers.unshift(
+        { match: /Справочник\.БанковскиеСчета/, answer: none },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: [...base.objects.entries()]
+              .filter(
+                ([, o]) => o.object === "Справочник.Контрагенты" && values(input).includes(o.fields.ИНН),
+              )
+              .map(([id, o]) => [
+                String(o.fields.ИНН),
+                ref(o.object, id, String(o.fields.Наименование)),
+                String(o.fields.Наименование),
+              ]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /Справочник\.ДоговорыКонтрагентов КАК Т ГДЕ Т\.Владелец\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: [...base.objects.entries()].flatMap(([id, o]) => {
+              if (o.object !== "Справочник.ДоговорыКонтрагентов") return [];
+              const owner = base.objects.get(String((o.fields.Владелец as { ref?: string }).ref));
+              if (!owner || !values(input).includes(owner.fields.ИНН)) return [];
+              return [
+                [
+                  String(owner.fields.ИНН),
+                  ref(o.object, id, String(o.fields.Номер)),
+                  String(o.fields.Номер),
+                  String(o.fields.Дата ?? ""),
+                ],
+              ];
+            }),
+            truncated: false,
+          }),
+        },
+        {
+          match: /ПЕРВЫЕ 300 Т\.Ссылка/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Документ.СписаниеСРасчетногоСчета", earlierPayment, "старый"), "старое"]],
+            truncated: false,
+          }),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: none },
+      );
+      store.setAiEnabled(company.id, true);
+      const rows = [1, 2, 3, 4, 5].map(
+        (n) =>
+          `0${n}.10.2026;50${n};Sam active group 786 mchj;310495297;${n * 1000},00;;Договор № 183 от 15.10.2026 оплата ${n}`,
+      );
+      const statement = [
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        ...rows,
+      ].join("\n");
+
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskani kirit",
+        files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
+      });
+      const answered = new Set<string>();
+      const timer = setInterval(() => {
+        for (const e of events) {
+          if (e.type === "confirm" && !answered.has(e.id)) {
+            answered.add(e.id);
+            assistant.decide(e.companyId, e.id, true);
+          }
+        }
+      }, 1);
+      await sending;
+      clearInterval(timer);
+
+      // The counterparty, then its contract, then the payments: three cards, and the model took one step.
+      const cards = events.flatMap((e) =>
+        e.type === "confirm" && e.proposal.kind === "batch" ? [e.proposal] : [],
+      );
+      expect(cards.map((c) => c.items.length)).toEqual([1, 1, 5]);
+      expect(cards.map((c) => c.items[0]?.object)).toEqual([
+        "Справочник.Контрагенты",
+        "Справочник.ДоговорыКонтрагентов",
+        "Документ.СписаниеСРасчетногоСчета",
+      ]);
+      const made = [...base.objects.entries()];
+      const counterparty = made.find(
+        ([, o]) => o.object === "Справочник.Контрагенты" && o.fields.ИНН === "310495297",
+      );
+      expect(counterparty?.[1].fields).toMatchObject({
+        Наименование: "Sam active group 786 mchj",
+        НаименованиеПолное: "Sam active group 786 mchj",
+      });
+      const newContract = made.find(
+        ([, o]) => o.object === "Справочник.ДоговорыКонтрагентов" && o.fields.Номер === "183",
+      );
+      expect(newContract?.[1].fields).toMatchObject({
+        Владелец: { ref: counterparty?.[0] },
+        Наименование: "№183 от 15.10.2026",
+        ВидДоговора: "СПоставщиком",
+      });
+      const payments = made.filter(
+        ([id, o]) => o.object === "Документ.СписаниеСРасчетногоСчета" && id !== earlierPayment,
+      );
+      expect(payments).toHaveLength(5);
+      for (const [, payment] of payments) {
+        expect(payment.posted).toBe(false);
+        expect(payment.fields).toMatchObject({
+          Контрагент: { ref: counterparty?.[0] },
+          ДоговорКонтрагента: { ref: newContract?.[0] },
+        });
+      }
+      expect(proxy.requests).toHaveLength(2);
+      expect(resultOf(proxy.requests)).toMatchObject({
+        status: "done",
+        createdInThisRun: ["Sam active group 786 mchj (INN 310495297)", expect.stringContaining("contract")],
+      });
+    });
+
     it("posts what the chat created with one command and no list from the model", async () => {
       const call = (id: string, name: string, input: unknown) => () => [
         {
