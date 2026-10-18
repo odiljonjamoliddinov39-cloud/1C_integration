@@ -20,16 +20,28 @@ describe("DidoxClient", () => {
     expect(client.signedIn).toBe(true);
     expect(server.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "GET /v1/auth/authId/5A3C0F",
+      "POST /v1/dsvs/gettimestamp",
       "POST /v1/auth/login",
     ]);
     expect(signer.signed).toEqual([JSON.stringify({ authId: "auth-5A3C0F" })]);
-    expect(server.requests[1]?.body).toEqual({
+    // The signature goes to Didox with the time stamp Didox gave it: it refuses one without.
+    const signed = Buffer.from(`PKCS7:${JSON.stringify({ authId: "auth-5A3C0F" })}`).toString("base64");
+    expect(server.requests[1]?.body).toBe(signed);
+    expect(server.requests[2]?.body).toEqual({
       serialNumber: "5A3C0F",
-      pkcs7: Buffer.from(`PKCS7:${JSON.stringify({ authId: "auth-5A3C0F" })}`).toString("base64"),
+      pkcs7: Buffer.from(`TS:${signed}`).toString("base64"),
     });
     // The sign-in itself carries no token.
     expect(server.requests[0]?.headers["user-key"]).toBeUndefined();
     expect(server.requests[0]?.headers["api-key"]).toBe("partner-key");
+  });
+
+  it("asks for the time stamp with the PKCS#7 as JSON when the plain text is refused", async () => {
+    const { server, client } = setup();
+    server.timestampAsJson = true;
+    await client.login();
+    expect(client.signedIn).toBe(true);
+    expect(server.requests.filter((r) => r.url.pathname === "/v1/dsvs/gettimestamp")).toHaveLength(2);
   });
 
   it("signs in by itself on the first request, and lists documents with the filters as query", async () => {
