@@ -63,6 +63,13 @@ Development server: `https://devapi.goodsign.biz/`. Requests carry `api-key` (a 
    it answers an empty token to what it does not understand (the PKCS#7 as plain text and as `{"pkcs7"}`
    both did), so the app tries the signature as JSON, the signature as text, the PKCS#7 as JSON and as
    text, and the first token wins; if none does, the error lists each answer.
+   E-IMZO 6.4.7 on one PC answered `pkcs7.attach_timestamp_token_pkcs7: Функция не найдена или версия
+E-IMZO устарела` (so Didox had given a token). The app then puts the token in itself (`cms.ts`): the
+   PKCS#7 is read as a tree (E-IMZO writes BER with indefinite lengths), the token is added to the signer's
+   unsigned attributes (id-aa-signatureTimeStampToken, which the signature does not cover), and the document
+   is written with definite lengths; every signed byte is copied as it was. Checked with `openssl cms -verify`
+   on a real BER signature and a real `openssl ts` token (the signature still verifies, the attribute is
+   there); not yet with Didox's own verification.
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.

@@ -25,6 +25,8 @@ export class FakeEImzo {
   omitSignatureValue = false;
   /** An E-IMZO without this function: it answers as an old version does. */
   lacks = new Set<string>();
+  /** The PKCS#7 (base64) create_pkcs7 answers with, e.g. a real one; by default a made-up one. */
+  pkcs7?: string;
 
   /** The origin of each connection made, in order (undefined: no page, as a desktop app). */
   readonly origins: (string | undefined)[] = [];
@@ -79,7 +81,7 @@ export class FakeEImzo {
       }
       return {
         success: true,
-        pkcs7_64: Buffer.from(`SIGNED(${id}):${String(m.arguments?.[0])}`).toString("base64"),
+        pkcs7_64: this.pkcs7 ?? Buffer.from(`SIGNED(${id}):${String(m.arguments?.[0])}`).toString("base64"),
         ...(this.omitSignatureValue ? {} : { signature_hex: "ab12", signer_serial_number: "5a3c0f11" }),
       };
     }

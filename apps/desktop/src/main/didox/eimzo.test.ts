@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { EImzoClient, EImzoError, EImzoSigner, chooseCertificate, parseAlias } from "./eimzo.js";
@@ -72,6 +73,21 @@ describe("E-IMZO", () => {
     eimzo.lacks.add("create_pkcs7");
     await expect(signer.pkcs7("x")).rejects.toThrow(/pkcs7\.create_pkcs7: Функция не найдена/);
     expect(eimzo.messages.filter((m) => m.name === "load_key")).toHaveLength(1);
+  });
+
+  it("puts the time stamp token in itself when E-IMZO lacks attach_timestamp_token_pkcs7", async () => {
+    const fixture = (name: string) =>
+      readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8").trim();
+    const signed = fixture("cms-signed.b64");
+    const eimzo = new FakeEImzo();
+    eimzo.certificates = [cert(ALIAS)];
+    eimzo.pkcs7 = signed;
+    eimzo.lacks.add("attach_timestamp_token_pkcs7");
+    const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
+    const stamped = await signer.pkcs7("x", async () => fixture("cms-timestamp-token.b64"));
+    expect(stamped).not.toBe(signed);
+    // The 1.2.840.113549.1.9.16.2.14 attribute is in the document.
+    expect(Buffer.from(stamped, "base64").includes(Buffer.from("2a864886f70d010910020e", "hex"))).toBe(true);
   });
 
   it("opens the key again when E-IMZO no longer knows its id, once", async () => {
