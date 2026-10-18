@@ -68,7 +68,8 @@ decided on its own (a contract the purpose names that 1C does not have): report 
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment, a tax or budget payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
 counterparties / templates / ownAccount. Payments already in 1C are left out by themselves. Then stop and report \
-what was entered, what is left, and the totals by month. To post what this chat has entered (the accountant says "проведи", "перевед", "post"), call propose_post_created with a title only: do not list the documents yourself, and stop after it. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
+what was entered, what is left, and the totals by month, in a few lines: do not list the documents one by one (the card showed \
+them) and do not bring up open matters from earlier in the chat; say only the counts, the totals in and out, and what needs the accountant's attention. To post what this chat has entered (the accountant says "проведи", "перевед", "post"), call propose_post_created with a title only: do not list the documents yourself, and stop after it. A tax or budget payment (the treasury or the tax office as receiver, or a tax named in the purpose) is never entered as a supplier payment: \
 it is «Уплата налога» with the tax, its period and the tax office, on the tax accounts, no contract and no VAT, copied from the \
 company's own posted payment of the same tax (pass it as templates, or enter it with propose_changes); the company's earlier \
 payments to the same receiver may themselves be wrong, so do not copy the latest one blindly. If this tool or propose_didox_invoices failed earlier in this conversation, \

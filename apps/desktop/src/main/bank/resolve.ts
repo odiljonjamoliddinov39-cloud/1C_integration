@@ -554,6 +554,18 @@ export async function resolvePayments(
         );
       }
     }
+    // No INN in the statement: the counterparty is the earlier payment's. Say whose, so that a wrong one is seen.
+    if (!payment.inn && !overrides.counterparties?.some((o) => o.row === payment.row)) {
+      const whose = template.fields["Контрагент"];
+      const name =
+        whose && typeof whose === "object" && typeof (whose as { name?: unknown }).name === "string"
+          ? (whose as { name: string }).name
+          : "";
+      addNote(
+        [payment.row],
+        `no INN in the statement for "${payment.counterparty || "?"}": the counterparty${name ? ` "${name}"` : ""} and the accounts come from the earlier payment of the same kind (${template.ref}); check that it is the right counterparty`,
+      );
+    }
     const made = copyTemplate(template, payment, {
       counterparty,
       contract,
