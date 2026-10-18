@@ -76,6 +76,13 @@ timestamp is required`. So the token is now read (`readTimestampToken`): a TimeS
    signature value, so a token for other data is not used and the next request shape is tried. If Didox
    still refuses, the error ends with `[time stamp from <shape>: …, sha256 imprint …, stamps the signature:
 yes/no/unknown]`.
+   Then (same day): the test server accepted the time stamp but refused the real certificate for another
+   reason (`failed to check certificate state … ocsp url is disallowed`: the test server cannot check a
+   production key's status; use the production Didox with the partner key). On the production host
+   `POST /v1/dsvs/gettimestamp` answered `405 Not Allowed` (nginx). So when every request shape meets
+   404/405/501 the app takes it that this Didox has no time stamp service, signs again without one, and lets
+   the sign-in say whether it wants one (the error then ends with `[no time stamp: this Didox has no
+/v1/dsvs/gettimestamp]`).
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.

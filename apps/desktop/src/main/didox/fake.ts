@@ -37,6 +37,9 @@ export class FakeDidox {
   private issued = 0;
   /** What /v1/dsvs/gettimestamp understands; anything else gets the empty token the real one gives. */
   timestampTakes: "signature-json" | "signature-text" | "pkcs7-json" | "pkcs7-text" = "signature-json";
+  /** A Didox with no /v1/dsvs/gettimestamp (nginx answers 405), and one whose sign-in needs no time stamp. */
+  hasTimestampEndpoint = true;
+  requiresTimestamp = true;
   /** Makes the next authorized request answer 401, as a token that lapsed. */
   expireTokens(): void {
     this.tokens.clear();
@@ -61,6 +64,9 @@ export class FakeDidox {
     const path = url.pathname;
     if (path.startsWith("/v1/auth/authId/")) return json({ authId: `auth-${path.split("/").pop()}` });
     if (path === "/v1/dsvs/gettimestamp") {
+      if (!this.hasTimestampEndpoint) {
+        return new Response("<html><head><title>405 Not Allowed</title></head></html>", { status: 405 });
+      }
       const [what, how] = this.timestampTakes.split("-") as ["signature" | "pkcs7", "json" | "text"];
       const sent = typeof body === "string" ? body : (body as Record<string, string> | undefined)?.[what];
       const fits = (how === "text") === (typeof body === "string") && Boolean(sent);
@@ -80,6 +86,7 @@ export class FakeDidox {
         Buffer.from(sent.pkcs7, "base64").toString(),
       )?.[1];
       if (
+        this.requiresTimestamp &&
         !Buffer.from(stamp ?? "", "base64")
           .toString()
           .startsWith("TST(")
