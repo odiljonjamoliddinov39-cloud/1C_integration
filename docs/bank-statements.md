@@ -65,3 +65,12 @@ asks for it), including the counterparty, contract and bank accounts the program
 Not verified against a real base yet: the attribute names (`БанковскийСчета.НомерСчета`,
 `НомерВходящегоДокумента`, `НазначениеПлатежа`, `СуммаДокумента`, the breakdown columns) are the
 usual ones of Бухгалтерия для Узбекистана 3.0, and are set only when the copied document has them.
+
+## Posting what the chat entered
+
+The chat remembers the documents it created in 1C and left unposted (`chat.created`). "проведи" /
+"перевед" / "post" is `propose_post_created` (a title only): the app builds one card with an update
+(post) per document, so the model neither lists nor reasons about them (the 26 documents of one statement
+took 15 s of model time and a long answer before). 1C's refusals (a closed period, a missing field) are on
+the card; what was posted is forgotten, what was refused stays for the next try. Posting or correcting
+documents that already exist is no longer counted against the plan's monthly import limit: only creations are.

@@ -34,6 +34,7 @@ import {
   type DeleteMarkedPreview,
   type DeleteMarkedResult,
   type BankPaymentsInput,
+  type PostCreatedInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -980,6 +981,9 @@ export class AssistantService {
     if (tool === "propose_bank_payments") {
       return this.proposeBank(chat, input as BankPaymentsInput, emit, signal);
     }
+    if (tool === "propose_post_created") {
+      return this.proposePostCreated(chat, input as PostCreatedInput, emit, signal);
+    }
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
     let create: () => Promise<ToolResult>;
@@ -1009,6 +1013,10 @@ export class AssistantService {
             results.push({ ok: false, code: "STOPPED", message: "Stopped by the user" });
           else results.push(await entry.apply());
         }
+        entries.forEach((entry, i) => {
+          const done = results[i];
+          if (entry.change?.action === "create" && done?.ok) this.noteCreated(chat, done.state);
+        });
         return { ok: true, data: results };
       };
     } else if (tool === "propose_delete_marked") {
@@ -1030,8 +1038,14 @@ export class AssistantService {
       if (unfixed) return unfixed;
       proposal = { kind: "change", preview: shown };
       // The version seen on the card: if someone changes the object meanwhile, 1C refuses.
-      create = () =>
-        this.deps.connector.tool(connection, "applyChange", { ...change, version: shown.version });
+      create = async () => {
+        const applied = await this.deps.connector.tool(connection, "applyChange", {
+          ...change,
+          version: shown.version,
+        });
+        if (applied.ok && change.action === "create") this.noteCreated(chat, applied.data as ObjectState);
+        return applied;
+      };
     } else if (tool === "propose_invoice_issued") {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
       const preview = await this.deps.connector.tool(connection, "previewInvoiceIssued", input);
@@ -1080,7 +1094,8 @@ export class AssistantService {
       proposal.kind === "invoice_received" || proposal.kind === "invoice_issued"
         ? 1
         : proposal.kind === "batch"
-          ? proposal.items.filter((item) => !item.error).length
+          ? // Posting or correcting documents that already exist is not a new document.
+            proposal.items.filter((item) => !item.error && item.action === "create").length
           : 0;
     if (documents > 0 && this.deps.billing) {
       const counted = await this.deps.billing.countImport(documents, this.deps.store.company(companyId).inn);
@@ -1500,6 +1515,57 @@ export class AssistantService {
     };
   }
 
+  /** A document this chat created and left unposted, so that "post them" needs no list from the model. */
+  private noteCreated(chat: StoredChat, state: ObjectState): void {
+    if (state.posted || !state.ref) return;
+    const list = (chat.created ?? []).filter((d) => d.ref !== state.ref);
+    list.push({ object: state.object, ref: state.ref, presentation: state.presentation });
+    chat.created = list.slice(-1000);
+  }
+
+  /**
+   * Posts what this chat created: one card with an update (post) per document, built here, not by
+   * the model. 1C says which it cannot post (a closed period, a missing field) on the card.
+   */
+  private async proposePostCreated(
+    chat: StoredChat,
+    input: PostCreatedInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const kinds = input.objects ? new Set(input.objects.map((o) => o.toLowerCase())) : null;
+    const list = (chat.created ?? []).filter((d) => !kinds || kinds.has(d.object.toLowerCase()));
+    emit({ type: "tool", name: "propose_post_created", detail: describe("propose_post_created", input) });
+    if (list.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: "nothing_to_post",
+          note: "This chat has created no unposted documents. A document made in another chat is posted with propose_changes (update, post: true).",
+        },
+      };
+    }
+    const proposal = {
+      title: input.title,
+      changes: list.map((d) => ({ action: "update" as const, object: d.object, ref: d.ref, post: true })),
+    };
+    let result = await this.propose(chat, "propose_changes", proposal, emit, signal);
+    // 1C's filling check on posting is for the accountant to see on the card, not for the model to chase.
+    if (!result.ok && result.code === "FILL_CHECK") {
+      result = await this.propose(chat, "propose_changes", proposal, emit, signal);
+    }
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number; object: ObjectState }[] } | null;
+    if (data?.status === "done") {
+      const posted = new Set(
+        (data.applied ?? []).filter((a) => a.object.posted).map((a) => list[a.n - 1]?.ref),
+      );
+      chat.created = (chat.created ?? []).filter((d) => !posted.has(d.ref));
+      this.save(chat);
+    }
+    return { ok: true, data: { ...(data ?? {}), notPostedYet: (chat.created ?? []).length } };
+  }
+
   /** A document created from files is saved unposted (the accountant posts it after checking), not as the model asked. */
   private unpostedIfImport(companyId: string, change: ChangeInput): ChangeInput {
     if (!this.unposted.has(companyId) || change.action !== "create" || !change.post) return change;
@@ -1647,6 +1713,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_didox_invoices") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
+  }
+  if (name === "propose_post_created") {
+    const batch = input as { title: string };
+    return batch.title;
   }
   if (name === "propose_bank_payments") {
     const batch = input as { title: string; rows?: number[] };

@@ -33,6 +33,14 @@ export interface StoredChat extends ChatSummary {
   bank?: BankStatement[];
   /** Payments already entered into 1C from this chat, as "file#row". */
   bankDone?: string[];
+  /** Documents this chat created in 1C and left unposted: what "post them" means. */
+  created?: CreatedDocument[];
+}
+
+export interface CreatedDocument {
+  object: string;
+  ref: string;
+  presentation: string;
 }
 
 // Ids become file names: only UUIDs, so no id can point outside the chats folder.

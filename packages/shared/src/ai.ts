@@ -202,6 +202,18 @@ export const BankPaymentsInput = z.object({
 });
 export type BankPaymentsInput = z.infer<typeof BankPaymentsInput>;
 
+/**
+ * Posts the documents this chat has created and left unposted (a bank statement's payments, a batch of
+ * documents): the app knows which they are, so the model sends nothing but a title.
+ */
+export const PostCreatedInput = z.object({
+  /** For the card's title, in the accountant's language, e.g. "Bank ko'chirmasi: 15 ta hujjatni o'tkazish". */
+  title: z.string().trim().min(1).max(200),
+  /** Only documents of these kinds (full names, e.g. Документ.СписаниеСРасчетногоСчета); absent: all. */
+  objects: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+});
+export type PostCreatedInput = z.infer<typeof PostCreatedInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -249,6 +261,7 @@ export const AI_TOOLS = {
   propose_invoices_received: InvoicesReceivedInput,
   propose_didox_invoices: DidoxInvoicesInput,
   propose_bank_payments: BankPaymentsInput,
+  propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
   report_findings: ReportFindingsInput,
 } as const;
@@ -263,6 +276,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoices_received",
   "propose_didox_invoices",
   "propose_bank_payments",
+  "propose_post_created",
   "propose_delete_marked",
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
