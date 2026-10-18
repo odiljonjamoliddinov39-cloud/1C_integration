@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+
 import { DidoxClient, DidoxError } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
 
@@ -119,5 +121,64 @@ describe("DidoxClient", () => {
     const error = await offline.profile().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DidoxError);
     expect(error).toMatchObject({ code: "DIDOX_NETWORK" });
+  });
+
+  describe("the time stamp token", () => {
+    const token = readFileSync(new URL("./fixtures/cms-timestamp-token.b64", import.meta.url), "utf8").trim();
+    const response = readFileSync(
+      new URL("./fixtures/cms-timestamp-response.b64", import.meta.url),
+      "utf8",
+    ).trim();
+    // The token stamps {"authId":"abc"}.
+    const stamped = Buffer.from('{"authId":"abc"}').toString("hex");
+    const answering = (answer: string, login?: Response) =>
+      new DidoxClient({
+        baseUrl: "https://didox.test/",
+        fetch: async (input) =>
+          String(input).includes("gettimestamp")
+            ? new Response(JSON.stringify({ success: true, timeStampTokenB64: answer }))
+            : (login ?? new Response("{}")),
+      });
+
+    it("takes a token that stamps this signature, and unwraps a TimeStampResp", async () => {
+      expect(await answering(token).timestampToken({ pkcs7: "", signatureHex: stamped })).toBe(token);
+      expect(await answering(response).timestampToken({ pkcs7: "", signatureHex: stamped })).toBe(token);
+    });
+
+    it("does not take a token for other data, and shows what it is", async () => {
+      const error = await answering(token)
+        .timestampToken({ pkcs7: "", signatureHex: "00ff" })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DidoxError);
+      expect((error as DidoxError).message).toContain("a token for other data");
+      expect((error as DidoxError).message).toContain("sha256 imprint");
+    });
+
+    it("says how the signature was stamped when Didox still refuses the sign-in", async () => {
+      const server = new FakeDidox();
+      const client = new DidoxClient(
+        {
+          baseUrl: "https://didox.test/",
+          fetch: async (input, init) =>
+            String(input).includes("gettimestamp")
+              ? new Response(JSON.stringify({ success: true, timeStampTokenB64: token }))
+              : String(input).includes("/auth/login")
+                ? new Response('{"error":"timestamp is required"}', { status: 401 })
+                : server.fetch(input, init),
+        },
+        {
+          serialNumber: async () => "5A3C0F",
+          pkcs7: async (_data, stamp) => {
+            await stamp?.({ pkcs7: "", signatureHex: stamped });
+            return "pkcs7";
+          },
+        },
+      );
+      const error = await client.login().catch((e: unknown) => e);
+      expect((error as DidoxError).message).toContain("timestamp is required");
+      expect((error as DidoxError).message).toMatch(
+        /\[time stamp from the signature as JSON: .*sha256 imprint/,
+      );
+    });
   });
 });

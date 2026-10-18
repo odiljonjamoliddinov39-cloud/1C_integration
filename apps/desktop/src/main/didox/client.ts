@@ -11,6 +11,8 @@
  * they come (`unknown`), and what is assumed about the token header is in one place (headers()).
  */
 
+import { readTimestampToken, stampsSignature } from "./cms.js";
+
 /** The accountant's E-IMZO key, as far as sign-in and signing are concerned. */
 export interface DidoxSigner {
   /** The key's serial number in hexadecimal. */
@@ -119,6 +121,8 @@ export class DidoxClient {
   private readonly baseUrl: string;
   private readonly fetcher: typeof fetch;
   private token: { value: string; expiresAt: number } | null = null;
+  /** How the last sign-in's time stamp was got, for the error when Didox still refuses it. */
+  private stamped = "";
 
   constructor(
     private readonly config: DidoxConfig = {},
@@ -147,11 +151,20 @@ export class DidoxClient {
     });
     const authId = textField(authIdBody, ["authId", "authid", "id"]);
     if (!authId) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no authId");
+    this.stamped = "";
     const pkcs7 = await signer.pkcs7(JSON.stringify({ authId }), (signed) => this.timestampToken(signed));
-    const loginBody = await this.request("POST", "/v1/auth/login", {
-      auth: false,
-      body: { serialNumber, pkcs7 },
-    });
+    let loginBody: unknown;
+    try {
+      loginBody = await this.request("POST", "/v1/auth/login", {
+        auth: false,
+        body: { serialNumber, pkcs7 },
+      });
+    } catch (e) {
+      // What was stamped and how, to see why Didox does not take it.
+      if (e instanceof DidoxError && this.stamped)
+        throw new DidoxError(e.code, `${e.message} [${this.stamped}]`, e.status);
+      throw e;
+    }
     const value = textField(loginBody, ["token", "userKey", "user-key", "user_key"]);
     if (!value) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no token");
     this.token = { value, expiresAt: Date.now() + TOKEN_LIFETIME_MS };
@@ -190,9 +203,24 @@ export class DidoxClient {
     for (const [label, options] of attempts) {
       try {
         const answer = await this.request("POST", "/v1/dsvs/gettimestamp", { auth: false, ...options });
-        const token = textField(answer, names);
-        if (token) return token;
-        seen.push(`${label}: ${JSON.stringify(answer).slice(0, 160)}`);
+        const raw = textField(answer, names);
+        if (!raw) {
+          seen.push(`${label}: ${JSON.stringify(answer).slice(0, 160)}`);
+          continue;
+        }
+        // A token that says it stamps some other data is not this signature's: try the next shape.
+        const read = readTimestampToken(raw);
+        const stamps = read ? stampsSignature(read, signatureHex) : "unknown";
+        this.stamped = `time stamp from ${label}: ${
+          read
+            ? `${read.wasResponse ? "a TimeStampResp, unwrapped" : "a token"}, ${read.algorithm} imprint ${read.imprint.slice(0, 16)}…, stamps the signature: ${stamps}`
+            : `${Buffer.from(raw, "base64").length} bytes that are not a token the app can read`
+        }`;
+        if (stamps === "no") {
+          seen.push(`${label}: a token for other data (${this.stamped})`);
+          continue;
+        }
+        return read?.contentInfo ?? raw;
       } catch (e) {
         if (!(e instanceof DidoxError) || e.status === undefined || e.status < 400 || e.status >= 500)
           throw e;

@@ -9,6 +9,8 @@
  * the signature) are copied byte for byte.
  */
 
+import { createHash } from "node:crypto";
+
 interface Node {
   /** The tag byte as it stands (class, constructed bit, number below 31). */
   tag: number;
@@ -132,4 +134,88 @@ export function describeBer(buf: Buffer): unknown {
   const show = (node: Node): unknown =>
     node.children ? [node.tag, node.children.map(show)] : [node.tag, node.value?.toString("hex")];
   return show(readNode(buf, 0).node);
+}
+
+/** Decodes the content bytes of an OBJECT IDENTIFIER: "1.2.840.113549.1.9.16.2.14". */
+function oidText(value: Buffer): string {
+  const first = value[0] ?? 0;
+  const parts = [Math.floor(first / 40), first % 40];
+  let n = 0;
+  for (const byte of value.subarray(1)) {
+    n = n * 128 + (byte & 0x7f);
+    if (!(byte & 0x80)) {
+      parts.push(n);
+      n = 0;
+    }
+  }
+  return parts.join(".");
+}
+
+const HASHES: Record<string, string> = {
+  "1.3.14.3.2.26": "sha1",
+  "2.16.840.1.101.3.4.2.4": "sha224",
+  "2.16.840.1.101.3.4.2.1": "sha256",
+  "2.16.840.1.101.3.4.2.2": "sha384",
+  "2.16.840.1.101.3.4.2.3": "sha512",
+};
+
+export interface TimeStampToken {
+  /** The token as a CMS ContentInfo (base64), which is what a signature carries. */
+  contentInfo: string;
+  /** Whether it came as a TimeStampResp (the token wrapped in a status), which is unwrapped. */
+  wasResponse: boolean;
+  /** The hash algorithm of its message imprint (a name when known, else the OID), and the imprint in hex. */
+  algorithm: string;
+  imprint: string;
+}
+
+/** The OCTET STRING content of a node, whole or in chunks. */
+function octets(node: Node | undefined): Buffer {
+  if (!node) return Buffer.alloc(0);
+  if (node.children) return Buffer.concat(node.children.map(octets));
+  return node.value ?? Buffer.alloc(0);
+}
+
+/**
+ * Reads a time stamp token: a CMS ContentInfo (SignedData) holding a TSTInfo, or a TimeStampResp that wraps
+ * one (a status, then the token). Null when it is neither. The imprint is what the token says it stamps.
+ */
+export function readTimestampToken(tokenBase64: string): TimeStampToken | null {
+  try {
+    const bytes = Buffer.from(tokenBase64, "base64");
+    let root = readNode(bytes, 0).node;
+    let wasResponse = false;
+    // TimeStampResp { PKIStatusInfo (a SEQUENCE), TimeStampToken }
+    if (root.children?.[0]?.tag === SEQUENCE && root.children[1]) {
+      root = root.children[1];
+      wasResponse = true;
+    }
+    if (root.children?.[0]?.tag !== OID) return null;
+    // ContentInfo { OID, [0] { SignedData { version, digestAlgorithms, encapContentInfo, … } } }
+    const encap = root.children[1]?.children?.[0]?.children?.[2];
+    const tstInfo = readNode(octets(encap?.children?.[1]?.children?.[0]), 0).node;
+    // TSTInfo { version, policy, messageImprint { hashAlgorithm { OID }, hashedMessage }, … }
+    const imprint = tstInfo.children?.[2];
+    const algorithm = oidText(imprint?.children?.[0]?.children?.[0]?.value ?? Buffer.alloc(0));
+    const hashed = octets(imprint?.children?.[1]);
+    if (hashed.length === 0) return null;
+    return {
+      contentInfo: writeNode(root).toString("base64"),
+      wasResponse,
+      algorithm: HASHES[algorithm] ?? algorithm,
+      imprint: hashed.toString("hex"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the token stamps this signature: its imprint is the hash of the signature value. "unknown" when
+ * the hash is not one Node has (a national algorithm), "no" when it is and the imprint differs.
+ */
+export function stampsSignature(token: TimeStampToken, signatureHex: string): "yes" | "no" | "unknown" {
+  if (!Object.values(HASHES).includes(token.algorithm)) return "unknown";
+  const hash = (data: Buffer) => createHash(token.algorithm).update(data).digest("hex");
+  return hash(Buffer.from(signatureHex, "hex")) === token.imprint ? "yes" : "no";
 }
