@@ -84,8 +84,10 @@ of the company's latest payment of the same kind is copied: its kind, currency, 
 owner, number, date and name are the new one's; the expiry date is left empty), then the payments, copied
 from that latest payment of the same kind (a note says so: operation, accounts and VAT are to be checked).
 Each round is looked up again with no step of the model between, so a new supplier costs two more clicks and
-no more model time. Not created: a 14-digit INN (a person), a row with no name, a purpose that names no contract
-(the payment comes back as `NEW_COUNTERPARTY`). Creating directory items is not counted against the plan's
+no more model time. A purpose that names no contract gets a neutral one, "№б/н от <date of the counterparty's
+earliest payment in the statement>" (one per counterparty), made the same way, with its kind set by the
+direction of the money (С покупателем for a receipt, С поставщиком for a payment); the note on the payment
+says so. Not created: a 14-digit INN (a person) and a row with no name. Creating directory items is not counted against the plan's
 import limit (only documents are).
 
 ## Card (acquiring) receipts: gross and the commission
