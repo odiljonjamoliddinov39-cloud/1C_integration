@@ -731,6 +731,9 @@ async function loadList(
   return list;
 }
 
+/** How many of the newest payments are read to find one that can be copied for a new counterparty. */
+const KIND_TEMPLATE_CANDIDATES = 50;
+
 /** A made-up reference, to test that a template can be copied before any counterparty or contract exists. */
 const DUMMY = "00000000-0000-4000-8000-000000000000";
 
@@ -746,7 +749,8 @@ async function kindTemplate(
   payment: BankPayment,
 ): Promise<Template | null> {
   const list = await loadList(deps, cache, object, "");
-  for (const candidate of list.slice(0, 8)) {
+  // Newest first, until one can be copied; a bound keeps a base with no usable payment from being read whole.
+  for (const candidate of list.slice(0, KIND_TEMPLATE_CANDIDATES)) {
     const template = await snapshot(deps, cache, object, candidate.ref);
     if (!template || !refOf(template.fields["ДоговорКонтрагента"])) continue;
     if (copyTemplate(template, payment, { counterparty: DUMMY, contract: DUMMY }).ok) return template;

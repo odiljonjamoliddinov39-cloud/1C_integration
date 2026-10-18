@@ -648,6 +648,46 @@ describe("bank payments for 1C", () => {
     expect(bare.problems).toEqual([expect.objectContaining({ rows: [9], code: "NEW_COUNTERPARTY" })]);
   });
 
+  it("looks past payments that cannot be copied to find the company's usual one for a new counterparty", async () => {
+    const NEW_CP = "cccccccc-0000-4ccc-8ccc-cccccccccccc";
+    const one = earlier().tables.РасшифровкаПлатежа[0] ?? {};
+    // Twelve newer payments split over two contracts (not copyable), then one that is.
+    const split: Doc[] = Array.from({ length: 12 }, (_, i) => ({
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`,
+      inn: "201607534",
+      purpose: "x",
+      snapshot: { ...earlier(), tables: { РасшифровкаПлатежа: [one, one] } } as never,
+    }));
+    const usual: Doc = {
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: OLD_OUT,
+      inn: "201607534",
+      purpose: "x",
+      snapshot: earlier(),
+    };
+    const { d } = deps({
+      docs: [...split, usual],
+      counterparties: [["999999999", NEW_CP, "NEW LTD"]],
+      contracts: [["999999999", "dddddddd-0000-4ddd-8ddd-dddddddddddd", "5", "2026-10-15T00:00:00"]],
+    });
+    const resolved = await resolvePayments(
+      statement([
+        payment({
+          row: 9,
+          direction: "out",
+          inn: "999999999",
+          counterparty: "NEW LTD",
+          purpose: "Договор 5 от 15.10.2026",
+        }),
+      ]),
+      { createMissing: true, fresh: new Set(["999999999"]) },
+      d,
+    );
+    expect(resolved.problems).toEqual([]);
+    expect(resolved.ready).toHaveLength(1);
+  });
+
   it("takes only the rows asked for", async () => {
     const { d } = deps();
     const resolved = await resolvePayments(
