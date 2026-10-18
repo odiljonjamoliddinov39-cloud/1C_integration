@@ -194,6 +194,11 @@ export const BankPaymentsInput = z.object({
     .array(z.object({ row: z.number().int().min(1), ref: Ref }))
     .max(2000)
     .optional(),
+  /**
+   * Book a card (acquiring) receipt gross and its commission as a bank-fee document of its own (the
+   * default); false: enter the receipt as the statement has it, net.
+   */
+  splitCommission: z.boolean().optional(),
   /** A posted payment document to copy for a row, when the counterparty has no earlier payment. */
   templates: z
     .array(z.object({ row: z.number().int().min(1), ref: Ref }))

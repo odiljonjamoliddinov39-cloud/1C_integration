@@ -86,3 +86,14 @@ Each round is looked up again with no step of the model between, so a new suppli
 no more model time. Not created: a 14-digit INN (a person), a row with no name, a purpose that names no contract
 (the payment comes back as `NEW_COUNTERPARTY`). Creating directory items is not counted against the plan's
 import limit (only documents are).
+
+## Card (acquiring) receipts: gross and the commission
+
+The statement's amount of a SmartVista row is the net; the purpose says the gross ("от сумма: 484,580.00")
+and the commission ("комиссия (0.2%) 969.16"). When they add up to the statement's amount (to a tiyin), the
+tool books the receipt at the gross and the commission as a bank-fee document of its own (`part:
+"commission"`), copied from the company's latest acquiring commission document (an outgoing bank-fee
+document whose purpose names the commission and the terminal). With no such earlier document the receipt
+stays net and a note says why; `splitCommission: false` keeps it net on purpose. A receipt that is already
+in 1C is skipped with its commission. Before this, receipts were booked net and the commissions were
+not entered (the 13.–15.10 runs), or entered by hand when asked.

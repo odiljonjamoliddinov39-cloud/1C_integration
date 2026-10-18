@@ -12,6 +12,7 @@
 import type { ChangeInput, RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
+import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
 export interface BankDeps extends ResolverDeps {
@@ -74,7 +75,8 @@ export interface BankResolved {
   missing: MissingCounterparty[];
   /** Contracts to create for counterparties created in this run; their payments wait for the next round. */
   contractsToCreate: PendingContract[];
-  ready: { payment: BankPayment; change: ChangeInput }[];
+  /** `part: "commission"`: the bank's commission of an acquiring receipt, a document of its own. */
+  ready: { payment: BankPayment; change: ChangeInput; part?: "commission" }[];
   /** Payments already in 1C (same date, counterparty and amount): left out. */
   alreadyIn1c: number[];
   problems: BankProblem[];
@@ -349,6 +351,8 @@ export async function resolvePayments(
     createMissing?: boolean;
     /** INNs of counterparties created earlier in this run: they have no earlier payment to copy. */
     fresh?: Set<string>;
+    /** Book an acquiring receipt gross and its commission as a document of its own (default: yes). */
+    splitCommission?: boolean;
   },
   deps: BankDeps,
 ): Promise<BankResolved> {
@@ -660,12 +664,41 @@ export async function resolvePayments(
         `no INN in the statement for "${payment.counterparty || "?"}": the counterparty${name ? ` "${name}"` : ""} and the accounts come from the earlier payment of the same kind (${template.ref}); check that it is the right counterparty`,
       );
     }
-    const made = copyTemplate(template, payment, {
+    const context: CopyContext = {
       counterparty,
       contract,
       ownAccount,
       counterpartyAccount: accountsOf.get(`${payment.inn}|${payment.account}`) ?? null,
-    });
+    };
+    // A card (acquiring) receipt: the statement has the net, the company books the gross and the bank's
+    // commission as a bank-fee document of its own.
+    const acquiring =
+      payment.direction === "in" && options.splitCommission !== false
+        ? parseAcquiring(payment.purpose, payment.amount)
+        : null;
+    if (acquiring) {
+      const fee = await commissionTemplate(deps, cache);
+      const gross = copyTemplate(template, { ...payment, amount: acquiring.gross }, context);
+      const commission = fee
+        ? copyTemplate(fee, { ...payment, direction: "out", amount: acquiring.commission }, { ownAccount })
+        : null;
+      if (gross.ok && commission?.ok) {
+        ready.push({ payment, change: gross.change });
+        ready.push({ payment, change: commission.change, part: "commission" });
+        addNote(
+          [payment.row],
+          "acquiring receipt booked gross, and the bank's commission as a bank-fee document of its own, copied from the latest acquiring commission document",
+        );
+        continue;
+      }
+      addNote(
+        [payment.row],
+        fee
+          ? "acquiring receipt: the commission document could not be made from the latest acquiring commission document; the receipt is entered net"
+          : "acquiring receipt: 1C has no earlier acquiring commission document to copy, so the commission is not entered and the receipt is net",
+      );
+    }
+    const made = copyTemplate(template, payment, context);
     if (!made.ok) {
       addProblem(payment, "BAD_TEMPLATE", made.message);
       continue;
@@ -756,6 +789,21 @@ async function kindTemplate(
     if (copyTemplate(template, payment, { counterparty: DUMMY, contract: DUMMY }).ok) return template;
   }
   return null;
+}
+
+/**
+ * The company's latest acquiring commission document (a bank fee whose purpose says it is for the
+ * terminals), read once: what an acquiring receipt's commission is copied from.
+ */
+async function commissionTemplate(deps: BankDeps, cache: BankCache): Promise<Template | null> {
+  const object = OBJECT.out;
+  const key = `${object}|commission`;
+  if (cache.snapshots.has(key)) return cache.snapshots.get(key) ?? null;
+  const list = await loadList(deps, cache, object, "");
+  const found = list.find((c) => isAcquiringFee(c.purpose));
+  const template = found ? await snapshot(deps, cache, object, found.ref) : null;
+  cache.snapshots.set(key, template);
+  return template;
 }
 
 /** Fields of a directory item that 1C makes or that belong to this one item, never copied from another. */

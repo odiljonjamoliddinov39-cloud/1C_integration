@@ -688,6 +688,57 @@ describe("bank payments for 1C", () => {
     expect(resolved.ready).toHaveLength(1);
   });
 
+  it("books an acquiring receipt gross and its commission as a document of its own", async () => {
+    const acquiring =
+      "00634SmartVista - Выручка CRYSTAL WATER TRADE 483,610.84 сум с 12.10.2026 по 12.10.2026 ( TID 30061802) от сумма: 484,580.00 в том числе комиссия (0.2%) 969.16";
+    const receipt = payment({ row: 4, inn: "", counterparty: "", purpose: acquiring, amount: 48_361_084 });
+    const docs: Doc[] = [
+      {
+        object: "Документ.ПоступлениеНаРасчетныйСчет",
+        ref: OLD_IN,
+        inn: "",
+        purpose: acquiring.replace("483,610.84", "1,000.00"),
+        snapshot: { ...earlier({ СуммаДокумента: 1000 }), tables: {} } as never,
+      },
+    ];
+    const fee: Doc = {
+      object: "Документ.СписаниеСРасчетногоСчета",
+      ref: OLD_OUT,
+      inn: "",
+      purpose: "Комиссия эквайринга SmartVista 0.2% за 11.10.2026",
+      snapshot: {
+        ...earlier({ СуммаДокумента: 800, НазначениеПлатежа: "Комиссия эквайринга" }),
+        tables: {},
+      } as never,
+    };
+
+    const both = await resolvePayments(statement([receipt]), {}, deps({ docs: [...docs, fee] }).d);
+    expect(both.problems).toEqual([]);
+    expect(both.ready.map((r) => [r.change.object, r.change.fields?.СуммаДокумента, r.part])).toEqual([
+      ["Документ.ПоступлениеНаРасчетныйСчет", 484_580, undefined],
+      ["Документ.СписаниеСРасчетногоСчета", 969.16, "commission"],
+    ]);
+    expect(both.notes.map((n) => n.message)).toEqual([
+      expect.stringContaining("no INN"),
+      expect.stringContaining("booked gross"),
+    ]);
+
+    // No earlier acquiring commission document to copy: the receipt is net, and it says so.
+    const noFee = await resolvePayments(statement([receipt]), {}, deps({ docs }).d);
+    expect(noFee.ready.map((r) => r.change.fields?.СуммаДокумента)).toEqual([483_610.84]);
+    expect(noFee.notes.map((n) => n.message)).toContainEqual(
+      expect.stringContaining("no earlier acquiring commission"),
+    );
+
+    // Asked to keep it net.
+    const net = await resolvePayments(
+      statement([receipt]),
+      { splitCommission: false },
+      deps({ docs: [...docs, fee] }).d,
+    );
+    expect(net.ready.map((r) => r.change.fields?.СуммаДокумента)).toEqual([483_610.84]);
+  });
+
   it("takes only the rows asked for", async () => {
     const { d } = deps();
     const resolved = await resolvePayments(

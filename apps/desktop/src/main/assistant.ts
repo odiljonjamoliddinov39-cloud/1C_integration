@@ -1479,6 +1479,7 @@ export class AssistantService {
           cache,
           createMissing: true,
           fresh,
+          ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
           overrides: {
             ...(input.ownAccount ? { ownAccount: input.ownAccount } : {}),
             ...(input.counterparties ? { counterparties: input.counterparties } : {}),
