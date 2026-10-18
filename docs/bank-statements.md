@@ -7,7 +7,8 @@ An attached Excel or CSV bank statement is read by the program (`apps/desktop/sr
    Дебет is read as money out of the account, Кредит as money in (or the sign of one amount column);
    the summary says which, and which heading was taken for which column. Rows without a date
    (totals, balances) are ignored. Checks: no amount, both sides filled, negative amount, duplicate,
-   INN that is not 9 or 14 digits, no document number.
+   INN that is not 9 or 14 digits, no document number. An INN of only zeros (what a bank writes where the INN
+   was not given) is no INN, and the payer is known by its name: see below.
 2. **What the model gets** is the summary only (totals by month and direction, the columns taken, the
    rows to look at), not the rows. The file stays on the PC for `read_attachment`. A statement of
    fewer than 5 payments is sent whole as before.
@@ -97,3 +98,14 @@ document whose purpose names the commission and the terminal). With no such earl
 stays net and a note says why; `splitCommission: false` keeps it net on purpose. A receipt that is already
 in 1C is skipped with its commission. Before this, receipts were booked net and the commissions were
 not entered (the 13.–15.10 runs), or entered by hand when asked.
+
+## A payer the bank gives no INN (nine zeros)
+
+The statement's INN column then holds `000000000`. That is not an INN: two such payers are not one
+counterparty. The payment is marked `innZero`, and the counterparty is looked up in 1C **by its name**
+(exactly the name in the statement) instead of by INN: its earlier payments (the template), its contracts
+named in the purpose and its bank accounts are found by the name too. If 1C has no counterparty of that
+name, it is created under the zeros the bank wrote (the one card of new counterparties), and a later
+statement finds it by name again. Two or more counterparties of the same name come back as
+`COUNTERPARTY_AMBIGUOUS`. Not looked up by name: a bank fee (the purpose says commission) and an acquiring
+receipt, which stay on the no-INN route (copied from a payment of the same kind).

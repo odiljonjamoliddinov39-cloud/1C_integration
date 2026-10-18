@@ -61,6 +61,8 @@ export interface MissingCounterparty {
   inn: string;
   name: string;
   rows: number[];
+  /** How this counterparty is known in this run (see `whoOf`): what `fresh` holds once it is created. */
+  key: string;
 }
 
 /** A contract of a counterparty created a moment ago, named in the purposes, that 1C does not have yet. */
@@ -100,6 +102,48 @@ const OBJECT = {
   in: "Документ.ПоступлениеНаРасчетныйСчет",
   out: "Документ.СписаниеСРасчетногоСчета",
 } as const;
+
+const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** What the bank writes in a payment for its own fees: not a counterparty to look up or create by name. */
+const BANK_FEE = /комисси|commission|komissiya/i;
+
+/** How a payment's counterparty is looked up in 1C: by INN, or by name when the bank wrote no INN (zeros). */
+export interface Who {
+  key: string;
+  field: "ИНН" | "Наименование";
+  value: string;
+}
+
+export function whoOf(p: BankPayment): Who | null {
+  if (p.inn) return { key: p.inn, field: "ИНН", value: p.inn };
+  const name = p.counterparty.trim();
+  if (p.innZero !== true || name === "" || BANK_FEE.test(p.purpose)) return null;
+  // An acquiring receipt is the terminal's, not a customer's.
+  if (p.direction === "in" && parseAcquiring(p.purpose, p.amount)) return null;
+  return { key: `name:${nameKey(name)}`, field: "Наименование", value: name };
+}
+
+/** Rows of a query on the owner of something (contract, bank account), asked by INN and by name; the key is first. */
+async function lookupByWho(
+  deps: BankDeps,
+  payments: BankPayment[],
+  text: (owner: string, placeholders: string) => string,
+): Promise<{ key: string; cells: unknown[] }[]> {
+  const found: { key: string; cells: unknown[] }[] = [];
+  for (const field of ["ИНН", "Наименование"] as const) {
+    const values = [
+      ...new Set(payments.flatMap((p) => (whoOf(p)?.field === field ? [whoOf(p)?.value ?? ""] : []))),
+    ];
+    if (values.length === 0) continue;
+    const rows = await lookup(deps, (ph) => text(`Т.Владелец.${field}`, ph), values);
+    for (const { cells } of rows ?? []) {
+      const first = String(cells[0] ?? "");
+      found.push({ key: field === "ИНН" ? first : `name:${nameKey(first)}`, cells });
+    }
+  }
+  return found;
+}
 
 /** Attributes the program rewrites in the copied document, by the names 1C configurations use. */
 const FIELD_NAMES = {
@@ -338,7 +382,11 @@ const sameKey = (date: string, counterparty: string, amount: number) =>
   `${day(date)}|${counterparty}|${Math.round(amount * 100)}`;
 
 const label = (p: BankPayment) =>
-  p.inn ? `${p.counterparty} (INN ${p.inn})` : p.counterparty || "(no name)";
+  p.inn
+    ? `${p.counterparty} (INN ${p.inn})`
+    : p.innZero
+      ? `${p.counterparty || "(no name)"} (the statement gives no INN)`
+      : p.counterparty || "(no name)";
 
 export async function resolvePayments(
   statement: BankStatement,
@@ -363,10 +411,10 @@ export async function resolvePayments(
   const alreadyIn1c: number[] = [];
   const wanted = options.only ? new Set(options.only) : null;
   let payments = statement.payments.filter((p) => !wanted || wanted.has(p.row));
-  const missingByInn = new Map<string, MissingCounterparty>();
+  const missingByKey = new Map<string, MissingCounterparty>();
   const pendingContracts = new Map<string, PendingContract>();
   const nothing = (): BankResolved => ({
-    missing: [...missingByInn.values()],
+    missing: [...missingByKey.values()],
     contractsToCreate: [...pendingContracts.values()],
     ready: [],
     alreadyIn1c,
@@ -439,9 +487,17 @@ export async function resolvePayments(
     }
   }
 
-  // 3. Counterparties by INN.
+  // 3. Counterparties by INN, and by name where the bank wrote no INN (zeros).
   const inns = [...new Set(payments.map((p) => p.inn).filter((inn) => inn !== ""))];
-  const byInn = new Map<string, BankCandidate[]>();
+  const names = [
+    ...new Map(
+      payments.flatMap((p) => {
+        const who = whoOf(p);
+        return who?.field === "Наименование" ? [[who.key, who.value] as const] : [];
+      }),
+    ).values(),
+  ];
+  const byWho = new Map<string, BankCandidate[]>();
   const counterpartyRows = inns.length
     ? await lookup(
         deps,
@@ -453,7 +509,20 @@ export async function resolvePayments(
   for (const { cells } of counterpartyRows ?? []) {
     const ref = refOf(cells[1]);
     if (ref)
-      byInn.set(String(cells[0]), [...(byInn.get(String(cells[0])) ?? []), { ref, name: textOf(cells[2]) }]);
+      byWho.set(String(cells[0]), [...(byWho.get(String(cells[0])) ?? []), { ref, name: textOf(cells[2]) }]);
+  }
+  const nameRows = names.length
+    ? await lookup(
+        deps,
+        (ph) =>
+          `ВЫБРАТЬ Т.Наименование КАК Наименование, Т.Ссылка КАК Ссылка, Т.Наименование КАК Имя ИЗ Справочник.Контрагенты КАК Т ГДЕ Т.Наименование В (${ph}) И НЕ Т.ПометкаУдаления`,
+        names,
+      )
+    : [];
+  for (const { cells } of nameRows ?? []) {
+    const ref = refOf(cells[1]);
+    const key = `name:${nameKey(String(cells[0] ?? ""))}`;
+    if (ref) byWho.set(key, [...(byWho.get(key) ?? []), { ref, name: textOf(cells[2]) }]);
   }
 
   // A payment with no INN (acquiring, bank fees) is copied from a payment of the same kind: no counterparty is needed.
@@ -464,31 +533,45 @@ export async function resolvePayments(
       withCounterparty.push({ payment: p, counterparty: chosen.ref });
       continue;
     }
-    if (p.inn === "") {
+    const who = whoOf(p);
+    if (!who) {
       withCounterparty.push({ payment: p, counterparty: null });
       continue;
     }
-    if (!counterpartyRows) {
+    if (!counterpartyRows || !nameRows) {
       addProblem(p, "COUNTERPARTY_NOT_FOUND", "1C could not be asked for the counterparty");
       continue;
     }
-    const matches = byInn.get(p.inn) ?? [];
+    const matches = byWho.get(who.key) ?? [];
     const [only] = matches;
+    const named =
+      who.field === "Наименование" ? `the name "${who.value}" (no INN in the statement)` : `INN ${p.inn}`;
     if (matches.length === 1 && only) withCounterparty.push({ payment: p, counterparty: only.ref });
     else if (matches.length === 0) {
-      // A company's INN is 9 digits; a person's (14) is not written here, and a nameless row cannot be created.
-      if (options.createMissing && p.inn.length === 9 && p.counterparty.trim() !== "") {
-        const known = missingByInn.get(p.inn);
+      // A company's INN is 9 digits; a person's (14) is not written here, and a nameless row cannot be created. A payer known by name only
+      // is created under the zeros the bank wrote, so a later statement finds it by name again.
+      if (
+        options.createMissing &&
+        p.counterparty.trim() !== "" &&
+        (who.field === "Наименование" || p.inn.length === 9)
+      ) {
+        const known = missingByKey.get(who.key);
         if (known) known.rows.push(p.row);
-        else missingByInn.set(p.inn, { inn: p.inn, name: p.counterparty.trim(), rows: [p.row] });
+        else
+          missingByKey.set(who.key, {
+            inn: p.inn || "000000000",
+            name: p.counterparty.trim(),
+            rows: [p.row],
+            key: who.key,
+          });
       } else {
-        addProblem(p, "COUNTERPARTY_NOT_FOUND", `no counterparty with INN ${p.inn} in 1C: create it first`);
+        addProblem(p, "COUNTERPARTY_NOT_FOUND", `no counterparty with ${named} in 1C: create it first`);
       }
     } else
       addProblem(
         p,
         "COUNTERPARTY_AMBIGUOUS",
-        `${matches.length} counterparties have INN ${p.inn}: choose one`,
+        `${matches.length} counterparties have ${named}: choose one`,
         matches,
       );
   }
@@ -513,45 +596,35 @@ export async function resolvePayments(
     }
   }
 
-  // 5. The contracts the purposes name, and the counterparties' bank accounts, by INN.
+  // 5. The contracts the purposes name, and the counterparties' bank accounts, by INN or name.
   const mentions = new Map<number, { number: string; date: string }>();
   for (const { payment } of withCounterparty) {
-    const mention = payment.inn ? contractMention(payment.purpose) : null;
+    const mention = whoOf(payment) ? contractMention(payment.purpose) : null;
     if (mention) mentions.set(payment.row, mention);
   }
-  const contractInns = [
-    ...new Set(withCounterparty.filter(({ payment }) => mentions.has(payment.row)).map((x) => x.payment.inn)),
-  ];
   const contractsOf = new Map<string, { ref: string; number: string; date: string }[]>();
-  for (const { cells } of contractInns.length
-    ? ((await lookup(
-        deps,
-        (ph) =>
-          `ВЫБРАТЬ Т.Владелец.ИНН КАК ИНН, Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ Т.Владелец.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
-        contractInns,
-      )) ?? [])
-    : []) {
+  for (const { key, cells } of await lookupByWho(
+    deps,
+    withCounterparty.filter(({ payment }) => mentions.has(payment.row)).map((x) => x.payment),
+    (owner, ph) =>
+      `ВЫБРАТЬ ${owner} КАК Ключ, Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ ${owner} В (${ph}) И НЕ Т.ПометкаУдаления`,
+  )) {
     const ref = refOf(cells[1]);
     if (ref) {
-      const list = contractsOf.get(String(cells[0])) ?? [];
+      const list = contractsOf.get(key) ?? [];
       list.push({ ref, number: String(cells[2] ?? ""), date: day(String(cells[3] ?? "")) });
-      contractsOf.set(String(cells[0]), list);
+      contractsOf.set(key, list);
     }
   }
-  const accountInns = [
-    ...new Set(withCounterparty.filter((x) => x.payment.inn && x.payment.account).map((x) => x.payment.inn)),
-  ];
   const accountsOf = new Map<string, string>();
-  for (const { cells } of accountInns.length
-    ? ((await lookup(
-        deps,
-        (ph) =>
-          `ВЫБРАТЬ Т.Владелец.ИНН КАК ИНН, Т.Ссылка КАК Ссылка, Т.НомерСчета КАК НомерСчета ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.Владелец.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
-        accountInns,
-      )) ?? [])
-    : []) {
+  for (const { key, cells } of await lookupByWho(
+    deps,
+    withCounterparty.filter((x) => whoOf(x.payment) && x.payment.account).map((x) => x.payment),
+    (owner, ph) =>
+      `ВЫБРАТЬ ${owner} КАК Ключ, Т.Ссылка КАК Ссылка, Т.НомерСчета КАК НомерСчета ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ ${owner} В (${ph}) И НЕ Т.ПометкаУдаления`,
+  )) {
     const ref = refOf(cells[1]);
-    if (ref) accountsOf.set(`${String(cells[0])}|${String(cells[2] ?? "").replace(/\D/g, "")}`, ref);
+    if (ref) accountsOf.set(`${key}|${String(cells[2] ?? "").replace(/\D/g, "")}`, ref);
   }
 
   // 6. A copy of the counterparty's newest payment of the same kind, per payment.
@@ -574,12 +647,13 @@ export async function resolvePayments(
       );
       continue;
     }
-    const fresh = Boolean(counterparty && payment.inn && options.fresh?.has(payment.inn));
+    const who = whoOf(payment);
+    const fresh = Boolean(counterparty && who && options.fresh?.has(who.key));
     const template = asked
       ? await snapshot(deps, cache, object, asked.ref)
       : fresh
         ? await kindTemplate(deps, cache, object, payment)
-        : await findTemplate(deps, cache, object, payment);
+        : await findTemplate(deps, cache, object, payment, who);
     if (!template) {
       addProblem(
         payment,
@@ -592,7 +666,7 @@ export async function resolvePayments(
     let contract: string | null = null;
     const mention = mentions.get(payment.row);
     if (fresh && counterparty) {
-      const list = contractsOf.get(payment.inn) ?? [];
+      const list = contractsOf.get(who?.key ?? "") ?? [];
       const have = mention
         ? list.filter(
             (c) => normalNumber(c.number) === normalNumber(mention.number) && c.date === mention.date,
@@ -601,7 +675,7 @@ export async function resolvePayments(
       if (have.length === 1 && have[0]) contract = have[0].ref;
       else if (mention) {
         // The counterparty was created a moment ago: its contract is made too, like the company's other contracts.
-        const key = `${payment.inn}|${normalNumber(mention.number)}|${mention.date}`;
+        const key = `${who?.key ?? ""}|${normalNumber(mention.number)}|${mention.date}`;
         const known = pendingContracts.get(key);
         if (known) known.rows.push(payment.row);
         else {
@@ -639,7 +713,7 @@ export async function resolvePayments(
         `new counterparty "${payment.counterparty}": the operation, accounts and VAT come from the latest payment of the same kind${name ? ` (to "${name}")` : ""}; check them`,
       );
     } else if (mention) {
-      const list = contractsOf.get(payment.inn) ?? [];
+      const list = contractsOf.get(who?.key ?? "") ?? [];
       const match = list.filter(
         (c) => normalNumber(c.number) === normalNumber(mention.number) && c.date === mention.date,
       );
@@ -653,7 +727,7 @@ export async function resolvePayments(
       }
     }
     // No INN in the statement: the counterparty is the earlier payment's. Say whose, so that a wrong one is seen.
-    if (!payment.inn && !overrides.counterparties?.some((o) => o.row === payment.row)) {
+    if (!who && !overrides.counterparties?.some((o) => o.row === payment.row)) {
       const whose = template.fields["Контрагент"];
       const name =
         whose && typeof whose === "object" && typeof (whose as { name?: unknown }).name === "string"
@@ -668,7 +742,7 @@ export async function resolvePayments(
       counterparty,
       contract,
       ownAccount,
-      counterpartyAccount: accountsOf.get(`${payment.inn}|${payment.account}`) ?? null,
+      counterpartyAccount: accountsOf.get(`${who?.key ?? ""}|${payment.account}`) ?? null,
     };
     // A card (acquiring) receipt: the statement has the net, the company books the gross and the bank's
     // commission as a bank-fee document of its own.
@@ -706,7 +780,7 @@ export async function resolvePayments(
     ready.push({ payment, change: made.change });
   }
   return {
-    missing: [...missingByInn.values()],
+    missing: [...missingByKey.values()],
     contractsToCreate: [...pendingContracts.values()],
     ready,
     alreadyIn1c,
@@ -736,22 +810,22 @@ async function snapshot(
   return template;
 }
 
-/** Posted documents of a kind, newest first, with their purposes: of one counterparty by INN, or the newest of all. */
+/** Posted documents of a kind, newest first, with their purposes: of one counterparty (by INN or name), or the newest of all. */
 async function loadList(
   deps: BankDeps,
   cache: BankCache,
   object: string,
-  inn: string,
+  who: Who | null,
 ): Promise<{ ref: string; purpose: string }[]> {
-  const key = `${object}|${inn || "*"}`;
+  const key = `${object}|${who?.key ?? "*"}`;
   const cached = cache.lists.get(key);
   if (cached) return cached;
   const outcome = await deps.query({
-    query: inn
-      ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.ИНН = &инн УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
+    query: who
+      ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.${who.field} = &${who.field === "ИНН" ? "инн" : "имя"} УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
       : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
-    ...(inn ? { params: { инн: inn } } : {}),
-    limit: inn ? 20 : 300,
+    ...(who ? { params: { [who.field === "ИНН" ? "инн" : "имя"]: who.value } } : {}),
+    limit: who ? 20 : 300,
     refs: true,
   });
   const list = outcome.ok
@@ -781,7 +855,7 @@ async function kindTemplate(
   object: string,
   payment: BankPayment,
 ): Promise<Template | null> {
-  const list = await loadList(deps, cache, object, "");
+  const list = await loadList(deps, cache, object, null);
   // Newest first, until one can be copied; a bound keeps a base with no usable payment from being read whole.
   for (const candidate of list.slice(0, KIND_TEMPLATE_CANDIDATES)) {
     const template = await snapshot(deps, cache, object, candidate.ref);
@@ -799,7 +873,7 @@ async function commissionTemplate(deps: BankDeps, cache: BankCache): Promise<Tem
   const object = OBJECT.out;
   const key = `${object}|commission`;
   if (cache.snapshots.has(key)) return cache.snapshots.get(key) ?? null;
-  const list = await loadList(deps, cache, object, "");
+  const list = await loadList(deps, cache, object, null);
   const found = list.find((c) => isAcquiringFee(c.purpose));
   const template = found ? await snapshot(deps, cache, object, found.ref) : null;
   cache.snapshots.set(key, template);
@@ -867,10 +941,11 @@ async function findTemplate(
   cache: BankCache,
   object: string,
   payment: BankPayment,
+  who: Who | null,
 ): Promise<Template | null> {
-  const list = await loadList(deps, cache, object, payment.inn);
+  const list = await loadList(deps, cache, object, who);
   const shape = shapeOf(payment.purpose);
   const same = shape.length >= 8 ? list.find((c) => shapeOf(c.purpose) === shape) : undefined;
-  const chosen = same ?? (payment.inn ? list[0] : undefined);
+  const chosen = same ?? (who ? list[0] : undefined);
   return chosen ? snapshot(deps, cache, object, chosen.ref) : null;
 }

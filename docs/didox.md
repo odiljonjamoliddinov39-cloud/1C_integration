@@ -113,6 +113,12 @@ https page), send one JSON message, take one answer, close.
   The demo's `localhost` and `127.0.0.1` keys are only for a local page. For a test, E-IMZO's tray menu
   has a "developer mode". **Whether E-IMZO accepts a desktop app, which has no page and no domain, is
   not documented** and has to be tried on a PC (then ask НИЦ НТ what key an installed application uses).
+  Seen 2026-10-18: on one PC E-IMZO 6.4.7 took the calls with no key; on another it answered
+  `API-key для домена null недействителен` to the first call (the desktop app sends no Origin). The app
+  now meets that refusal by repeating the call as from a local page: an `Origin: http://localhost`
+  header and the guide's published `localhost`/`127.0.0.1` keys sent first on the same connection, and
+  goes on that way. Whether E-IMZO accepts those for a desktop app is to be seen; if not, the error says
+  so, and НИЦ НТ has to be asked for a key for the application.
 - Test without a physical key: tray menu, Development, ID-card emulator (test only).
 
 ## Built

@@ -41,6 +41,11 @@ export interface BankPayment {
   counterparty: string;
   /** The counterparty's INN (digits), "" when the statement has none. */
   inn: string;
+  /**
+   * The INN column held only zeros: the bank writes nine zeros when the INN was not given. Then the
+   * counterparty is known by its name.
+   */
+  innZero?: true;
   /** The counterparty's bank account. */
   account: string;
   mfo: string;
@@ -134,6 +139,9 @@ const innOf = (text: string) => {
   return /e\+/i.test(text) ? "" : d;
 };
 
+/** Banks write 000000000 where the INN was not given: that is no INN (two such payers are not one counterparty). */
+const isZeroInn = (inn: string) => /^0+$/.test(inn);
+
 export function parseBankStatement(file: TableFile): BankStatement | null {
   for (const sheet of file.sheets) {
     const header = findHeader(sheet);
@@ -206,7 +214,9 @@ export function parseBankStatement(file: TableFile): BankStatement | null {
         "name",
         incoming ? "receiverName" : "payerName",
       );
-      const inn = innOf(pick(incoming ? "payerInn" : "receiverInn", "inn"));
+      const written = innOf(pick(incoming ? "payerInn" : "receiverInn", "inn"));
+      const innZero = isZeroInn(written);
+      const inn = innZero ? "" : written;
       const payment: BankPayment = {
         row,
         date,
@@ -215,6 +225,7 @@ export function parseBankStatement(file: TableFile): BankStatement | null {
         amount: tiyin(value),
         counterparty,
         inn,
+        ...(innZero ? { innZero: true as const } : {}),
         account: digits(pick(incoming ? "payerAccount" : "receiverAccount", "account")),
         mfo: digits(pick("mfo")),
         purpose: pick("purpose"),
