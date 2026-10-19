@@ -92,9 +92,13 @@ export async function runDidoxTest(
   );
   try {
     await client.login();
-    step("login", true, "Signed in; Didox gave a token.");
+    step("login", true, `Signed in to ${baseUrl}; Didox gave a token.`);
   } catch (e) {
-    step("login", false, failure(e));
+    step(
+      "login",
+      false,
+      `${failure(e)}\n[server: ${baseUrl}${input.baseUrl ? "" : " (the address was empty: the test server)"}]`,
+    );
     return { baseUrl, steps };
   }
 
