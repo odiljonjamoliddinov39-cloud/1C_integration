@@ -37,6 +37,8 @@ interface StoredCompany {
   lastSyncAt: string | null;
   /** The AI assistant may read this company's 1C (TD §11: off by default, turned on with consent). */
   aiEnabled?: boolean;
+  /** How this company reaches Didox (the API address and the E-IMZO key to sign in with). */
+  didox?: { baseUrl: string; serialNumber: string };
 }
 
 /** Signed-in state. The refresh token is encrypted; the license token is signed, not secret. */
@@ -163,6 +165,14 @@ export class LocalStore {
     return view(c);
   }
 
+  setDidox(id: string, didox: { baseUrl: string; serialNumber: string } | null): CompanyView {
+    const c = this.find(id);
+    if (didox) c.didox = didox;
+    else delete c.didox;
+    this.save();
+    return view(c);
+  }
+
   company(id: string): CompanyView {
     return view(this.find(id));
   }
@@ -197,5 +207,6 @@ function view(c: StoredCompany): CompanyView {
     lastStatus: c.lastStatus,
     lastSyncAt: c.lastSyncAt,
     aiEnabled: c.aiEnabled ?? false,
+    didox: c.didox ?? null,
   };
 }

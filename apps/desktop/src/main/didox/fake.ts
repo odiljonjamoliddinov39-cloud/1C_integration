@@ -35,6 +35,11 @@ export interface FakeRequest {
  */
 export class FakeDidox {
   readonly requests: FakeRequest[] = [];
+  /** The signed-in company's profile, other companies' profiles by INN, Didox's units, drafts made. */
+  ownProfile: Record<string, unknown> = { name: "OWN MCHJ", tin: "302936161", account: "2020800" };
+  profiles = new Map<string, Record<string, unknown>>();
+  measures: { id: string; name: string }[] = [{ id: "1", name: "шт" }];
+  drafts: { docType: string; body: unknown }[] = [];
   /** Print forms by document id (a PDF). */
   files = new Map<string, Uint8Array>();
   documents: { id: string; doctype: string; status: number; owner: 0 | 1 }[] = [];
@@ -136,6 +141,20 @@ export class FakeDidox {
           (d) => (owner === null || d.owner === Number(owner)) && (!doctypes || doctypes.includes(d.doctype)),
         ),
       );
+    }
+    if (path === "/v1/profile") return json(this.ownProfile);
+    const vat = /^\/v1\/profile\/vatRegStatus\/([^/]+)$/.exec(path);
+    if (vat?.[1]) return json({ vatRegCode: "326080000001", vatRegStatus: 20 });
+    const company = /^\/v1\/profile\/(\d+)$/.exec(path);
+    if (company?.[1]) {
+      const found = this.profiles.get(company[1]);
+      return found ? json(found) : json({ error: "not found" }, 404);
+    }
+    if (path === "/v1/measures/all") return json(this.measures);
+    const create = /^\/v1\/documents\/([^/]+)\/create$/.exec(path);
+    if (create?.[1]) {
+      this.drafts.push({ docType: create[1], body });
+      return json({ _id: `DRAFT${this.drafts.length}` });
     }
     const file = /^\/v1\/documents\/([^/]+)\/file\/true$/.exec(path);
     if (file?.[1]) {

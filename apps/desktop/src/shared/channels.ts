@@ -18,6 +18,7 @@ export const CHANNELS = {
   billingRefresh: "billing:refresh",
   didoxKeys: "didox:keys",
   didoxTest: "didox:test",
+  didoxSave: "didox:save",
   assistantEnable: "assistant:enable",
   assistantSend: "assistant:send",
   assistantStop: "assistant:stop",

@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -28,6 +28,16 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ...(serialNumber ? { serialNumber } : {}),
       }),
+  });
+  const queryClient = useQueryClient();
+  const companies = useQuery({ queryKey: ["companies"], queryFn: () => window.platform.companies.list() });
+  const companyList = companies.data ?? [];
+  const [companyId, setCompanyId] = useState("");
+  const chosen = companyList.find((c) => c.id === companyId) ?? null;
+  const save = useMutation({
+    mutationFn: (settings: { baseUrl: string; serialNumber: string } | null) =>
+      window.platform.didox.save(companyId, settings),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["companies"] }),
   });
   const result: DidoxTestResult | null = run.data?.ok ? run.data.data : null;
   const keyList = keys.data?.ok ? keys.data.data : [];
@@ -132,6 +142,47 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
               </li>
             ))}
           </ol>
+        )}
+
+        {result?.steps.some((step) => step.name === "login" && step.ok) && (
+          <div className="space-y-2 rounded-xl border border-border p-3">
+            <div className="text-sm font-semibold">{t("didox.saveTitle")}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label={t("didox.saveCompany")}
+                className="h-9 rounded-lg border border-border bg-card px-2 text-sm"
+                value={companyId}
+                onChange={(e) => {
+                  setCompanyId(e.target.value);
+                  save.reset();
+                }}
+              >
+                <option value="">{t("didox.saveCompany")}</option>
+                {companyList.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                disabled={!companyId || !serialNumber || save.isPending}
+                onClick={() => save.mutate({ baseUrl: result.baseUrl, serialNumber })}
+              >
+                {t("didox.save")}
+              </Button>
+              {chosen?.didox && (
+                <Button size="sm" variant="ghost" onClick={() => save.mutate(null)}>
+                  {t("didox.forget")}
+                </Button>
+              )}
+            </div>
+            {!serialNumber && <div className="text-xs text-muted-foreground">{t("didox.savePick")}</div>}
+            {save.data?.ok && save.data.data.didox && chosen && (
+              <div className="text-xs text-teal">{t("didox.saved", { name: chosen.name })}</div>
+            )}
+            {save.data && !save.data.ok && <ErrorText>{save.data.message}</ErrorText>}
+          </div>
         )}
       </Card>
     </div>
