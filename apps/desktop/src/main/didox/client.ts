@@ -340,24 +340,15 @@ export class DidoxClient {
   }
 
   /**
-   * The archive of a document (its XML, PDF and signatures, the zip the Didox site offers): Didox gives
-   * a link that is good for 5 minutes, and the archive is fetched from it.
+   * The print form of a document (the PDF of the page Didox shows, as Didox's own 1C library reads it):
+   * the answer carries it as base64 in `file.data`.
    */
-  async downloadArchive(id: string): Promise<Uint8Array> {
-    const body = await this.request("GET", `/v1/documents/${encodeURIComponent(id)}/downloadrequest`);
-    const url = textField(body, ["url", "link", "href"]);
-    if (!url || !/^https:\/\//i.test(url))
-      throw new DidoxError("DIDOX_RESPONSE", "Didox sent no download link");
-    let response: Response;
-    try {
-      // The link is signed: our keys are not sent to wherever it points.
-      response = await this.fetcher(url);
-    } catch (e) {
-      throw new DidoxError("DIDOX_NETWORK", e instanceof Error ? e.message : String(e));
-    }
-    if (!response.ok)
-      throw new DidoxError("DIDOX_HTTP", `The archive link answered ${response.status}`, response.status);
-    return new Uint8Array(await response.arrayBuffer());
+  async documentFile(id: string): Promise<Uint8Array> {
+    const body = await this.request("GET", `/v1/documents/${encodeURIComponent(id)}/file/true`);
+    const file = typeof body === "object" && body !== null ? (body as { file?: unknown }).file : undefined;
+    const data = textField(file, ["data"]);
+    if (!data) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no file for this document");
+    return new Uint8Array(Buffer.from(data, "base64"));
   }
 
   /** What Didox wants signed to accept, reject or cancel a document. */

@@ -72,7 +72,7 @@ export const DidoxTestInput = z.object({
 export type DidoxTestInput = z.infer<typeof DidoxTestInput>;
 
 export interface DidoxTestStep {
-  name: "eimzo" | "keys" | "login" | "profile" | "documents" | "archive";
+  name: "eimzo" | "keys" | "login" | "profile" | "documents" | "document" | "file";
   ok: boolean;
   /** What was found, or why it failed; the answers of Didox in full are cut at a few lines. */
   detail: string;

@@ -259,7 +259,8 @@ const en = {
       login: "Sign in to Didox",
       profile: "Company profile",
       documents: "Incoming documents",
-      archive: "A document's archive",
+      document: "A document",
+      file: "A document's print form",
     },
   },
   companies: {
@@ -666,7 +667,8 @@ const ru: Dict = {
       login: "Вход в Didox",
       profile: "Профиль компании",
       documents: "Входящие документы",
-      archive: "Архив документа",
+      document: "Документ",
+      file: "Печатная форма документа",
     },
   },
   companies: {
@@ -1073,7 +1075,8 @@ const uz: Dict = {
       login: "Didox ga kirish",
       profile: "Kompaniya profili",
       documents: "Kiruvchi hujjatlar",
-      archive: "Hujjat arxivi",
+      document: "Hujjat",
+      file: "Hujjatning bosma shakli",
     },
   },
   companies: {

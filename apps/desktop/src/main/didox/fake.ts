@@ -31,13 +31,12 @@ export interface FakeRequest {
 }
 
 /**
- * A stand-in for the Didox server: the sign-in handshake, a list of documents and archives to
- * download. `fetch` can be handed to DidoxClient.
+ * A stand-in for the Didox server: the sign-in handshake, a list of documents and their print forms. `fetch` can be handed to DidoxClient.
  */
 export class FakeDidox {
   readonly requests: FakeRequest[] = [];
-  /** Archives by document id (a zip as the Didox site gives it). */
-  archives = new Map<string, Uint8Array>();
+  /** Print forms by document id (a PDF). */
+  files = new Map<string, Uint8Array>();
   documents: { id: string; doctype: string; status: number; owner: 0 | 1 }[] = [];
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
@@ -90,10 +89,6 @@ export class FakeDidox {
     const json = (value: unknown, status = 200) =>
       new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 
-    if (url.host === "files.didox.test") {
-      const bytes = this.archives.get(url.pathname.slice(1));
-      return bytes ? new Response(bytes.slice().buffer as ArrayBuffer) : new Response("", { status: 404 });
-    }
     const path = url.pathname;
     if (path.startsWith("/v1/auth/authId/")) return json({ authId: `auth-${path.split("/").pop()}` });
     if (path === "/v1/dsvs/timestamp" || path === "/v1/dsvs/gettimestamp") {
@@ -142,10 +137,11 @@ export class FakeDidox {
         ),
       );
     }
-    const archive = /^\/v1\/documents\/([^/]+)\/downloadrequest$/.exec(path);
-    if (archive?.[1]) {
-      return this.archives.has(archive[1])
-        ? new Response(`https://files.didox.test/${archive[1]}`)
+    const file = /^\/v1\/documents\/([^/]+)\/file\/true$/.exec(path);
+    if (file?.[1]) {
+      const bytes = this.files.get(file[1]);
+      return bytes
+        ? json({ file: { data: Buffer.from(bytes).toString("base64") } })
         : json({ error: "not found" }, 404);
     }
     const one = /^\/v1\/documents\/([^/]+)$/.exec(path);

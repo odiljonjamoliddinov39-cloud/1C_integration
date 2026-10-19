@@ -1,10 +1,9 @@
 /**
  * The "Didox test" of the app: signs in with the accountant's E-IMZO key and reads what Didox answers,
  * step by step, so a first run on a PC shows at once what works (E-IMZO, the key, sign-in, the profile,
- * the incoming documents, one document's archive). It changes nothing in Didox or in 1C.
+ * the incoming documents, one document and its print form). It changes nothing in Didox or in 1C.
  */
 import type { DidoxKeyView, DidoxTestInput, DidoxTestResult, DidoxTestStep } from "../../shared/ipc.js";
-import { readAttachments } from "../attachments.js";
 import { DIDOX_DEV_URL, DidoxClient, DidoxError } from "./client.js";
 import { type EImzoClient, EImzoError, EImzoSigner } from "./eimzo.js";
 
@@ -115,16 +114,20 @@ export async function runDidoxTest(
   const id = firstDocumentId(list);
   if (id === null) {
     if (list !== null)
-      step("archive", false, "No document id found in the list above, so no archive was tried.");
+      step("document", false, "No document id found in the list above, so no document was read.");
     return { baseUrl, steps };
   }
   try {
-    const bytes = await client.downloadArchive(id);
-    const read = await readAttachments([{ name: `didox-${id}.zip`, data: new Uint8Array(bytes) }]);
-    const note = read.blocks[0] as { text?: string } | undefined;
-    step("archive", true, `Document ${id}: ${bytes.byteLength} bytes.\n${note?.text ?? ""}`);
+    step("document", true, `Document ${id}:\n${shown(await client.documentInfo(id))}`);
   } catch (e) {
-    step("archive", false, `Document ${id}: ${failure(e)}`);
+    step("document", false, `Document ${id}: ${failure(e)}`);
+  }
+  try {
+    const bytes = await client.documentFile(id);
+    const pdf = Buffer.from(bytes.subarray(0, 4)).toString("latin1") === "%PDF";
+    step("file", true, `Document ${id}: ${bytes.byteLength} bytes${pdf ? ", a PDF" : ""}.`);
+  } catch (e) {
+    step("file", false, `Document ${id}: ${failure(e)}`);
   }
   return { baseUrl, steps };
 }
