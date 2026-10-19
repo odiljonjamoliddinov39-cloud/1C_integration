@@ -176,6 +176,45 @@ export const DidoxInvoicesInput = z.object({
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
 /**
+ * An invoice to be made in Didox as a DRAFT (not signed, not sent). The model reads the invoice from 1C and
+ * passes what is in it; the app takes the seller and the buyer from Didox, works the sums out itself and
+ * shows them on the card.
+ */
+export const DidoxDraftInput = z.object({
+  /** For the card's title, e.g. "Hisob-faktura 1294 - Adim MChJ". */
+  title: z.string().trim().min(1).max(200),
+  /** The invoice number as it stands in 1C. */
+  number: z.string().trim().min(1).max(80),
+  /** YYYY-MM-DD. */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** The buyer's INN (9 digits) or PINFL (14). */
+  buyerInn: z.string().regex(/^(\d{9}|\d{14})$/),
+  contract: z
+    .object({ number: z.string().trim().min(1).max(80), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+    .optional(),
+  lines: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(500),
+        /** The unit as 1C names it ("шт", "кг"). */
+        unit: z.string().trim().min(1).max(40),
+        qty: z.number().positive(),
+        /** Price without VAT, in sum. */
+        price: z.number().min(0),
+        /** VAT rate in percent (12, or 0). */
+        vatRate: z.number().min(0).max(100),
+        /** The state catalogue code (IKPU) and name of the goods or service, when 1C has them. */
+        catalogCode: z.string().trim().max(40).optional(),
+        catalogName: z.string().trim().max(500).optional(),
+        barcode: z.string().trim().max(60).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+export type DidoxDraftInput = z.infer<typeof DidoxDraftInput>;
+
+/**
  * Payments of a bank statement the app has read from the attached file: the app builds the
  * documents itself (a copy of the counterparty's newest payment, with this payment's date, amount,
  * number and purpose). Only what it could not settle comes back, and the model answers with
@@ -265,6 +304,7 @@ export const AI_TOOLS = {
   propose_invoice_received: InvoiceReceivedDraft,
   propose_invoices_received: InvoicesReceivedInput,
   propose_didox_invoices: DidoxInvoicesInput,
+  propose_didox_draft: DidoxDraftInput,
   propose_bank_payments: BankPaymentsInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -280,6 +320,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoice_received",
   "propose_invoices_received",
   "propose_didox_invoices",
+  "propose_didox_draft",
   "propose_bank_payments",
   "propose_post_created",
   "propose_delete_marked",

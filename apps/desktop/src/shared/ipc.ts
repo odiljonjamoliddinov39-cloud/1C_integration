@@ -268,8 +268,31 @@ export interface BatchItem {
 export type BatchItemResult =
   { ok: true; state: ObjectState } | { ok: false; code: string; message: string } | null;
 
+/** An outgoing invoice as the card shows it before the draft is made in Didox (sums as "1234.50"). */
+export interface DidoxDraftPreview {
+  number: string;
+  date: string;
+  seller: { tin: string; name: string };
+  buyer: { tin: string; name: string };
+  contract: { number: string; date: string } | null;
+  lines: {
+    n: number;
+    name: string;
+    unit: string;
+    qty: number;
+    price: string;
+    amount: string;
+    vatRate: number;
+    vat: string;
+    total: string;
+  }[];
+  totals: { amount: string; vat: string; total: string };
+}
+
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
+  /** An invoice to be made in Didox as a draft (not signed, not sent). */
+  | { kind: "didox_draft"; draft: DidoxDraftPreview }
   | { kind: "change"; preview: ChangePreview }
   | { kind: "batch"; title: string; items: BatchItem[] }
   | { kind: "invoice_issued"; sale: SaleSummary }
@@ -283,6 +306,7 @@ export type ProposalOutcome =
   | { status: "applied"; state: ObjectState }
   | { status: "batch"; results: BatchItemResult[] }
   | { status: "removed"; result: DeleteMarkedResult }
+  | { status: "didox_draft"; id: string }
   | { status: "failed"; code: string; message: string };
 
 export interface ElapsedParts {

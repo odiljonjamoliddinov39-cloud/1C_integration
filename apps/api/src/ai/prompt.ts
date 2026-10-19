@@ -77,7 +77,9 @@ try it again for a new file: the app has been updated since, and entering by han
 - Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
 fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \
 one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
-invoice are left out by themselves).
+invoice are left out by themselves). To send an issued invoice to the buyer through Didox, read it from 1C (it \
+must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
+the accountant checks and signs it in Didox. Say so in your answer.
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
@@ -288,6 +290,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  propose_didox_draft:
+    "Make an invoice that already exists in 1C (счёт-фактура выданный, posted, with its real number) in Didox as a " +
+    "DRAFT, on ONE card. Read the invoice from 1C first (number, date, contract, buyer INN, lines with unit, " +
+    "quantity, price WITHOUT VAT, VAT rate, and the IKPU code when 1C has it) and pass it as it stands: the app takes " +
+    "the seller and the buyer from Didox and works every sum out itself. It creates a draft only: nothing is signed or " +
+    "sent; the accountant checks and signs it in Didox. Never pass an invoice that is not posted or has a " +
+    "placeholder number: tell the accountant to post it and fix the number first. If Didox is not connected for " +
+    "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_post_created:
     "Post (проведение) the documents THIS chat created and left unposted (a bank statement's payments, a batch of " +
     "documents), on ONE card with a title. The app knows which they are: send only the title (objects, full names, " +

@@ -3,7 +3,7 @@
  * (outgoing.ts), and on the accountant's confirmation it is created as a DRAFT. Nothing is signed or sent
  * here: the accountant signs and sends the draft in Didox, or in a later step of the app.
  */
-import type { DidoxClient} from "./client.js";
+import type { DidoxClient } from "./client.js";
 import { DidoxError } from "./client.js";
 import {
   type DraftInput,

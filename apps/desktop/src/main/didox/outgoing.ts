@@ -6,6 +6,10 @@
  */
 
 /** Didox's code of an invoice among its document types (the path of `/v1/documents/{docType}/create`). */
+import type { DidoxDraftPreview as DraftPreview } from "../../shared/ipc.js";
+
+export type { DraftPreview };
+
 export const INVOICE_DOCTYPE = "002";
 
 export interface DraftLineInput {
@@ -59,29 +63,6 @@ export interface DraftProblem {
   /** The line it is about (1-based); null for the document. */
   line: number | null;
   message: string;
-}
-
-export interface DraftLineView {
-  n: number;
-  name: string;
-  unit: string;
-  qty: number;
-  price: string;
-  amount: string;
-  vatRate: number;
-  vat: string;
-  total: string;
-}
-
-/** What the accountant sees on the card before the draft is made. */
-export interface DraftPreview {
-  number: string;
-  date: string;
-  seller: { tin: string; name: string };
-  buyer: { tin: string; name: string };
-  contract: { number: string; date: string } | null;
-  lines: DraftLineView[];
-  totals: { amount: string; vat: string; total: string };
 }
 
 /** Sum with two decimals, from tiyin. */
@@ -201,7 +182,7 @@ export function buildInvoiceDraft(
   let amountTotal = 0;
   let vatTotal = 0;
   const products: Record<string, unknown>[] = [];
-  const views: DraftLineView[] = [];
+  const views: DraftPreview["lines"] = [];
   input.lines.forEach((line, i) => {
     const n = i + 1;
     if (!line.name.trim()) add("BAD_LINE", n, "The line has no name");

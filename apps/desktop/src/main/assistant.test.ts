@@ -23,6 +23,9 @@ import { ChatStore } from "./chats.js";
 import { InProcessConnector } from "./connector.js";
 import { ControlClient } from "./control-client.js";
 import type { SessionService } from "./session.js";
+import { EImzoClient } from "./didox/eimzo.js";
+import { FakeEImzo } from "./didox/fake-eimzo.js";
+import { FakeDidox } from "./didox/fake.js";
 import { LocalStore, type SecretBox } from "./store.js";
 
 const secrets: SecretBox = { encrypt: (p) => `enc:${p}`, decrypt: (e) => e.slice(4) };
@@ -87,6 +90,7 @@ function setup(
   script: Parameters<typeof fakeProxy>[0],
   licenseMode: "active" | "read_only" = "active",
   others?: Parameters<typeof fakeProxy>[1],
+  didox?: { eimzo: EImzoClient; fetch: typeof fetch },
 ) {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
@@ -120,6 +124,7 @@ function setup(
     maxTurns: 25,
     auditChecks: TEST_CHECKS,
     auditConcurrency: 1,
+    ...(didox ? { didox } : {}),
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -339,6 +344,68 @@ describe("assistant", () => {
       expect(base.issued).toHaveLength(1);
       expect(events.find((e) => e.type === "decided")).toMatchObject({ outcome: { status: "created" } });
       expect(resultOf(proxy.requests)).toMatchObject({ status: "created", document: { posted: false } });
+    });
+
+    describe("an invoice for Didox", () => {
+      const ALIAS =
+        "1.2.860.3.16.1.1=302936161,CN=ИВАНОВ ИВАН,O=FIDES PROJECTS XK,SERIALNUMBER=5A3C0F11,VALIDFROM=2025.01.01 00:00:00,VALIDTO=2099.01.01 23:59:59";
+      const draft = {
+        title: "Hisob-faktura 1294",
+        number: "1294",
+        date: "2026-10-19",
+        buyerInn: "201607534",
+        lines: [{ name: "Suv", unit: "шт", qty: 2, price: 1000, vatRate: 12 }],
+      };
+      function didoxSetup() {
+        const server = new FakeDidox();
+        server.profiles.set("201607534", { name: "NAVRO'Z-PTK MCHJ", account: "2020", mfo: "00014" });
+        const eimzo = new FakeEImzo();
+        eimzo.certificates = [{ disk: "D", path: "/k", name: "key1", alias: ALIAS }];
+        const made = setup(proposeThenAnswer("propose_didox_draft", draft), "active", undefined, {
+          eimzo: new EImzoClient({ connect: eimzo.connect }),
+          fetch: server.fetch,
+        });
+        made.store.setAiEnabled(made.company.id, true);
+        return { ...made, server };
+      }
+
+      it("makes a draft only after the card is confirmed, and signs and sends nothing", async () => {
+        const { assistant, store, company, events, proxy, server } = didoxSetup();
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        const sending = assistant.send({ companyId: company.id, text: "yubor didoksdan" });
+        await answerCards(events, assistant, true);
+        expect(await sending).toEqual({ ok: true, data: null });
+
+        expect(events.find((e) => e.type === "confirm")).toMatchObject({
+          proposal: {
+            kind: "didox_draft",
+            draft: { number: "1294", buyer: { name: "NAVRO'Z-PTK MCHJ" }, totals: { total: "2240.00" } },
+          },
+        });
+        expect(server.drafts).toHaveLength(1);
+        expect(server.requests.some((r) => /\/(sign|tosign|reject)$/.test(r.url.pathname))).toBe(false);
+        expect(events.find((e) => e.type === "decided")).toMatchObject({
+          outcome: { status: "didox_draft", id: "DRAFT1" },
+        });
+        expect(resultOf(proxy.requests)).toMatchObject({ status: "draft_created", draftId: "DRAFT1" });
+      });
+
+      it("makes nothing in Didox when the user cancels", async () => {
+        const { assistant, store, company, events, proxy, server } = didoxSetup();
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        const sending = assistant.send({ companyId: company.id, text: "?" });
+        await answerCards(events, assistant, false);
+        await sending;
+        expect(server.drafts).toHaveLength(0);
+        expect(resultOf(proxy.requests)).toEqual({ status: "declined_by_user" });
+      });
+
+      it("tells the model when Didox is not connected for the company", async () => {
+        const { assistant, company, proxy, server } = didoxSetup();
+        await assistant.send({ companyId: company.id, text: "?" });
+        expect(JSON.stringify(proxy.requests[1]?.messages)).toContain("NO_DIDOX_CONNECTION");
+        expect(server.requests).toHaveLength(0);
+      });
     });
 
     it("writes nothing when the user cancels, and tells the model so", async () => {
