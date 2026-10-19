@@ -202,4 +202,19 @@ describe("DidoxClient", () => {
       expect((error as DidoxError).message).toContain("this Didox has no /v1/dsvs/gettimestamp");
     });
   });
+
+  it("sends the token as user-key, and as api-key too when there is no partner key", async () => {
+    const server = new FakeDidox();
+    const bare = new DidoxClient({ baseUrl: "https://didox.test/", fetch: server.fetch }, new FakeSigner());
+    await bare.listDocuments();
+    // The sign-in itself carries no key; the requests after it carry the token under both names.
+    expect(server.requests[0]?.headers["api-key"]).toBeUndefined();
+    const last = server.requests.at(-1);
+    expect(last?.headers["user-key"]).toBe("token-1");
+    expect(last?.headers["api-key"]).toBe("token-1");
+    // With a partner key, api-key is the partner key.
+    const keyed = setup();
+    await keyed.client.listDocuments();
+    expect(keyed.server.requests.at(-1)?.headers["api-key"]).toBe("partner-key");
+  });
 });
