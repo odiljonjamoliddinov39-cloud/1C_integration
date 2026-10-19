@@ -325,11 +325,18 @@ export class DidoxClient {
     });
   }
 
-  /** Request headers. Whether the token travels as `user-key` is to be confirmed on the dev server. */
+  /**
+   * Request headers. The token travels as `user-key`; with no partner key it also travels as `api-key`,
+   * which is how a company's own working 1C module (uzbled_Операторы_Didox) sends it:
+   * `Заголовки.Вставить("api-key", Токен)`.
+   */
   private headers(auth: boolean): Record<string, string> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.config.apiKey) headers["api-key"] = this.config.apiKey;
-    if (auth && this.token) headers["user-key"] = this.token.value;
+    if (auth && this.token) {
+      headers["user-key"] = this.token.value;
+      if (!this.config.apiKey) headers["api-key"] = this.token.value;
+    }
     return headers;
   }
 

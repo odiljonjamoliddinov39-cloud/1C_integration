@@ -83,6 +83,9 @@ yes/no/unknown]`.
    404/405/501 the app takes it that this Didox has no time stamp service, signs again without one, and lets
    the sign-in say whether it wants one (the error then ends with `[no time stamp: this Didox has no
 /v1/dsvs/gettimestamp]`).
+   A company's own working 1C module (`uzbled_Операторы_Didox`) sends the token as `api-key`:
+   `HTTPЗапрос.Заголовки.Вставить("api-key", Токен)`. So with no partner key configured the app sends the
+   token under both `user-key` and `api-key`; with a partner key, `api-key` is the partner key.
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.
