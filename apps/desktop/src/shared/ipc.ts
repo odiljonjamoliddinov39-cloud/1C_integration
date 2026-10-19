@@ -289,6 +289,57 @@ export interface DidoxDraftPreview {
   totals: { amount: string; vat: string; total: string };
 }
 
+/** Debit and credit of the company ("owner") and of the counterparty, as sums "1234.50". */
+export interface DidoxBalanceView {
+  ownerDebit: string;
+  ownerCredit: string;
+  partnerDebit: string;
+  partnerCredit: string;
+}
+
+/** A reconciliation act as the card shows it before the draft is made in Didox. */
+export interface DidoxReconciliationPreview {
+  number: string;
+  date: string;
+  from: string;
+  to: string;
+  seller: { tin: string; name: string };
+  buyer: { tin: string; name: string };
+  /** The counterparty as the 1C act names it. */
+  counterparty1c: string;
+  contracts: {
+    number: string;
+    date: string;
+    rows: {
+      ownerDate: string;
+      ownerName: string;
+      ownerDebit: string;
+      ownerCredit: string;
+      partnerDate: string;
+      partnerName: string;
+      partnerDebit: string;
+      partnerCredit: string;
+    }[];
+    open: DidoxBalanceView;
+    total: DidoxBalanceView;
+    close: DidoxBalanceView;
+  }[];
+  open: DidoxBalanceView;
+  turnover: DidoxBalanceView;
+  close: DidoxBalanceView;
+  /** Things to look at before confirming (a counterparty's name that differs, an empty side). */
+  warnings: string[];
+}
+
+/** A draft in Didox that is about to be deleted. */
+export interface DidoxDraftDeletePreview {
+  id: string;
+  /** What Didox says about it; empty when it did not say. */
+  number: string;
+  date: string;
+  recipient: string;
+}
+
 /** A free-form document (a letter, an act, ...) as the card shows it before the draft is made in Didox. */
 export interface DidoxDocumentPreview {
   /** "letter", "work_act", ... */
@@ -305,6 +356,10 @@ export interface DidoxDocumentPreview {
 
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
+  /** A reconciliation act built from the 1C document, to be made in Didox as a draft. */
+  | { kind: "didox_reconciliation"; act: DidoxReconciliationPreview }
+  /** A wrong draft to be deleted in Didox (it is not signed, so it was never sent). */
+  | { kind: "didox_delete"; draft: DidoxDraftDeletePreview }
   /** A letter or another free-form document to be made in Didox as a draft (not signed, not sent). */
   | { kind: "didox_document"; document: DidoxDocumentPreview }
   /** An invoice to be made in Didox as a draft (not signed, not sent). */
@@ -323,6 +378,7 @@ export type ProposalOutcome =
   | { status: "batch"; results: BatchItemResult[] }
   | { status: "removed"; result: DeleteMarkedResult }
   | { status: "didox_draft"; id: string }
+  | { status: "didox_deleted"; id: string }
   | { status: "failed"; code: string; message: string };
 
 export interface ElapsedParts {

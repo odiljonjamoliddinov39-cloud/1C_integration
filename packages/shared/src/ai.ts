@@ -212,16 +212,7 @@ export type OnecSource = z.infer<typeof OnecSource>;
 export const DidoxDocumentInput = z.object({
   /** For the card's title, e.g. "Xat - Zarkentrade MChJ". */
   title: z.string().trim().min(1).max(200),
-  type: z.enum([
-    "letter",
-    "reconciliation_act",
-    "contract",
-    "payment_invoice",
-    "work_act",
-    "request",
-    "specification",
-    "other",
-  ]),
+  type: z.enum(["letter", "contract", "payment_invoice", "work_act", "request", "specification", "other"]),
   /** The document's own number (an outgoing number of the company) and date YYYY-MM-DD. */
   number: z.string().trim().min(1).max(80),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -243,6 +234,46 @@ export const DidoxDocumentInput = z.object({
     .optional(),
 });
 export type DidoxDocumentInput = z.infer<typeof DidoxDocumentInput>;
+
+/**
+ * A reconciliation act (акт сверки) made in Didox as a DRAFT from the saved act in 1C
+ * (Документ.АктСверкиВзаиморасчетов): the app reads its rows, contract and period itself and works every balance
+ * out; only the balance at the start of the period (not kept in the 1C act) comes from the model.
+ */
+export const DidoxReconciliationInput = z.object({
+  /** For the card's title, e.g. "Akt sverka - Zarkentrade". */
+  title: z.string().trim().min(1).max(200),
+  /** The saved act in 1C. */
+  onec: OnecSource,
+  /** The counterparty's INN (9 digits) or PINFL (14). */
+  buyerInn: z.string().regex(/^(\d{9}|\d{14})$/),
+  /**
+   * The balance at the start of the period, in sum, from the accounts: debit and credit of the company and of the
+   * counterparty. One entry for an act with one contract; with several, one per contract number. Absent: zero.
+   */
+  openings: z
+    .array(
+      z.object({
+        contract: z.string().trim().max(80).optional(),
+        ownerDebit: z.number().min(0).optional(),
+        ownerCredit: z.number().min(0).optional(),
+        partnerDebit: z.number().min(0).optional(),
+        partnerCredit: z.number().min(0).optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  /** A sentence for the act's text, when the accountant wants one. */
+  text: z.string().trim().max(2000).optional(),
+});
+export type DidoxReconciliationInput = z.infer<typeof DidoxReconciliationInput>;
+
+/** A draft in Didox to be deleted (a wrong one: a draft is not signed, so it was never sent). */
+export const DidoxDeleteDraftInput = z.object({
+  /** The draft's id in Didox, as the assistant told the accountant when it made the draft. */
+  id: z.string().regex(/^[A-Za-z0-9_-]{6,64}$/),
+});
+export type DidoxDeleteDraftInput = z.infer<typeof DidoxDeleteDraftInput>;
 
 /**
  * An invoice to be made in Didox as a DRAFT (not signed, not sent). The model reads the invoice from 1C and
@@ -378,6 +409,8 @@ export const AI_TOOLS = {
   propose_didox_invoices: DidoxInvoicesInput,
   propose_didox_draft: DidoxDraftInput,
   propose_didox_document: DidoxDocumentInput,
+  propose_didox_reconciliation: DidoxReconciliationInput,
+  propose_didox_delete_draft: DidoxDeleteDraftInput,
   propose_bank_payments: BankPaymentsInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -395,6 +428,8 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_didox_invoices",
   "propose_didox_draft",
   "propose_didox_document",
+  "propose_didox_reconciliation",
+  "propose_didox_delete_draft",
   "propose_bank_payments",
   "propose_post_created",
   "propose_delete_marked",

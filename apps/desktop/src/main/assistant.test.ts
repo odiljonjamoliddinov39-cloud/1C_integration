@@ -353,6 +353,7 @@ describe("assistant", () => {
         "1.2.860.3.16.1.1=302936161,CN=ИВАНОВ ИВАН,O=FIDES PROJECTS XK,SERIALNUMBER=5A3C0F11,VALIDFROM=2025.01.01 00:00:00,VALIDTO=2099.01.01 23:59:59";
       const INVOICE_REF = "11111111-1111-4111-8111-111111111111";
       const ACT_REF = "22222222-2222-4222-8222-222222222222";
+      const WORK_REF = "33333333-3333-4333-8333-333333333333";
       const draft = {
         onec: { object: "Документ.СчетФактураВыданный", ref: INVOICE_REF },
         title: "Hisob-faktura 1294",
@@ -409,9 +410,35 @@ describe("assistant", () => {
           deletionMark: false,
           version: 1,
         });
+        made.base.objects.set(WORK_REF, {
+          object: "Документ.АктВыполненныхРабот",
+          fields: { Номер: "0000-000013", Дата: "2026-10-19T00:00:00" },
+          posted: false,
+          deletionMark: false,
+          version: 1,
+        });
+        // The reconciliation act as 1C keeps it: the period, the contract and the rows of the company's side.
         made.base.objects.set(ACT_REF, {
           object: "Документ.АктСверкиВзаиморасчетов",
-          fields: { Номер: "0000-000013", Дата: "2026-10-19T00:00:00" },
+          fields: {
+            Номер: "0000-000013",
+            Дата: "2026-10-19T00:00:00",
+            ДатаНачала: "2026-01-01T00:00:00",
+            ДатаОкончания: "2026-10-19T00:00:00",
+            Контрагент: { name: "NAVRO'Z-PTK MCHJ" },
+            ДоговорКонтрагента: "№85 от 30.12.2025",
+          },
+          tables: {
+            ПоДаннымОрганизации: [
+              {
+                Дебет: 10000000,
+                Представление: "Списание с расчетного счета 0000-000000000336 от 28.01.2026",
+                Дата: "2026-01-28T00:00:06",
+                Договор: "№85 от 30.12.2025",
+              },
+            ],
+            ПоДаннымКонтрагента: [],
+          },
           posted: false,
           deletionMark: false,
           version: 1,
@@ -524,7 +551,7 @@ describe("assistant", () => {
       describe("1C first: a Didox document is made only from a saved 1C document", () => {
         const act = {
           title: "Akt sverka",
-          type: "reconciliation_act",
+          type: "work_act",
           number: "0000-000013",
           date: "2026-10-19",
           buyerInn: "201607534",
@@ -548,7 +575,7 @@ describe("assistant", () => {
         it("makes the draft of an act that is saved in 1C with that number and date", async () => {
           const { server, result } = await run({
             ...act,
-            onec: { object: "Документ.АктСверкиВзаиморасчетов", ref: ACT_REF },
+            onec: { object: "Документ.АктВыполненныхРабот", ref: WORK_REF },
           });
           expect(result.status).toBe("draft_created");
           expect(server.drafts).toHaveLength(1);
@@ -571,7 +598,7 @@ describe("assistant", () => {
               ...act,
               number: "0000-000016",
               date: "2026-10-20",
-              onec: { object: "Документ.АктСверкиВзаиморасчетов", ref: ACT_REF },
+              onec: { object: "Документ.АктВыполненныхРабот", ref: WORK_REF },
             }),
             pdf,
           );
@@ -590,6 +617,92 @@ describe("assistant", () => {
           const result = resultOf(made.proxy.requests) as { problems: { code: string }[] };
           expect(result.problems.map((p) => p.code)).toEqual(["ONEC_NOT_POSTED"]);
           expect(made.server.drafts).toHaveLength(0);
+        });
+      });
+
+      describe("a reconciliation act built from the 1C act, and a wrong draft deleted", () => {
+        async function run(
+          script: ReturnType<typeof proposeThenAnswer>,
+          before?: (m: ReturnType<typeof didoxSetup>) => void,
+        ) {
+          const made = didoxSetup(script);
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          before?.(made);
+          const sending = made.assistant.send({ companyId: made.company.id, text: "?" });
+          await answerCards(made.events, made.assistant, true);
+          await sending;
+          return made;
+        }
+        const rec = {
+          title: "Akt sverka",
+          onec: { object: "Документ.АктСверкиВзаиморасчетов", ref: ACT_REF },
+          buyerInn: "201607534",
+          openings: [{ ownerDebit: 500 }],
+        };
+
+        it("reads the rows, contract and period from 1C and works the balances out itself", async () => {
+          const made = await run(proposeThenAnswer("propose_didox_reconciliation", rec));
+          const card = made.events.find((e) => e.type === "confirm");
+          expect(card).toMatchObject({
+            proposal: {
+              kind: "didox_reconciliation",
+              act: {
+                number: "0000-000013",
+                from: "2026-01-01",
+                to: "2026-10-19",
+                buyer: { name: "NAVRO'Z-PTK MCHJ" },
+                close: { ownerDebit: "10000500.00", ownerCredit: "0.00" },
+                contracts: [{ number: "85", date: "2025-12-30" }],
+              },
+            },
+          });
+          expect(made.server.drafts).toHaveLength(1);
+          expect(made.server.drafts[0]?.docType).toBe("052");
+          expect(made.server.drafts[0]?.body).toMatchObject({
+            VerificationActDoc: { VerificationActNo: "0000-000013" },
+            CloseBalance: { OwnerDebit: 10_000_500 },
+          });
+          expect(resultOf(made.proxy.requests)).toMatchObject({ status: "draft_created", draftId: "DRAFT1" });
+        });
+
+        it("refuses an act with no rows, and touches nothing in Didox", async () => {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_reconciliation", rec));
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          made.base.objects.get(ACT_REF)!.tables = { ПоДаннымОрганизации: [], ПоДаннымКонтрагента: [] };
+          await made.assistant.send({ companyId: made.company.id, text: "?" });
+          const result = resultOf(made.proxy.requests) as { status: string; problems: { code: string }[] };
+          expect(result).toMatchObject({ status: "needs_attention" });
+          expect(result.problems.map((p) => p.code)).toEqual(["NO_ROWS"]);
+          expect(made.server.requests).toHaveLength(0);
+        });
+
+        it("deletes a wrong draft only after the card is confirmed", async () => {
+          const made = await run(proposeThenAnswer("propose_didox_delete_draft", { id: "DRAFT1" }), (m) => {
+            m.server.drafts.push({ docType: "000", body: { name: "15" } });
+          });
+          expect(made.events.find((e) => e.type === "confirm")).toMatchObject({
+            proposal: { kind: "didox_delete", draft: { id: "DRAFT1", number: "15" } },
+          });
+          expect(made.server.drafts).toHaveLength(0);
+          expect(resultOf(made.proxy.requests)).toMatchObject({ status: "draft_deleted", draftId: "DRAFT1" });
+        });
+
+        it("keeps the draft when the user cancels", async () => {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_delete_draft", { id: "DRAFT1" }));
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          made.server.drafts.push({ docType: "000", body: {} });
+          const sending = made.assistant.send({ companyId: made.company.id, text: "?" });
+          await answerCards(made.events, made.assistant, false);
+          await sending;
+          expect(made.server.drafts).toHaveLength(1);
+          expect(resultOf(made.proxy.requests)).toEqual({ status: "declined_by_user" });
+        });
+
+        it("says so when Didox has no such draft", async () => {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_delete_draft", { id: "NOSUCHID" }));
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          await made.assistant.send({ companyId: made.company.id, text: "?" });
+          expect(JSON.stringify(made.proxy.requests[1]?.messages)).toContain("NOT_FOUND");
         });
       });
 

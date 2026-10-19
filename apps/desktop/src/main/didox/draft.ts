@@ -5,8 +5,14 @@
  */
 import type { DidoxClient } from "./client.js";
 import { DidoxError } from "./client.js";
-import type { DidoxDocumentPreview } from "../../shared/ipc.js";
+import type { DidoxDocumentPreview, DidoxReconciliationPreview } from "../../shared/ipc.js";
 import { type LetterInput, letterHtml } from "./letter.js";
+import {
+  type OpeningInput,
+  type ReconAct,
+  type ReconProblem,
+  buildReconciliation,
+} from "./reconciliation.js";
 import {
   type DocumentInput,
   buildDocumentDraft,
@@ -98,6 +104,32 @@ export async function prepareDocumentDraft(
   };
 }
 
+export type PreparedReconciliation =
+  | { ok: true; body: Record<string, unknown>; preview: DidoxReconciliationPreview }
+  | { ok: false; problems: ReconProblem[] };
+
+/** A reconciliation act from the 1C act: the parties are read from Didox, the balances are worked out. */
+export async function prepareReconciliationDraft(
+  client: DidoxClient,
+  act: ReconAct,
+  buyerInn: string,
+  ownTin: string,
+  openings: OpeningInput[],
+  text: string | undefined,
+): Promise<PreparedReconciliation> {
+  if (!/^(\d{9}|\d{14})$/.test(buyerInn))
+    return {
+      ok: false,
+      problems: [{ code: "BAD_TIN", message: `The counterparty's INN "${buyerInn}" is not 9 or 14 digits` }],
+    };
+  const [seller, buyer] = await Promise.all([
+    partyOf(client, ownTin, true),
+    partyOf(client, buyerInn, false),
+  ]);
+  const built = buildReconciliation(act, seller, buyer, openings, text);
+  return built.ok ? { ok: true, body: built.built.body, preview: built.built.preview } : built;
+}
+
 /** Creates the draft in Didox. Returns its id; throws DidoxError when Didox refuses (its words are in the message). */
 export async function createDraft(
   client: DidoxClient,
@@ -113,3 +145,5 @@ export async function createDraft(
 
 /** The path code of a free-form document, for `createDraft`. */
 export { DOCUMENT_DOCTYPE } from "./outgoing.js";
+
+export { RECONCILIATION_DOCTYPE } from "./reconciliation.js";

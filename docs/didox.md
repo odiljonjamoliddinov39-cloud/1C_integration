@@ -231,6 +231,21 @@ Not wired into the app yet: no settings screen, no assistant tool.
    saved 1C document, reads it (`GetObject`) and refuses when it is missing, marked for deletion, not posted (an
    invoice), has another number or date than the Didox document, or when the text does not name that number and
    date. Only a letter and an "other" document need no 1C source.
+
+   **Reconciliation act (type 052)**: `propose_didox_reconciliation` builds Didox's verification act from the saved
+   1C act (`Документ.АктСверкиВзаиморасчетов`): the number, date, period, contract and the rows of both sides
+   (`ПоДаннымОрганизации`, `ПоДаннымКонтрагента`; debit and credit per row) are read from 1C, and every turnover and
+   balance (per contract and in all) is worked out by the app in tiyin: a positive net is a debit, a negative one a
+   credit. The 1C act keeps no balance at the start of the period; the model reads it from the accounts and passes
+   it (per contract when there are several), and the card shows it with the table. The body is the library's
+   `VerificationActDoc`, `VerificationActContracts[].VerificationActContractItems` with `OpenBalance`,
+   `TotalBalance`, `CloseBalance`, and the totals. A counterparty name in 1C that is not Didox's company with that
+   INN, and an empty counterparty side, are warnings on the card.
+
+   **Deleting a draft**: `propose_didox_delete_draft` (a card, then `POST /v1/documents/{id}/delete/draft`,
+   `DELETE` where the server has no POST route; the route is from the Postman collection, its method is not
+   documented). Didox deletes only drafts, so a signed or sent document cannot be removed this way.
+
 5. **Dedup**: a Didox document id is the `externalId` of the 1C record, so a document is never
    entered twice (the PlatformAPI already refuses a second one).
 

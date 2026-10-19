@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ClipboardEvent, type DragEvent, type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  type FormEvent,
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1060,6 +1068,10 @@ function ProposalCard({
             </div>
           )}
         </>
+      ) : proposal.kind === "didox_reconciliation" ? (
+        <DidoxReconciliationBody act={proposal.act} />
+      ) : proposal.kind === "didox_delete" ? (
+        <DidoxDeleteBody draft={proposal.draft} />
       ) : proposal.kind === "didox_document" ? (
         <DidoxDocumentBody document={proposal.document} />
       ) : proposal.kind === "didox_draft" ? (
@@ -1146,9 +1158,13 @@ function ProposalCard({
               ? "assistant.proposal.note"
               : proposal.kind === "delete_marked"
                 ? "assistant.proposal.noteRemove"
-                : proposal.kind === "didox_draft" || proposal.kind === "didox_document"
-                  ? "assistant.proposal.didoxNote"
-                  : "assistant.proposal.noteReceived",
+                : proposal.kind === "didox_delete"
+                  ? "assistant.proposal.didoxDeleteNote"
+                  : proposal.kind === "didox_draft" ||
+                      proposal.kind === "didox_document" ||
+                      proposal.kind === "didox_reconciliation"
+                    ? "assistant.proposal.didoxNote"
+                    : "assistant.proposal.noteReceived",
           )}
         </p>
       )}
@@ -1168,17 +1184,23 @@ function ProposalCard({
               ? sent
                 ? t("assistant.proposal.removing")
                 : t("assistant.proposal.remove", { count: proposal.preview.total })
-              : proposal.kind === "didox_draft" || proposal.kind === "didox_document"
-                ? t(sent ? "assistant.proposal.didoxCreating" : "assistant.proposal.didoxCreate")
-                : sent && proposal.kind === "batch"
-                  ? t("assistant.proposal.batchApplying")
-                  : proposal.kind === "batch"
-                    ? t("assistant.proposal.batchApply", {
-                        count: proposal.items.filter((item) => item.preview).length,
-                      })
-                    : t(
-                        proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create",
-                      )}
+              : proposal.kind === "didox_delete"
+                ? t(sent ? "assistant.proposal.didoxDeleting" : "assistant.proposal.didoxDelete")
+                : proposal.kind === "didox_draft" ||
+                    proposal.kind === "didox_document" ||
+                    proposal.kind === "didox_reconciliation"
+                  ? t(sent ? "assistant.proposal.didoxCreating" : "assistant.proposal.didoxCreate")
+                  : sent && proposal.kind === "batch"
+                    ? t("assistant.proposal.batchApplying")
+                    : proposal.kind === "batch"
+                      ? t("assistant.proposal.batchApply", {
+                          count: proposal.items.filter((item) => item.preview).length,
+                        })
+                      : t(
+                          proposal.kind === "change"
+                            ? "assistant.proposal.apply"
+                            : "assistant.proposal.create",
+                        )}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -1190,6 +1212,10 @@ function ProposalCard({
             number: outcome.document.number,
             date: day(outcome.document.date),
           })}
+        </div>
+      ) : outcome.status === "didox_deleted" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.didoxDeleted", { id: outcome.id })}
         </div>
       ) : outcome.status === "didox_draft" ? (
         <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
@@ -1227,6 +1253,139 @@ function ProposalCard({
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
       )}
     </Card>
+  );
+}
+
+/** A reconciliation act built from the 1C act: both sides' rows by contract, and the balances worked out. */
+function DidoxReconciliationBody({
+  act,
+}: {
+  act: Extract<Proposal, { kind: "didox_reconciliation" }>["act"];
+}) {
+  const { t } = useTranslation();
+  const num = (value: string) =>
+    Number(value) === 0
+      ? "—"
+      : new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2 }).format(Number(value));
+  const balance = (label: string, b: typeof act.open, bold = false) => (
+    <tr className={cn("border-t border-border", bold && "font-semibold")}>
+      <td className="py-1 pr-2" colSpan={2}>
+        {label}
+      </td>
+      <td className="py-1 text-right">{num(b.ownerDebit)}</td>
+      <td className="py-1 text-right">{num(b.ownerCredit)}</td>
+      <td className="py-1 text-right">{num(b.partnerDebit)}</td>
+      <td className="py-1 text-right">{num(b.partnerCredit)}</td>
+    </tr>
+  );
+  return (
+    <>
+      <div>
+        <div className="font-semibold">{t("assistant.proposal.didoxRecTitle")}</div>
+        <div className="text-muted-foreground">
+          № {act.number} · {day(act.date)} · {day(act.from)} – {day(act.to)}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxSeller")}</span>
+          <span className="font-medium">
+            {act.seller.name} · {act.seller.tin}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxBuyer")}</span>
+          <span className="font-medium">
+            {act.buyer.name} · {act.buyer.tin}
+          </span>
+        </div>
+      </div>
+      {act.warnings.map((warning) => (
+        <div
+          key={warning}
+          className="rounded-lg bg-amber-100 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100"
+        >
+          {warning}
+        </div>
+      ))}
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-xs tabular-nums">
+          <thead className="sticky top-0 bg-card text-muted-foreground">
+            <tr className="text-left">
+              <th className="py-1 pr-2 font-medium">{t("assistant.proposal.didoxRecDate")}</th>
+              <th className="py-1 pr-2 font-medium">{t("assistant.proposal.didoxRecOperation")}</th>
+              <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxRecOwnerDt")}</th>
+              <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxRecOwnerKt")}</th>
+              <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxRecPartnerDt")}</th>
+              <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxRecPartnerKt")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {act.contracts.map((c) => (
+              <Fragment key={`${c.number}|${c.date}`}>
+                <tr className="border-t border-border bg-muted/40 font-medium">
+                  <td className="py-1" colSpan={6}>
+                    {t("assistant.proposal.didoxContract")} № {c.number} · {day(c.date)}
+                  </td>
+                </tr>
+                {balance(t("assistant.proposal.didoxRecOpen"), c.open)}
+                {c.rows.map((row, i) => (
+                  <tr key={i} className="border-t border-border align-top">
+                    <td className="py-1 pr-2">
+                      {row.ownerDate ? day(row.ownerDate) : row.partnerDate ? day(row.partnerDate) : ""}
+                    </td>
+                    <td className="py-1 pr-2">{row.ownerName || row.partnerName}</td>
+                    <td className="py-1 text-right">{num(row.ownerDebit)}</td>
+                    <td className="py-1 text-right">{num(row.ownerCredit)}</td>
+                    <td className="py-1 text-right">{num(row.partnerDebit)}</td>
+                    <td className="py-1 text-right">{num(row.partnerCredit)}</td>
+                  </tr>
+                ))}
+                {balance(t("assistant.proposal.didoxRecTurnover"), c.total)}
+                {balance(t("assistant.proposal.didoxRecClose"), c.close, true)}
+              </Fragment>
+            ))}
+            {act.contracts.length > 1 && (
+              <>
+                {balance(t("assistant.proposal.didoxRecAllOpen"), act.open)}
+                {balance(t("assistant.proposal.didoxRecAllTurnover"), act.turnover)}
+                {balance(t("assistant.proposal.didoxRecAllClose"), act.close, true)}
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/** A wrong draft about to be deleted in Didox. */
+function DidoxDeleteBody({ draft }: { draft: Extract<Proposal, { kind: "didox_delete" }>["draft"] }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div>
+        <div className="font-semibold">{t("assistant.proposal.didoxDeleteTitle")}</div>
+        <div className="text-muted-foreground">{draft.id}</div>
+      </div>
+      <div className="space-y-1">
+        {draft.number && (
+          <div className="flex gap-2">
+            <span className="w-48 shrink-0 text-muted-foreground">№</span>
+            <span className="font-medium">
+              {draft.number}
+              {draft.date ? ` · ${day(draft.date)}` : ""}
+            </span>
+          </div>
+        )}
+        {draft.recipient && (
+          <div className="flex gap-2">
+            <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxBuyer")}</span>
+            <span className="font-medium">{draft.recipient}</span>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
