@@ -103,15 +103,13 @@ describe("DidoxClient", () => {
     expect(server.requests.filter((r) => /^\/v1\/auth\/\d+\/token$/.test(r.url.pathname))).toHaveLength(2);
   });
 
-  it("downloads a document's archive from the link, without sending our keys to the link", async () => {
+  it("reads a document's print form from the base64 Didox answers with", async () => {
     const { server, client } = setup();
-    server.archives.set("doc-1", new Uint8Array([0x50, 0x4b, 3, 4]));
-    const bytes = await client.downloadArchive("doc-1");
-    expect([...bytes]).toEqual([0x50, 0x4b, 3, 4]);
-    const file = server.requests.at(-1);
-    expect(file?.url.host).toBe("files.didox.test");
-    expect(file?.headers["user-key"]).toBeUndefined();
-    expect(file?.headers["api-key"]).toBeUndefined();
+    server.files.set("doc-1", new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+    const bytes = await client.documentFile("doc-1");
+    expect([...bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
+    expect(server.requests.at(-1)?.url.pathname).toBe("/v1/documents/doc-1/file/true");
+    await expect(client.documentFile("nope")).rejects.toMatchObject({ code: "DIDOX_HTTP", status: 404 });
   });
 
   it("says what failed, in codes", async () => {

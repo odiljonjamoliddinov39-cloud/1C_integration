@@ -105,8 +105,10 @@ yes/no/unknown]`.
   for agent, 8 signed by agent, 40 not valid, 60 partner waits for agent), `owner` (0 incoming, 1
   outgoing), `page`, `limit` (default 20), `dateFrom`/`dateTo`, `partner` (tax number).
 - `GET /v1/documents/statistics/all` (counts, same filters); `GET /v1/documents/{id}` (details).
-- **`GET /v1/documents/{id}/downloadrequest`: a link, valid 5 minutes, to the archive of the document**
-  (the same zip the Didox site offers: XML, PDF, signatures). The app already reads those zips.
+- ~~`GET /v1/documents/{id}/downloadrequest`~~ (a link to the archive zip) is in an old Postman collection;
+  production answers 500 "route … could not be found" and Didox's own 1C library never uses it. The
+  library reads a document with `GET /v1/documents/{id}` (the data) and `GET /v1/documents/{id}/file/true`
+  (`{file: {data: base64}}`, the print form), so the app does the same.
 - Print forms: `/v1/documents/{id}/html/{locale}`, `/pdf/{locale}`, `/file/false`.
 - Sending: `POST /v1/documents/{docType}/create` makes a draft (the body is Didox's structure; for an
   act `ActDoc`, `ContractDoc`, `SellerTin`, `BuyerTin`, `ProductList.Products[]` with `Name`,
@@ -181,15 +183,14 @@ https page), send one JSON message, take one answer, close.
 
 `apps/desktop/src/main/didox/`, with tests and fakes (`FakeDidox`, `FakeSigner`, a fake E-IMZO):
 
-- `client.ts`: `DidoxClient` (sign-in through a `DidoxSigner`, listing, details, archive download,
+- `client.ts`: `DidoxClient` (sign-in through a `DidoxSigner`, listing, details, print form,
   create/sign/reject).
 - `eimzo.ts`: `EImzoClient` (the local service above), `EImzoSigner` (picks the key by serial number or
   INN, else the only valid one; opens it once; signs; reopens it if E-IMZO forgot the id).
 
 - `test-run.ts` and the **"Didox test" button** (Companies screen, top right): asks E-IMZO for its version
   and keys, signs in to Didox with the chosen key (E-IMZO opens its own password window), then reads
-  the profile, the five newest incoming documents and the archive of the first one (through the zip
-  reader), showing each step's answer. It changes nothing. Address (empty: the dev server), the partner
+  the profile, the five newest incoming documents, the first one's data and its print form, showing each step's answer. It changes nothing. Address (empty: the dev server), the partner
   `api-key` and the key to use are fields of the dialog; nothing is saved.
 
 Not wired into the app yet: no settings screen, no assistant tool.
@@ -206,8 +207,8 @@ Not wired into the app yet: no settings screen, no assistant tool.
    pattern as `onec-client` and `FakePlatform`), so everything below is tested without Didox.
 2. **Connection per company**: the company's Didox sign-in on the PC, stored encrypted like the 1C
    passwords. It never goes to our server.
-3. **Incoming**: tools for the assistant to list incoming documents and read them through the
-   archive link (the zip reader and the XML-first rule already exist); the existing received-invoice,
+3. **Incoming**: tools for the assistant to list incoming documents and read them through
+   `GET /v1/documents/{id}` and the print form; the existing received-invoice,
    services and change tools do the entering. Documents whose buyer is another
    organization are listed, not entered (already in the prompt).
 4. **Outgoing**: a proposal card for sending (what, to whom, the amounts), the accountant confirms,
