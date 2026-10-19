@@ -61,6 +61,13 @@ export interface DidoxKeyView {
   validTo: string | null;
 }
 
+/** How a company reaches Didox: the API address and the E-IMZO key (its serial number) to sign in with. Not secret. */
+export const DidoxSettings = z.object({
+  baseUrl: z.string().trim().min(1).max(200),
+  serialNumber: z.string().trim().min(1).max(100),
+});
+export type DidoxSettings = z.infer<typeof DidoxSettings>;
+
 export const DidoxTestInput = z.object({
   /** Didox's address; the development server when empty. */
   baseUrl: z.string().trim().max(200).optional(),
@@ -102,6 +109,8 @@ export interface CompanyView {
   lastStatus: ConnectorStatus | null;
   lastSyncAt: string | null;
   aiEnabled: boolean;
+  /** Set once the Didox test worked and was saved for this company; null: Didox is not connected. */
+  didox: DidoxSettings | null;
 }
 
 /** The license as the desktop sees it (TD §4 "Licensing behavior"). */
@@ -259,8 +268,31 @@ export interface BatchItem {
 export type BatchItemResult =
   { ok: true; state: ObjectState } | { ok: false; code: string; message: string } | null;
 
+/** An outgoing invoice as the card shows it before the draft is made in Didox (sums as "1234.50"). */
+export interface DidoxDraftPreview {
+  number: string;
+  date: string;
+  seller: { tin: string; name: string };
+  buyer: { tin: string; name: string };
+  contract: { number: string; date: string } | null;
+  lines: {
+    n: number;
+    name: string;
+    unit: string;
+    qty: number;
+    price: string;
+    amount: string;
+    vatRate: number;
+    vat: string;
+    total: string;
+  }[];
+  totals: { amount: string; vat: string; total: string };
+}
+
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
+  /** An invoice to be made in Didox as a draft (not signed, not sent). */
+  | { kind: "didox_draft"; draft: DidoxDraftPreview }
   | { kind: "change"; preview: ChangePreview }
   | { kind: "batch"; title: string; items: BatchItem[] }
   | { kind: "invoice_issued"; sale: SaleSummary }
@@ -274,6 +306,7 @@ export type ProposalOutcome =
   | { status: "applied"; state: ObjectState }
   | { status: "batch"; results: BatchItemResult[] }
   | { status: "removed"; result: DeleteMarkedResult }
+  | { status: "didox_draft"; id: string }
   | { status: "failed"; code: string; message: string };
 
 export interface ElapsedParts {
@@ -370,6 +403,8 @@ export interface PlatformBridge {
     keys(): Promise<Result<DidoxKeyView[]>>;
     /** Signs in to Didox with the key and reads what it answers, step by step; E-IMZO asks for the password. */
     test(input: DidoxTestInput): Promise<Result<DidoxTestResult>>;
+    /** Keeps (or, with null, forgets) how this company reaches Didox, for the assistant. */
+    save(companyId: string, settings: DidoxSettings | null): Promise<Result<CompanyView>>;
   };
   assistant: {
     /** Turns the assistant on or off for a company (on only after the user agreed). */

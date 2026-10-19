@@ -211,9 +211,13 @@ Not wired into the app yet: no settings screen, no assistant tool.
    `GET /v1/documents/{id}` and the print form; the existing received-invoice,
    services and change tools do the entering. Documents whose buyer is another
    organization are listed, not entered (already in the prompt).
-4. **Outgoing**: a proposal card for sending (what, to whom, the amounts), the accountant confirms,
-   the document is signed (E-IMZO) and sent; the status comes back to the chat. Nothing is sent
-   without that confirmation.
+4. **Outgoing**: step 1 is built: the tool `propose_didox_draft` makes an invoice that exists in 1C a **draft** in
+   Didox, after the accountant confirms a card (seller, buyer, lines and the sums the app worked out). It never
+   signs and never sends. The body follows Didox's own 1C library (`FacturaDoc`, `ContractDoc`, `Seller` and
+   `Buyer` from Didox's profiles of the two INNs, `ProductList.Products[]`, the totals) and is created with
+   `POST /v1/documents/002/create`. How a company reaches Didox (address and E-IMZO key serial, not secret) is
+   saved from the Didox test dialog ("Save for this company"). Step 2, signing (`/tosign`, E-IMZO, `/sign`) and
+   sending, comes only after a draft made this way has been checked on real Didox.
 5. **Dedup**: a Didox document id is the `externalId` of the 1C record, so a document is never
    entered twice (the PlatformAPI already refuses a second one).
 

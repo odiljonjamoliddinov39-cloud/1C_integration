@@ -30,7 +30,7 @@ describe("Didox test run", () => {
       "eimzo:true",
       "keys:true",
       "login:true",
-      "profile:false", // the fake has no profile endpoint: a step that fails does not stop the others
+      "profile:true",
       "documents:true",
       "document:true",
       "file:true",

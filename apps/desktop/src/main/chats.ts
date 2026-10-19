@@ -33,6 +33,8 @@ export interface StoredChat extends ChatSummary {
   bank?: BankStatement[];
   /** Payments already entered into 1C from this chat, as "file#row". */
   bankDone?: string[];
+  /** Invoices this chat made in Didox as drafts: "number|date|buyer INN" and the draft's id. */
+  didoxDrafts?: { key: string; id: string }[];
   /** Documents this chat created in 1C and left unposted: what "post them" means. */
   created?: CreatedDocument[];
 }

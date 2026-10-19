@@ -317,6 +317,16 @@ export class DidoxClient {
     return this.request("GET", `/v1/profile/${encodeURIComponent(tin)}`);
   }
 
+  /** Didox's list of units of measure (their ids go into the lines of a document). */
+  measures(): Promise<unknown> {
+    return this.request("GET", "/v1/measures/all");
+  }
+
+  /** The VAT registration code and status of a company. */
+  vatStatus(tin: string): Promise<unknown> {
+    return this.request("GET", `/v1/profile/vatRegStatus/${encodeURIComponent(tin)}`);
+  }
+
   listDocuments(query: DocumentQuery = {}): Promise<unknown> {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {

@@ -1060,6 +1060,8 @@ function ProposalCard({
             </div>
           )}
         </>
+      ) : proposal.kind === "didox_draft" ? (
+        <DidoxDraftBody draft={proposal.draft} />
       ) : proposal.kind === "invoice_issued" ? (
         <>
           <div>
@@ -1142,7 +1144,9 @@ function ProposalCard({
               ? "assistant.proposal.note"
               : proposal.kind === "delete_marked"
                 ? "assistant.proposal.noteRemove"
-                : "assistant.proposal.noteReceived",
+                : proposal.kind === "didox_draft"
+                  ? "assistant.proposal.didoxNote"
+                  : "assistant.proposal.noteReceived",
           )}
         </p>
       )}
@@ -1162,13 +1166,17 @@ function ProposalCard({
               ? sent
                 ? t("assistant.proposal.removing")
                 : t("assistant.proposal.remove", { count: proposal.preview.total })
-              : sent && proposal.kind === "batch"
-                ? t("assistant.proposal.batchApplying")
-                : proposal.kind === "batch"
-                  ? t("assistant.proposal.batchApply", {
-                      count: proposal.items.filter((item) => item.preview).length,
-                    })
-                  : t(proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create")}
+              : proposal.kind === "didox_draft"
+                ? t(sent ? "assistant.proposal.didoxCreating" : "assistant.proposal.didoxCreate")
+                : sent && proposal.kind === "batch"
+                  ? t("assistant.proposal.batchApplying")
+                  : proposal.kind === "batch"
+                    ? t("assistant.proposal.batchApply", {
+                        count: proposal.items.filter((item) => item.preview).length,
+                      })
+                    : t(
+                        proposal.kind === "change" ? "assistant.proposal.apply" : "assistant.proposal.create",
+                      )}
           </Button>
           <Button size="sm" variant="outline" disabled={sent} onClick={() => decide(false)}>
             {t("assistant.proposal.cancel")}
@@ -1180,6 +1188,10 @@ function ProposalCard({
             number: outcome.document.number,
             date: day(outcome.document.date),
           })}
+        </div>
+      ) : outcome.status === "didox_draft" ? (
+        <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
+          {t("assistant.proposal.didoxDone", { id: outcome.id })}
         </div>
       ) : outcome.status === "removed" ? (
         <div className="rounded-lg bg-success/15 px-3 py-2 font-medium text-success">
@@ -1213,6 +1225,79 @@ function ProposalCard({
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
       )}
     </Card>
+  );
+}
+
+/** An invoice about to be made in Didox as a draft: who, what, and the sums the app worked out. */
+function DidoxDraftBody({ draft }: { draft: Extract<Proposal, { kind: "didox_draft" }>["draft"] }) {
+  const { t } = useTranslation();
+  const num = (value: string) =>
+    new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2 }).format(Number(value));
+  return (
+    <>
+      <div>
+        <div className="font-semibold">{t("assistant.proposal.didoxTitle")}</div>
+        <div className="text-muted-foreground">
+          {t("assistant.proposal.didoxInvoice", { number: draft.number, date: day(draft.date) })}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxSeller")}</span>
+          <span className="font-medium">
+            {draft.seller.name} · {draft.seller.tin}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxBuyer")}</span>
+          <span className="font-medium">
+            {draft.buyer.name} · {draft.buyer.tin}
+          </span>
+        </div>
+        {draft.contract && (
+          <div className="flex gap-2">
+            <span className="w-48 shrink-0 text-muted-foreground">
+              {t("assistant.proposal.didoxContract")}
+            </span>
+            <span className="font-medium">
+              № {draft.contract.number} · {day(draft.contract.date)}
+            </span>
+          </div>
+        )}
+      </div>
+      <table className="w-full text-xs tabular-nums">
+        <thead className="text-muted-foreground">
+          <tr className="text-left">
+            <th className="py-1 font-medium">{t("assistant.proposal.item")}</th>
+            <th className="py-1 text-right font-medium">{t("assistant.proposal.quantity")}</th>
+            <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxAmount")}</th>
+            <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxVat")}</th>
+            <th className="py-1 text-right font-medium">{t("assistant.proposal.didoxTotal")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {draft.lines.map((line) => (
+            <tr key={line.n} className="border-t border-border">
+              <td className="py-1 pr-2">{line.name}</td>
+              <td className="py-1 text-right">
+                {line.qty} {line.unit}
+              </td>
+              <td className="py-1 text-right">{num(line.amount)}</td>
+              <td className="py-1 text-right">
+                {num(line.vat)} ({line.vatRate}%)
+              </td>
+              <td className="py-1 text-right">{num(line.total)}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-border font-semibold">
+            <td className="py-1" colSpan={2} />
+            <td className="py-1 text-right">{num(draft.totals.amount)}</td>
+            <td className="py-1 text-right">{num(draft.totals.vat)}</td>
+            <td className="py-1 text-right">{num(draft.totals.total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </>
   );
 }
 

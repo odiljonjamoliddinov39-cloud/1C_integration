@@ -200,6 +200,9 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.billingRefresh, () => handlers.billingRefresh());
   ipcMain.handle(CHANNELS.didoxKeys, () => handlers.didoxKeys());
   ipcMain.handle(CHANNELS.didoxTest, (_e, input: unknown) => handlers.didoxTest(input));
+  ipcMain.handle(CHANNELS.didoxSave, (_e, id: unknown, settings: unknown) =>
+    handlers.didoxSave(id, settings),
+  );
   ipcMain.handle(CHANNELS.assistantEnable, (_e, id: unknown, enabled: unknown) =>
     handlers.assistantEnable(id, enabled),
   );

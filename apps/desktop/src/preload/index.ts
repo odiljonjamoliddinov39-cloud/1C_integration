@@ -34,6 +34,7 @@ const bridge: PlatformBridge = {
   didox: {
     keys: () => ipcRenderer.invoke(CHANNELS.didoxKeys),
     test: (input) => ipcRenderer.invoke(CHANNELS.didoxTest, input),
+    save: (companyId, settings) => ipcRenderer.invoke(CHANNELS.didoxSave, companyId, settings),
   },
   assistant: {
     enable: (companyId, enabled) => ipcRenderer.invoke(CHANNELS.assistantEnable, companyId, enabled),

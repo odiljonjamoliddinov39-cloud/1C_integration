@@ -35,6 +35,7 @@ import {
   type DeleteMarkedResult,
   type BankPaymentsInput,
   type PostCreatedInput,
+  type DidoxDraftInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -82,7 +83,10 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import type { BankStatement } from "./bank/statement.js";
+import { DidoxClient, DidoxError } from "./didox/client.js";
 import { type DidoxDocument, batchOf, didoxKey } from "./didox/document.js";
+import { createDraft, prepareDraft } from "./didox/draft.js";
+import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
 import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
@@ -168,6 +172,8 @@ export interface AssistantDeps {
   traceLog?: TraceLog;
   /** The plan's limits: read-only companies, and the monthly counts of imports and audits. */
   billing?: Pick<BillingState, "isReadOnly" | "countImport" | "countAudit">;
+  /** E-IMZO and the network for Didox; the real ones unless a test hands in fakes. */
+  didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
 }
 
 const READ_ONLY_MESSAGE =
@@ -1052,6 +1058,12 @@ export class AssistantService {
         if (applied.ok && change.action === "create") this.noteCreated(chat, applied.data as ObjectState);
         return applied;
       };
+    } else if (tool === "propose_didox_draft") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const prepared = await this.prepareDidoxDraft(chat, input as DidoxDraftInput);
+      if ("early" in prepared) return prepared.early;
+      proposal = prepared.proposal;
+      create = prepared.create;
     } else if (tool === "propose_invoice_issued") {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
       const preview = await this.deps.connector.tool(connection, "previewInvoiceIssued", input);
@@ -1146,9 +1158,100 @@ export class AssistantService {
       decided({ status: "applied", state });
       return { ok: true, data: { status: "done", action: proposal.preview.action, object: state } };
     }
+    if (proposal.kind === "didox_draft") {
+      const { id } = result.data as { id: string };
+      decided({ status: "didox_draft", id });
+      return {
+        ok: true,
+        data: {
+          status: "draft_created",
+          draftId: id,
+          note: "A DRAFT only: it is not signed and not sent. The accountant checks and signs it in Didox.",
+        },
+      };
+    }
     const document = result.data as CreateInvoiceResult;
     decided({ status: "created", document });
     return { ok: true, data: { status: document.duplicate ? "already_exists" : "created", document } };
+  }
+
+  /** The company's Didox client (one per saved address and key, so the key's password is asked once). */
+  private readonly didoxClients = new Map<string, { key: string; client: DidoxClient }>();
+
+  private didoxClient(companyId: string): DidoxClient | null {
+    const settings = this.deps.store.company(companyId).didox;
+    if (!settings) return null;
+    const key = `${settings.baseUrl}|${settings.serialNumber}`;
+    const cached = this.didoxClients.get(companyId);
+    if (cached?.key === key) return cached.client;
+    const client = new DidoxClient(
+      { baseUrl: settings.baseUrl, ...(this.deps.didox?.fetch ? { fetch: this.deps.didox.fetch } : {}) },
+      new EImzoSigner(this.deps.didox?.eimzo ?? new EImzoClient(), { serialNumber: settings.serialNumber }),
+    );
+    this.didoxClients.set(companyId, { key, client });
+    return client;
+  }
+
+  /**
+   * An invoice for Didox: the parties and units are read from Didox (E-IMZO may ask for the key's password
+   * the first time), the card shows the sums the app worked out, and a confirmation makes a DRAFT there.
+   */
+  private async prepareDidoxDraft(
+    chat: StoredChat,
+    input: DidoxDraftInput,
+  ): Promise<{ early: ToolResult } | { proposal: Proposal; create: () => Promise<ToolResult> }> {
+    const client = this.didoxClient(chat.companyId);
+    if (!client) {
+      return {
+        early: {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message:
+            "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox " +
+            "test button, run the test, choose the signature key and press Save for this company.",
+        },
+      };
+    }
+    const key = [input.number, input.date, input.buyerInn].join("|");
+    const known = chat.didoxDrafts?.find((d) => d.key === key);
+    if (known) return { early: { ok: true, data: { status: "already_exists", draftId: known.id } } };
+    const failure = (e: unknown): ToolResult => {
+      if (e instanceof DidoxError || e instanceof EImzoError)
+        return { ok: false, code: e.code, message: e.message };
+      return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
+    };
+    let prepared: Awaited<ReturnType<typeof prepareDraft>>;
+    try {
+      prepared = await prepareDraft(
+        client,
+        {
+          number: input.number,
+          date: input.date,
+          buyerTin: input.buyerInn,
+          contract: input.contract,
+          lines: input.lines,
+        },
+        this.deps.store.company(chat.companyId).inn,
+      );
+    } catch (e) {
+      return { early: failure(e) };
+    }
+    if (!prepared.ok)
+      return { early: { ok: true, data: { status: "needs_attention", problems: prepared.problems } } };
+    const { body, preview } = prepared;
+    return {
+      proposal: { kind: "didox_draft", draft: preview },
+      create: async () => {
+        try {
+          const id = await createDraft(client, body);
+          chat.didoxDrafts = [...(chat.didoxDrafts ?? []), { key, id }];
+          this.save(chat);
+          return { ok: true, data: { id } };
+        } catch (e) {
+          return failure(e);
+        }
+      },
+    };
   }
 
   /**
@@ -1813,6 +1916,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_didox_invoices") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
+  }
+  if (name === "propose_didox_draft") {
+    const draft = input as { number: string; title: string };
+    return `${draft.number} · ${draft.title}`;
   }
   if (name === "propose_post_created") {
     const batch = input as { title: string };

@@ -12,6 +12,7 @@ import {
   type AppInfo,
   type BillingView,
   type DidoxKeyView,
+  DidoxSettings,
   DidoxTestInput,
   type DidoxTestResult,
   type ChatSummary,
@@ -210,6 +211,16 @@ export function createHandlers({
           ...(didox?.fetch ? { fetch: didox.fetch } : {}),
         }),
       };
+    },
+
+    didoxSave: async (id: unknown, raw: unknown): Promise<Result<CompanyView>> => {
+      if (raw === null) return { ok: true, data: store.setDidox(String(id), null) };
+      const settings = DidoxSettings.safeParse(raw);
+      if (!settings.success) return invalid(settings.error);
+      if (!/^https:\/\//i.test(settings.data.baseUrl)) {
+        return { ok: false, code: "VALIDATION", message: "Didox's address must start with https://" };
+      }
+      return { ok: true, data: store.setDidox(String(id), settings.data) };
     },
 
     removeCompany: async (id: unknown): Promise<void> => {
