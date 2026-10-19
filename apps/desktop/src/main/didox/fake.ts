@@ -3,16 +3,23 @@ import type { DidoxSigner, Stamper } from "./client.js";
 /** A signer that signs nothing real: for tests and the demo, where there is no E-IMZO. */
 export class FakeSigner implements DidoxSigner {
   readonly signed: string[] = [];
-  constructor(private readonly serial = "5A3C0F") {}
+  constructor(
+    private readonly serial = "5A3C0F",
+    private readonly tax = "302936161",
+  ) {}
   async serialNumber(): Promise<string> {
     return this.serial;
+  }
+  async taxId(): Promise<string> {
+    return this.tax;
   }
   async pkcs7(data: string, stamp?: Stamper): Promise<string> {
     this.signed.push(data);
     const pkcs7 = Buffer.from(`PKCS7:${data}`).toString("base64");
     if (!stamp) return pkcs7;
-    const token = await stamp({ pkcs7, signatureHex: Buffer.from(data).toString("hex") });
-    return Buffer.from(`TS:${token}:${pkcs7}`).toString("base64");
+    const stamped = await stamp({ pkcs7, signatureHex: Buffer.from(data).toString("hex") });
+    if (stamped.attached) return stamped.value;
+    return Buffer.from(`TS:${stamped.value}:${pkcs7}`).toString("base64");
   }
 }
 
@@ -35,14 +42,40 @@ export class FakeDidox {
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
   private issued = 0;
-  /** What /v1/dsvs/gettimestamp understands; anything else gets the empty token the real one gives. */
-  timestampTakes: "signature-json" | "signature-text" | "pkcs7-json" | "pkcs7-text" = "signature-json";
-  /** A Didox with no /v1/dsvs/gettimestamp (nginx answers 405), and one whose sign-in needs no time stamp. */
+  /** Didox puts the time stamp token into the PKCS#7 itself (`isAttachedPkcs7`), instead of giving the token. */
+  attachesStamp = false;
+  /** The older Didox: no /v1/auth/{taxId}/token, only /v1/auth/login. */
+  hasPersonLogin = true;
+  /** A Didox with no time stamp service (nginx answers 405), and one whose sign-in needs no time stamp. */
   hasTimestampEndpoint = true;
   requiresTimestamp = true;
   /** Makes the next authorized request answer 401, as a token that lapsed. */
   expireTokens(): void {
     this.tokens.clear();
+  }
+
+  /** The INNs the company's token was asked for. */
+  readonly companyTokens: string[] = [];
+
+  /** A sign-in with a signature: refused without the time stamp the sign-in requires. */
+  private signIn(
+    signature: string | undefined,
+    json: (value: unknown, status?: number) => Response,
+  ): Response {
+    if (!signature) return json({ error: "no signature" }, 400);
+    // The fake signer writes "TS:<token>:…", the fake E-IMZO "STAMPED(<serial>,<token>):…".
+    const stamp = /^(?:TS:|STAMPED\([^,]*,)([^:)]*)/.exec(Buffer.from(signature, "base64").toString())?.[1];
+    if (
+      this.requiresTimestamp &&
+      !Buffer.from(stamp ?? "", "base64")
+        .toString()
+        .startsWith("TST(")
+    ) {
+      return json({ error: "Unauthorized. Invalid signature: Eimzo fail. timestamp is required" }, 401);
+    }
+    const token = `token-${++this.issued}`;
+    this.tokens.add(token);
+    return json({ token, related_companies: [] });
   }
 
   readonly fetch: typeof fetch = async (input, init) => {
@@ -63,39 +96,41 @@ export class FakeDidox {
     }
     const path = url.pathname;
     if (path.startsWith("/v1/auth/authId/")) return json({ authId: `auth-${path.split("/").pop()}` });
-    if (path === "/v1/dsvs/gettimestamp") {
+    if (path === "/v1/dsvs/timestamp" || path === "/v1/dsvs/gettimestamp") {
       if (!this.hasTimestampEndpoint) {
         return new Response("<html><head><title>405 Not Allowed</title></head></html>", { status: 405 });
       }
-      const [what, how] = this.timestampTakes.split("-") as ["signature" | "pkcs7", "json" | "text"];
-      const sent = typeof body === "string" ? body : (body as Record<string, string> | undefined)?.[what];
-      const fits = (how === "text") === (typeof body === "string") && Boolean(sent);
-      const hex = what === "signature" && fits && /^[0-9a-f]+$/.test(String(sent));
-      const understood = fits && (what === "pkcs7" || hex);
+      // Both the PKCS#7 and the signature value are asked for, as Didox's own library sends them.
+      const sent = body as { pkcs7?: string; signatureHex?: string } | undefined;
+      if (!sent?.pkcs7 || !sent.signatureHex) {
+        return json({ success: true, timeStampTokenB64: "", isAttachedPkcs7: false });
+      }
+      const token = Buffer.from(`TST(${sent.signatureHex})`).toString("base64");
       return json({
         success: true,
-        timeStampTokenB64: understood ? Buffer.from(`TST(${sent})`).toString("base64") : "",
-        isAttachedPkcs7: false,
+        timeStampTokenB64: this.attachesStamp
+          ? Buffer.from(`TS:${token}:${sent.pkcs7}`).toString("base64")
+          : token,
+        isAttachedPkcs7: this.attachesStamp,
       });
+    }
+    const personLogin = /^\/v1\/auth\/(\d+)\/token$/.exec(path);
+    if (personLogin && !this.hasPersonLogin) return json({ error: "not found" }, 404);
+    if (personLogin) {
+      const sent = body as { serialNumber?: string; signature?: string } | undefined;
+      return this.signIn(sent?.signature, json);
+    }
+    const companyLogin = /^\/v1\/auth\/company\/(\d+)\/login$/.exec(path);
+    if (companyLogin) {
+      if (!this.tokens.has(headers["user-key"] ?? "")) return json({ error: "unauthorized" }, 401);
+      const token = `token-${++this.issued}`;
+      this.tokens.add(token);
+      this.companyTokens.push(companyLogin[1] ?? "");
+      return json({ token });
     }
     if (path === "/v1/auth/login") {
       const sent = body as { serialNumber?: string; pkcs7?: string } | undefined;
-      if (!sent?.pkcs7) return json({ error: "no signature" }, 400);
-      // The fake signer writes "TS:<token>:…", the fake E-IMZO "STAMPED(<serial>,<token>):…".
-      const stamp = /^(?:TS:|STAMPED\([^,]*,)([^:)]*)/.exec(
-        Buffer.from(sent.pkcs7, "base64").toString(),
-      )?.[1];
-      if (
-        this.requiresTimestamp &&
-        !Buffer.from(stamp ?? "", "base64")
-          .toString()
-          .startsWith("TST(")
-      ) {
-        return json({ error: "Unauthorized. Invalid signature: Eimzo fail. timestamp is required" }, 401);
-      }
-      const token = `token-${++this.issued}`;
-      this.tokens.add(token);
-      return json({ token });
+      return this.signIn(sent?.pkcs7, json);
     }
     if (!this.tokens.has(headers["user-key"] ?? "")) return json({ error: "unauthorized" }, 401);
     if (path === "/v1/documents") {

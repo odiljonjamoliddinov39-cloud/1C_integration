@@ -44,7 +44,10 @@ describe("E-IMZO", () => {
     const eimzo = new FakeEImzo();
     eimzo.certificates = [cert(ALIAS)];
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
-    const stamped = await signer.pkcs7("x", async ({ signatureHex }) => `token-of-${signatureHex}`);
+    const stamped = await signer.pkcs7("x", async ({ signatureHex }) => ({
+      value: `token-of-${signatureHex}`,
+      attached: false,
+    }));
     expect(Buffer.from(stamped, "base64").toString()).toContain("STAMPED(5a3c0f11,token-of-ab12)");
     expect(eimzo.messages.find((m) => m.name === "attach_timestamp_token_pkcs7")).toMatchObject({
       plugin: "pkcs7",
@@ -57,7 +60,9 @@ describe("E-IMZO", () => {
     eimzo.certificates = [cert(ALIAS)];
     eimzo.omitSignatureValue = true;
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
-    await expect(signer.pkcs7("x", async () => "t")).rejects.toThrow(/answered: success, pkcs7_64/);
+    await expect(signer.pkcs7("x", async () => ({ value: "t", attached: false }))).rejects.toThrow(
+      /answered: success, pkcs7_64/,
+    );
   });
 
   it("names the function an old E-IMZO lacks, and does not take that for a lapsed key", async () => {
@@ -65,7 +70,7 @@ describe("E-IMZO", () => {
     eimzo.certificates = [cert(ALIAS)];
     eimzo.lacks.add("attach_timestamp_token_pkcs7");
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
-    await expect(signer.pkcs7("x", async () => "token")).rejects.toThrow(
+    await expect(signer.pkcs7("x", async () => ({ value: "token", attached: false }))).rejects.toThrow(
       /pkcs7\.attach_timestamp_token_pkcs7: Функция не найдена/,
     );
     // The key was opened once: a missing function is not a lapsed key id.
@@ -84,7 +89,10 @@ describe("E-IMZO", () => {
     eimzo.pkcs7 = signed;
     eimzo.lacks.add("attach_timestamp_token_pkcs7");
     const signer = new EImzoSigner(new EImzoClient({ connect: eimzo.connect }));
-    const stamped = await signer.pkcs7("x", async () => fixture("cms-timestamp-token.b64"));
+    const stamped = await signer.pkcs7("x", async () => ({
+      value: fixture("cms-timestamp-token.b64"),
+      attached: false,
+    }));
     expect(stamped).not.toBe(signed);
     // The 1.2.840.113549.1.9.16.2.14 attribute is in the document.
     expect(Buffer.from(stamped, "base64").includes(Buffer.from("2a864886f70d010910020e", "hex"))).toBe(true);

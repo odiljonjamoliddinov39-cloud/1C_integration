@@ -80,7 +80,7 @@ describe("Didox test run", () => {
 
   it("uses the development server by default", async () => {
     const { run } = setup();
-    expect((await run()).baseUrl).toBe("https://devapi.goodsign.biz/");
+    expect((await run()).baseUrl).toBe("https://testapi2.didox.uz/");
   });
 
   it("finds a document id in the shapes a list may come in", () => {

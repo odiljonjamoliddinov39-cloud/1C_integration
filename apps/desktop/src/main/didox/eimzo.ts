@@ -351,6 +351,11 @@ export class EImzoSigner implements DidoxSigner {
     return (await this.chosen()).serialNumber;
   }
 
+  async taxId(): Promise<string> {
+    const certificate = await this.chosen();
+    return certificate.tin || certificate.pinfl;
+  }
+
   async pkcs7(data: string, stamp?: Stamper): Promise<string> {
     const certificate = await this.chosen();
     const dataBase64 = Buffer.from(data, "utf8").toString("base64");
@@ -383,7 +388,10 @@ export class EImzoSigner implements DidoxSigner {
         `E-IMZO gave no signature value or signer serial to time-stamp (it answered: ${signed.answered.join(", ")})`,
       );
     }
-    const token = await stamp({ pkcs7: signed.pkcs7, signatureHex: signed.signatureHex });
+    const stamped = await stamp({ pkcs7: signed.pkcs7, signatureHex: signed.signatureHex });
+    // Didox already put the token in: that is the signature.
+    if (stamped.attached) return stamped.value;
+    const token = stamped.value;
     try {
       return await this.client.attachTimestamp(signed.pkcs7, signed.signerSerial, token);
     } catch (e) {

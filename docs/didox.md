@@ -121,6 +121,34 @@ yes/no/unknown]`.
 **Not in the collection** (to be seen on the dev server): the shape of the document list and of a
 document's details, the shape of the login answer, and whether the token travels as `user-key`.
 
+## The real protocol: Didox's own 1C library (given by Didox, 2026-10-19)
+
+Didox gave "Библиотека электронных документов для Узбекистана" 3.0.15.1 (a 1C configuration, `uzbled_*`).
+Its common module `uzbled_Операторы_Didox` and the operators catalog's data hold what the Postman collection
+did not show. What the app now follows:
+
+- **Servers**: production `api.didox.uz`, test `testapi2.didox.uz`, port 443 (the library switches by the
+  constant `uzbled_ЭтоТест`). The site is `didox.uz`: it is not the API (it answers 405).
+- **authId**: `GET v1/auth/authId/{serialNumber}` → `{authId}`.
+- **Time stamp**: `POST v1/dsvs/timestamp` with JSON `{"pkcs7": "<E-IMZO's PKCS#7>", "signatureHex":
+"<E-IMZO's signature_hex>"}` (both) → `{"success", "timeStampTokenB64", "isAttachedPkcs7"}`. With
+  `isAttachedPkcs7` true the value is the PKCS#7 with the stamp in it and is used as it is; else it is a token
+  that E-IMZO attaches (`attach_timestamp_token_pkcs7`, or the app's `cms.ts` when E-IMZO lacks it).
+- **Sign-in with a key**: `POST v1/auth/{taxId}/token` with `{"serialNumber", "signature": "<stamped PKCS#7>"}` →
+  `{"token", "related_companies"}`; `taxId` is the INN of the key (a company's key: the company's INN). For a
+  person's key the company's token is then `POST v1/auth/company/{companyTin}/login` with the person's token
+  as `api-key` and `user-key`. (The older `v1/auth/login` with `{"serialNumber", "pkcs7"}` is kept as a
+  fallback.) Registration: `POST v1/auth/register`, the same body as the older login.
+- **Every later request**: the token as both `api-key` and `user-key`. There is **no partner key** in the
+  library.
+- **Sign-in by INN and password** (no E-IMZO): `POST waltz/goodsign/0.0.1/user/{inn}/token` with
+  `{"password"}`. Not built.
+- **Documents**: `GET v1/documents?limit=100&page={page}`, `GET v1/documents/{id}`, `POST v1/documents/{id}/tosign`
+  with `{"action": "accept|reject|cancel", "comment": ""}` → `{"data": <what to sign>}`, `POST
+v1/documents/{id}/sign`, `/reject`, `/delete`, `POST v1/documents/{docType}/create`, `…/{id}/update/{docType}`,
+  `GET v1/documents/{id}/file/true` (print form), `GET v1/profile`, `v1/profile/{taxId}`, `v1/profile/update`,
+  `v1/profile/branches?tin=`, `v1/profile/taxGap/{tin}`, `v1/measures/all`, `v1/profile/productClasses`.
+
 ## E-IMZO (from https://github.com/qo0p/e-imzo-doc)
 
 E-IMZO is a program on the accountant's PC. It has a local WebSocket service, and every call is one
