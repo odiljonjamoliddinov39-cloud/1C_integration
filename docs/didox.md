@@ -221,6 +221,11 @@ Not wired into the app yet: no settings screen, no assistant tool.
    `POST /v1/documents/002/create`. How a company reaches Didox (address and E-IMZO key serial, not secret) is
    saved from the Didox test dialog ("Save for this company"). Step 2, signing (`/tosign`, E-IMZO, `/sign`) and
    sending, comes only after a draft made this way has been checked on real Didox.
+   Letters and other free-form documents go the same way with `propose_didox_document`: the text from the chat
+   is printed to a PDF (a hidden Electron window), the body is Didox's free-form layout from its 1C library
+   (`POST /v1/documents/000/create`, `data{Subtype, Document{DocumentNo, DocumentDate}, Seller, Buyer}` and
+   `document` = the PDF in base64; Subtype 1 reconciliation act, 2 letter, 3 contract, 4 invoice for payment,
+   5 act of work, 6 other, 7 request, 8 specification), as a draft only.
 5. **Dedup**: a Didox document id is the `externalId` of the 1C record, so a document is never
    entered twice (the PlatformAPI already refuses a second one).
 

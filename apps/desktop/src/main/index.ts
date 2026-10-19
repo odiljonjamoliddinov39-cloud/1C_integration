@@ -103,6 +103,17 @@ const shrinkImage: ShrinkImage = (data, maxSide) => {
   return new Uint8Array(sized.toJPEG(85));
 };
 
+/** Prints an HTML page to a PDF (A4) in a window nobody sees. */
+const renderPdf = async (html: string): Promise<Uint8Array> => {
+  const window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    return await window.webContents.printToPDF({ pageSize: "A4", printBackground: false });
+  } finally {
+    window.destroy();
+  }
+};
+
 function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, payload);
 }
@@ -133,6 +144,7 @@ void app.whenReady().then(async () => {
     connector,
     emit: (event) => broadcast(CHANNELS.assistantEvent, event),
     shrinkImage,
+    renderPdf,
     traceLog: new TraceLog(join(app.getPath("userData"), "traced-chats.json")),
   });
   // The questions already in the saved chats teach the engine too (a minute after start, in the background).

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInvoiceDraft, draftIdOf, findMeasure, partyFromProfile } from "./outgoing.js";
+import {
+  buildDocumentDraft,
+  buildInvoiceDraft,
+  draftIdOf,
+  findMeasure,
+  partyFromProfile,
+} from "./outgoing.js";
 
 const seller = partyFromProfile("303212825", {
   name: "CRYSTAL WATER TRADE MCHJ",
@@ -114,5 +120,32 @@ describe("the answer to a creation", () => {
     expect(draftIdOf({ _id: "D1" })).toBe("D1");
     expect(draftIdOf({ data: { id: "D2" } })).toBe("D2");
     expect(draftIdOf("false")).toBeNull();
+  });
+});
+
+describe("free-form document draft", () => {
+  const letter = { type: "letter" as const, number: "15", date: "2026-10-19", buyerTin: "201607534" };
+
+  it("is laid out as Didox's library does: Subtype, Document, the parties, and the PDF", () => {
+    const result = buildDocumentDraft(letter, seller, buyer, "UERG");
+    if (!result.ok) throw new Error(JSON.stringify(result.problems));
+    expect(result.body).toMatchObject({
+      data: {
+        Subtype: 2,
+        Document: { DocumentNo: "15", DocumentDate: "2026-10-19" },
+        SellerTin: "303212825",
+        BuyerTin: "201607534",
+        Seller: { Name: "CRYSTAL WATER TRADE MCHJ" },
+        Buyer: { Name: "NAVRO'Z-PTK MCHJ" },
+      },
+      document: "UERG",
+    });
+  });
+
+  it("names what is wrong and makes nothing", () => {
+    const result = buildDocumentDraft({ ...letter, number: "", buyerTin: "1" }, seller, null, "");
+    expect(result).toMatchObject({ ok: false });
+    if (result.ok) return;
+    expect(result.problems.map((p) => p.code)).toEqual(["NO_NUMBER", "BAD_TIN"]);
   });
 });

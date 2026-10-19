@@ -289,8 +289,24 @@ export interface DidoxDraftPreview {
   totals: { amount: string; vat: string; total: string };
 }
 
+/** A free-form document (a letter, an act, ...) as the card shows it before the draft is made in Didox. */
+export interface DidoxDocumentPreview {
+  /** "letter", "work_act", ... */
+  type: string;
+  number: string;
+  date: string;
+  /** What the document is about, one line. */
+  subject: string;
+  /** The text that goes into the PDF (the start of it when it is long). */
+  text: string;
+  seller: { tin: string; name: string };
+  buyer: { tin: string; name: string };
+}
+
 /** A document the assistant prepared; nothing is written to 1C until the user confirms it. */
 export type Proposal =
+  /** A letter or another free-form document to be made in Didox as a draft (not signed, not sent). */
+  | { kind: "didox_document"; document: DidoxDocumentPreview }
   /** An invoice to be made in Didox as a draft (not signed, not sent). */
   | { kind: "didox_draft"; draft: DidoxDraftPreview }
   | { kind: "change"; preview: ChangePreview }

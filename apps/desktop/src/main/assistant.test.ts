@@ -91,6 +91,7 @@ function setup(
   licenseMode: "active" | "read_only" = "active",
   others?: Parameters<typeof fakeProxy>[1],
   didox?: { eimzo: EImzoClient; fetch: typeof fetch },
+  renderPdf?: (html: string) => Promise<Uint8Array>,
 ) {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
@@ -125,6 +126,7 @@ function setup(
     auditChecks: TEST_CHECKS,
     auditConcurrency: 1,
     ...(didox ? { didox } : {}),
+    ...(renderPdf ? { renderPdf } : {}),
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -380,15 +382,21 @@ describe("assistant", () => {
         },
       });
 
-      function didoxSetup(script = proposeThenAnswer("propose_didox_draft", draft)) {
+      function didoxSetup(
+        script = proposeThenAnswer("propose_didox_draft", draft),
+        renderPdf?: (html: string) => Promise<Uint8Array>,
+      ) {
         const server = new FakeDidox();
         server.profiles.set("201607534", { name: "NAVRO'Z-PTK MCHJ", account: "2020", mfo: "00014" });
         const eimzo = new FakeEImzo();
         eimzo.certificates = [{ disk: "D", path: "/k", name: "key1", alias: ALIAS }];
-        const made = setup(script, "active", undefined, {
-          eimzo: new EImzoClient({ connect: eimzo.connect }),
-          fetch: server.fetch,
-        });
+        const made = setup(
+          script,
+          "active",
+          undefined,
+          { eimzo: new EImzoClient({ connect: eimzo.connect }), fetch: server.fetch },
+          renderPdf,
+        );
         made.store.setAiEnabled(made.company.id, true);
         return { ...made, server };
       }
@@ -462,6 +470,37 @@ describe("assistant", () => {
         );
         const saved = chats.load(company.id, chats.list(company.id)[0]!.id);
         expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
+      });
+
+      it("makes a letter a free-form draft in Didox, as a PDF, after the card is confirmed", async () => {
+        const letter = proposeThenAnswer("propose_didox_document", {
+          title: "Xat - NAVRO'Z-PTK",
+          type: "letter",
+          number: "15",
+          date: "2026-10-19",
+          buyerInn: "201607534",
+          subject: "Dalolatnoma haqida",
+          text: "Hurmatli hamkor!\n\nDalolatnomani imzolang.",
+        });
+        const { assistant, store, company, events, proxy, server } = didoxSetup(
+          letter,
+          async () => new Uint8Array(Buffer.from("%PDF-1.4")),
+        );
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        const sending = assistant.send({ companyId: company.id, text: "didoksga yubor" });
+        await answerCards(events, assistant, true);
+        expect(await sending).toEqual({ ok: true, data: null });
+
+        expect(events.find((e) => e.type === "confirm")).toMatchObject({
+          proposal: {
+            kind: "didox_document",
+            document: { type: "letter", number: "15", subject: "Dalolatnoma haqida" },
+          },
+        });
+        expect(server.drafts).toHaveLength(1);
+        expect(server.drafts[0]?.docType).toBe("000");
+        expect(server.requests.some((r) => /\/(sign|tosign|reject)$/.test(r.url.pathname))).toBe(false);
+        expect(resultOf(proxy.requests)).toMatchObject({ status: "draft_created", draftId: "DRAFT1" });
       });
 
       it("tells the model when Didox is not connected for the company", async () => {

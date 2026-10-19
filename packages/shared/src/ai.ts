@@ -199,6 +199,40 @@ export const FetchDidoxInput = z.object({
 export type FetchDidoxInput = z.infer<typeof FetchDidoxInput>;
 
 /**
+ * A letter or another free-form document to be made in Didox as a DRAFT (not signed, not sent): the app puts
+ * the text into a PDF and takes the two companies from Didox.
+ */
+export const DidoxDocumentInput = z.object({
+  /** For the card's title, e.g. "Xat - Zarkentrade MChJ". */
+  title: z.string().trim().min(1).max(200),
+  type: z.enum([
+    "letter",
+    "reconciliation_act",
+    "contract",
+    "payment_invoice",
+    "work_act",
+    "request",
+    "specification",
+    "other",
+  ]),
+  /** The document's own number (an outgoing number of the company) and date YYYY-MM-DD. */
+  number: z.string().trim().min(1).max(80),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** The recipient's INN (9 digits) or PINFL (14). */
+  buyerInn: z.string().regex(/^(\d{9}|\d{14})$/),
+  /** One line: what it is about, shown above the text. */
+  subject: z.string().trim().min(1).max(300),
+  /** The whole text of the document, plain text, paragraphs separated by a blank line. */
+  text: z.string().trim().min(1).max(30000),
+  /** Who signs, for the line under the text (the director's name), when known. */
+  signer: z.string().trim().max(200).optional(),
+  contract: z
+    .object({ number: z.string().trim().min(1).max(80), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+    .optional(),
+});
+export type DidoxDocumentInput = z.infer<typeof DidoxDocumentInput>;
+
+/**
  * An invoice to be made in Didox as a DRAFT (not signed, not sent). The model reads the invoice from 1C and
  * passes what is in it; the app takes the seller and the buyer from Didox, works the sums out itself and
  * shows them on the card.
@@ -329,6 +363,7 @@ export const AI_TOOLS = {
   propose_invoices_received: InvoicesReceivedInput,
   propose_didox_invoices: DidoxInvoicesInput,
   propose_didox_draft: DidoxDraftInput,
+  propose_didox_document: DidoxDocumentInput,
   propose_bank_payments: BankPaymentsInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -345,6 +380,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoices_received",
   "propose_didox_invoices",
   "propose_didox_draft",
+  "propose_didox_document",
   "propose_bank_payments",
   "propose_post_created",
   "propose_delete_marked",

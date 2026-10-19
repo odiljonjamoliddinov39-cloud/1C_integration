@@ -1060,6 +1060,8 @@ function ProposalCard({
             </div>
           )}
         </>
+      ) : proposal.kind === "didox_document" ? (
+        <DidoxDocumentBody document={proposal.document} />
       ) : proposal.kind === "didox_draft" ? (
         <DidoxDraftBody draft={proposal.draft} />
       ) : proposal.kind === "invoice_issued" ? (
@@ -1144,7 +1146,7 @@ function ProposalCard({
               ? "assistant.proposal.note"
               : proposal.kind === "delete_marked"
                 ? "assistant.proposal.noteRemove"
-                : proposal.kind === "didox_draft"
+                : proposal.kind === "didox_draft" || proposal.kind === "didox_document"
                   ? "assistant.proposal.didoxNote"
                   : "assistant.proposal.noteReceived",
           )}
@@ -1166,7 +1168,7 @@ function ProposalCard({
               ? sent
                 ? t("assistant.proposal.removing")
                 : t("assistant.proposal.remove", { count: proposal.preview.total })
-              : proposal.kind === "didox_draft"
+              : proposal.kind === "didox_draft" || proposal.kind === "didox_document"
                 ? t(sent ? "assistant.proposal.didoxCreating" : "assistant.proposal.didoxCreate")
                 : sent && proposal.kind === "batch"
                   ? t("assistant.proposal.batchApplying")
@@ -1225,6 +1227,47 @@ function ProposalCard({
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{outcome.message}</div>
       )}
     </Card>
+  );
+}
+
+/** A letter (or another free-form document) about to be made in Didox as a draft: who, about what, the text. */
+function DidoxDocumentBody({
+  document,
+}: {
+  document: Extract<Proposal, { kind: "didox_document" }>["document"];
+}) {
+  const { t } = useTranslation();
+  const kind = t(`assistant.proposal.didoxType.${document.type}`, { defaultValue: document.type });
+  return (
+    <>
+      <div>
+        <div className="font-semibold">{t("assistant.proposal.didoxDocTitle")}</div>
+        <div className="text-muted-foreground">
+          {kind} № {document.number} · {day(document.date)}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxSeller")}</span>
+          <span className="font-medium">
+            {document.seller.name} · {document.seller.tin}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxBuyer")}</span>
+          <span className="font-medium">
+            {document.buyer.name} · {document.buyer.tin}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <span className="w-48 shrink-0 text-muted-foreground">{t("assistant.proposal.didoxSubject")}</span>
+          <span className="font-medium">{document.subject}</span>
+        </div>
+      </div>
+      <div className="max-h-64 overflow-y-auto rounded-lg bg-muted/40 p-3 text-xs whitespace-pre-wrap">
+        {document.text}
+      </div>
+    </>
   );
 }
 

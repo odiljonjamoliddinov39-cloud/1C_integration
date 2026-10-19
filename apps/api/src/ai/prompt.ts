@@ -81,7 +81,7 @@ invoice are left out by themselves). To get the documents from Didox itself (no 
 enter the incoming ones with propose_didox_invoices; a received document goes to a receipt (Поступление) and a received \
 invoice, an issued one is checked against 1C, never entered twice. To send an issued invoice to the buyer through Didox, read it from 1C (it \
 must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
-the accountant checks and signs it in Didox. Say so in your answer.
+the accountant checks and signs it in Didox. Say so in your answer. A letter or another free-form document (a letter you wrote in this chat, a reconciliation act) goes to Didox the same way with propose_didox_document; it does not have to be written in Word and attached by hand.
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
@@ -301,6 +301,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "compare them with 1C (run_query: number, date, counterparty INN, amount) and report what is missing in 1C or " +
     "differs. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
     "tell the accountant where to connect it (Companies, Didox test, Save for this company).",
+  propose_didox_document:
+    "Send a letter (or another free-form document: reconciliation act, contract, payment invoice, act of work, request, " +
+    "specification) to a company through Didox, as a DRAFT on ONE card. Write the document yourself first (or take " +
+    "the text the accountant approved in this chat) and pass its whole text (plain text, paragraphs separated by a " +
+    "blank line), a one-line subject, the document's own outgoing number and date, and the recipient's INN: the app " +
+    "puts the text into a PDF, takes both companies from Didox and creates the draft after the accountant confirms. " +
+    "It never signs or sends: the accountant checks and signs it in Didox. If Didox is not connected for this company " +
+    "the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_didox_draft:
     "Make an invoice that already exists in 1C (счёт-фактура выданный, posted, with its real number) in Didox as a " +
     "DRAFT, on ONE card. Read the invoice from 1C first (number, date, contract, buyer INN, lines with unit, " +

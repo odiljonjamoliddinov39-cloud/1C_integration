@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DidoxClient } from "./client.js";
-import { createDraft, prepareDraft } from "./draft.js";
+import { DOCUMENT_DOCTYPE, createDraft, prepareDocumentDraft, prepareDraft } from "./draft.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
 
 function setup() {
@@ -40,5 +40,57 @@ describe("invoice draft in Didox", () => {
     const { client } = setup();
     const prepared = await prepareDraft(client, { ...input, buyerTin: "999999999" }, "302936161");
     expect(prepared).toMatchObject({ ok: false, problems: [{ code: "NO_PARTY" }] });
+  });
+});
+
+describe("letter draft in Didox", () => {
+  const letter = {
+    type: "letter" as const,
+    number: "15",
+    date: "2026-10-19",
+    buyerTin: "201607534",
+    subject: "Akt sverka haqida",
+    text: "Hurmatli hamkor!\n\nSizdan <solishtirma> dalolatnomani imzolashni so'raymiz.",
+  };
+
+  it("puts the text into a PDF, and creates a free-form draft (000) only when asked", async () => {
+    const { server, client } = setup();
+    const pages: string[] = [];
+    const render = async (html: string) => {
+      pages.push(html);
+      return new Uint8Array(Buffer.from("%PDF-test"));
+    };
+    const prepared = await prepareDocumentDraft(client, letter, "302936161", render);
+    if (!prepared.ok) throw new Error(JSON.stringify(prepared.problems));
+    expect(pages[0]).toContain("&lt;solishtirma&gt;");
+    expect(pages[0]).toContain("NAVRO'Z-PTK MCHJ");
+    expect(prepared.preview).toMatchObject({
+      type: "letter",
+      number: "15",
+      buyer: { name: "NAVRO'Z-PTK MCHJ" },
+    });
+    expect(server.drafts).toHaveLength(0);
+
+    await createDraft(client, prepared.body, DOCUMENT_DOCTYPE);
+    expect(server.drafts[0]?.docType).toBe("000");
+    expect((server.drafts[0]?.body as { document: string }).document).toBe(
+      Buffer.from("%PDF-test").toString("base64"),
+    );
+  });
+
+  it("makes no PDF for a recipient Didox does not know", async () => {
+    const { client } = setup();
+    let rendered = false;
+    const prepared = await prepareDocumentDraft(
+      client,
+      { ...letter, buyerTin: "999999999" },
+      "302936161",
+      async () => {
+        rendered = true;
+        return new Uint8Array();
+      },
+    );
+    expect(prepared).toMatchObject({ ok: false, problems: [{ code: "NO_PARTY" }] });
+    expect(rendered).toBe(false);
   });
 });
