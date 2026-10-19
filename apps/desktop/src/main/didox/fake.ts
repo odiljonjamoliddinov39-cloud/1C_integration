@@ -42,7 +42,15 @@ export class FakeDidox {
   drafts: { docType: string; body: unknown }[] = [];
   /** Print forms by document id (a PDF). */
   files = new Map<string, Uint8Array>();
-  documents: { id: string; doctype: string; status: number; owner: 0 | 1 }[] = [];
+  documents: {
+    id: string;
+    doctype: string;
+    status: number;
+    owner: 0 | 1;
+    /** The document itself (what `GET /v1/documents/{id}` gives); the list does not carry it. */
+    json?: unknown;
+    updated?: string;
+  }[] = [];
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
   private issued = 0;
@@ -136,11 +144,16 @@ export class FakeDidox {
     if (path === "/v1/documents") {
       const owner = url.searchParams.get("owner");
       const doctypes = url.searchParams.get("doctype")?.split(",");
-      return json(
-        this.documents.filter(
-          (d) => (owner === null || d.owner === Number(owner)) && (!doctypes || doctypes.includes(d.doctype)),
-        ),
+      const limit = Number(url.searchParams.get("limit") ?? 20);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const dateFrom = url.searchParams.get("dateFrom");
+      const matching = this.documents.filter(
+        (d) =>
+          (owner === null || d.owner === Number(owner)) &&
+          (!doctypes || doctypes.includes(d.doctype)) &&
+          (!dateFrom || !d.updated || d.updated.slice(0, 10) >= dateFrom),
       );
+      return json(matching.slice((page - 1) * limit, page * limit).map(({ json: _json, ...entry }) => entry));
     }
     if (path === "/v1/profile") return json(this.ownProfile);
     const vat = /^\/v1\/profile\/vatRegStatus\/([^/]+)$/.exec(path);
@@ -166,7 +179,7 @@ export class FakeDidox {
     const one = /^\/v1\/documents\/([^/]+)$/.exec(path);
     if (one?.[1]) {
       const found = this.documents.find((d) => d.id === one[1]);
-      return found ? json(found) : json({ error: "not found" }, 404);
+      return found ? json(found.json ?? found) : json({ error: "not found" }, 404);
     }
     return json({ error: "not found" }, 404);
   };

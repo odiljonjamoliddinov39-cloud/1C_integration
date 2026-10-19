@@ -176,6 +176,29 @@ export const DidoxInvoicesInput = z.object({
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
 /**
+ * Documents read from Didox itself (its API, no files): the period by the document's own date. Reads only.
+ * The incoming ones (our INN is the buyer) go into the chat the same way attached Didox files do, so
+ * propose_didox_invoices enters them; the outgoing ones (our INN is the seller) are listed to be compared with 1C.
+ */
+export const FetchDidoxInput = z.object({
+  /** YYYY-MM-DD; absent: the start of this year. */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** YYYY-MM-DD; absent: today. */
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** "incoming" by default; "both" also reads what the company issued. */
+  direction: z.enum(["incoming", "outgoing", "both"]).optional(),
+  /** The most documents to read, 100 by default. */
+  limit: z.number().int().min(1).max(300).optional(),
+});
+export type FetchDidoxInput = z.infer<typeof FetchDidoxInput>;
+
+/**
  * An invoice to be made in Didox as a DRAFT (not signed, not sent). The model reads the invoice from 1C and
  * passes what is in it; the app takes the seller and the buyer from Didox, works the sums out itself and
  * shows them on the card.
@@ -296,6 +319,7 @@ export const AI_TOOLS = {
   run_query: RunQueryInput,
   get_object: GetObjectInput,
   read_attachment: ReadAttachmentInput,
+  fetch_didox_documents: FetchDidoxInput,
   check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
@@ -327,7 +351,12 @@ export const AI_PROPOSAL_TOOLS = [
 ] as const;
 export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
 /** Tools the app runs itself (over attached files, or several 1C calls), not one 1C function. */
-export const AI_LOCAL_TOOLS = ["read_attachment", "report_findings", "check_changes"] as const;
+export const AI_LOCAL_TOOLS = [
+  "read_attachment",
+  "fetch_didox_documents",
+  "report_findings",
+  "check_changes",
+] as const;
 export type AiLocalTool = (typeof AI_LOCAL_TOOLS)[number];
 /** Tools that read 1C. */
 export type AiReadTool = Exclude<AiToolName, AiProposalTool | AiLocalTool>;

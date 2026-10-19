@@ -207,10 +207,13 @@ Not wired into the app yet: no settings screen, no assistant tool.
    pattern as `onec-client` and `FakePlatform`), so everything below is tested without Didox.
 2. **Connection per company**: the company's Didox sign-in on the PC, stored encrypted like the 1C
    passwords. It never goes to our server.
-3. **Incoming**: tools for the assistant to list incoming documents and read them through
-   `GET /v1/documents/{id}` and the print form; the existing received-invoice,
-   services and change tools do the entering. Documents whose buyer is another
-   organization are listed, not entered (already in the prompt).
+3. **Incoming**: built: the tool `fetch_didox_documents` (reads only) pages through Didox's lists
+   (`GET /v1/documents?owner=0|1&page=&limit=&dateFrom=`), reads each document (`GET /v1/documents/{id}`, or
+   the JSON the list entry carries) and keeps those dated in the period. The ones where the company is the
+   buyer join the chat exactly as attached Didox files do, so `propose_didox_invoices`, the checks and the
+   resolver work on them unchanged; the ones where it is the seller are listed to be compared with 1C. No
+   files from the accountant are needed. `dateTo` is not sent to Didox (it filters by the update date, which can
+   be later than the document's own), the period end is applied to the document's own date.
 4. **Outgoing**: step 1 is built: the tool `propose_didox_draft` makes an invoice that exists in 1C a **draft** in
    Didox, after the accountant confirms a card (seller, buyer, lines and the sums the app worked out). It never
    signs and never sends. The body follows Didox's own 1C library (`FacturaDoc`, `ContractDoc`, `Seller` and

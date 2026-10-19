@@ -168,6 +168,7 @@ const en = {
       propose_invoices_issued: "Finding the sales:",
       propose_invoices_received: "Preparing invoices:",
       propose_didox_invoices: "Preparing invoices from Didox:",
+      fetch_didox_documents: "Reading documents from Didox:",
       propose_didox_draft: "Preparing an invoice for Didox (E-IMZO may ask for the key's password):",
       propose_bank_payments: "Preparing the bank statement payments:",
       propose_post_created: "Preparing to post the documents:",
@@ -595,6 +596,7 @@ const ru: Dict = {
       propose_invoices_issued: "Ищу реализации:",
       propose_invoices_received: "Готовлю счета-фактуры:",
       propose_didox_invoices: "Готовлю счета-фактуры из Didox:",
+      fetch_didox_documents: "Читаю документы из Didox:",
       propose_didox_draft: "Готовлю счёт-фактуру для Didox (E-IMZO может спросить пароль ключа):",
       propose_bank_payments: "Готовлю платежи из банковской выписки:",
       propose_post_created: "Готовлю проведение документов:",
@@ -1022,6 +1024,7 @@ const uz: Dict = {
       propose_invoices_issued: "Sotuvlarni topyapman:",
       propose_invoices_received: "Hisob-fakturalarni tayyorlayapman:",
       propose_didox_invoices: "Didox hisob-fakturalarini tayyorlayapman:",
+      fetch_didox_documents: "Didox hujjatlarini oʻqiyapman:",
       propose_didox_draft:
         "Didox uchun hisob-faktura tayyorlayapman (E-IMZO kalit parolini soʻrashi mumkin):",
       propose_bank_payments: "Bank ko'chirmasidagi to'lovlarni tayyorlayapman:",

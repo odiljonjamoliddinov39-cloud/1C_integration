@@ -356,12 +356,36 @@ describe("assistant", () => {
         buyerInn: "201607534",
         lines: [{ name: "Suv", unit: "шт", qty: 2, price: 1000, vatRate: 12 }],
       };
-      function didoxSetup() {
+      /** An ЭСФ as Didox gives it, cut down to the fields that matter. */
+      const factura = (number: string, date: string, sellerTin: string, buyerTin: string) => ({
+        facturadoc: { facturano: number, facturadate: date },
+        sellertin: sellerTin,
+        seller: { name: `SELLER ${sellerTin}` },
+        buyertin: buyerTin,
+        buyer: { name: `BUYER ${buyerTin}` },
+        productlist: {
+          hasvat: false,
+          products: [
+            {
+              ordno: 1,
+              name: "Suv",
+              count: "1",
+              summa: "1000.00",
+              deliverysum: "1000.00",
+              vatrate: 0,
+              vatsum: 0,
+              deliverysumwithvat: "1000.00",
+            },
+          ],
+        },
+      });
+
+      function didoxSetup(script = proposeThenAnswer("propose_didox_draft", draft)) {
         const server = new FakeDidox();
         server.profiles.set("201607534", { name: "NAVRO'Z-PTK MCHJ", account: "2020", mfo: "00014" });
         const eimzo = new FakeEImzo();
         eimzo.certificates = [{ disk: "D", path: "/k", name: "key1", alias: ALIAS }];
-        const made = setup(proposeThenAnswer("propose_didox_draft", draft), "active", undefined, {
+        const made = setup(script, "active", undefined, {
           eimzo: new EImzoClient({ connect: eimzo.connect }),
           fetch: server.fetch,
         });
@@ -398,6 +422,46 @@ describe("assistant", () => {
         await sending;
         expect(server.drafts).toHaveLength(0);
         expect(resultOf(proxy.requests)).toEqual({ status: "declined_by_user" });
+      });
+
+      it("reads the company's Didox documents itself: incoming go into the chat, outgoing are listed", async () => {
+        const fetching = proposeThenAnswer("fetch_didox_documents", {
+          from: "2026-10-01",
+          to: "2026-10-31",
+          direction: "both",
+        });
+        const { assistant, store, company, proxy, server, base, chats } = didoxSetup(fetching);
+        const inn = base.organizations[0]!.inn;
+        server.documents = [
+          {
+            id: "a",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("1", "2026-10-09", "111111111", inn),
+          },
+          {
+            id: "b",
+            doctype: "002",
+            status: 3,
+            owner: 1,
+            json: factura("7", "2026-10-11", inn, "222222222"),
+          },
+        ];
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        await assistant.send({ companyId: company.id, text: "Didoxdan hammasini ol" });
+
+        expect(resultOf(proxy.requests)).toMatchObject({ read: 2, incomingCount: 1, outgoingCount: 1 });
+        const result = resultOf(proxy.requests) as { incomingSummary: string; outgoingList: string[] };
+        expect(result.incomingSummary).toContain("SELLER 111111111");
+        expect(result.outgoingList[0]).toContain("222222222");
+        // Nothing was created, signed or deleted in Didox.
+        expect(server.drafts).toHaveLength(0);
+        expect(server.requests.some((r) => /\/(create|sign|reject|delete)$/.test(r.url.pathname))).toBe(
+          false,
+        );
+        const saved = chats.load(company.id, chats.list(company.id)[0]!.id);
+        expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
       });
 
       it("tells the model when Didox is not connected for the company", async () => {

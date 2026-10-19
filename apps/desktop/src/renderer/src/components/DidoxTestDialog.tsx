@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 /** A first look at Didox: E-IMZO, the key, the sign-in and what Didox answers. Changes nothing. */
 export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
-  const [baseUrl, setBaseUrl] = useState("");
+  const [baseUrl, setBaseUrl] = useState("https://api.didox.uz/");
   const [apiKey, setApiKey] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
   const keys = useQuery({

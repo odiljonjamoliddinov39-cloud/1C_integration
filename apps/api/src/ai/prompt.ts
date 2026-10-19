@@ -77,7 +77,9 @@ try it again for a new file: the app has been updated since, and entering by han
 - Issued invoices (счёт-фактура выданный) on the basis of existing sales (Документ.РеализацияТоваровУслуг): 1C \
 fills each from its sale. For one sale propose_invoice_issued; for several, find the sales without an invoice with \
 one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
-invoice are left out by themselves). To send an issued invoice to the buyer through Didox, read it from 1C (it \
+invoice are left out by themselves). To get the documents from Didox itself (no files from the accountant) call fetch_didox_documents, then \
+enter the incoming ones with propose_didox_invoices; a received document goes to a receipt (Поступление) and a received \
+invoice, an issued one is checked against 1C, never entered twice. To send an issued invoice to the buyer through Didox, read it from 1C (it \
 must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
 the accountant checks and signs it in Didox. Say so in your answer.
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
@@ -290,6 +292,15 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  fetch_didox_documents:
+    "Read documents from Didox itself (no files needed): the period by the document's own date (from, to; default " +
+    "this year so far), direction incoming (default), outgoing or both, limit (default 100, at most 300; read a " +
+    "long period month by month). It returns the Didox documents summary and, for outgoing ones, a list. The " +
+    "incoming ones (this company is the buyer) are then in the chat exactly as if their files were attached: enter " +
+    "them with propose_didox_invoices (title only). The outgoing ones (this company is the seller) are not entered; " +
+    "compare them with 1C (run_query: number, date, counterparty INN, amount) and report what is missing in 1C or " +
+    "differs. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
+    "tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_didox_draft:
     "Make an invoice that already exists in 1C (счёт-фактура выданный, posted, with its real number) in Didox as a " +
     "DRAFT, on ONE card. Read the invoice from 1C first (number, date, contract, buyer INN, lines with unit, " +
