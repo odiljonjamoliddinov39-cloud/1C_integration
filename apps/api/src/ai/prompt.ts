@@ -81,7 +81,9 @@ invoice are left out by themselves). To get the documents from Didox itself (no 
 enter the incoming ones with propose_didox_invoices; a received document goes to a receipt (Поступление) and a received \
 invoice, an issued one is checked against 1C, never entered twice. To send an issued invoice to the buyer through Didox, read it from 1C (it \
 must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
-the accountant checks and signs it in Didox. Say so in your answer.
+the accountant checks and signs it in Didox. Say so in your answer. Always in this order: the document is applied \
+in 1C first (its card confirmed), and only then goes to Didox, with onec: {object, ref} of the saved 1C document and the \
+number and date exactly as 1C has them; the tool refuses otherwise. A letter or another free-form document (a letter you wrote in this chat) goes to Didox the same way with propose_didox_document; a reconciliation act goes with propose_didox_reconciliation (the app builds it from the saved 1C act); a wrong draft is removed with propose_didox_delete_draft. None of it has to be written in Word and attached by hand.
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
@@ -301,6 +303,34 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "compare them with 1C (run_query: number, date, counterparty INN, amount) and report what is missing in 1C or " +
     "differs. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
     "tell the accountant where to connect it (Companies, Didox test, Save for this company).",
+  propose_didox_reconciliation:
+    "Send a reconciliation act (акт сверки) to a counterparty through Didox, as a DRAFT on ONE card, from the act " +
+    "that is ALREADY SAVED in 1C (Документ.АктСверкиВзаиморасчетов; make it in 1C first with propose_changes, confirm " +
+    "its card, then call this). Pass onec: {object, ref} of that act and the counterparty's INN: the app reads the " +
+    "act's number, date, period, contract and the rows of both sides itself and works every turnover and balance " +
+    "out; never write the act's text or figures yourself. The act in 1C keeps no balance at the start of the " +
+    "period: find it in the accounts (a query on the settlement accounts of this counterparty and contract, on the " +
+    "start date) and pass it as openings (debit and credit of the company and of the counterparty, per contract " +
+    "number when the act has several contracts; omit it only when it is really zero). It never signs or sends: the " +
+    "accountant checks and signs it in Didox. Use this, not propose_didox_document, for a reconciliation act.",
+  propose_didox_delete_draft:
+    "Delete a wrong DRAFT in Didox (its id is the one told to the accountant when the draft was made), on ONE card " +
+    "after the accountant confirms. Only drafts are deleted (they were never signed or sent); Didox refuses " +
+    "anything else. Use it when the accountant asks to remove a draft or after a draft turned out wrong and is to be " +
+    "made again.",
+  propose_didox_document:
+    "Send a letter (or another free-form document: contract, payment invoice, act of work, request, " +
+    "specification) to a company through Didox, as a DRAFT on ONE card. Write the document yourself first (or take " +
+    "the text the accountant approved in this chat) and pass its whole text (plain text, paragraphs separated by a " +
+    "blank line), a one-line subject, the document's own outgoing number and date, and the recipient's INN: the app " +
+    "puts the text into a PDF, takes both companies from Didox and creates the draft after the accountant confirms. " +
+    "It never signs or sends: the accountant checks and signs it in Didox. A document that exists in 1C (a " +
+    "reconciliation act, a contract, an invoice for payment, an act of work) is applied in 1C FIRST (propose_changes " +
+    "and its card), and then goes here with onec: {object, ref} of the saved 1C document and ITS number and date, " +
+    "read from 1C (get_object), not typed from memory: the tool reads that document and refuses on a missing " +
+    "document, a different number or date, or a text that does not name them. Copy every figure of the text from the " +
+    "saved 1C document. If Didox is not connected for this company " +
+    "the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_didox_draft:
     "Make an invoice that already exists in 1C (счёт-фактура выданный, posted, with its real number) in Didox as a " +
     "DRAFT, on ONE card. Read the invoice from 1C first (number, date, contract, buyer INN, lines with unit, " +

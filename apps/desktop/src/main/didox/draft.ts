@@ -5,7 +5,17 @@
  */
 import type { DidoxClient } from "./client.js";
 import { DidoxError } from "./client.js";
+import type { DidoxDocumentPreview, DidoxReconciliationPreview } from "../../shared/ipc.js";
+import { type LetterInput, letterHtml } from "./letter.js";
 import {
+  type OpeningInput,
+  type ReconAct,
+  type ReconProblem,
+  buildReconciliation,
+} from "./reconciliation.js";
+import {
+  type DocumentInput,
+  buildDocumentDraft,
   type DraftInput,
   type DraftPreview,
   type DraftProblem,
@@ -52,11 +62,88 @@ export async function prepareDraft(
   return built.ok ? { ok: true, body: built.built.body, preview: built.built.preview } : built;
 }
 
+export type PreparedDocument =
+  | { ok: true; body: Record<string, unknown>; preview: DidoxDocumentPreview }
+  | { ok: false; problems: DraftProblem[] };
+
+/** Makes a PDF (bytes) of an HTML page; Electron prints one, tests hand in a stand-in. */
+export type RenderPdf = (html: string) => Promise<Uint8Array>;
+
+/**
+ * A letter or another free-form document for Didox: the parties are read from Didox, the text goes into a PDF
+ * and the body is built as Didox's own 1C library builds it. `ownTin` is the INN of the company in the app.
+ */
+export async function prepareDocumentDraft(
+  client: DidoxClient,
+  input: DocumentInput & LetterInput & { subject: string },
+  ownTin: string,
+  renderPdf: RenderPdf,
+): Promise<PreparedDocument> {
+  const [seller, buyer] = await Promise.all([
+    partyOf(client, ownTin, true),
+    /^(\d{9}|\d{14})$/.test(input.buyerTin) ? partyOf(client, input.buyerTin, false) : null,
+  ]);
+  // Checked before the PDF is made: nothing is rendered for a document that cannot be sent.
+  const checked = buildDocumentDraft(input, seller, buyer, "");
+  if (!checked.ok || !seller || !buyer) return checked.ok ? { ok: false, problems: [] } : checked;
+  const pdf = await renderPdf(letterHtml(input, seller, buyer));
+  const built = buildDocumentDraft(input, seller, buyer, Buffer.from(pdf).toString("base64"));
+  if (!built.ok) return built;
+  return {
+    ok: true,
+    body: built.body,
+    preview: {
+      type: input.type,
+      number: input.number.trim(),
+      date: input.date,
+      subject: input.subject,
+      text: input.text.length > 1500 ? `${input.text.slice(0, 1500)}…` : input.text,
+      seller: { tin: seller.tin, name: seller.name },
+      buyer: { tin: buyer.tin, name: buyer.name },
+    },
+  };
+}
+
+export type PreparedReconciliation =
+  | { ok: true; body: Record<string, unknown>; preview: DidoxReconciliationPreview }
+  | { ok: false; problems: ReconProblem[] };
+
+/** A reconciliation act from the 1C act: the parties are read from Didox, the balances are worked out. */
+export async function prepareReconciliationDraft(
+  client: DidoxClient,
+  act: ReconAct,
+  buyerInn: string,
+  ownTin: string,
+  openings: OpeningInput[],
+  text: string | undefined,
+): Promise<PreparedReconciliation> {
+  if (!/^(\d{9}|\d{14})$/.test(buyerInn))
+    return {
+      ok: false,
+      problems: [{ code: "BAD_TIN", message: `The counterparty's INN "${buyerInn}" is not 9 or 14 digits` }],
+    };
+  const [seller, buyer] = await Promise.all([
+    partyOf(client, ownTin, true),
+    partyOf(client, buyerInn, false),
+  ]);
+  const built = buildReconciliation(act, seller, buyer, openings, text);
+  return built.ok ? { ok: true, body: built.built.body, preview: built.built.preview } : built;
+}
+
 /** Creates the draft in Didox. Returns its id; throws DidoxError when Didox refuses (its words are in the message). */
-export async function createDraft(client: DidoxClient, body: Record<string, unknown>): Promise<string> {
-  const answer = await client.createDocument(INVOICE_DOCTYPE, body);
+export async function createDraft(
+  client: DidoxClient,
+  body: Record<string, unknown>,
+  docType: string = INVOICE_DOCTYPE,
+): Promise<string> {
+  const answer = await client.createDocument(docType, body);
   const id = draftIdOf(answer);
   if (!id)
     throw new DidoxError("DIDOX_RESPONSE", `Didox made no draft: ${JSON.stringify(answer).slice(0, 300)}`);
   return id;
 }
+
+/** The path code of a free-form document, for `createDraft`. */
+export { DOCUMENT_DOCTYPE } from "./outgoing.js";
+
+export { RECONCILIATION_DOCTYPE } from "./reconciliation.js";

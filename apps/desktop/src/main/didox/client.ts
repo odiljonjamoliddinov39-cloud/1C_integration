@@ -317,6 +317,23 @@ export class DidoxClient {
     return this.request("GET", `/v1/profile/${encodeURIComponent(tin)}`);
   }
 
+  /**
+   * Deletes a DRAFT (Didox refuses anything that is not one: a signed document is deleted with a signature,
+   * which this app does not do). The route is the Postman collection's `/v1/documents/{id}/delete/draft`; the
+   * method is not in it, so POST is tried and, where the server has no such route (404/405), DELETE.
+   */
+  async deleteDraft(id: string): Promise<unknown> {
+    const path = `/v1/documents/${encodeURIComponent(id)}/delete/draft`;
+    try {
+      return await this.request("POST", path);
+    } catch (e) {
+      if (e instanceof DidoxError && (e.status === 404 || e.status === 405)) {
+        return this.request("DELETE", path);
+      }
+      throw e;
+    }
+  }
+
   /** Didox's list of units of measure (their ids go into the lines of a document). */
   measures(): Promise<unknown> {
     return this.request("GET", "/v1/measures/all");
@@ -395,7 +412,7 @@ export class DidoxClient {
   }
 
   private async request(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     options: { auth?: boolean; body?: unknown; text?: string } = {},
   ): Promise<unknown> {

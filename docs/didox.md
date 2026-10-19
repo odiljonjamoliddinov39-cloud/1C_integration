@@ -221,6 +221,31 @@ Not wired into the app yet: no settings screen, no assistant tool.
    `POST /v1/documents/002/create`. How a company reaches Didox (address and E-IMZO key serial, not secret) is
    saved from the Didox test dialog ("Save for this company"). Step 2, signing (`/tosign`, E-IMZO, `/sign`) and
    sending, comes only after a draft made this way has been checked on real Didox.
+   Letters and other free-form documents go the same way with `propose_didox_document`: the text from the chat
+   is printed to a PDF (a hidden Electron window), the body is Didox's free-form layout from its 1C library
+   (`POST /v1/documents/000/create`, `data{Subtype, Document{DocumentNo, DocumentDate}, Seller, Buyer}` and
+   `document` = the PDF in base64; Subtype 1 reconciliation act, 2 letter, 3 contract, 4 invoice for payment,
+   5 act of work, 6 other, 7 request, 8 specification), as a draft only.
+   **1C first**: a document that exists in 1C (an invoice, a reconciliation act, a contract, an invoice for payment,
+   an act of work) is applied in 1C first and only then goes to Didox. The tool takes `onec: {object, ref}` of the
+   saved 1C document, reads it (`GetObject`) and refuses when it is missing, marked for deletion, not posted (an
+   invoice), has another number or date than the Didox document, or when the text does not name that number and
+   date. Only a letter and an "other" document need no 1C source.
+
+   **Reconciliation act (type 052)**: `propose_didox_reconciliation` builds Didox's verification act from the saved
+   1C act (`Документ.АктСверкиВзаиморасчетов`): the number, date, period, contract and the rows of both sides
+   (`ПоДаннымОрганизации`, `ПоДаннымКонтрагента`; debit and credit per row) are read from 1C, and every turnover and
+   balance (per contract and in all) is worked out by the app in tiyin: a positive net is a debit, a negative one a
+   credit. The 1C act keeps no balance at the start of the period; the model reads it from the accounts and passes
+   it (per contract when there are several), and the card shows it with the table. The body is the library's
+   `VerificationActDoc`, `VerificationActContracts[].VerificationActContractItems` with `OpenBalance`,
+   `TotalBalance`, `CloseBalance`, and the totals. A counterparty name in 1C that is not Didox's company with that
+   INN, and an empty counterparty side, are warnings on the card.
+
+   **Deleting a draft**: `propose_didox_delete_draft` (a card, then `POST /v1/documents/{id}/delete/draft`,
+   `DELETE` where the server has no POST route; the route is from the Postman collection, its method is not
+   documented). Didox deletes only drafts, so a signed or sent document cannot be removed this way.
+
 5. **Dedup**: a Didox document id is the `externalId` of the 1C record, so a document is never
    entered twice (the PlatformAPI already refuses a second one).
 

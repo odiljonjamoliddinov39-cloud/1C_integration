@@ -150,6 +150,26 @@ export function findMeasure(measures: unknown, unit: string): string | null {
   return null;
 }
 
+/** A party as Didox's documents carry it (`Seller`, `Buyer`). */
+export function partyBody(p: Party) {
+  return {
+    Name: p.name,
+    Account: p.account,
+    BankId: p.bankId,
+    Address: p.address,
+    Mobile: p.mobile,
+    WorkPhone: p.workPhone,
+    Oked: p.oked,
+    DistrictId: p.districtId,
+    Director: p.director,
+    Accountant: p.accountant,
+    VatRegCode: p.vatRegCode,
+    BranchCode: "",
+    BranchName: "",
+    ...(p.vatRegStatus !== null ? { VatRegStatus: p.vatRegStatus } : {}),
+  };
+}
+
 interface Built {
   /** The body for `POST /v1/documents/002/create`. */
   body: Record<string, unknown>;
@@ -230,22 +250,6 @@ export function buildInvoiceDraft(
 
   if (problems.length > 0 || !seller || !buyer) return { ok: false, problems };
 
-  const party = (p: Party) => ({
-    Name: p.name,
-    Account: p.account,
-    BankId: p.bankId,
-    Address: p.address,
-    Mobile: p.mobile,
-    WorkPhone: p.workPhone,
-    Oked: p.oked,
-    DistrictId: p.districtId,
-    Director: p.director,
-    Accountant: p.accountant,
-    VatRegCode: p.vatRegCode,
-    BranchCode: "",
-    BranchName: "",
-    ...(p.vatRegStatus !== null ? { VatRegStatus: p.vatRegStatus } : {}),
-  });
   const hasVat = products.some((p) => p.VatSum !== 0);
   const total = amountTotal + vatTotal;
   return {
@@ -260,8 +264,8 @@ export function buildInvoiceDraft(
           : {}),
         SellerTin: seller.tin,
         BuyerTin: buyer.tin,
-        Seller: party(seller),
-        Buyer: party(buyer),
+        Seller: partyBody(seller),
+        Buyer: partyBody(buyer),
         ProductList: {
           HasVat: hasVat,
           HasExcise: false,
@@ -295,4 +299,68 @@ export function buildInvoiceDraft(
 export function draftIdOf(answer: unknown): string | null {
   const a = record(answer);
   return pick(a, ["_id", "id", "documentId"]) || pick(record(a.data), ["_id", "id", "documentId"]) || null;
+}
+
+/** Didox's code for a free-form document (the path of `/v1/documents/{docType}/create`). */
+export const DOCUMENT_DOCTYPE = "000";
+
+/** The `Subtype` Didox's own 1C library gives each kind of free-form document. */
+export const DOCUMENT_SUBTYPES = {
+  reconciliation_act: 1,
+  letter: 2,
+  contract: 3,
+  payment_invoice: 4,
+  work_act: 5,
+  other: 6,
+  request: 7,
+  specification: 8,
+} as const;
+export type DocumentType = keyof typeof DOCUMENT_SUBTYPES;
+
+export interface DocumentInput {
+  type: DocumentType;
+  number: string;
+  /** YYYY-MM-DD. */
+  date: string;
+  buyerTin: string;
+  contract?: { number: string; date: string } | undefined;
+}
+
+/**
+ * The draft body of a free-form document (a letter, an act, ...): the file is a PDF of the text (base64),
+ * the data are the number, date and the two parties, as in Didox's own 1C library.
+ */
+export function buildDocumentDraft(
+  input: DocumentInput,
+  seller: Party | null,
+  buyer: Party | null,
+  pdfBase64: string,
+): { ok: true; body: Record<string, unknown> } | { ok: false; problems: DraftProblem[] } {
+  const problems: DraftProblem[] = [];
+  const add = (code: DraftProblemCode, message: string) => problems.push({ code, line: null, message });
+  if (!input.number.trim()) add("NO_NUMBER", "The document has no number");
+  if (!validDate(input.date)) add("BAD_DATE", `The date "${input.date}" is not YYYY-MM-DD`);
+  if (!validTin(input.buyerTin))
+    add("BAD_TIN", `The recipient's INN "${input.buyerTin}" is not 9 or 14 digits`);
+  if (!seller) add("NO_SELLER_DATA", "Didox gave no profile for our own company");
+  if (!buyer && validTin(input.buyerTin)) add("NO_PARTY", `Didox has no company with INN ${input.buyerTin}`);
+  if (problems.length > 0 || !seller || !buyer) return { ok: false, problems };
+  return {
+    ok: true,
+    body: {
+      data: {
+        Subtype: DOCUMENT_SUBTYPES[input.type],
+        Document: { DocumentNo: input.number.trim(), DocumentDate: input.date },
+        contractdoc: {
+          contractdate: input.contract?.date ?? "",
+          contractno: input.contract?.number ?? "",
+        },
+        SellerTin: seller.tin,
+        BuyerTin: buyer.tin,
+        Seller: partyBody(seller),
+        Buyer: partyBody(buyer),
+      },
+      document: pdfBase64,
+    },
+  };
 }

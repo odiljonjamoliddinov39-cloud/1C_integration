@@ -40,6 +40,8 @@ export class FakeDidox {
   profiles = new Map<string, Record<string, unknown>>();
   measures: { id: string; name: string }[] = [{ id: "1", name: "шт" }];
   drafts: { docType: string; body: unknown }[] = [];
+  /** The methods the draft deletion answers to (the real route's method is not documented). */
+  deleteMethods = ["POST", "DELETE"];
   /** Print forms by document id (a PDF). */
   files = new Map<string, Uint8Array>();
   documents: {
@@ -164,6 +166,14 @@ export class FakeDidox {
       return found ? json(found) : json({ error: "not found" }, 404);
     }
     if (path === "/v1/measures/all") return json(this.measures);
+    const removal = /^\/v1\/documents\/([^/]+)\/delete\/draft$/.exec(path);
+    if (removal?.[1]) {
+      if (!this.deleteMethods.includes(init?.method ?? "GET")) return json({ error: "no route" }, 405);
+      const at = this.drafts.findIndex((_d, i) => `DRAFT${i + 1}` === removal[1]);
+      if (at < 0) return json({ error: "not a draft" }, 404);
+      this.drafts.splice(at, 1);
+      return json({ success: true });
+    }
     const create = /^\/v1\/documents\/([^/]+)\/create$/.exec(path);
     if (create?.[1]) {
       this.drafts.push({ docType: create[1], body });
@@ -178,6 +188,8 @@ export class FakeDidox {
     }
     const one = /^\/v1\/documents\/([^/]+)$/.exec(path);
     if (one?.[1]) {
+      const draftAt = this.drafts.findIndex((_d, i) => `DRAFT${i + 1}` === one[1]);
+      if (draftAt >= 0) return json({ id: one[1], ...(this.drafts[draftAt]?.body as object) });
       const found = this.documents.find((d) => d.id === one[1]);
       return found ? json(found.json ?? found) : json({ error: "not found" }, 404);
     }

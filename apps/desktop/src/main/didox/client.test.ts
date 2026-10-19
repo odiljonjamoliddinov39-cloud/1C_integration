@@ -112,6 +112,21 @@ describe("DidoxClient", () => {
     await expect(client.documentFile("nope")).rejects.toMatchObject({ code: "DIDOX_HTTP", status: 404 });
   });
 
+  it("deletes a draft, with the method the server has a route for", async () => {
+    const { server, client } = setup();
+    server.drafts.push({ docType: "000", body: {} });
+    await client.deleteDraft("DRAFT1");
+    expect(server.drafts).toHaveLength(0);
+    expect(server.requests.at(-1)).toMatchObject({ method: "POST" });
+
+    server.deleteMethods = ["DELETE"];
+    server.drafts.push({ docType: "000", body: {} });
+    await client.deleteDraft("DRAFT1");
+    expect(server.drafts).toHaveLength(0);
+    expect(server.requests.map((r) => r.method).slice(-2)).toEqual(["POST", "DELETE"]);
+    await expect(client.deleteDraft("DRAFT9")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("says what failed, in codes", async () => {
     const { client } = setup();
     await expect(client.documentInfo("missing")).rejects.toMatchObject({ code: "DIDOX_HTTP", status: 404 });

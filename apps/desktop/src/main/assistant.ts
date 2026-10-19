@@ -35,6 +35,10 @@ import {
   type DeleteMarkedResult,
   type BankPaymentsInput,
   type PostCreatedInput,
+  type DidoxDeleteDraftInput,
+  type DidoxDocumentInput,
+  type DidoxReconciliationInput,
+  type ObjectSnapshot,
   type DidoxDraftInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
@@ -85,9 +89,26 @@ import {
 } from "./bank/resolve.js";
 import type { BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
-import { type DidoxDocument, batchOf, describeBatch, didoxKey, money } from "./didox/document.js";
+import {
+  type DidoxDocument,
+  batchOf,
+  describeBatch,
+  didoxKey,
+  money,
+  parseDidoxDocument,
+} from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
-import { createDraft, prepareDraft } from "./didox/draft.js";
+import {
+  DOCUMENT_DOCTYPE,
+  RECONCILIATION_DOCTYPE,
+  type RenderPdf,
+  createDraft,
+  prepareDocumentDraft,
+  prepareDraft,
+  prepareReconciliationDraft,
+} from "./didox/draft.js";
+import { documentJson } from "./didox/fetch.js";
+import { readReconciliationAct } from "./didox/reconciliation.js";
 import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
 import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
@@ -176,6 +197,8 @@ export interface AssistantDeps {
   billing?: Pick<BillingState, "isReadOnly" | "countImport" | "countAudit">;
   /** E-IMZO and the network for Didox; the real ones unless a test hands in fakes. */
   didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
+  /** Prints an HTML page to a PDF (Electron); absent in tests that do not make letters. */
+  renderPdf?: RenderPdf;
 }
 
 const READ_ONLY_MESSAGE =
@@ -1063,6 +1086,24 @@ export class AssistantService {
         if (applied.ok && change.action === "create") this.noteCreated(chat, applied.data as ObjectState);
         return applied;
       };
+    } else if (tool === "propose_didox_reconciliation") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const prepared = await this.prepareDidoxReconciliation(chat, input as DidoxReconciliationInput);
+      if ("early" in prepared) return prepared.early;
+      proposal = prepared.proposal;
+      create = prepared.create;
+    } else if (tool === "propose_didox_delete_draft") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const prepared = await this.prepareDidoxDelete(chat, input as DidoxDeleteDraftInput);
+      if ("early" in prepared) return prepared.early;
+      proposal = prepared.proposal;
+      create = prepared.create;
+    } else if (tool === "propose_didox_document") {
+      emit({ type: "tool", name: tool, detail: describe(tool, input) });
+      const prepared = await this.prepareDidoxDocument(chat, input as DidoxDocumentInput);
+      if ("early" in prepared) return prepared.early;
+      proposal = prepared.proposal;
+      create = prepared.create;
     } else if (tool === "propose_didox_draft") {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
       const prepared = await this.prepareDidoxDraft(chat, input as DidoxDraftInput);
@@ -1163,7 +1204,18 @@ export class AssistantService {
       decided({ status: "applied", state });
       return { ok: true, data: { status: "done", action: proposal.preview.action, object: state } };
     }
-    if (proposal.kind === "didox_draft") {
+    if (proposal.kind === "didox_delete") {
+      decided({ status: "didox_deleted", id: proposal.draft.id });
+      return {
+        ok: true,
+        data: { status: "draft_deleted", draftId: proposal.draft.id, note: "The draft is deleted in Didox." },
+      };
+    }
+    if (
+      proposal.kind === "didox_draft" ||
+      proposal.kind === "didox_document" ||
+      proposal.kind === "didox_reconciliation"
+    ) {
       const { id } = result.data as { id: string };
       decided({ status: "didox_draft", id });
       return {
@@ -1277,6 +1329,273 @@ export class AssistantService {
   }
 
   /**
+   * The 1C document a Didox document is made from: it must exist, not be marked for deletion, and carry the
+   * number and date the Didox document has (and, when posting matters, be posted). What is wrong comes back as
+   * problems the model must settle first: apply the document in 1C, then go to Didox. `required` false: no source
+   * is needed (a letter), but one that is given is still checked.
+   */
+  private async checkOnecSource(
+    companyId: string,
+    source: { object: string; ref: string } | undefined,
+    need: { number: string; date: string; posted: boolean; what: string; text?: string },
+    required = true,
+  ): Promise<{ problems: { code: string; message: string }[] } | { error: ToolResult }> {
+    if (!source) {
+      return {
+        problems: required
+          ? [
+              {
+                code: "NO_1C_DOCUMENT",
+                message: `First apply the document in 1C (propose_changes, then its card), and pass onec: {object, ref} of ${need.what}. Read its number and date from 1C and give them here as they are.`,
+              },
+            ]
+          : [],
+      };
+    }
+    const read = await this.deps.connector.tool(this.deps.store.connection(companyId), "get_object", source);
+    if (!read.ok) return { error: read };
+    const snapshot = read.data as ObjectSnapshot;
+    const problems: { code: string; message: string }[] = [];
+    const text = (value: unknown) =>
+      typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
+    const number = text(snapshot.fields.Номер ?? snapshot.fields.Number);
+    const date = text(snapshot.fields.Дата ?? snapshot.fields.Date).slice(0, 10);
+    if (snapshot.deletionMark)
+      problems.push({
+        code: "ONEC_DELETED",
+        message: `${snapshot.presentation} is marked for deletion in 1C.`,
+      });
+    if (number && number !== need.number.trim())
+      problems.push({
+        code: "ONEC_NUMBER",
+        message: `The number in 1C is ${number}, not ${need.number}: use the number from 1C.`,
+      });
+    if (date && date !== need.date)
+      problems.push({
+        code: "ONEC_DATE",
+        message: `The date in 1C is ${date}, not ${need.date}: use the date from 1C.`,
+      });
+    if (need.posted && !snapshot.posted)
+      problems.push({
+        code: "ONEC_NOT_POSTED",
+        message: `${snapshot.presentation} is not posted in 1C: post it first.`,
+      });
+    if (need.text !== undefined) {
+      const shown = need.date.split("-").reverse().join(".");
+      if (!need.text.includes(need.number.trim()) || !need.text.includes(shown))
+        problems.push({
+          code: "TEXT_NUMBER",
+          message: `The text must name the document's number ${need.number} and date ${shown} as in 1C.`,
+        });
+    }
+    return { problems };
+  }
+
+  /** A failure of Didox or E-IMZO as a tool result. */
+  private didoxFailure(e: unknown): ToolResult {
+    if (e instanceof DidoxError || e instanceof EImzoError)
+      return { ok: false, code: e.code, message: e.message };
+    return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
+  }
+
+  private noDidox(): ToolResult {
+    return {
+      ok: false,
+      code: "NO_DIDOX_CONNECTION",
+      message:
+        "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox " +
+        "test button, run the test, choose the signature key and press Save for this company.",
+    };
+  }
+
+  /**
+   * A reconciliation act from the saved act in 1C: the app reads its rows, contract and period and works every
+   * balance out; the card shows the table and the balances; a confirmation makes a DRAFT in Didox (type 052).
+   */
+  private async prepareDidoxReconciliation(
+    chat: StoredChat,
+    input: DidoxReconciliationInput,
+  ): Promise<{ early: ToolResult } | { proposal: Proposal; create: () => Promise<ToolResult> }> {
+    const client = this.didoxClient(chat.companyId);
+    if (!client) return { early: this.noDidox() };
+    const read = await this.deps.connector.tool(
+      this.deps.store.connection(chat.companyId),
+      "get_object",
+      input.onec,
+    );
+    if (!read.ok) return { early: read };
+    const snapshot = read.data as ObjectSnapshot;
+    const attention = (problems: { code: string; message: string }[]): { early: ToolResult } => ({
+      early: { ok: true, data: { status: "needs_attention", problems } },
+    });
+    if (snapshot.deletionMark)
+      return attention([
+        { code: "ONEC_DELETED", message: `${snapshot.presentation} is marked for deletion in 1C.` },
+      ]);
+    const act = readReconciliationAct(snapshot);
+    if (!act.ok) return attention(act.problems);
+    const key = ["rec", act.act.number, act.act.date, input.buyerInn].join("|");
+    const known = chat.didoxDrafts?.find((d) => d.key === key);
+    if (known) return { early: { ok: true, data: { status: "already_exists", draftId: known.id } } };
+    let prepared: Awaited<ReturnType<typeof prepareReconciliationDraft>>;
+    try {
+      prepared = await prepareReconciliationDraft(
+        client,
+        act.act,
+        input.buyerInn,
+        this.deps.store.company(chat.companyId).inn,
+        input.openings ?? [],
+        input.text,
+      );
+    } catch (e) {
+      return { early: this.didoxFailure(e) };
+    }
+    if (!prepared.ok) return attention(prepared.problems);
+    const { body, preview } = prepared;
+    return {
+      proposal: { kind: "didox_reconciliation", act: preview },
+      create: async () => {
+        try {
+          const id = await createDraft(client, body, RECONCILIATION_DOCTYPE);
+          chat.didoxDrafts = [...(chat.didoxDrafts ?? []), { key, id }];
+          this.save(chat);
+          return { ok: true, data: { id } };
+        } catch (e) {
+          return this.didoxFailure(e);
+        }
+      },
+    };
+  }
+
+  /**
+   * A wrong draft in Didox to delete: the card says which document it is (as far as Didox tells), and only the
+   * confirmation deletes it. Didox deletes drafts only, so a signed or sent document cannot be removed this way.
+   */
+  private async prepareDidoxDelete(
+    chat: StoredChat,
+    input: DidoxDeleteDraftInput,
+  ): Promise<{ early: ToolResult } | { proposal: Proposal; create: () => Promise<ToolResult> }> {
+    const client = this.didoxClient(chat.companyId);
+    if (!client) return { early: this.noDidox() };
+    let details: unknown;
+    try {
+      details = await client.documentInfo(input.id);
+    } catch (e) {
+      if (e instanceof DidoxError && e.status === 404)
+        return { early: { ok: false, code: "NOT_FOUND", message: `Didox has no document ${input.id}.` } };
+      return { early: this.didoxFailure(e) };
+    }
+    const json = documentJson(details);
+    const parsed = json === null ? null : parseDidoxDocument(json);
+    const raw = (details && typeof details === "object" ? details : {}) as Record<string, unknown>;
+    const draft = {
+      id: input.id,
+      number: parsed?.number ?? (typeof raw.name === "string" ? raw.name : ""),
+      date: parsed?.date ?? "",
+      recipient: parsed?.buyer.name ?? "",
+    };
+    return {
+      proposal: { kind: "didox_delete", draft },
+      create: async () => {
+        try {
+          await client.deleteDraft(input.id);
+          chat.didoxDrafts = (chat.didoxDrafts ?? []).filter((d) => d.id !== input.id);
+          this.save(chat);
+          return { ok: true, data: { id: input.id } };
+        } catch (e) {
+          return this.didoxFailure(e);
+        }
+      },
+    };
+  }
+
+  /**
+   * A letter or another free-form document for Didox: the parties are read from Didox, the text becomes a PDF,
+   * the card shows what will go, and a confirmation makes a DRAFT there (not signed, not sent).
+   */
+  private async prepareDidoxDocument(
+    chat: StoredChat,
+    input: DidoxDocumentInput,
+  ): Promise<{ early: ToolResult } | { proposal: Proposal; create: () => Promise<ToolResult> }> {
+    const client = this.didoxClient(chat.companyId);
+    if (!client) {
+      return {
+        early: {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message:
+            "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox " +
+            "test button, run the test, choose the signature key and press Save for this company.",
+        },
+      };
+    }
+    if (!this.deps.renderPdf) {
+      return { early: { ok: false, code: "NO_PDF", message: "This app cannot make a PDF here." } };
+    }
+    const key = ["doc", input.type, input.number, input.date, input.buyerInn].join("|");
+    const known = chat.didoxDrafts?.find((d) => d.key === key);
+    if (known) return { early: { ok: true, data: { status: "already_exists", draftId: known.id } } };
+    const failure = (e: unknown): ToolResult => {
+      if (e instanceof DidoxError || e instanceof EImzoError)
+        return { ok: false, code: e.code, message: e.message };
+      return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
+    };
+    // Acts, contracts, invoices for payment ... exist in 1C first; the Didox document is made from that one.
+    const fromOnec = input.type !== "letter" && input.type !== "other";
+    const checked = await this.checkOnecSource(
+      chat.companyId,
+      input.onec,
+      {
+        number: input.number,
+        date: input.date,
+        posted: false,
+        what: "the saved document in 1C this is made from",
+        text: input.text,
+      },
+      fromOnec,
+    );
+    if ("error" in checked) return { early: checked.error };
+    if (checked.problems.length > 0)
+      return { early: { ok: true, data: { status: "needs_attention", problems: checked.problems } } };
+    let prepared: Awaited<ReturnType<typeof prepareDocumentDraft>>;
+    try {
+      prepared = await prepareDocumentDraft(
+        client,
+        {
+          type: input.type,
+          number: input.number,
+          date: input.date,
+          buyerTin: input.buyerInn,
+          contract: input.contract,
+          subject: input.subject,
+          text: input.text,
+          signer: input.signer,
+        },
+        this.deps.store.company(chat.companyId).inn,
+        this.deps.renderPdf,
+      );
+    } catch (e) {
+      return { early: failure(e) };
+    }
+    if (!prepared.ok)
+      return { early: { ok: true, data: { status: "needs_attention", problems: prepared.problems } } };
+    const { body, preview } = prepared;
+    return {
+      proposal: { kind: "didox_document", document: preview },
+      create: async () => {
+        try {
+          const id = await createDraft(client, body, DOCUMENT_DOCTYPE);
+          chat.didoxDrafts = [...(chat.didoxDrafts ?? []), { key, id }];
+          this.save(chat);
+          return { ok: true, data: { id } };
+        } catch (e) {
+          return failure(e);
+        }
+      },
+    };
+  }
+
+  /**
    * An invoice for Didox: the parties and units are read from Didox (E-IMZO may ask for the key's password
    * the first time), the card shows the sums the app worked out, and a confirmation makes a DRAFT there.
    */
@@ -1304,6 +1623,16 @@ export class AssistantService {
         return { ok: false, code: e.code, message: e.message };
       return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
     };
+    // The invoice is applied (and posted) in 1C first; the draft is made from that document.
+    const checked = await this.checkOnecSource(chat.companyId, input.onec, {
+      number: input.number,
+      date: input.date,
+      posted: true,
+      what: "the posted issued invoice (Документ.СчетФактураВыданный)",
+    });
+    if ("error" in checked) return { early: checked.error };
+    if (checked.problems.length > 0)
+      return { early: { ok: true, data: { status: "needs_attention", problems: checked.problems } } };
     let prepared: Awaited<ReturnType<typeof prepareDraft>>;
     try {
       prepared = await prepareDraft(
@@ -2004,6 +2333,15 @@ function describe(name: string, input: unknown): string {
   if (name === "fetch_didox_documents") {
     const read = input as FetchDidoxInput;
     return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;
+  }
+  if (name === "propose_didox_reconciliation") {
+    const rec = input as { title: string };
+    return rec.title;
+  }
+  if (name === "propose_didox_delete_draft") return String((input as { id: string }).id);
+  if (name === "propose_didox_document") {
+    const doc = input as { type: string; number: string; title: string };
+    return `${doc.type} ${doc.number} · ${doc.title}`;
   }
   if (name === "propose_didox_draft") {
     const draft = input as { number: string; title: string };
