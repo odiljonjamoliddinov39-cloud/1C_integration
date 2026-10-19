@@ -1,14 +1,16 @@
 /**
- * Didox (the electronic document exchange) over its REST API, as documented in the
- * "DIDOX-1C-INTEGRATION" Postman collection (docs/didox.md). Runs on the PC: the accountant's key and
- * the tokens never go to our server.
+ * Didox (the electronic document exchange) over its REST API, as Didox's own 1C library ("Библиотека
+ * электронных документов для Узбекистана", given by Didox) calls it (docs/didox.md). Runs on the PC: the
+ * accountant's key and the tokens never go to our server.
  *
  * Sign-in is by the accountant's E-IMZO key: the key's serial number gives an authId, the app signs
- * `{"authId": "..."}` (PKCS#7) with the key and sends it to /v1/auth/login, which returns a token for
- * 24 hours. The signing itself is a DidoxSigner (E-IMZO runs on the PC); this client only asks for it.
+ * `{"authId": "..."}` (PKCS#7) with the key, has Didox time-stamp the signature (/v1/dsvs/timestamp), and
+ * sends it to /v1/auth/{taxId}/token, which returns a token. With a person's key the token is then
+ * exchanged for the company's (/v1/auth/company/{tin}/login). Every later request carries the token as
+ * both `api-key` and `user-key`. The signing itself is a DidoxSigner (E-IMZO runs on the PC).
  *
- * Shapes the collection does not show (the document list and a document's details) are returned as
- * they come (`unknown`), and what is assumed about the token header is in one place (headers()).
+ * Shapes Didox's documents do not show (the document list and a document's details) are returned as
+ * they come (`unknown`).
  */
 
 import { readTimestampToken, stampsSignature } from "./cms.js";
@@ -17,6 +19,8 @@ import { readTimestampToken, stampsSignature } from "./cms.js";
 export interface DidoxSigner {
   /** The key's serial number in hexadecimal. */
   serialNumber(): Promise<string>;
+  /** The tax number the key is for (the company's INN for a company's key, else the person's); "" if unknown. */
+  taxId?(): Promise<string>;
   /**
    * The data signed with the key, as PKCS#7 (base64). With `stamp`, the signature's time stamp token is
    * asked of it and attached, as Didox wants.
@@ -31,18 +35,46 @@ export interface SignedData {
   /** The signature value in hexadecimal, as E-IMZO gives it next to the PKCS#7. */
   signatureHex: string;
 }
-/** Asks for the time stamp token (base64) of a signature. */
-export type Stamper = (signed: SignedData) => Promise<string>;
+/**
+ * What Didox's time stamp service gives: a token to attach to the signature, or (`attached`) the signature
+ * with the token already in it, which is then used as it is.
+ */
+export interface Stamped {
+  value: string;
+  attached: boolean;
+}
+/** Asks for the time stamp of a signature. */
+export type Stamper = (signed: SignedData) => Promise<Stamped>;
 
 export interface DidoxConfig {
-  /** The development server is the default; production is set when a company goes live. */
+  /** Didox's test server is the default; production is `https://api.didox.uz/`. */
   baseUrl?: string;
-  /** The partner key Didox gives an integrator (header api-key). */
+  /** A key sent as `api-key` on the requests made before sign-in (Didox's own library sends none). */
   apiKey?: string;
+  /** The company to work for when the key is a person's: its INN (the token is exchanged for the company's). */
+  companyTin?: string;
   fetch?: typeof fetch;
 }
 
-export const DIDOX_DEV_URL = "https://devapi.goodsign.biz/";
+/** Didox's test server and its production server, as in Didox's own 1C library. */
+export const DIDOX_DEV_URL = "https://testapi2.didox.uz/";
+export const DIDOX_PROD_URL = "https://api.didox.uz/";
+
+/**
+ * The server address only: a page URL pasted from the browser (`https://didox.uz/documents/…`) is cut to
+ * its server, and the site's own name (didox.uz) is taken for the API's (api.didox.uz).
+ */
+export function didoxServer(address: string | undefined): string {
+  const text = (address ?? "").trim();
+  if (text === "") return DIDOX_DEV_URL.replace(/\/+$/, "");
+  try {
+    const url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `https://${text}`);
+    const host = ["didox.uz", "www.didox.uz"].includes(url.host.toLowerCase()) ? "api.didox.uz" : url.host;
+    return `${url.protocol}//${host}`;
+  } catch {
+    return text.replace(/\/+$/, "");
+  }
+}
 
 export type DidoxErrorCode =
   | "DIDOX_AUTH"
@@ -129,12 +161,14 @@ export class DidoxClient {
   private token: { value: string; expiresAt: number } | null = null;
   /** How the last sign-in's time stamp was got, for the error when Didox still refuses it. */
   private stamped = "";
+  /** A sign-in is under way: a 401 inside it is its own answer, not a reason to sign in again. */
+  private signingIn = false;
 
   constructor(
     private readonly config: DidoxConfig = {},
     private readonly signer?: DidoxSigner,
   ) {
-    this.baseUrl = (config.baseUrl ?? DIDOX_DEV_URL).replace(/\/+$/, "");
+    this.baseUrl = didoxServer(config.baseUrl);
     this.fetcher = config.fetch ?? fetch;
   }
 
@@ -149,9 +183,19 @@ export class DidoxClient {
 
   /** Signs in with the accountant's key. */
   async login(): Promise<void> {
+    this.signingIn = true;
+    try {
+      await this.signIn();
+    } finally {
+      this.signingIn = false;
+    }
+  }
+
+  private async signIn(): Promise<void> {
     const signer = this.signer;
     if (!signer) throw new DidoxError("DIDOX_AUTH", "No E-IMZO key is available to sign in with");
     const serialNumber = await signer.serialNumber();
+    const taxId = (await signer.taxId?.()) ?? "";
     const authIdBody = await this.request("GET", `/v1/auth/authId/${encodeURIComponent(serialNumber)}`, {
       auth: false,
     });
@@ -163,18 +207,15 @@ export class DidoxClient {
     try {
       pkcs7 = await signer.pkcs7(data, (signed) => this.timestampToken(signed));
     } catch (e) {
-      // A Didox with no time stamp service (the production one answers 405 there) may not ask for a stamp:
+      // A Didox with no time stamp service (a site's web server answers 405 there) may not ask for a stamp:
       // sign without, and let the sign-in say whether it wants one.
       if (!(e instanceof DidoxError && e.code === "DIDOX_NO_TIMESTAMP")) throw e;
-      this.stamped = "no time stamp: this Didox has no /v1/dsvs/gettimestamp";
+      this.stamped = "no time stamp: this Didox has no /v1/dsvs/timestamp";
       pkcs7 = await signer.pkcs7(data);
     }
     let loginBody: unknown;
     try {
-      loginBody = await this.request("POST", "/v1/auth/login", {
-        auth: false,
-        body: { serialNumber, pkcs7 },
-      });
+      loginBody = await this.personLogin(serialNumber, taxId, pkcs7);
     } catch (e) {
       // What was stamped and how, to see why Didox does not take it.
       if (e instanceof DidoxError && this.stamped)
@@ -184,73 +225,87 @@ export class DidoxClient {
     const value = textField(loginBody, ["token", "userKey", "user-key", "user_key"]);
     if (!value) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no token");
     this.token = { value, expiresAt: Date.now() + TOKEN_LIFETIME_MS };
+
+    // A person's key: the company's token is asked with the person's.
+    const company = this.config.companyTin?.trim();
+    if (company && company !== taxId) {
+      const body = await this.request("POST", `/v1/auth/company/${encodeURIComponent(company)}/login`);
+      const companyToken = textField(body, ["token", "userKey", "user-key", "user_key"]);
+      if (!companyToken) throw new DidoxError("DIDOX_RESPONSE", "Didox sent no token for the company");
+      this.token = { value: companyToken, expiresAt: Date.now() + TOKEN_LIFETIME_MS };
+    }
+  }
+
+  /** The key's own sign-in: /v1/auth/{taxId}/token, or the older /v1/auth/login where that route is not. */
+  private async personLogin(serialNumber: string, taxId: string, pkcs7: string): Promise<unknown> {
+    const older = () =>
+      this.request("POST", "/v1/auth/login", { auth: false, body: { serialNumber, pkcs7 } });
+    if (!taxId) return older();
+    try {
+      return await this.request("POST", `/v1/auth/${encodeURIComponent(taxId)}/token`, {
+        auth: false,
+        body: { serialNumber, signature: pkcs7 },
+      });
+    } catch (e) {
+      if (e instanceof DidoxError && (e.status === 404 || e.status === 405)) return older();
+      throw e;
+    }
   }
 
   /**
-   * Didox refuses a signature with no time stamp ("Eimzo fail … timestamp is required"), and E-IMZO does
-   * not stamp. /v1/dsvs/gettimestamp gives the token ({"success":true,"timeStampTokenB64":"…"}); E-IMZO
-   * attaches it to the PKCS#7 (attach_timestamp_token_pkcs7). The collection does not show what the
-   * endpoint takes, and it answers an empty token to what it does not understand, so the likely shapes
-   * are tried in turn and the first token wins; if none does, the error shows each answer.
+   * Didox refuses a signature with no time stamp ("Eimzo fail … timestamp is required"). Its time stamp
+   * service takes the signature (`{"pkcs7", "signatureHex"}`, both) and answers
+   * `{"success", "timeStampTokenB64", "isAttachedPkcs7"}`: with `isAttachedPkcs7` the value is the PKCS#7
+   * with the token in it, else a token that is attached to the PKCS#7 (E-IMZO does it, or the app).
+   * Didox's library calls /v1/dsvs/timestamp; the older collection names /v1/dsvs/gettimestamp.
    */
-  async timestampToken({ pkcs7, signatureHex }: SignedData): Promise<string> {
-    const attempts: [string, { body?: unknown; text?: string }][] = [
-      [
-        "the signature as JSON",
-        {
-          body: {
-            signature: signatureHex,
-            signatureHex,
-            signature_hex: signatureHex,
-            hex: signatureHex,
-            isAttachedPkcs7: false,
-          },
-        },
-      ],
-      ["the signature as text", { text: signatureHex }],
-      [
-        "the PKCS#7 as JSON",
-        { body: { pkcs7, pkcs7B64: pkcs7, pkcs7_64: pkcs7, data: pkcs7, isAttachedPkcs7: true } },
-      ],
-      ["the PKCS#7 as text", { text: pkcs7 }],
-    ];
+  async timestampToken({ pkcs7, signatureHex }: SignedData): Promise<Stamped> {
+    const paths = ["/v1/dsvs/timestamp", "/v1/dsvs/gettimestamp"];
     const names = ["timeStampTokenB64", "timeStampToken", "tst", "token"];
     const seen: string[] = [];
-    for (const [label, options] of attempts) {
+    for (const path of paths) {
       try {
-        const answer = await this.request("POST", "/v1/dsvs/gettimestamp", { auth: false, ...options });
+        const answer = await this.request("POST", path, { auth: false, body: { pkcs7, signatureHex } });
         const raw = textField(answer, names);
         if (!raw) {
-          seen.push(`${label}: ${JSON.stringify(answer).slice(0, 160)}`);
+          seen.push(`${path}: ${JSON.stringify(answer).slice(0, 160)}`);
           continue;
         }
-        // A token that says it stamps some other data is not this signature's: try the next shape.
+        const attached =
+          typeof answer === "object" &&
+          answer !== null &&
+          (answer as { isAttachedPkcs7?: unknown }).isAttachedPkcs7 === true;
+        if (attached) {
+          this.stamped = `time stamp from ${path}: attached to the PKCS#7 by Didox`;
+          return { value: raw, attached: true };
+        }
+        // A token that says it stamps some other data is not this signature's.
         const read = readTimestampToken(raw);
         const stamps = read ? stampsSignature(read, signatureHex) : "unknown";
-        this.stamped = `time stamp from ${label}: ${
+        this.stamped = `time stamp from ${path}: ${
           read
             ? `${read.wasResponse ? "a TimeStampResp, unwrapped" : "a token"}, ${read.algorithm} imprint ${read.imprint.slice(0, 16)}…, stamps the signature: ${stamps}`
             : `${Buffer.from(raw, "base64").length} bytes that are not a token the app can read`
         }`;
         if (stamps === "no") {
-          seen.push(`${label}: a token for other data (${this.stamped})`);
+          seen.push(`${path}: a token for other data (${this.stamped})`);
           continue;
         }
-        return read?.contentInfo ?? raw;
+        return { value: read?.contentInfo ?? raw, attached: false };
       } catch (e) {
         if (!(e instanceof DidoxError) || e.status === undefined || e.status < 400 || e.status >= 500)
           throw e;
-        seen.push(`${label}: ${e.message}`);
+        seen.push(`${path}: ${e.message}`);
       }
     }
-    // Every shape met a missing route (404/405, a web server's page): there is no time stamp service here.
-    if (seen.length === attempts.length && seen.every((line) => /answered (404|405|501)\b/.test(line))) {
+    // Every route met a missing one (404/405, a web server's page): there is no time stamp service here.
+    if (seen.length === paths.length && seen.every((line) => /answered (404|405|501)\b/.test(line))) {
       throw new DidoxError(
         "DIDOX_NO_TIMESTAMP",
         `Didox has no time stamp service (${seen[0]?.slice(0, 120)})`,
       );
     }
-    throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp token (${seen.join("; ")})`);
+    throw new DidoxError("DIDOX_AUTH", `Didox gave no time stamp (${seen.join("; ")})`);
   }
 
   /** The profile of the signed-in company. */
@@ -326,17 +381,15 @@ export class DidoxClient {
   }
 
   /**
-   * Request headers. The token travels as `user-key`; with no partner key it also travels as `api-key`,
-   * which is how a company's own working 1C module (uzbled_Операторы_Didox) sends it:
-   * `Заголовки.Вставить("api-key", Токен)`.
+   * Request headers. After sign-in the token travels as both `api-key` and `user-key`, as Didox's own 1C
+   * library sends it; before it, only a partner key if one was given.
    */
   private headers(auth: boolean): Record<string, string> {
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (this.config.apiKey) headers["api-key"] = this.config.apiKey;
     if (auth && this.token) {
+      headers["api-key"] = this.token.value;
       headers["user-key"] = this.token.value;
-      if (!this.config.apiKey) headers["api-key"] = this.token.value;
-    }
+    } else if (this.config.apiKey) headers["api-key"] = this.config.apiKey;
     return headers;
   }
 
@@ -365,7 +418,7 @@ export class DidoxClient {
         throw new DidoxError("DIDOX_NETWORK", e instanceof Error ? e.message : String(e));
       }
       // A token that lapsed early is renewed once with the key, then the request goes again.
-      if (response.status === 401 && auth && this.signer && attempt === 0) {
+      if (response.status === 401 && auth && this.signer && attempt === 0 && !this.signingIn) {
         await this.login();
         continue;
       }

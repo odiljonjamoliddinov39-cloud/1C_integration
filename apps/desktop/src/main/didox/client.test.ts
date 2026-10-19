@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { readFileSync } from "node:fs";
 
-import { DidoxClient, DidoxError } from "./client.js";
+import { DidoxClient, DidoxError, didoxServer } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
 
 function setup() {
@@ -16,58 +16,63 @@ function setup() {
 }
 
 describe("DidoxClient", () => {
-  it("signs in with the key: authId for its serial number, the authId signed, the token kept", async () => {
+  it("signs in with the key: authId, the signature time-stamped by Didox, then /v1/auth/{taxId}/token", async () => {
     const { server, signer, client } = setup();
     await client.login();
     expect(client.signedIn).toBe(true);
     expect(server.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "GET /v1/auth/authId/5A3C0F",
-      "POST /v1/dsvs/gettimestamp",
-      "POST /v1/auth/login",
+      "POST /v1/dsvs/timestamp",
+      "POST /v1/auth/302936161/token",
     ]);
     expect(signer.signed).toEqual([JSON.stringify({ authId: "auth-5A3C0F" })]);
-    // The signature value goes to Didox for its time stamp; the PKCS#7 that comes back carries it.
+    // Didox's time stamp service gets the PKCS#7 and the signature value, both.
     const signed = Buffer.from(`PKCS7:${JSON.stringify({ authId: "auth-5A3C0F" })}`).toString("base64");
     const hex = Buffer.from(JSON.stringify({ authId: "auth-5A3C0F" })).toString("hex");
-    expect(server.requests[1]?.body).toMatchObject({ signature: hex });
+    expect(server.requests[1]?.body).toEqual({ pkcs7: signed, signatureHex: hex });
+    // The sign-in carries the stamped signature as `signature`.
     const token = Buffer.from(`TST(${hex})`).toString("base64");
     expect(server.requests[2]?.body).toEqual({
       serialNumber: "5A3C0F",
-      pkcs7: Buffer.from(`TS:${token}:${signed}`).toString("base64"),
+      signature: Buffer.from(`TS:${token}:${signed}`).toString("base64"),
     });
     // The sign-in itself carries no token.
     expect(server.requests[0]?.headers["user-key"]).toBeUndefined();
-    expect(server.requests[0]?.headers["api-key"]).toBe("partner-key");
   });
 
-  it.each(["signature-text", "pkcs7-json", "pkcs7-text"] as const)(
-    "finds the shape the time stamp endpoint takes (%s) by trying the likely ones",
-    async (takes) => {
-      const { server, client } = setup();
-      server.timestampTakes = takes;
-      await client.login();
-      expect(client.signedIn).toBe(true);
-    },
-  );
+  it("uses the PKCS#7 Didox has put the time stamp into (isAttachedPkcs7) as it is", async () => {
+    const { server, client } = setup();
+    server.attachesStamp = true;
+    await client.login();
+    expect(client.signedIn).toBe(true);
+  });
 
-  it("shows what the time stamp endpoint answered when no shape gets a token", async () => {
-    const { server } = setup();
-    const refusing = new DidoxClient(
-      {
-        baseUrl: "https://didox.test/",
-        fetch: async (input, init) =>
-          String(input).includes("gettimestamp")
-            ? new Response('{"success":true,"timeStampTokenB64":"","isAttachedPkcs7":false}')
-            : server.fetch(input, init),
-      },
+  it("goes to the older /v1/auth/login where /v1/auth/{taxId}/token is not", async () => {
+    const { server, client } = setup();
+    server.hasPersonLogin = false;
+    await client.login();
+    expect(client.signedIn).toBe(true);
+    expect(server.requests.at(-1)?.url.pathname).toBe("/v1/auth/login");
+    expect(server.requests.at(-1)?.body).toMatchObject({ serialNumber: "5A3C0F" });
+  });
+
+  it("asks for the company's token when the key is a person's and a company is to be worked for", async () => {
+    const server = new FakeDidox();
+    const client = new DidoxClient(
+      { baseUrl: "https://didox.test/", companyTin: "303212825", fetch: server.fetch },
+      new FakeSigner("5A3C0F", "30101900000001"),
+    );
+    await client.listDocuments();
+    expect(server.companyTokens).toEqual(["303212825"]);
+    // The company's token (the second one issued) is what the requests carry.
+    expect(server.requests.at(-1)?.headers["user-key"]).toBe("token-2");
+    // A company's own key needs no exchange.
+    const own = new FakeDidox();
+    await new DidoxClient(
+      { baseUrl: "https://didox.test/", companyTin: "302936161", fetch: own.fetch },
       new FakeSigner(),
-    );
-    const error = await refusing.login().catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(DidoxError);
-    expect((error as DidoxError).message).toContain("no time stamp token");
-    expect((error as DidoxError).message).toContain(
-      'the PKCS#7 as text: {"success":true,"timeStampTokenB64":""',
-    );
+    ).listDocuments();
+    expect(own.companyTokens).toEqual([]);
   });
 
   it("signs in by itself on the first request, and lists documents with the filters as query", async () => {
@@ -95,7 +100,7 @@ describe("DidoxClient", () => {
     await client.listDocuments();
     server.expireTokens();
     await expect(client.listDocuments()).resolves.toHaveLength(1);
-    expect(server.requests.filter((r) => r.url.pathname === "/v1/auth/login")).toHaveLength(2);
+    expect(server.requests.filter((r) => /^\/v1\/auth\/\d+\/token$/.test(r.url.pathname))).toHaveLength(2);
   });
 
   it("downloads a document's archive from the link, without sending our keys to the link", async () => {
@@ -135,14 +140,20 @@ describe("DidoxClient", () => {
       new DidoxClient({
         baseUrl: "https://didox.test/",
         fetch: async (input) =>
-          String(input).includes("gettimestamp")
+          String(input).includes("dsvs/")
             ? new Response(JSON.stringify({ success: true, timeStampTokenB64: answer }))
             : (login ?? new Response("{}")),
       });
 
     it("takes a token that stamps this signature, and unwraps a TimeStampResp", async () => {
-      expect(await answering(token).timestampToken({ pkcs7: "", signatureHex: stamped })).toBe(token);
-      expect(await answering(response).timestampToken({ pkcs7: "", signatureHex: stamped })).toBe(token);
+      expect(await answering(token).timestampToken({ pkcs7: "", signatureHex: stamped })).toEqual({
+        value: token,
+        attached: false,
+      });
+      expect(await answering(response).timestampToken({ pkcs7: "", signatureHex: stamped })).toEqual({
+        value: token,
+        attached: false,
+      });
     });
 
     it("does not take a token for other data, and shows what it is", async () => {
@@ -160,9 +171,9 @@ describe("DidoxClient", () => {
         {
           baseUrl: "https://didox.test/",
           fetch: async (input, init) =>
-            String(input).includes("gettimestamp")
+            String(input).includes("dsvs/")
               ? new Response(JSON.stringify({ success: true, timeStampTokenB64: token }))
-              : String(input).includes("/auth/login")
+              : String(input).includes("/token")
                 ? new Response('{"error":"timestamp is required"}', { status: 401 })
                 : server.fetch(input, init),
         },
@@ -177,7 +188,7 @@ describe("DidoxClient", () => {
       const error = await client.login().catch((e: unknown) => e);
       expect((error as DidoxError).message).toContain("timestamp is required");
       expect((error as DidoxError).message).toMatch(
-        /\[time stamp from the signature as JSON: .*sha256 imprint/,
+        /\[time stamp from \/v1\/dsvs\/timestamp: .*sha256 imprint/,
       );
     });
   });
@@ -199,23 +210,34 @@ describe("DidoxClient", () => {
       const error = await client.login().catch((e: unknown) => e);
       expect(error).toBeInstanceOf(DidoxError);
       expect((error as DidoxError).message).toContain("timestamp is required");
-      expect((error as DidoxError).message).toContain("this Didox has no /v1/dsvs/gettimestamp");
+      expect((error as DidoxError).message).toContain("this Didox has no /v1/dsvs/timestamp");
     });
   });
 
-  it("sends the token as user-key, and as api-key too when there is no partner key", async () => {
-    const server = new FakeDidox();
-    const bare = new DidoxClient({ baseUrl: "https://didox.test/", fetch: server.fetch }, new FakeSigner());
-    await bare.listDocuments();
-    // The sign-in itself carries no key; the requests after it carry the token under both names.
-    expect(server.requests[0]?.headers["api-key"]).toBeUndefined();
+  it("sends the token as both api-key and user-key after sign-in, and a partner key only before it", async () => {
+    const { server, client } = setup();
+    await client.listDocuments();
+    // Before sign-in only the partner key (if one was given) travels as api-key.
+    expect(server.requests[0]?.headers["api-key"]).toBe("partner-key");
+    expect(server.requests[0]?.headers["user-key"]).toBeUndefined();
+    // After it, the token is both, as Didox's own 1C library sends it.
     const last = server.requests.at(-1);
     expect(last?.headers["user-key"]).toBe("token-1");
     expect(last?.headers["api-key"]).toBe("token-1");
-    // With a partner key, api-key is the partner key.
-    const keyed = setup();
-    await keyed.client.listDocuments();
-    expect(keyed.server.requests.at(-1)?.headers["api-key"]).toBe("partner-key");
+    const bare = new FakeDidox();
+    await new DidoxClient(
+      { baseUrl: "https://didox.test/", fetch: bare.fetch },
+      new FakeSigner(),
+    ).listDocuments();
+    expect(bare.requests[0]?.headers["api-key"]).toBeUndefined();
+  });
+
+  it("cuts a pasted page URL to its server, and takes the site for the API (didox.uz is api.didox.uz)", () => {
+    expect(didoxServer("")).toBe("https://testapi2.didox.uz");
+    expect(didoxServer("https://didox.uz/documents/new?tab=all&p=1")).toBe("https://api.didox.uz");
+    expect(didoxServer("didox.uz")).toBe("https://api.didox.uz");
+    expect(didoxServer("https://api.didox.uz/")).toBe("https://api.didox.uz");
+    expect(didoxServer("https://didox.test/v1/x")).toBe("https://didox.test");
   });
 
   it("says plainly that the address is the site's when Didox answers a web page", async () => {

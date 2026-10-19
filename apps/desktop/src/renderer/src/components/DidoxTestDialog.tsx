@@ -54,7 +54,7 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
             <Label htmlFor="didox-url">{t("didox.address")}</Label>
             <Input
               id="didox-url"
-              placeholder="https://devapi.goodsign.biz/"
+              placeholder="https://api.didox.uz/"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
