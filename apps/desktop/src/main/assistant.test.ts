@@ -351,7 +351,10 @@ describe("assistant", () => {
     describe("an invoice for Didox", () => {
       const ALIAS =
         "1.2.860.3.16.1.1=302936161,CN=ИВАНОВ ИВАН,O=FIDES PROJECTS XK,SERIALNUMBER=5A3C0F11,VALIDFROM=2025.01.01 00:00:00,VALIDTO=2099.01.01 23:59:59";
+      const INVOICE_REF = "11111111-1111-4111-8111-111111111111";
+      const ACT_REF = "22222222-2222-4222-8222-222222222222";
       const draft = {
+        onec: { object: "Документ.СчетФактураВыданный", ref: INVOICE_REF },
         title: "Hisob-faktura 1294",
         number: "1294",
         date: "2026-10-19",
@@ -398,6 +401,21 @@ describe("assistant", () => {
           renderPdf,
         );
         made.store.setAiEnabled(made.company.id, true);
+        // The documents in 1C that the Didox documents are made from.
+        made.base.objects.set(INVOICE_REF, {
+          object: "Документ.СчетФактураВыданный",
+          fields: { Номер: "1294", Дата: "2026-10-19T00:00:00" },
+          posted: true,
+          deletionMark: false,
+          version: 1,
+        });
+        made.base.objects.set(ACT_REF, {
+          object: "Документ.АктСверкиВзаиморасчетов",
+          fields: { Номер: "0000-000013", Дата: "2026-10-19T00:00:00" },
+          posted: false,
+          deletionMark: false,
+          version: 1,
+        });
         return { ...made, server };
       }
 
@@ -501,6 +519,78 @@ describe("assistant", () => {
         expect(server.drafts[0]?.docType).toBe("000");
         expect(server.requests.some((r) => /\/(sign|tosign|reject)$/.test(r.url.pathname))).toBe(false);
         expect(resultOf(proxy.requests)).toMatchObject({ status: "draft_created", draftId: "DRAFT1" });
+      });
+
+      describe("1C first: a Didox document is made only from a saved 1C document", () => {
+        const act = {
+          title: "Akt sverka",
+          type: "reconciliation_act",
+          number: "0000-000013",
+          date: "2026-10-19",
+          buyerInn: "201607534",
+          subject: "Akt sverka",
+          text: "АКТ СВЕРКИ № 0000-000013 от 19.10.2026 между сторонами.",
+        };
+        const pdf = async () => new Uint8Array(Buffer.from("%PDF-1.4"));
+
+        async function run(input: Record<string, unknown>) {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_document", input), pdf);
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          const sending = made.assistant.send({ companyId: made.company.id, text: "?" });
+          await answerCards(made.events, made.assistant, true);
+          await sending;
+          return {
+            ...made,
+            result: resultOf(made.proxy.requests) as { status: string; problems?: { code: string }[] },
+          };
+        }
+
+        it("makes the draft of an act that is saved in 1C with that number and date", async () => {
+          const { server, result } = await run({
+            ...act,
+            onec: { object: "Документ.АктСверкиВзаиморасчетов", ref: ACT_REF },
+          });
+          expect(result.status).toBe("draft_created");
+          expect(server.drafts).toHaveLength(1);
+        });
+
+        it("refuses an act that was not applied in 1C first, and touches nothing in Didox", async () => {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_document", act), pdf);
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          await made.assistant.send({ companyId: made.company.id, text: "?" });
+          const result = resultOf(made.proxy.requests) as { status: string; problems: { code: string }[] };
+          expect(result.status).toBe("needs_attention");
+          expect(result.problems.map((p) => p.code)).toEqual(["NO_1C_DOCUMENT"]);
+          expect(made.server.requests).toHaveLength(0);
+          expect(made.events.some((e) => e.type === "confirm")).toBe(false);
+        });
+
+        it("refuses a number or date that differs from 1C, or a text that does not name them", async () => {
+          const made = didoxSetup(
+            proposeThenAnswer("propose_didox_document", {
+              ...act,
+              number: "0000-000016",
+              date: "2026-10-20",
+              onec: { object: "Документ.АктСверкиВзаиморасчетов", ref: ACT_REF },
+            }),
+            pdf,
+          );
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          await made.assistant.send({ companyId: made.company.id, text: "?" });
+          const result = resultOf(made.proxy.requests) as { problems: { code: string }[] };
+          expect(result.problems.map((p) => p.code)).toEqual(["ONEC_NUMBER", "ONEC_DATE", "TEXT_NUMBER"]);
+          expect(made.server.drafts).toHaveLength(0);
+        });
+
+        it("wants an invoice posted in 1C before it goes to Didox", async () => {
+          const made = didoxSetup(proposeThenAnswer("propose_didox_draft", draft));
+          made.store.setDidox(made.company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+          made.base.objects.get(INVOICE_REF)!.posted = false;
+          await made.assistant.send({ companyId: made.company.id, text: "?" });
+          const result = resultOf(made.proxy.requests) as { problems: { code: string }[] };
+          expect(result.problems.map((p) => p.code)).toEqual(["ONEC_NOT_POSTED"]);
+          expect(made.server.drafts).toHaveLength(0);
+        });
       });
 
       it("tells the model when Didox is not connected for the company", async () => {

@@ -226,6 +226,11 @@ Not wired into the app yet: no settings screen, no assistant tool.
    (`POST /v1/documents/000/create`, `data{Subtype, Document{DocumentNo, DocumentDate}, Seller, Buyer}` and
    `document` = the PDF in base64; Subtype 1 reconciliation act, 2 letter, 3 contract, 4 invoice for payment,
    5 act of work, 6 other, 7 request, 8 specification), as a draft only.
+   **1C first**: a document that exists in 1C (an invoice, a reconciliation act, a contract, an invoice for payment,
+   an act of work) is applied in 1C first and only then goes to Didox. The tool takes `onec: {object, ref}` of the
+   saved 1C document, reads it (`GetObject`) and refuses when it is missing, marked for deletion, not posted (an
+   invoice), has another number or date than the Didox document, or when the text does not name that number and
+   date. Only a letter and an "other" document need no 1C source.
 5. **Dedup**: a Didox document id is the `externalId` of the 1C record, so a document is never
    entered twice (the PlatformAPI already refuses a second one).
 

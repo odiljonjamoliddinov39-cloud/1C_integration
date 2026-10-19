@@ -36,6 +36,7 @@ import {
   type BankPaymentsInput,
   type PostCreatedInput,
   type DidoxDocumentInput,
+  type ObjectSnapshot,
   type DidoxDraftInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
@@ -1292,6 +1293,69 @@ export class AssistantService {
   }
 
   /**
+   * The 1C document a Didox document is made from: it must exist, not be marked for deletion, and carry the
+   * number and date the Didox document has (and, when posting matters, be posted). What is wrong comes back as
+   * problems the model must settle first: apply the document in 1C, then go to Didox. `required` false: no source
+   * is needed (a letter), but one that is given is still checked.
+   */
+  private async checkOnecSource(
+    companyId: string,
+    source: { object: string; ref: string } | undefined,
+    need: { number: string; date: string; posted: boolean; what: string; text?: string },
+    required = true,
+  ): Promise<{ problems: { code: string; message: string }[] } | { error: ToolResult }> {
+    if (!source) {
+      return {
+        problems: required
+          ? [
+              {
+                code: "NO_1C_DOCUMENT",
+                message: `First apply the document in 1C (propose_changes, then its card), and pass onec: {object, ref} of ${need.what}. Read its number and date from 1C and give them here as they are.`,
+              },
+            ]
+          : [],
+      };
+    }
+    const read = await this.deps.connector.tool(this.deps.store.connection(companyId), "get_object", source);
+    if (!read.ok) return { error: read };
+    const snapshot = read.data as ObjectSnapshot;
+    const problems: { code: string; message: string }[] = [];
+    const text = (value: unknown) =>
+      typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
+    const number = text(snapshot.fields.Номер ?? snapshot.fields.Number);
+    const date = text(snapshot.fields.Дата ?? snapshot.fields.Date).slice(0, 10);
+    if (snapshot.deletionMark)
+      problems.push({
+        code: "ONEC_DELETED",
+        message: `${snapshot.presentation} is marked for deletion in 1C.`,
+      });
+    if (number && number !== need.number.trim())
+      problems.push({
+        code: "ONEC_NUMBER",
+        message: `The number in 1C is ${number}, not ${need.number}: use the number from 1C.`,
+      });
+    if (date && date !== need.date)
+      problems.push({
+        code: "ONEC_DATE",
+        message: `The date in 1C is ${date}, not ${need.date}: use the date from 1C.`,
+      });
+    if (need.posted && !snapshot.posted)
+      problems.push({
+        code: "ONEC_NOT_POSTED",
+        message: `${snapshot.presentation} is not posted in 1C: post it first.`,
+      });
+    if (need.text !== undefined) {
+      const shown = need.date.split("-").reverse().join(".");
+      if (!need.text.includes(need.number.trim()) || !need.text.includes(shown))
+        problems.push({
+          code: "TEXT_NUMBER",
+          message: `The text must name the document's number ${need.number} and date ${shown} as in 1C.`,
+        });
+    }
+    return { problems };
+  }
+
+  /**
    * A letter or another free-form document for Didox: the parties are read from Didox, the text becomes a PDF,
    * the card shows what will go, and a confirmation makes a DRAFT there (not signed, not sent).
    */
@@ -1322,6 +1386,23 @@ export class AssistantService {
         return { ok: false, code: e.code, message: e.message };
       return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
     };
+    // Acts, contracts, invoices for payment ... exist in 1C first; the Didox document is made from that one.
+    const fromOnec = input.type !== "letter" && input.type !== "other";
+    const checked = await this.checkOnecSource(
+      chat.companyId,
+      input.onec,
+      {
+        number: input.number,
+        date: input.date,
+        posted: false,
+        what: "the saved document in 1C this is made from",
+        text: input.text,
+      },
+      fromOnec,
+    );
+    if ("error" in checked) return { early: checked.error };
+    if (checked.problems.length > 0)
+      return { early: { ok: true, data: { status: "needs_attention", problems: checked.problems } } };
     let prepared: Awaited<ReturnType<typeof prepareDocumentDraft>>;
     try {
       prepared = await prepareDocumentDraft(
@@ -1388,6 +1469,16 @@ export class AssistantService {
         return { ok: false, code: e.code, message: e.message };
       return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
     };
+    // The invoice is applied (and posted) in 1C first; the draft is made from that document.
+    const checked = await this.checkOnecSource(chat.companyId, input.onec, {
+      number: input.number,
+      date: input.date,
+      posted: true,
+      what: "the posted issued invoice (Документ.СчетФактураВыданный)",
+    });
+    if ("error" in checked) return { early: checked.error };
+    if (checked.problems.length > 0)
+      return { early: { ok: true, data: { status: "needs_attention", problems: checked.problems } } };
     let prepared: Awaited<ReturnType<typeof prepareDraft>>;
     try {
       prepared = await prepareDraft(

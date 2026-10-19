@@ -199,6 +199,13 @@ export const FetchDidoxInput = z.object({
 export type FetchDidoxInput = z.infer<typeof FetchDidoxInput>;
 
 /**
+ * The 1C document a Didox document is made from. The app reads it and refuses to go on when it is not there or
+ * its number or date differ: a document is applied in 1C first, and only then goes to Didox.
+ */
+export const OnecSource = GetObjectInput;
+export type OnecSource = z.infer<typeof OnecSource>;
+
+/**
  * A letter or another free-form document to be made in Didox as a DRAFT (not signed, not sent): the app puts
  * the text into a PDF and takes the two companies from Didox.
  */
@@ -226,6 +233,11 @@ export const DidoxDocumentInput = z.object({
   text: z.string().trim().min(1).max(30000),
   /** Who signs, for the line under the text (the director's name), when known. */
   signer: z.string().trim().max(200).optional(),
+  /**
+   * The saved 1C document this is made from (an act, a contract, an invoice for payment ...): required for every
+   * type but "letter" and "other". Its number and date must be the ones given here.
+   */
+  onec: OnecSource.optional(),
   contract: z
     .object({ number: z.string().trim().min(1).max(80), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
     .optional(),
@@ -249,6 +261,8 @@ export const DidoxDraftInput = z.object({
   contract: z
     .object({ number: z.string().trim().min(1).max(80), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
     .optional(),
+  /** The posted issued invoice in 1C this is made from (Документ.СчетФактураВыданный): required. */
+  onec: OnecSource.optional(),
   lines: z
     .array(
       z.object({
