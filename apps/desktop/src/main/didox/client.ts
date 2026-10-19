@@ -370,6 +370,15 @@ export class DidoxClient {
         continue;
       }
       const text = await response.text();
+      // A web page (the site, not the API): the address is the site's. Said plainly, at the first request.
+      if (/^\s*<(!doctype|html)/i.test(text)) {
+        throw new DidoxError(
+          "DIDOX_RESPONSE",
+          `Didox answered ${response.status} with a web page, not the API: ${this.baseUrl} is the site's address. ` +
+            `Use the address the API is on (the one your 1C Didox module connects to), with no page path.`,
+          response.status,
+        );
+      }
       if (!response.ok) {
         throw new DidoxError(
           response.status === 401 || response.status === 403 ? "DIDOX_AUTH" : "DIDOX_HTTP",

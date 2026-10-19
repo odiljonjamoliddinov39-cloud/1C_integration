@@ -86,6 +86,10 @@ yes/no/unknown]`.
    A company's own working 1C module (`uzbled_Операторы_Didox`) sends the token as `api-key`:
    `HTTPЗапрос.Заголовки.Вставить("api-key", Токен)`. So with no partner key configured the app sends the
    token under both `user-key` and `api-key`; with a partner key, `api-key` is the partner key.
+   The address must be the API's, not the Didox site's: a `https://didox.uz/documents/…` page URL answers
+   `405 Not Allowed` (nginx) to every API request, and an SPA may answer the sign-in's first GET with its HTML.
+   The client now says so when Didox answers a web page ("… with a web page, not the API: … is the site's
+   address").
 3. `POST /v1/auth/login` with `{"serialNumber", "pkcs7"}` (the stamped PKCS#7): returns a token valid for 24 hours.
    `GET /v1/auth/token` (with the authId) extends it by 24 hours. `POST /v1/auth/register` registers a
    user by key (e-mail, mobile, acceptance of the offer at didox.uz/oferta); its token lives 200 seconds.

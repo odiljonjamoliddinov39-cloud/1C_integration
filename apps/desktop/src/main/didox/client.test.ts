@@ -217,4 +217,22 @@ describe("DidoxClient", () => {
     await keyed.client.listDocuments();
     expect(keyed.server.requests.at(-1)?.headers["api-key"]).toBe("partner-key");
   });
+
+  it("says plainly that the address is the site's when Didox answers a web page", async () => {
+    const page = "<!doctype html><html><head><title>Didox</title></head></html>";
+    const client = new DidoxClient(
+      { baseUrl: "https://didox.example/documents/new", fetch: async () => new Response(page) },
+      new FakeSigner(),
+    );
+    const error = await client.login().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DidoxError);
+    expect((error as DidoxError).message).toContain("a web page, not the API");
+    expect((error as DidoxError).message).toContain("with no page path");
+    // A 405 from the web server counts as that too, and still reads as "no time stamp service" where that matters.
+    const refused = new DidoxClient(
+      { baseUrl: "https://didox.example/", fetch: async () => new Response(page, { status: 405 }) },
+      new FakeSigner(),
+    );
+    await expect(refused.listDocuments()).rejects.toThrow(/answered 405 with a web page/);
+  });
 });
