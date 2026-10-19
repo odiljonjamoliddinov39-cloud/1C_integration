@@ -36,6 +36,7 @@ import {
   type BankPaymentsInput,
   type PostCreatedInput,
   type DidoxDraftInput,
+  type FetchDidoxInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -84,7 +85,8 @@ import {
 } from "./bank/resolve.js";
 import type { BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
-import { type DidoxDocument, batchOf, didoxKey } from "./didox/document.js";
+import { type DidoxDocument, batchOf, describeBatch, didoxKey, money } from "./didox/document.js";
+import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { createDraft, prepareDraft } from "./didox/draft.js";
 import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
 import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
@@ -955,6 +957,9 @@ export class AssistantService {
     if (use.name === "read_attachment") {
       return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
     }
+    if (use.name === "fetch_didox_documents") {
+      return this.fetchDidox(chat, input.data as FetchDidoxInput, signal);
+    }
     if (use.name === "check_changes") {
       return this.checkChanges(
         this.deps.store.connection(chat.companyId),
@@ -1190,6 +1195,85 @@ export class AssistantService {
     );
     this.didoxClients.set(companyId, { key, client });
     return client;
+  }
+
+  /**
+   * Reads documents from Didox's API. The incoming ones (the company is the buyer) join the chat's Didox
+   * documents, as attached files do; the outgoing ones are listed for comparing with 1C. Nothing is changed.
+   */
+  private async fetchDidox(
+    chat: StoredChat,
+    input: FetchDidoxInput,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const client = this.didoxClient(chat.companyId);
+    if (!client) {
+      return {
+        ok: false,
+        code: "NO_DIDOX_CONNECTION",
+        message:
+          "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox " +
+          "test button, run the test, choose the signature key and press Save for this company.",
+      };
+    }
+    const own = this.deps.store.company(chat.companyId).inn;
+    const today = new Date().toISOString().slice(0, 10);
+    const from = input.from ?? `${today.slice(0, 4)}-01-01`;
+    const to = input.to ?? today;
+    let read: Awaited<ReturnType<typeof fetchDidoxDocuments>>;
+    try {
+      read = await fetchDidoxDocuments(
+        client,
+        { from, to, direction: input.direction ?? "incoming", limit: input.limit ?? 100 },
+        signal,
+      );
+    } catch (e) {
+      if (e instanceof DidoxError || e instanceof EImzoError)
+        return { ok: false, code: e.code, message: e.message };
+      return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
+    }
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    const incoming = read.documents.filter((d) => d.buyer.tin === own);
+    const outgoing = read.documents.filter((d) => d.seller.tin === own);
+    const other = read.documents.length - incoming.length - outgoing.length;
+    if (incoming.length > 0) {
+      chat.didox = mergeDidox(chat.didox ?? [], incoming);
+      this.save(chat);
+    }
+    return {
+      ok: true,
+      data: {
+        period: { from, to },
+        read: read.documents.length,
+        incomingCount: incoming.length,
+        outgoingCount: outgoing.length,
+        ...(other > 0 ? { otherCompanies: other } : {}),
+        skipped: read.skipped,
+        ...(read.failed.length > 0 ? { failed: read.failed.slice(0, 10) } : {}),
+        ...(read.truncated
+          ? {
+              truncated:
+                "There are more documents in this period: ask for a shorter period, one month at a time.",
+            }
+          : {}),
+        ...(incoming.length > 0
+          ? {
+              incomingSummary: describeBatch(batchOf(incoming)),
+              next: "These incoming documents are now in the chat: enter them with propose_didox_invoices (title only).",
+            }
+          : {}),
+        ...(outgoing.length > 0
+          ? {
+              outgoingList: outgoing.map(
+                (d) =>
+                  `${d.number}|${d.date}|${d.buyer.name} (INN ${d.buyer.tin})|total ${money(d.totals.total)}|${d.kind}`,
+              ),
+              outgoingNote:
+                "Issued by this company: do not enter them; compare with 1C (number, date, counterparty INN, amount) and report the differences.",
+            }
+          : {}),
+      },
+    };
   }
 
   /**
@@ -1916,6 +2000,10 @@ function describe(name: string, input: unknown): string {
   if (name === "propose_didox_invoices") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
+  }
+  if (name === "fetch_didox_documents") {
+    const read = input as FetchDidoxInput;
+    return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;
   }
   if (name === "propose_didox_draft") {
     const draft = input as { number: string; title: string };
