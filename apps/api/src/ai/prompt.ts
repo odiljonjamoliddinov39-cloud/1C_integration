@@ -361,7 +361,8 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "bank's fees as fees, and reports transfers between the company's own accounts and accounts in a currency " +
     "(transfersBetweenOwnAccounts, foreignCurrencyAccounts): those are NOT entered, tell the accountant; its reflections " +
     "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
-    "pass them on. What it could " +
+    "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
+    "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +
     "not settle comes back as problems with each row's date, amount, name and purpose: settle them from that, without " +
     "reading the file; answer with references in counterparties (row, file, ref), templates (row, file, ref of a posted " +
     "payment document to copy) and ownAccount, and call it again.",

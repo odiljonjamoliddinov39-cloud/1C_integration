@@ -116,6 +116,24 @@ const text = (cell: unknown): string => {
   return "";
 };
 
+/** The currency as letters: 1C keeps its code (860 for the sum, 840 for the dollar) or its short name (сум). */
+export function normalCurrency(code: string): string {
+  const key = code.trim().toUpperCase();
+  const numeric: Record<string, string> = {
+    "000": "UZS",
+    "860": "UZS",
+    "643": "RUB",
+    "840": "USD",
+    "978": "EUR",
+    "826": "GBP",
+  };
+  if (numeric[key]) return numeric[key];
+  if (/^(СУМ|СЎМ|СУМА|SUM|SO'M|SOM|UZS)$/.test(key)) return "UZS";
+  if (/^(РУБ|РУБ\.|РУБЛЬ|RUB)$/.test(key)) return "RUB";
+  if (/^(ДОЛЛ|ДОЛЛАР|USD)$/.test(key)) return "USD";
+  return key;
+}
+
 export function purposeOf(account: {
   name: string;
   currency: string;
@@ -123,8 +141,8 @@ export function purposeOf(account: {
   number: string;
 }): AccountPurpose {
   if (/блок|block|bloklan|заблок|эскроу|escrow|аккредитив/i.test(account.name)) return "blocked";
-  const currency = (account.currency || currencyOfAccount(account.number)).toUpperCase();
-  if (currency !== "" && currency !== "UZS" && currency !== "СУМ" && currency !== "000") return "foreign";
+  const currency = normalCurrency(account.currency) || currencyOfAccount(account.number);
+  if (currency !== "" && currency !== "UZS") return "foreign";
   if (/\b(usd|rub|eur|dollar|доллар|рубл|евро)\b/i.test(account.name)) return "foreign";
   if (account.ledger.startsWith("5110") || /основн|асосий|main|расч[её]тн/i.test(account.name)) return "main";
   return "other";
@@ -155,7 +173,7 @@ async function readAccounts(
       ref,
       number: text(cells[1]),
       name: text(cells[2]),
-      currency: text(cells[3]),
+      currency: normalCurrency(text(cells[3])),
       ledger: text(cells[4]),
     };
     accounts.push({ ...account, purpose: purposeOf(account), uses: [] });
@@ -310,7 +328,7 @@ async function readCurrencies(deps: ResolverDeps): Promise<Policy["currencies"]>
   });
   return rowsOf(outcome)
     .flatMap((cells) => {
-      const currency = text(cells[0]);
+      const currency = normalCurrency(text(cells[0]));
       const contracts = typeof cells[1] === "number" ? cells[1] : 0;
       return currency && contracts > 0 ? [{ currency, contracts }] : [];
     })
@@ -492,13 +510,8 @@ export function reflectOnImport(policy: Policy, plan: LedgerPlan): string[] {
       continue;
     }
     const statementCurrency = view.currency || currencyOfAccount(view.account);
-    const oneCCurrency = found.currency.toUpperCase();
-    if (
-      statementCurrency &&
-      oneCCurrency &&
-      statementCurrency !== oneCCurrency &&
-      !(statementCurrency === "UZS" && /^(сум|uzs|000)$/i.test(oneCCurrency))
-    ) {
+    const oneCCurrency = normalCurrency(found.currency);
+    if (statementCurrency && oneCCurrency && statementCurrency !== oneCCurrency) {
       lines.push(
         `Account ${view.account} is in ${statementCurrency} by its number, but 1C keeps it in ${found.currency}: check it.`,
       );

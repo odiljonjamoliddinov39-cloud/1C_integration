@@ -307,6 +307,21 @@ describe("reflectOnImport", () => {
     expect(lines[0]).toContain("1C has no earlier document of such money");
   });
 
+  it("does not take 1C's code for the sum (860) or the name (сум) for a currency that disagrees", async () => {
+    for (const code of ["860", "сум", "UZS"]) {
+      const policy = await learnPolicy(
+        fake((q) =>
+          q.query.includes("Справочник.БанковскиеСчета")
+            ? ok([[MAIN, "20208000100438330001", "Асосий", code, "5110", "201607534"]])
+            : undefined,
+        ),
+        "201607534",
+      );
+      expect(policy.accounts[0]).toMatchObject({ currency: "UZS", purpose: "main" });
+      expect(reflectOnImport(policy, plan({ accounts: [view("20208000100438330001")] }))).toEqual([]);
+    }
+  });
+
   it("warns about a currency that disagrees with 1C", async () => {
     const policy = await learnPolicy(
       fake((q) =>
