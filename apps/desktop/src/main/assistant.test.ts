@@ -92,6 +92,7 @@ function setup(
   others?: Parameters<typeof fakeProxy>[1],
   didox?: { eimzo: EImzoClient; fetch: typeof fetch },
   renderPdf?: (html: string) => Promise<Uint8Array>,
+  learnPolicy = false,
 ) {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
@@ -125,6 +126,7 @@ function setup(
     maxTurns: 25,
     auditChecks: TEST_CHECKS,
     auditConcurrency: 1,
+    learnPolicy,
     ...(didox ? { didox } : {}),
     ...(renderPdf ? { renderPdf } : {}),
   });
@@ -201,6 +203,65 @@ describe("assistant", () => {
 
     expect(events.map((e) => e.type)).toEqual(["text", "tool", "text", "done", "elapsed"]);
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
+  });
+
+  describe("how the company works", () => {
+    const answer = (text: string) => () => [
+      { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text }] },
+    ];
+    const withAccounts = (t: ReturnType<typeof setup>) => {
+      t.base.queryAnswers.unshift({
+        match: /Справочник\.БанковскиеСчета/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            [
+              { type: "Справочник.БанковскиеСчета", ref: "11111111-0000-4000-8000-000000000001", name: "x" },
+              "20208000100438330009",
+              "Блок счет",
+              "UZS",
+              "5530",
+              t.company.inn,
+            ],
+          ],
+          truncated: false,
+        }),
+      });
+    };
+
+    it("learns it from 1C once and sends it with every question, so the model follows the company's practice", async () => {
+      const t = setup([answer("one"), answer("two")], "active", undefined, undefined, undefined, true);
+      withAccounts(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "first" });
+      await t.assistant.send({ companyId: t.company.id, text: "second" });
+      expect(t.proxy.requests).toHaveLength(2);
+      for (const request of t.proxy.requests) {
+        expect(request.policy).toContain("«Блок счет»");
+        expect(request.policy).toContain("blocked / held-money account");
+      }
+      // The reads were made once for both questions.
+      const reads = t.base.calls.filter(
+        (c) => c.fn === "RunQuery" && String(c.arg).includes("Справочник.БанковскиеСчета"),
+      );
+      expect(reads).toHaveLength(1);
+    });
+
+    it("lets a base that does not answer pass: the question goes on without it", async () => {
+      const t = setup([answer("ok")], "active", undefined, undefined, undefined, true);
+      t.base.queryAnswers.unshift({
+        match: /ВЫБРАТЬ/,
+        answer: () => {
+          throw new Error("1C is busy");
+        },
+      });
+      t.store.setAiEnabled(t.company.id, true);
+      expect(await t.assistant.send({ companyId: t.company.id, text: "?" })).toEqual({
+        ok: true,
+        data: null,
+      });
+      expect(t.proxy.requests[0]!.policy).toBeUndefined();
+    });
   });
 
   it("returns 1C query errors and bad tool input to the model as errors, so it can fix them", async () => {

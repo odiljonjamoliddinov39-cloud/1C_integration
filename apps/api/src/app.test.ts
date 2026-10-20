@@ -1029,6 +1029,35 @@ describe.skipIf(!available)("control system API", () => {
       expect((aiCalls[0]?.system as unknown[]).length).toBe(2);
     });
 
+    it("puts how the company works, as the app learned it, in the prompt after the structure digest", async () => {
+      const reg = (await post("/v1/auth/register", account)).json();
+      await call("PUT", "/v1/ai/digest", reg.accessToken, {
+        company: "Crystal Water",
+        configName: "Buxgalteriya",
+        configVersion: "3.0.1",
+        digest: "Документ.РеализацияТоваровУслуг: Дата, Номер, Контрагент",
+        tokenCount: 12,
+      });
+      aiCalls.length = 0;
+      await chat(reg.accessToken, {
+        company: "Crystal Water",
+        policy: "Bank accounts of the company in 1C:\n- «Блок счет» blocked / held-money account",
+      });
+      const system = aiCalls[0]?.system as { text: string; cache_control?: unknown }[];
+      expect(system.map((block) => block.text.slice(0, 20))).toEqual([
+        SYSTEM_PROMPT.slice(0, 20),
+        "Structure of this co",
+        "How this company wor",
+        "The accountant is wo",
+      ]);
+      expect(system[2]?.text).toContain("Блок счет");
+      expect(system[2]?.cache_control).toEqual({ type: "ephemeral" });
+      // Without it, the prompt is as before.
+      aiCalls.length = 0;
+      await chat(reg.accessToken, { company: "Crystal Water" });
+      expect((aiCalls[0]?.system as unknown[]).length).toBe(3);
+    });
+
     it("answers a repeated question from the cache, until the data version or the time changes", async () => {
       const reg = (await post("/v1/auth/register", account)).json();
       const key = { company: "Crystal Water", question: "Какой остаток на 5110?", dataVersion: "v1" };

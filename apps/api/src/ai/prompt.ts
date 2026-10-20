@@ -294,6 +294,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  learn_accounting_policy:
+    "Learn how this company works from its own 1C, with no input: its bank accounts (main, blocked, foreign-currency) and what " +
+    "each is used for, the kinds of operation its bank documents carry (and whether it has ever recorded a transfer between " +
+    "its own accounts or a conversion, and as what), and the accounting policy register when the configuration has one. Reads " +
+    "only. Use it when the accountant asks how the company works or books some money (a transfer to the blocked account, a " +
+    "conversion to USD or RUB, a payment to a foreign supplier, a customs import), and before you explain such money in a bank " +
+    "import. Reason from what it returns; say plainly what 1C does not show.",
   fetch_didox_documents:
     "Read documents from Didox itself (no files needed): the period by the document's own date (from, to; default " +
     "this year so far), direction incoming (default), outgoing or both, limit (default 100, at most 300; read a " +
@@ -352,7 +359,9 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the rows of that period itself, so never look for them in the file. With several statements attached call it ONCE " +
     "without file: it reads the accounts together, leaves out an account that money only passes through, enters the " +
     "bank's fees as fees, and reports transfers between the company's own accounts and accounts in a currency " +
-    "(transfersBetweenOwnAccounts, foreignCurrencyAccounts): those are NOT entered, tell the accountant. What it could " +
+    "(transfersBetweenOwnAccounts, foreignCurrencyAccounts): those are NOT entered, tell the accountant; its reflections " +
+    "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
+    "pass them on. What it could " +
     "not settle comes back as problems with each row's date, amount, name and purpose: settle them from that, without " +
     "reading the file; answer with references in counterparties (row, file, ref), templates (row, file, ref of a posted " +
     "payment document to copy) and ownAccount, and call it again.",
@@ -376,6 +385,17 @@ export const TOOLS: Anthropic.Tool[] = (Object.keys(AI_TOOLS) as AiToolName[]).m
 }));
 
 /** The company's 1C structure (built by the app once per configuration version), after the instructions. */
+/** How this company works, as the desktop app learned it from the company's own 1C. */
+export function policyBlock(policy: string): string {
+  return (
+    "How this company works, learned by the program from its own 1C data (its accounting practice, not a general rule). " +
+    "Follow it when you decide how to book, enter or explain something: which bank account is for what, which documents " +
+    "and ledger accounts the company uses for which kind of operation, how it deals with foreign currency. Where it is " +
+    "silent, say so and ask or use the general rule, naming it as such; where the practice differs from the general rule, " +
+    `follow the practice and mention the difference:\n${policy}`
+  );
+}
+
 export function digestBlock(digest: string): string {
   return `Structure of this company's 1C, built from its configuration. Use it instead of asking 1C what exists:\n${digest}`;
 }

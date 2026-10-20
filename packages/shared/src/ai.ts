@@ -412,6 +412,7 @@ export const AI_TOOLS = {
   get_object: GetObjectInput,
   read_attachment: ReadAttachmentInput,
   fetch_didox_documents: FetchDidoxInput,
+  learn_accounting_policy: z.object({}),
   check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
@@ -452,6 +453,7 @@ export type AiProposalTool = (typeof AI_PROPOSAL_TOOLS)[number];
 export const AI_LOCAL_TOOLS = [
   "read_attachment",
   "fetch_didox_documents",
+  "learn_accounting_policy",
   "report_findings",
   "check_changes",
 ] as const;
@@ -521,6 +523,12 @@ export const AiChatInput = z.object({
   kind: z.enum(["import"]).optional(),
   /** The app asks for the default model for this step (e.g. the user rejected the last answer). */
   escalate: z.boolean().optional(),
+  /**
+   * How this company works, learned by the app from its own 1C (bank accounts and what each is for, the documents it
+   * posts, the accounts its postings use, the currencies of its contracts, the accounting policy): read before every
+   * question, so the model follows the company's practice. Absent: nothing was learned.
+   */
+  policy: z.string().max(12_000).optional(),
   messages: z.array(AiMessage).min(1).max(20_000),
 });
 export type AiChatInput = z.infer<typeof AiChatInput>;

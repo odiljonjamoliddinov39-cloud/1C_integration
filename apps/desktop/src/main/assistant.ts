@@ -88,6 +88,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
 import type { BankPayment, BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
 import {
@@ -187,6 +188,8 @@ export interface AssistantDeps {
   retryDelaysMs?: readonly number[];
   /** Model turns per question (tests make it small). */
   maxTurns?: number;
+  /** Learn how the company works from its 1C before each question; on unless false (tests count 1C calls). */
+  learnPolicy?: boolean;
   /** The audit's checklist and how many checks run at once (tests use their own). */
   auditChecks?: AuditCheck[];
   auditConcurrency?: number;
@@ -238,6 +241,8 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export class AssistantService {
   /** Per company: the open chat. */
   private readonly open = new Map<string, StoredChat>();
+  /** What was learned of how each company works (its bank accounts, documents, postings), kept for hours. */
+  private readonly policies = new PolicyMemory();
   private readonly running = new Map<string, AbortController>();
   /** Per company: the card waiting for the user's answer. */
   private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
@@ -562,12 +567,15 @@ export class AssistantService {
   ): Promise<Result<null>> {
     const history = chat.messages;
     const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
+    // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
+    const { text: policy } = await this.policyOf(chat.companyId);
     for (let turn = 0; turn < maxTurns; turn++) {
       const stepStarted = Date.now();
       const answer = await this.turnWithRetries(
         {
           company: companyName,
           tools: CHAT_TOOLS,
+          ...(policy ? { policy } : {}),
           task: run.task,
           ...(run.import ? { kind: "import" as const } : {}),
           ...(run.escalate ? { escalate: true } : {}),
@@ -699,6 +707,7 @@ export class AssistantService {
     return this.task(companyId, chat, emit, async () => {
       const connection = this.deps.store.connection(companyId);
       const policy = await this.engine.policy();
+      const practice = (await this.policyOf(companyId)).text;
       const queue = checks.map((check, i) => ({ check, state: view.checks[i] as AuditCheckView }));
       const worker = async () => {
         for (let next = queue.shift(); next && !abort.signal.aborted; next = queue.shift()) {
@@ -708,6 +717,7 @@ export class AssistantService {
           const started = Date.now();
           const result = await this.runCheck(
             company.name,
+            practice,
             connection,
             policy,
             check,
@@ -752,6 +762,7 @@ export class AssistantService {
   /** One audit check: the model reads 1C until it reports what it found. */
   private async runCheck(
     companyName: string,
+    practice: string,
     connection: ReturnType<LocalStore["connection"]>,
     policy: AiPolicy,
     check: AuditCheck,
@@ -767,7 +778,7 @@ export class AssistantService {
       let answer;
       try {
         answer = await this.turnWithRetries(
-          { company: companyName, tools: AUDIT_TOOLS, messages },
+          { company: companyName, tools: AUDIT_TOOLS, ...(practice ? { policy: practice } : {}), messages },
           quiet,
           signal,
         );
@@ -1020,6 +1031,9 @@ export class AssistantService {
     }
     if (use.name === "fetch_didox_documents") {
       return this.fetchDidox(chat, input.data as FetchDidoxInput, signal);
+    }
+    if (use.name === "learn_accounting_policy") {
+      return this.learnAccountingPolicy(chat);
     }
     if (use.name === "check_changes") {
       return this.checkChanges(
@@ -1285,6 +1299,37 @@ export class AssistantService {
     );
     this.didoxClients.set(companyId, { key, client });
     return client;
+  }
+
+  /** What 1C says about how the company works: bank accounts and their use, transfer kinds, the policy register. */
+  private policyOf(companyId: string, force = false) {
+    if (this.deps.learnPolicy === false) return Promise.resolve({ policy: null, text: "" });
+    const connection = this.deps.store.connection(companyId);
+    const inn = this.deps.store.company(companyId).inn;
+    return this.policies.get(
+      companyId,
+      () =>
+        learnPolicy(
+          {
+            query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query),
+            describe: (objects: string[]) =>
+              this.deps.connector.tool(connection, "describe_objects", { objects }),
+          },
+          inn,
+        ),
+      force,
+    );
+  }
+
+  private async learnAccountingPolicy(chat: StoredChat): Promise<ToolResult> {
+    const learned = await this.policyOf(chat.companyId, true);
+    return learned.text
+      ? { ok: true, data: { policy: learned.text } }
+      : {
+          ok: false,
+          code: "POLICY_NOT_READ",
+          message: "1C did not answer: the company's practice could not be read now",
+        };
   }
 
   /**
@@ -2034,7 +2079,10 @@ export class AssistantService {
       return [{ statement, prepared, rows }];
     });
     const ledger = describeLedger(plan, ledgerOptions);
-    const notEntered = notEnteredOf(plan, chosen);
+    // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
+    const learned = await this.policyOf(chat.companyId);
+    const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
+    const notEntered = { ...notEnteredOf(plan, chosen), ...(reflections.length > 0 ? { reflections } : {}) };
     if (tasks.length === 0) {
       return {
         ok: true,
