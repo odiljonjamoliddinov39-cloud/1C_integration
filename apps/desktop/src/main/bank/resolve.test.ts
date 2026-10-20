@@ -107,6 +107,8 @@ function deps(
     contracts?: [string, string, string, string][];
     accounts?: [string, string, string][];
     existing?: [string, string, number][];
+    /** Posted tax payments: ref, date, period, name of the tax, purpose. */
+    tax?: [string, string, string, string, string][];
   } = {},
 ) {
   const seen: RunQueryInput[] = [];
@@ -154,6 +156,17 @@ function deps(
           (opts.counterparties ?? [["201607534", NAVRUZ, "NAVRO'Z-PTK"]])
             .filter(([, , name]) => !byName || asked.includes(name))
             .map(([inn, id, name]) => [byName ? name : inn, ref("Справочник.Контрагенты", id, name), name]),
+        );
+      }
+      if (q.includes("Налог.Наименование")) {
+        return rows(
+          (opts.tax ?? []).map(([id, date, period, name, purpose]) => [
+            ref("Документ.СписаниеСРасчетногоСчета", id, "налог"),
+            date,
+            period,
+            ref("Справочник.ВидыНалоговИПлатежейВБюджет", "t", name),
+            purpose,
+          ]),
         );
       }
       if (q.includes("ПЕРВЫЕ")) {
@@ -531,7 +544,12 @@ describe("bank payments for 1C", () => {
     });
     const resolved = await resolvePayments(statement([treasury, tax, supplier]), {}, d);
     expect(resolved.ready.map((r) => r.payment.row)).toEqual([8]);
-    expect(resolved.problems).toEqual([expect.objectContaining({ rows: [6, 7], code: "TAX_PAYMENT" })]);
+    // With no payment of the same tax in 1C there is nothing to copy: each is named, with the tax.
+    expect(resolved.problems.map((p) => [p.rows, p.code])).toEqual([
+      [[6], "TAX_PAYMENT"],
+      [[7], "TAX_PAYMENT"],
+    ]);
+    expect(resolved.problems[0]?.message).toContain("property");
 
     const named = await resolvePayments(
       statement([treasury]),
@@ -540,6 +558,132 @@ describe("bank payments for 1C", () => {
     );
     expect(named.problems).toEqual([]);
     expect(named.ready).toHaveLength(1);
+  });
+
+  describe("payments to the budget", () => {
+    const TAX_DOC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const taxDoc = (period: string, date: string) =>
+      ({
+        fields: {
+          Номер: "0000-000000005600",
+          Дата: date,
+          Проведен: true,
+          ВидОперации: ref(
+            "Перечисление.ВидыОперацийСписаниеДенежныхСредств",
+            "УплатаНалога",
+            "Уплата налога",
+          ),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", "77777777-7777-4777-8777-777777777777", "старый"),
+          Налог: ref("Справочник.ВидыНалоговИПлатежейВБюджет", "t", "Налог на доходы физических лиц"),
+          НалоговыйПериод: period,
+          ИФНС: ref("Справочник.ГНИ", "g", "2607"),
+          СчетКонтрагента: ref("Справочник.БанковскиеСчета", "d", "23402000300100001010"),
+          СуммаДокумента: 3_000_000,
+          НазначениеПлатежа: "НДФЛ за июнь",
+        },
+        tables: {
+          РасшифровкаПлатежа: [{ Сумма: 3_000_000, СуммаПлатежа: 3_000_000, КурсВзаиморасчетов: 1 }],
+        },
+      }) as unknown as ReturnType<typeof earlier>;
+    const ndfl = payment({
+      row: 9,
+      direction: "out",
+      date: "2026-10-19",
+      amount: 374_000_000,
+      number: "77",
+      counterparty: "Davlat soliq qo'mitasi",
+      inn: "201122919",
+      purpose: "НДФЛ",
+    });
+    const history = (): [string, string, string, string, string][] => [
+      [
+        TAX_DOC,
+        "2026-07-13T00:00:00",
+        "2026-06-01T00:00:00",
+        "Налог на доходы физических лиц",
+        "НДФЛ за июнь",
+      ],
+      [
+        "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "2026-06-12T00:00:00",
+        "2026-05-01T00:00:00",
+        "Налог на доходы физических лиц",
+        "НДФЛ",
+      ],
+      [
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "2026-07-13T00:00:00",
+        "2026-06-01T00:00:00",
+        "Единый социальный платеж",
+        "ЕСП",
+      ],
+    ];
+
+    it("copies the company's latest payment of the same tax, with the period the company's habit gives", async () => {
+      const { d } = deps({
+        tax: history(),
+        docs: [
+          {
+            object: "Документ.СписаниеСРасчетногоСчета",
+            ref: TAX_DOC,
+            inn: "201122919",
+            purpose: "НДФЛ за июнь",
+            snapshot: taxDoc("2026-06-01T00:00:00", "2026-07-13T00:00:00"),
+          },
+        ],
+      });
+      const resolved = await resolvePayments(statement([ndfl]), {}, d);
+      expect(resolved.problems).toEqual([]);
+      expect(resolved.ready).toHaveLength(1);
+      const change = resolved.ready[0]!.change;
+      expect(change).toMatchObject({
+        action: "create",
+        object: "Документ.СписаниеСРасчетногоСчета",
+        post: false,
+      });
+      expect(change.fields).toMatchObject({
+        СуммаДокумента: 3_740_000,
+        НалоговыйПериод: "2026-09-01T00:00:00",
+        Дата: "2026-10-19",
+        НазначениеПлатежа: "НДФЛ",
+      });
+      // The tax office and the tax stay the earlier payment's.
+      expect(change.fields?.ИФНС).toMatchObject({ ref: "g" });
+      expect(change.fields?.Налог).toMatchObject({ ref: "t" });
+      expect(resolved.notes[0]?.message).toContain("the month before");
+      // No counterparty was looked up for the treasury.
+      expect(resolved.missing).toEqual([]);
+    });
+
+    it("takes the period the purpose names over the habit", async () => {
+      const { d } = deps({
+        tax: history(),
+        docs: [
+          {
+            object: "Документ.СписаниеСРасчетногоСчета",
+            ref: TAX_DOC,
+            inn: "201122919",
+            purpose: "НДФЛ за июнь",
+            snapshot: taxDoc("2026-06-01T00:00:00", "2026-07-13T00:00:00"),
+          },
+        ],
+      });
+      const resolved = await resolvePayments(statement([{ ...ndfl, purpose: "НДФЛ за август 2026" }]), {}, d);
+      expect(resolved.ready[0]?.change.fields).toMatchObject({ НалоговыйПериод: "2026-08-01T00:00:00" });
+      expect(resolved.notes[0]?.message).toContain("as the purpose says");
+    });
+
+    it("does not guess a tax the company has never paid, and asks for a template", async () => {
+      const { d } = deps({ tax: history() });
+      const resolved = await resolvePayments(
+        statement([{ ...ndfl, purpose: "Налог на прибыль за 3 квартал" }]),
+        {},
+        d,
+      );
+      expect(resolved.ready).toEqual([]);
+      expect(resolved.problems[0]).toMatchObject({ code: "TAX_PAYMENT" });
+      expect(resolved.problems[0]?.message).toContain("profit");
+    });
   });
 
   it("offers to create a counterparty the statement names, then its contract, then the payment", async () => {

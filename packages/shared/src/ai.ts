@@ -175,6 +175,184 @@ export const DidoxInvoicesInput = z.object({
 });
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
+const Money = z.number().finite().min(-1e15).max(1e15);
+const Percent = z.number().finite().min(0).max(1000);
+
+/**
+ * Accounting arithmetic done by the program, so that no figure in an answer is the model's own sum: pick the
+ * operation and give the inputs; the result is exact to the cent and its parts add up to the whole.
+ */
+export const AccountingCalcInput = z.discriminatedUnion("op", [
+  /** VAT out of a net amount, or out of a gross one. */
+  z.object({ op: z.literal("vat"), amount: Money, rate: Percent, mode: z.enum(["exclusive", "inclusive"]) }),
+  /** A depreciation schedule: straight line, declining balance, sum of years' digits, or by units of output. */
+  z.object({
+    op: z.literal("depreciation"),
+    cost: Money,
+    residual: Money.optional(),
+    periods: z.number().int().min(1).max(600),
+    method: z.enum(["straight_line", "declining_balance", "sum_of_years", "units"]),
+    /** Declining balance: 2 = double declining (default). */
+    factor: z.number().min(1).max(5).optional(),
+    /** Units: the output of each period. */
+    units: z.array(z.number().min(0)).max(600).optional(),
+  }),
+  /** A loan schedule: equal instalments (annuity) or equal principal (differentiated). */
+  z.object({
+    op: z.literal("loan"),
+    principal: Money,
+    annualRate: Percent,
+    months: z.number().int().min(1).max(600),
+    type: z.enum(["annuity", "differentiated"]),
+  }),
+  /** NPV at a rate, the internal rate of return and the payback of a series of cash flows (the first is period 0). */
+  z.object({ op: z.literal("npv_irr"), rate: Percent, cashflows: z.array(Money).min(2).max(200) }),
+  /** Foreign-currency balances revalued at the closing rate: the exchange difference of each and in all. */
+  z.object({
+    op: z.literal("fx_revaluation"),
+    items: z
+      .array(
+        z.object({
+          name: z.string().max(200),
+          kind: z.enum(["asset", "liability"]),
+          /** The balance in the foreign currency. */
+          amount: Money,
+          bookRate: z.number().positive(),
+          closingRate: z.number().positive(),
+        }),
+      )
+      .min(1)
+      .max(200),
+  }),
+  /** The cost of what is issued from stock: FIFO, LIFO or the average; what stays. */
+  z.object({
+    op: z.literal("costing"),
+    method: z.enum(["fifo", "lifo", "average"]),
+    opening: z.object({ qty: z.number().min(0), unitCost: z.number().min(0) }).optional(),
+    movements: z
+      .array(
+        z.object({
+          type: z.enum(["in", "out"]),
+          qty: z.number().positive(),
+          /** For a receipt. */
+          unitCost: z.number().min(0).optional(),
+        }),
+      )
+      .min(1)
+      .max(1000),
+  }),
+  /** Gross to net (or net to gross) with the income tax, the employee's pension contribution and the employer's social tax. */
+  z.object({
+    op: z.literal("payroll"),
+    gross: Money.optional(),
+    net: Money.optional(),
+    incomeTaxRate: Percent.optional(),
+    inpsRate: Percent.optional(),
+    employerSocialRate: Percent.optional(),
+    /** The income tax is on the gross less the employee's pension contribution. */
+    taxAfterInps: z.boolean().optional(),
+  }),
+  /** An import (GTD): customs value, duty, excise, import VAT and the landed cost of each item, costs shared exactly. */
+  z.object({
+    op: z.literal("landed_cost"),
+    /** Soums per unit of the invoice currency. */
+    rate: z.number().positive(),
+    items: z
+      .array(
+        z.object({
+          name: z.string().max(200),
+          /** The invoice value in the invoice currency. */
+          value: z.number().min(0),
+          qty: z.number().positive().optional(),
+          weight: z.number().min(0).optional(),
+          dutyRate: Percent.optional(),
+          exciseRate: Percent.optional(),
+        }),
+      )
+      .min(1)
+      .max(200),
+    /** Freight and insurance in the invoice currency, shared by value or weight. */
+    freight: z.number().min(0).optional(),
+    insurance: z.number().min(0).optional(),
+    allocateBy: z.enum(["value", "weight"]).optional(),
+    /** In soums, shared by value. */
+    customsFee: z.number().min(0).optional(),
+    otherCosts: z.number().min(0).optional(),
+    vatRate: Percent.optional(),
+    /** False: the import VAT goes into the cost. Default true (offset against output VAT). */
+    vatRecoverable: z.boolean().optional(),
+  }),
+  /** A penalty for late payment: per day on a principal, for days or for dates, with a cap. */
+  z.object({
+    op: z.literal("penalty"),
+    principal: Money,
+    days: z.number().int().min(0).max(36500).optional(),
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    /** Percent per day, 0.033 by default. */
+    ratePerDay: z.number().min(0).max(10).optional(),
+    /** The most the penalty can be, as a percent of the principal. */
+    capPercent: z.number().min(0).max(1000).optional(),
+  }),
+  /** Liquidity, turnover days, margins, returns and cover from the figures given. */
+  z.object({
+    op: z.literal("ratios"),
+    currentAssets: Money.optional(),
+    currentLiabilities: Money.optional(),
+    inventory: Money.optional(),
+    cash: Money.optional(),
+    receivables: Money.optional(),
+    payables: Money.optional(),
+    revenue: Money.optional(),
+    cogs: Money.optional(),
+    netIncome: Money.optional(),
+    equity: Money.optional(),
+    totalAssets: Money.optional(),
+    totalDebt: Money.optional(),
+    ebit: Money.optional(),
+    interest: Money.optional(),
+    /** Days in the period, 365 by default. */
+    days: z.number().int().min(1).max(366).optional(),
+  }),
+  /** Break-even units and revenue, and for a target profit. */
+  z.object({
+    op: z.literal("break_even"),
+    fixedCosts: Money,
+    price: z.number().positive(),
+    variableCost: z.number().min(0),
+    targetProfit: Money.optional(),
+  }),
+  /** A total shared in proportion to weights, to the cent, the parts adding up exactly. */
+  z.object({ op: z.literal("allocate"), total: Money, weights: z.array(z.number().min(0)).min(1).max(500) }),
+]);
+export type AccountingCalcInput = z.infer<typeof AccountingCalcInput>;
+
+/**
+ * What the model sends: the operation and its fields, flat. The strict shape is `AccountingCalcInput`, which the app
+ * checks (a tool's input schema cannot be a union at the top level), and says what is wrong when a field is missing.
+ */
+export const ACCOUNTING_CALC_OPS = [
+  "vat",
+  "depreciation",
+  "loan",
+  "npv_irr",
+  "fx_revaluation",
+  "costing",
+  "payroll",
+  "landed_cost",
+  "penalty",
+  "ratios",
+  "break_even",
+  "allocate",
+] as const;
+export const AccountingCalcTool = z.looseObject({ op: z.enum(ACCOUNTING_CALC_OPS) });
+
 /**
  * Documents read from Didox itself (its API, no files): the period by the document's own date. Reads only.
  * The incoming ones (our INN is the buyer) go into the chat the same way attached Didox files do, so
@@ -413,6 +591,7 @@ export const AI_TOOLS = {
   read_attachment: ReadAttachmentInput,
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
+  accounting_calc: AccountingCalcTool,
   check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
@@ -454,6 +633,7 @@ export const AI_LOCAL_TOOLS = [
   "read_attachment",
   "fetch_didox_documents",
   "learn_accounting_policy",
+  "accounting_calc",
   "report_findings",
   "check_changes",
 ] as const;

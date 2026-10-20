@@ -40,6 +40,7 @@ import {
   type DidoxReconciliationInput,
   type ObjectSnapshot,
   type DidoxDraftInput,
+  AccountingCalcInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
@@ -88,6 +89,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
 import type { BankPayment, BankStatement } from "./bank/statement.js";
@@ -1038,6 +1040,20 @@ export class AssistantService {
     }
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
+    }
+    if (use.name === "accounting_calc") {
+      const checked = AccountingCalcInput.safeParse(input.data);
+      if (!checked.success) {
+        return {
+          ok: false,
+          code: "BAD_CALC_INPUT",
+          message: `Fix the inputs of ${(input.data as { op?: string }).op ?? "the calculation"}: ${checked.error.issues
+            .slice(0, 6)
+            .map((i) => `${i.path.join(".") || "input"}: ${i.message}`)
+            .join("; ")}`,
+        };
+      }
+      return { ok: true, data: accountingCalc(checked.data) };
     }
     if (use.name === "check_changes") {
       return this.checkChanges(
@@ -2499,6 +2515,7 @@ function describe(name: string, input: unknown): string {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
   }
+  if (name === "accounting_calc") return String((input as { op?: string }).op ?? "");
   if (name === "fetch_didox_documents") {
     const read = input as FetchDidoxInput;
     return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;
