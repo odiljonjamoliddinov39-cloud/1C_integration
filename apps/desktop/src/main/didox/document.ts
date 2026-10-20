@@ -196,9 +196,17 @@ function line(item: Record<string, unknown>, fallback: number): DidoxLine {
   const qty = decimal(item.count) ?? 0;
   const price = tiyin(item.summa) ?? 0;
   const amount = tiyin(item.deliverysum ?? item.totalsumwithoutvat) ?? Math.round(qty * price);
-  const rate = decimal(item.vatrate) ?? 0;
-  const vat = tiyin(item.vatsum) ?? 0;
-  const total = tiyin(item.deliverysumwithvat ?? item.totalsum) ?? amount + vat;
+  let rate = decimal(item.vatrate) ?? 0;
+  let vat = tiyin(item.vatsum) ?? 0;
+  const stated = tiyin(item.deliverysumwithvat ?? item.totalsum);
+  const total = stated ?? amount + vat;
+  // A line with no VAT in it is a line without VAT, whatever rate is written beside it: the supplier flagged it
+  // so, or charged none (the total is the amount). It is not a mismatch to look at, and 1C gets no rate for it.
+  const flagged = [true, "true", 1, "1"].includes(item.withoutvat as boolean | string | number);
+  if (rate !== 0 && (flagged || (stated !== null && vat === 0 && Math.abs(total - amount) <= 1))) {
+    rate = 0;
+    vat = 0;
+  }
   return {
     n: typeof item.ordno === "number" ? item.ordno : fallback,
     name: str(item.name).replace(/\s+/g, " "),

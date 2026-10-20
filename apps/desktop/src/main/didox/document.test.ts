@@ -162,6 +162,58 @@ describe("parseDidoxDocument", () => {
     expect(doc?.issues.map((i) => i.code)).toEqual(["TIN_FORMAT", "VAT_RATE"]);
   });
 
+  it("reads a line with no VAT in it as a line without VAT, not as a mismatch", () => {
+    const doc = parseDidoxDocument(
+      invoice({}, [
+        // The supplier flagged it, though a rate is written beside it.
+        {
+          ordno: 1,
+          name: "flagged",
+          count: "1",
+          summa: "100",
+          deliverysum: "100",
+          vatrate: 12,
+          withoutvat: true,
+          deliverysumwithvat: "100",
+        },
+        // No VAT charged: the total is the amount.
+        {
+          ordno: 2,
+          name: "none charged",
+          count: "1",
+          summa: "100",
+          deliverysum: "100",
+          vatrate: 12,
+          vatsum: 0,
+          deliverysumwithvat: "100",
+        },
+      ]),
+    );
+    expect(doc?.issues).toEqual([]);
+    expect(doc?.lines.map((l) => [l.vatRate, l.vat, l.total])).toEqual([
+      [0, 0, 10000],
+      [0, 0, 10000],
+    ]);
+  });
+
+  it("still shows a line whose VAT is written and does not add up", () => {
+    const doc = parseDidoxDocument(
+      invoice({}, [
+        {
+          ordno: 1,
+          name: "x",
+          count: "1",
+          summa: "100",
+          deliverysum: "100",
+          vatrate: 12,
+          vatsum: 15,
+          deliverysumwithvat: "115",
+        },
+      ]),
+    );
+    expect(doc?.issues.map((i) => i.code)).toEqual(["LINE_VAT"]);
+  });
+
   it("accepts a person's 14-digit PINFL", () => {
     expect(parseDidoxDocument(invoice({ sellertin: "31610976740015" }))?.issues).toEqual([]);
   });
