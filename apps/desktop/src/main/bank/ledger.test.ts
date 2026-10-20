@@ -259,4 +259,33 @@ describe("the accounts of one company read together", () => {
     const lone = planLedger([read(MAIN, mainRows)], { ownInn: COMPANY });
     expect(lone.accounts[0]?.role).toBe("settlement");
   });
+
+  it("takes the terminals' takings for receipts to enter, not for a move between the company's own accounts", () => {
+    const card = [
+      "12.10.2026",
+      "88",
+      "OWN LLC",
+      COMPANY,
+      "23510000300000000004",
+      "",
+      "483610.84",
+      "00634SmartVista - Выручка OWN LLC 483,610.84 сум с 12.10.2026 по 12.10.2026 ( TID 30061802) от сумма: 484,580.00 в том числе комиссия (0.2%) 969.16",
+    ];
+    const plain = [
+      "12.10.2026",
+      "89",
+      "OWN LLC",
+      COMPANY,
+      "23510000300000000004",
+      "",
+      "5000",
+      "Перевод средств",
+    ];
+    const lone = planLedger([read(MAIN, [card, plain])], { ownInn: COMPANY });
+    const rows = lone.rows.values().next().value as number[];
+    // The terminal receipt is entered; the plain move from an unattached own account is a transfer to look at.
+    expect(rows).toHaveLength(1);
+    expect(lone.transfers).toHaveLength(1);
+    expect(lone.transfers[0]?.kind).toBe("unattached_own");
+  });
 });

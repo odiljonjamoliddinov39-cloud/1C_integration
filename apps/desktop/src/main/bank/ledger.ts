@@ -13,6 +13,7 @@
  *  - a statement of a foreign-currency account is reported, not entered (its documents are in a currency);
  *  - everything else is a payment to hand to the resolver, inside the period asked for.
  */
+import { parseAcquiring } from "./acquiring.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 /** ISO 4217 numeric currency codes as banks write them in an account number; "000" is the national currency. */
@@ -220,8 +221,15 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     const fees = new Set<number>();
     for (const p of inPeriod) {
       const toOwn = p.account !== "" && p.account !== s.account && own.has(p.account);
+      // The terminals' takings arrive from the bank's own accounts under the company's INN, but they are receipts
+      // to enter (gross, with the commission), not a move between the company's accounts.
+      const terminal = p.direction === "in" && parseAcquiring(p.purpose, p.amount) !== null;
       const toSelfUnknown =
-        !toOwn && options.ownInn !== undefined && p.inn === options.ownInn && p.account !== s.account;
+        !toOwn &&
+        !terminal &&
+        options.ownInn !== undefined &&
+        p.inn === options.ownInn &&
+        p.account !== s.account;
       // The bank's fee: a payment to an account the bank passes its fees through (attached, or one of the
       // company's own that is not attached but whose payments read as fees).
       const feeAccount =

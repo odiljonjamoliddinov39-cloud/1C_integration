@@ -13,6 +13,7 @@ import type { ChangeInput, RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
 import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
+import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
 export interface BankDeps extends ResolverDeps {
@@ -89,6 +90,17 @@ export interface BankCache {
   /** Posted documents of a kind, newest first: "object|INN" (or "object|*" for all) → ref and purpose. */
   lists: Map<string, { ref: string; purpose: string }[]>;
   snapshots: Map<string, Template | null>;
+  /** The company's posted tax payments (newest first), read once; null when 1C could not say. */
+  tax?: TaxHistory[] | null;
+}
+
+export interface TaxHistory {
+  ref: string;
+  date: string;
+  /** The tax period the document was made for ("YYYY-MM-DDT00:00:00"), "" when it has none. */
+  period: string;
+  tax: string;
+  purpose: string;
 }
 
 export interface Template {
@@ -119,11 +131,11 @@ export interface Who {
 }
 
 export function whoOf(p: BankPayment): Who | null {
+  // An acquiring receipt is the terminal's, not a customer's: whatever the statement writes as its payer.
+  if (p.direction === "in" && parseAcquiring(p.purpose, p.amount)) return null;
   if (p.inn) return { key: p.inn, field: "ИНН", value: p.inn };
   const name = p.counterparty.trim();
   if (p.innZero !== true || name === "" || BANK_FEE.test(p.purpose)) return null;
-  // An acquiring receipt is the terminal's, not a customer's.
-  if (p.direction === "in" && parseAcquiring(p.purpose, p.amount)) return null;
   return { key: `name:${nameKey(name)}`, field: "Наименование", value: name };
 }
 
@@ -255,6 +267,8 @@ export interface CopyContext {
   contract?: string | null;
   ownAccount?: string | null;
   counterpartyAccount?: string | null;
+  /** Fields set last, when the earlier document has them (the tax period of a tax payment). */
+  set?: Record<string, unknown>;
 }
 
 /** The copied document with this payment's own date, amount, number and purpose, or why it cannot be made. */
@@ -321,6 +335,8 @@ export function copyTemplate(
     );
   // The date is the standard attribute: its name is the one the earlier document was read with.
   fields[first(FIELD_NAMES.date, template.fields) ?? "Дата"] = payment.date;
+  for (const [name, value] of Object.entries(ctx.set ?? {}))
+    if (name in template.fields) fields[name] = value;
 
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const [name, rows] of Object.entries(template.tables)) {
@@ -537,7 +553,8 @@ export async function resolvePayments(
       continue;
     }
     const who = whoOf(p);
-    if (!who) {
+    // A payment to the budget has no counterparty to look up: it is copied from the company's payment of the same tax.
+    if (!who || (isTaxPayment(p) && taxKindOf(p.purpose))) {
       withCounterparty.push({ payment: p, counterparty: null });
       continue;
     }
@@ -658,13 +675,15 @@ export async function resolvePayments(
     }
     const object = OBJECT[payment.direction];
     const asked = overrides.templates?.find((o) => o.row === payment.row);
-    // A tax payment is copied only from a document the model names (the company's own correct tax payment).
+    // A tax payment: the tax is named by the payment, and the template is the company's payment of that same tax.
     if (!asked && isTaxPayment(payment)) {
-      addProblem(
-        payment,
-        "TAX_PAYMENT",
-        "looks like a tax or budget payment: it needs the «Уплата налога» operation, the tax, its period and the tax office, not a copy of an earlier supplier payment. Answer with templates (a posted «Уплата налога» document of the company, for the same tax) or enter it with propose_changes",
-      );
+      const made = await taxPayment(deps, cache, payment, ownAccount);
+      if (made.ok) {
+        ready.push({ payment, change: made.change });
+        addNote([payment.row], made.note);
+      } else {
+        addProblem(payment, "TAX_PAYMENT", made.message);
+      }
       continue;
     }
     const who = whoOf(payment);
@@ -810,6 +829,92 @@ export async function resolvePayments(
     problems,
     notes,
   };
+}
+
+const TAX_NEEDS =
+  "a payment to the budget needs the «Уплата налога» operation, the tax, its period and the tax office. Answer with templates (a posted «Уплата налога» document of the company, for the same tax) or enter it with propose_changes";
+
+/** The company's posted tax payments, newest first, read once. */
+async function loadTaxHistory(deps: BankDeps, cache: BankCache): Promise<TaxHistory[] | null> {
+  if (cache.tax !== undefined) return cache.tax;
+  const outcome = await deps.query({
+    query:
+      "ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.Дата КАК Дата, Т.НалоговыйПериод КАК Период, Т.Налог.Наименование КАК Налог, Т.НазначениеПлатежа КАК Назначение " +
+      `ИЗ ${OBJECT.out} КАК Т ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления И Т.Налог <> ЗНАЧЕНИЕ(Справочник.ВидыНалоговИПлатежейВБюджет.ПустаяСсылка) УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+    limit: 300,
+    refs: true,
+  });
+  cache.tax = outcome.ok
+    ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+        const ref = refOf(cells[0]);
+        return ref
+          ? [
+              {
+                ref,
+                date: String(cells[1] ?? ""),
+                period: typeof cells[2] === "string" ? cells[2] : "",
+                tax: textOf(cells[3]),
+                purpose: String(cells[4] ?? ""),
+              },
+            ]
+          : [];
+      })
+    : null;
+  return cache.tax;
+}
+
+const isKind = (row: TaxHistory, kind: TaxKind) =>
+  taxNameIs(kind, row.tax) || taxKindOf(row.purpose) === kind;
+
+/**
+ * A payment to the budget made from the company's newest posted payment of the same tax: its operation, accounts,
+ * tax and tax office stay, and the payment's date, amount, number, purpose and the tax period change. The period is
+ * the one the purpose names, else the company's habit (how many months before the payment its earlier payments of
+ * this tax were for).
+ */
+async function taxPayment(
+  deps: BankDeps,
+  cache: BankCache,
+  payment: BankPayment,
+  ownAccount: string | null,
+): Promise<{ ok: true; change: ChangeInput; note: string } | { ok: false; message: string }> {
+  const kind = taxKindOf(payment.purpose);
+  if (!kind) {
+    return { ok: false, message: `the purpose names no single tax: ${TAX_NEEDS}` };
+  }
+  const history = await loadTaxHistory(deps, cache);
+  if (!history)
+    return { ok: false, message: `1C could not be asked for the company's tax payments: ${TAX_NEEDS}` };
+  const same = history.filter((h) => isKind(h, kind));
+  const latest = same[0];
+  if (!latest) {
+    return {
+      ok: false,
+      message: `the company has no posted payment of this tax (${kind}) in 1C to copy: ${TAX_NEEDS}`,
+    };
+  }
+  const template = await snapshot(deps, cache, OBJECT.out, latest.ref);
+  if (!template) return { ok: false, message: `the payment ${latest.ref} could not be read: ${TAX_NEEDS}` };
+  const period = taxPeriodFor(
+    payment.purpose,
+    day(payment.date),
+    same.map((h) => ({ date: day(h.date), period: h.period ? day(h.period) : "" })),
+  );
+  const made = copyTemplate(template, payment, {
+    ownAccount,
+    ...(period ? { set: { НалоговыйПериод: period.value } } : {}),
+  });
+  if (!made.ok) return { ok: false, message: made.message };
+  const from = `${template.fields["Номер"] ?? latest.ref} of ${day(latest.date)}`;
+  const note =
+    `tax payment (${latest.tax || kind}) copied from the company's latest payment of the same tax, ${from}; ` +
+    (period
+      ? period.source === "purpose"
+        ? `the tax period is ${period.value.slice(0, 7)}, as the purpose says`
+        : `the tax period is ${period.value.slice(0, 7)}: the company's earlier payments of this tax were for ${period.lag === 1 ? "the month before" : `${period.lag} months before`} the payment month`
+      : "the tax period and the tax office are the earlier payment's: the purpose names no period and no habit could be read") +
+    "; check the amount of the tax and its period";
+  return { ok: true, change: made.change, note };
 }
 
 async function snapshot(
