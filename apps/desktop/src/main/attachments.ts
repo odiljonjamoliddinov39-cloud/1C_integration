@@ -510,8 +510,13 @@ async function spreadsheet(data: Uint8Array, name: string): Promise<TableFile> {
   };
 }
 
-/** A statement of a few payments is as cheap to send as it is to summarise: the model reads it whole. */
-const isWorthSummarising = (bank: BankStatement) => bank.payments.length >= 5;
+/**
+ * A statement of a few payments is as cheap to send as it is to summarise: the model reads it whole. One that
+ * names its own account is always read by the program: it is one account of a company's several, and the
+ * others (which pass money through it, or take transfers from it) can only be told apart with it among them.
+ */
+const isWorthSummarising = (bank: BankStatement) =>
+  bank.payments.length >= 5 || (bank.account !== "" && bank.payments.length >= 1);
 
 /**
  * A bank statement the program has read: the model gets the totals and the exceptions, and enters

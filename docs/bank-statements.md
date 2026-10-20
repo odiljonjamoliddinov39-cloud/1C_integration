@@ -131,3 +131,27 @@ program does not depend on a template:
 - The one thing the data cannot say is which of the two amount columns is money out: the summary tells the
   model that the columns were found by their data and the totals In / Out are shown, so a reversed reading
   is seen before anything is entered.
+
+## Several accounts, one period: the account ledger
+
+A company's bank accounts are not separate worlds, and a real import is several statements at once (a settlement
+account, a special account for blocked funds, a transit account the bank passes its fees through, accounts in a
+currency). `bank/ledger.ts` reads them together, in whole tiyin, with no AI, before anything is entered:
+
+- **Header**: any 20-digit account in the heading (not only 202…), the printed `Остаток: Начало дня / Конец дня`
+  and a check that the rows add up to it (a mismatch means missing rows or swapped In/Out, said before anything is
+  entered). In the columns, "Наименование счёта" is the counterparty's name and "№ счёта" its account.
+- **Period**: `propose_bank_payments` takes `from`/`to`; the program picks the rows, the model never reads the file
+  for them (a bank statement's rows are refused to `read_attachment` after a few reads; totals stay allowed).
+- **Pass-through accounts**: a statement that opens and closes at zero, takes in only from the company's own
+  accounts and pays out the same is left out (its rows are the other legs of payments in the other statements). What
+  it passes decides what the payments to it are: the bank's fees (names/purposes "комиссия", "тариф", "SWIFT" …) are
+  entered as fee documents with no counterparty; a currency conversion is a transfer, not a payment.
+- **Transfers between own accounts**: matched with their other leg (same day and amount, the other way, the other
+  account) and reported, not entered; the accountant decides how they are booked. A payment to the company's own INN
+  from an account that is not attached is told the same way (or is a fee, when its purpose reads as one).
+- **Currency**: digits 6–8 of the account (`000` UZS, `643` RUB, `840` USD, `978` EUR); a foreign-currency account is
+  reported, not entered.
+- **One run**: with no `file`, every attached statement is handled in one run and one card; answers to what could not
+  be settled carry the file. What cannot be settled comes back with each row's date, amount, name and purpose.
+- A statement of a few payments that names its own account is read by the program too (it is one account of several).

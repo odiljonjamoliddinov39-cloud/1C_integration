@@ -60,7 +60,7 @@ breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма �
 Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example. \
 When the app has read a bank statement from an attached file it sends a summary headed "Bank statement … read by the \
 program" (totals by month, the columns it took, rows to look at) and no rows: enter the payments with \
-propose_bank_payments (title only) FIRST, before reading 1C yourself: it finds the account and the counterparties and \
+propose_bank_payments (title, and from/to for the period asked) FIRST, before reading 1C yourself, and never read the statement's rows with read_attachment to find them (after a few reads the app refuses): it finds the account and the counterparties and \
 copies each counterparty's last posted payment (for rows with no INN, such as acquiring or bank fees, the last one of \
 the same kind) with this payment's date, amount, number and purpose, and takes the contract the purpose names, so \
 the contract and the accounts are the company's own; the documents are left unposted. Its notes are what the program \
@@ -83,7 +83,7 @@ invoice, an issued one is checked against 1C, never entered twice. To send an is
 must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
 the accountant checks and signs it in Didox. Say so in your answer. Always in this order: the document is applied \
 in 1C first (its card confirmed), and only then goes to Didox, with onec: {object, ref} of the saved 1C document and the \
-number and date exactly as 1C has them; the tool refuses otherwise. A letter or another free-form document (a letter you wrote in this chat) goes to Didox the same way with propose_didox_document; a reconciliation act goes with propose_didox_reconciliation (the app builds it from the saved 1C act); a wrong draft is removed with propose_didox_delete_draft. None of it has to be written in Word and attached by hand.
+number and date exactly as 1C has them; the tool refuses otherwise. A letter or another free-form document (a letter you wrote in this chat) goes to Didox the same way with propose_didox_document; a reconciliation act goes with propose_didox_reconciliation (the app builds it from the saved 1C act); a wrong draft is removed with propose_didox_delete_draft. None of it has to be written in Word and attached by hand. A line without VAT is normal (the app reads it as no VAT, not as an error, and the summary says OK): never call a document wrong only because it has no VAT. If 1C refuses a VAT rate (VAT_RATE_NOT_FOUND, it names the rates the base has), do not enter the document by hand with another rate: look at how this company booked the same supplier before (its earlier receipts, the learned practice), tell the accountant what you found and ask, or follow the practice and say so. The received invoice is made unposted on its receipt: post the receipt first (propose_post_created), then the invoice.
 - Received invoices (счёт-фактура полученный): supplier INN, the supplier's invoice number and date, and per line \
 the item (IKPU code, or the exact name from Справочник.Номенклатура), quantity, price, VAT rate and amounts. One: \
 propose_invoice_received; several: all of them with propose_invoices_received, on one card.
@@ -294,6 +294,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+  learn_accounting_policy:
+    "Learn how this company works from its own 1C, with no input: its bank accounts (main, blocked, foreign-currency) and what " +
+    "each is used for, the kinds of operation its bank documents carry (and whether it has ever recorded a transfer between " +
+    "its own accounts or a conversion, and as what), and the accounting policy register when the configuration has one. Reads " +
+    "only. Use it when the accountant asks how the company works or books some money (a transfer to the blocked account, a " +
+    "conversion to USD or RUB, a payment to a foreign supplier, a customs import), and before you explain such money in a bank " +
+    "import. Reason from what it returns; say plainly what 1C does not show.",
   fetch_didox_documents:
     "Read documents from Didox itself (no files needed): the period by the document's own date (from, to; default " +
     "this year so far), direction incoming (default), outgoing or both, limit (default 100, at most 300; read a " +
@@ -348,9 +355,17 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'Prepare the payments of the bank statement the app already read from the attached file (the summary "Bank ' +
     'statement … read by the program") as bank documents on ONE card with a title. The app finds the bank account ' +
     "and the counterparties and copies each counterparty's last posted payment with this payment's date, amount, " +
-    "number and purpose: send only the title (rows, a list of sheet rows, to take some of them; file when several are " +
-    "attached). What it could not settle comes back as problems; answer them with references in counterparties " +
-    "(row, ref), templates (row, ref of a posted payment document to copy) and ownAccount, and call it again.",
+    "number and purpose: send the title and the period the accountant asked for (from, to: YYYY-MM-DD); the program takes " +
+    "the rows of that period itself, so never look for them in the file. With several statements attached call it ONCE " +
+    "without file: it reads the accounts together, leaves out an account that money only passes through, enters the " +
+    "bank's fees as fees, and reports transfers between the company's own accounts and accounts in a currency " +
+    "(transfersBetweenOwnAccounts, foreignCurrencyAccounts): those are NOT entered, tell the accountant; its reflections " +
+    "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
+    "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
+    "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +
+    "not settle comes back as problems with each row's date, amount, name and purpose: settle them from that, without " +
+    "reading the file; answer with references in counterparties (row, file, ref), templates (row, file, ref of a posted " +
+    "payment document to copy) and ownAccount, and call it again.",
   propose_invoice_received:
     "Prepare a received invoice (счёт-фактура полученный) from a supplier: supplier INN, the supplier's invoice number " +
     "and date (YYYY-MM-DD), and lines (item by IKPU code or exact 1C name; quantity; price and amount without VAT; VAT " +
@@ -371,6 +386,17 @@ export const TOOLS: Anthropic.Tool[] = (Object.keys(AI_TOOLS) as AiToolName[]).m
 }));
 
 /** The company's 1C structure (built by the app once per configuration version), after the instructions. */
+/** How this company works, as the desktop app learned it from the company's own 1C. */
+export function policyBlock(policy: string): string {
+  return (
+    "How this company works, learned by the program from its own 1C data (its accounting practice, not a general rule). " +
+    "Follow it when you decide how to book, enter or explain something: which bank account is for what, which documents " +
+    "and ledger accounts the company uses for which kind of operation, how it deals with foreign currency. Where it is " +
+    "silent, say so and ask or use the general rule, naming it as such; where the practice differs from the general rule, " +
+    `follow the practice and mention the difference:\n${policy}`
+  );
+}
+
 export function digestBlock(digest: string): string {
   return `Structure of this company's 1C, built from its configuration. Use it instead of asking 1C what exists:\n${digest}`;
 }

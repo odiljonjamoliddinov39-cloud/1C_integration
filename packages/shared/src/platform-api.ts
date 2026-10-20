@@ -75,7 +75,7 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
  * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
  * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.7.3";
+export const EXTENSION_VERSION = "0.7.4";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {

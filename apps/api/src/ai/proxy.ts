@@ -28,7 +28,7 @@ import { latestDigest } from "./digest.js";
 import { loopGuard, loopNote } from "./loop.js";
 import { type AiModel, type TurnTiming, usageOf } from "./model.js";
 import { policyFor } from "./policy.js";
-import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock } from "./prompt.js";
+import { SYSTEM_PROMPT, TOOLS, contextBlock, digestBlock, policyBlock } from "./prompt.js";
 import { routeModel, withoutThinking } from "./router.js";
 import { type ModelChoice, aiChoiceFor } from "./settings.js";
 import { AI_ALERT_KEY } from "./alert.js";
@@ -168,6 +168,15 @@ export class AiProxy {
               {
                 type: "text" as const,
                 text: digestBlock(digest.digest),
+                cache_control: { type: "ephemeral" as const },
+              },
+            ]
+          : []),
+        ...(input.policy
+          ? [
+              {
+                type: "text" as const,
+                text: policyBlock(input.policy),
                 cache_control: { type: "ephemeral" as const },
               },
             ]

@@ -169,6 +169,7 @@ const en = {
       propose_invoices_received: "Preparing invoices:",
       propose_didox_invoices: "Preparing invoices from Didox:",
       fetch_didox_documents: "Reading documents from Didox:",
+      learn_accounting_policy: "Learning how the company works from 1C:",
       propose_didox_reconciliation:
         "Building the reconciliation act from 1C (E-IMZO may ask for the key's password):",
       propose_didox_delete_draft: "Looking up the draft in Didox:",
@@ -631,6 +632,7 @@ const ru: Dict = {
       propose_invoices_received: "Готовлю счета-фактуры:",
       propose_didox_invoices: "Готовлю счета-фактуры из Didox:",
       fetch_didox_documents: "Читаю документы из Didox:",
+      learn_accounting_policy: "Изучаю по 1С, как работает компания:",
       propose_didox_reconciliation: "Собираю акт сверки из 1С (E-IMZO может спросить пароль ключа):",
       propose_didox_delete_draft: "Ищу черновик в Didox:",
       propose_didox_document: "Готовлю документ для Didox (E-IMZO может спросить пароль ключа):",
@@ -1092,6 +1094,7 @@ const uz: Dict = {
       propose_invoices_received: "Hisob-fakturalarni tayyorlayapman:",
       propose_didox_invoices: "Didox hisob-fakturalarini tayyorlayapman:",
       fetch_didox_documents: "Didox hujjatlarini oʻqiyapman:",
+      learn_accounting_policy: "1C dan kompaniya qanday ishlashini oʻrganyapman:",
       propose_didox_reconciliation:
         "1C’dan solishtirma dalolatnoma tuzyapman (E-IMZO kalit parolini soʻrashi mumkin):",
       propose_didox_delete_draft: "Didox’dagi qoralamani qidiryapman:",
