@@ -1521,6 +1521,129 @@ describe("assistant", () => {
       });
     });
 
+    it("enters the period asked for from every attached statement in one run, and leaves out an account money only passes through", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const ownAccount = crypto.randomUUID();
+      const earlierPayment = crypto.randomUUID();
+      const contract = crypto.randomUUID();
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "b1",
+                name: "propose_bank_payments",
+                input: { title: "Vypiska 2026-09", from: "2026-09-01", to: "2026-09-30" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const counterparty = base.counterparties[0]!;
+      base.objects.set(earlierPayment, {
+        object: "Документ.ПоступлениеНаРасчетныйСчет",
+        fields: {
+          Номер: "0000-000007",
+          Дата: "2026-07-01T00:00:00",
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", counterparty.ref, counterparty.name),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+          НомерВходящегоДокумента: "55",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 1000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Справочник.БанковскиеСчета", ownAccount, "р/с")]],
+            truncated: false,
+          }),
+        },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.counterparties
+              .filter((c) => values(input).includes(c.inn))
+              .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Документ.ПоступлениеНаРасчетныйСчет", earlierPayment, "старый"), "старое"]],
+            truncated: false,
+          }),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: () => ({ columns: [], rows: [], truncated: false }) },
+      );
+      store.setAiEnabled(company.id, true);
+      const head = "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа";
+      // Three payments in September, one in August (outside the period).
+      const main = [
+        "Выписка по счёту 20208000100438330001",
+        head,
+        `20.08.2026;100;${counterparty.name};${counterparty.inn};;900,00;Оплата август`,
+        ...[1, 2, 3].map(
+          (n) => `0${n}.09.2026;10${n};${counterparty.name};${counterparty.inn};;${n * 1000},00;Оплата ${n}`,
+        ),
+      ].join("\n");
+      // The bank's transit account: takes in from the company's own account, pays out the same, opens and closes at zero.
+      const transit = [
+        "Выписка по счёту 16401000100438330001",
+        "Остаток:;Начало дня;0;;Конец дня;0",
+        "Дата;№ док;Наименование счёта;ИНН;№ счёта;Дебет;Кредит;Назначение платежа",
+        "02.09.2026;1;OWN LLC;300000001;20208000100438330001;;120,00;Комиссия",
+        "02.09.2026;1;Комиссионные доходы банка;207117389;45249000000001082160;120,00;;Комиссия",
+      ].join("\n");
+
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskalarni kirit",
+        files: [
+          { name: "main.csv", data: new TextEncoder().encode(main) },
+          { name: "transit.csv", data: new TextEncoder().encode(transit) },
+        ],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      // The model was told what each account is, from the attach.
+      expect(JSON.stringify(proxy.requests[0]?.messages[0])).toContain("pass_through");
+      const made = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.ПоступлениеНаРасчетныйСчет" && o.fields.НазначениеПлатежа !== "старое",
+      );
+      // Only September's three payments of the main account; nothing from the transit account.
+      expect(made.map((o) => o.fields.СуммаДокумента)).toEqual([1000, 2000, 3000]);
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      const result = resultOf(proxy.requests) as { status: string; ledger: string; outsideThePeriod: number };
+      expect(result).toMatchObject({ status: "done", outsideThePeriod: 1, passThroughRowsLeftOut: 2 });
+      expect(result.ledger).toContain("pass_through");
+    });
+
     it("creates a counterparty and its contract the statement names, then enters its payments: three cards, no model step", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const supplier = crypto.randomUUID();

@@ -87,7 +87,8 @@ import {
   type BankResolved,
   resolvePayments,
 } from "./bank/resolve.js";
-import type { BankStatement } from "./bank/statement.js";
+import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import type { BankPayment, BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
 import {
   type DidoxDocument,
@@ -227,6 +228,8 @@ interface Run {
   escalate: boolean;
   /** What was done for this question: the engine learns from it when it ends. */
   trace: TraceBuilder;
+  /** Times this question read rows of a bank statement by hand (read_attachment without totals). */
+  bankRowReads: number;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -291,8 +294,24 @@ export class AssistantService {
       throw e;
     }
     const question = text.trim() || attached.info.map((file) => file.name).join(", ");
+    // Several bank statements of one company are read together: what each account is and how they link.
+    const blocks = [...attached.blocks];
+    if (attached.bank.length > 0) {
+      const all = mergeBank(chat.bank ?? [], attached.bank);
+      if (all.length >= 2) {
+        blocks.push({
+          type: "document",
+          source: {
+            type: "text",
+            media_type: "text/plain",
+            data: describeLedger(planLedger(all, { ownInn: this.deps.store.company(companyId).inn })),
+          },
+          title: "Bank accounts of this chat",
+        });
+      }
+    }
     const content: AiMessage["content"] =
-      attached.blocks.length > 0 ? [...attached.blocks, { type: "text", text: question }] : question;
+      blocks.length > 0 ? [...blocks, { type: "text", text: question }] : question;
     // Pages and pictures of earlier questions were read; only their names stay.
     chat.messages = dropPages(chat.messages);
     if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
@@ -334,6 +353,7 @@ export class AssistantService {
           import: attached.blocks.length > 0,
           escalate: false,
           trace: new TraceBuilder(),
+          bankRowReads: 0,
         };
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
         if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
@@ -724,6 +744,7 @@ export class AssistantService {
         import: false,
         escalate: false,
         trace: new TraceBuilder(),
+        bankRowReads: 0,
       });
     });
   }
@@ -978,7 +999,24 @@ export class AssistantService {
     }
     emit({ type: "tool", name: use.name, detail: describe(use.name, input.data) });
     if (use.name === "read_attachment") {
-      return readTable(chat.tables ?? [], input.data as ReadAttachmentInput);
+      const read = input.data as ReadAttachmentInput;
+      // A bank statement is read by the program. Reading its rows over and over is what burned a whole day's
+      // budget on one import: after a few reads the model is sent back to the tool that does the work.
+      const isStatement = (chat.bank ?? []).some((s) => s.fileName.toLowerCase() === read.file.toLowerCase());
+      if (isStatement && !read.group_by && !read.sum) {
+        run.bankRowReads += 1;
+        if (run.bankRowReads > BANK_ROW_READS) {
+          return {
+            ok: false,
+            code: "USE_BANK_TOOL",
+            message:
+              `Stop reading the rows of ${read.file} by hand (${BANK_ROW_READS} reads already): the program has read this bank statement. ` +
+              "Call propose_bank_payments (title, from, to): it takes the period, the bank fees and the payments itself, and what it " +
+              "cannot settle comes back with each row's date, amount, name and purpose. Use read_attachment only with group_by or sum.",
+          };
+        }
+      }
+      return readTable(chat.tables ?? [], read);
     }
     if (use.name === "fetch_didox_documents") {
       return this.fetchDidox(chat, input.data as FetchDidoxInput, signal);
@@ -1949,10 +1987,10 @@ export class AssistantService {
     signal: AbortSignal,
   ): Promise<ToolResult> {
     const statements = chat.bank ?? [];
-    const statement = input.file
+    const named = input.file
       ? statements.find((s) => s.fileName.toLowerCase() === input.file?.toLowerCase())
-      : statements.at(-1);
-    if (!statement) {
+      : undefined;
+    if (statements.length === 0 || (input.file && !named)) {
       return {
         ok: false,
         code: "NO_BANK_STATEMENT",
@@ -1962,15 +2000,49 @@ export class AssistantService {
             : `No statement "${input.file}". Read: ${statements.map((s) => s.fileName).join(", ")}`,
       };
     }
+    // One statement by name, or every attached one in one run.
+    const chosen = named ? [named] : statements;
     emit({ type: "tool", name: "propose_bank_payments", detail: describe("propose_bank_payments", input) });
     const done = new Set(chat.bankDone ?? []);
-    const doneKey = (row: number) => `${statement.fileName}#${row}`;
-    const only = (input.rows ?? statement.payments.map((p) => p.row)).filter(
-      (row) => !done.has(doneKey(row)),
-    );
-    if (only.length === 0) {
-      return { ok: true, data: { status: done.size > 0 ? "all_entered" : "nothing_to_enter" } };
+    const doneKey = (file: string, row: number) => `${file}#${row}`;
+    const ownInn = this.deps.store.company(chat.companyId).inn;
+    const ledgerOptions = { from: input.from, to: input.to, ownInn };
+    // The accounts read together: what money only passes through, the bank's fees and the transfers between the
+    // company's own accounts are the program's to sort out; the rest are payments.
+    const plan = planLedger(statements, ledgerOptions);
+    const tasks = chosen.flatMap((statement) => {
+      const wanted = input.rows && named ? new Set(input.rows) : null;
+      const rows = (plan.rows.get(statement.fileName) ?? []).filter(
+        (row) => (!wanted || wanted.has(row)) && !done.has(doneKey(statement.fileName, row)),
+      );
+      if (rows.length === 0) return [];
+      const fees = plan.fees.get(statement.fileName) ?? new Set<number>();
+      // The bank's fee has no counterparty: the row is cleared of the company's own name and INN.
+      const prepared: BankStatement =
+        fees.size === 0
+          ? statement
+          : {
+              ...statement,
+              payments: statement.payments.map((p) => {
+                if (!fees.has(p.row)) return p;
+                // The bank wrote no INN for a fee: the zero-INN flag goes too, or it would be looked up by name.
+                const rest: BankPayment = { ...p, inn: "", counterparty: "Bank fee" };
+                delete rest.innZero;
+                return rest;
+              }),
+            };
+      return [{ statement, prepared, rows }];
+    });
+    const ledger = describeLedger(plan, ledgerOptions);
+    const notEntered = notEnteredOf(plan, chosen);
+    if (tasks.length === 0) {
+      return {
+        ok: true,
+        data: { status: done.size > 0 ? "all_entered" : "nothing_to_enter", ledger, ...notEntered },
+      };
     }
+    const label = (s: BankStatement) => s.account || s.fileName;
+    const several = tasks.length > 1;
 
     const connection = this.deps.store.connection(chat.companyId);
     const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
@@ -1983,31 +2055,47 @@ export class AssistantService {
     const cache: BankCache = { lists: new Map(), snapshots: new Map() };
     const fresh = new Set<string>();
     const madeNow: string[] = [];
-    let resolved: BankResolved;
-    // A counterparty the statement names and 1C lacks is created first (one card), then its contract
-    // (one card), then the payments: each round is looked up again, with no step of the model between.
-    for (let round = 0; ; round++) {
-      resolved = await resolvePayments(
-        statement,
-        {
-          companyInn: this.deps.store.company(chat.companyId).inn,
-          only,
-          cache,
-          createMissing: true,
-          fresh,
-          ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
-          overrides: {
-            ...(input.ownAccount ? { ownAccount: input.ownAccount } : {}),
-            ...(input.counterparties ? { counterparties: input.counterparties } : {}),
-            ...(input.templates ? { templates: input.templates } : {}),
-          },
-        },
-        bankDeps,
+    // What the model answered for a statement: its own file's, or any when it is the only one.
+    const mine = <T extends { file?: string | undefined }>(statement: BankStatement, list: T[] | undefined) =>
+      list?.filter((o) =>
+        o.file ? o.file.toLowerCase() === statement.fileName.toLowerCase() : tasks.length === 1,
       );
-      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    let results: { task: (typeof tasks)[number]; resolved: BankResolved }[];
+    // A counterparty the statements name and 1C lacks is created first (one card), then its contract (one card),
+    // then the payments: each round is looked up again, with no step of the model between.
+    for (let round = 0; ; round++) {
+      results = [];
+      for (const task of tasks) {
+        const counterparties = mine(task.statement, input.counterparties)?.map(({ row, ref }) => ({
+          row,
+          ref,
+        }));
+        const templates = mine(task.statement, input.templates)?.map(({ row, ref }) => ({ row, ref }));
+        const resolved = await resolvePayments(
+          task.prepared,
+          {
+            companyInn: ownInn,
+            only: task.rows,
+            cache,
+            createMissing: true,
+            fresh,
+            ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
+            overrides: {
+              ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),
+              ...(counterparties?.length ? { counterparties } : {}),
+              ...(templates?.length ? { templates } : {}),
+            },
+          },
+          bankDeps,
+        );
+        if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+        results.push({ task, resolved });
+      }
       if (round >= 3) break;
-      if (resolved.missing.length > 0) {
-        const missing = resolved.missing;
+      const missing = [
+        ...new Map(results.flatMap((r) => r.resolved.missing).map((m) => [m.key, m])).values(),
+      ];
+      if (missing.length > 0) {
         const made = await this.proposeBatch(
           chat,
           {
@@ -2036,8 +2124,10 @@ export class AssistantService {
         if (applied.length === 0) break;
         continue;
       }
-      if (resolved.contractsToCreate.length > 0) {
-        const pending = resolved.contractsToCreate;
+      const pending = [
+        ...new Map(results.flatMap((r) => r.resolved.contractsToCreate).map((c) => [c.label, c])).values(),
+      ];
+      if (pending.length > 0) {
         const made = await this.proposeBatch(
           chat,
           {
@@ -2065,39 +2155,49 @@ export class AssistantService {
     }
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
 
+    const where = (task: (typeof tasks)[number]) => (several ? ` [${label(task.statement)}]` : "");
+    const ready = results.flatMap(({ task, resolved }) =>
+      resolved.ready.map((item) => ({ ...item, file: task.statement.fileName })),
+    );
+    const problems = results.flatMap(({ task, resolved }) =>
+      resolved.problems.map((p) => ({ ...p, file: task.statement.fileName, statement: task.statement })),
+    );
+    const notes = results.flatMap(({ task, resolved }) =>
+      resolved.notes.map((n) => ({ rows: n.rows, message: `${n.message}${where(task)}` })),
+    );
+    const notCreated = results.flatMap(({ task, resolved }) => [
+      ...resolved.missing.map(
+        (m) =>
+          `counterparty ${m.name} (${m.key.startsWith("name:") ? "no INN in the statement" : `INN ${m.inn}`}), rows ${m.rows.join(", ")}${where(task)}`,
+      ),
+      ...resolved.contractsToCreate.map(
+        (c) => `contract ${c.label}, rows ${c.rows.join(", ")}${where(task)}`,
+      ),
+    ]);
+    const alreadyIn1c = results.flatMap(({ resolved }) => resolved.alreadyIn1c);
     const attention = {
+      ledger,
+      ...notEntered,
       ...(madeNow.length > 0 ? { createdInThisRun: madeNow } : {}),
-      ...(resolved.missing.length + resolved.contractsToCreate.length > 0
+      ...(notCreated.length > 0 ? { notCreated } : {}),
+      ...(problems.length > 0 ? { needsAttention: summarizeBankProblems(problems) } : {}),
+      ...(notes.length > 0
         ? {
-            notCreated: [
-              ...resolved.missing.map(
-                (m) =>
-                  `counterparty ${m.name} (${m.key.startsWith("name:") ? "no INN in the statement" : `INN ${m.inn}`}), rows ${m.rows.join(", ")}`,
-              ),
-              ...resolved.contractsToCreate.map((c) => `contract ${c.label}, rows ${c.rows.join(", ")}`),
-            ],
-          }
-        : {}),
-      ...(resolved.problems.length > 0 ? { needsAttention: summarizeBankProblems(resolved.problems) } : {}),
-      ...(resolved.notes.length > 0
-        ? {
-            notes: resolved.notes
-              .slice(0, 20)
-              .map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),
+            notes: notes.slice(0, 20).map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),
             notesAbout:
               "Decided by the program, not blocking: mention these to the accountant in the final answer.",
           }
         : {}),
-      ...(resolved.alreadyIn1c.length > 0
-        ? { alreadyIn1c: { count: resolved.alreadyIn1c.length, rows: resolved.alreadyIn1c.slice(0, 50) } }
+      ...(alreadyIn1c.length > 0
+        ? { alreadyIn1c: { count: alreadyIn1c.length, rows: alreadyIn1c.slice(0, 50) } }
         : {}),
     };
-    if (resolved.ready.length === 0) {
+    if (ready.length === 0) {
       return { ok: true, data: { status: "needs_attention", ...attention, next: BANK_NEXT } };
     }
     const proposal = {
       title: input.title,
-      changes: resolved.ready.map(({ change }) => change),
+      changes: ready.map(({ change }) => change),
     };
     const result = await this.proposeBatch(chat, proposal, emit, signal);
     if (!result.ok) return result;
@@ -2105,13 +2205,13 @@ export class AssistantService {
     if (data?.status === "done") {
       const entered = new Set(chat.bankDone ?? []);
       for (const { n } of data.applied ?? []) {
-        const payment = resolved.ready[n - 1]?.payment;
-        if (payment) entered.add(doneKey(payment.row));
+        const item = ready[n - 1];
+        if (item) entered.add(doneKey(item.file, item.payment.row));
       }
       chat.bankDone = [...entered];
       this.save(chat);
     }
-    const hasAttention = resolved.problems.length > 0;
+    const hasAttention = problems.length > 0;
     return {
       ok: true,
       data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
@@ -2536,22 +2636,88 @@ interface DidoxOrigin {
 const DIDOX_NEXT =
   "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_invoices again with items / counterparties / contracts (references only); documents already entered are not offered again.";
 
+/** Reads of rows of a bank statement by hand that one question may make before it is sent to propose_bank_payments. */
+const BANK_ROW_READS = 4;
+
 const BANK_NEXT =
   "Settle these (find the counterparty in 1C by name, create what is missing with propose_changes, or ask the accountant) and call propose_bank_payments again with counterparties / templates / ownAccount (references and sheet rows only); payments already entered are not offered again.";
 
+/** What the program did not enter, and why: the transfers between the company's own accounts, other currencies, the period. */
+function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
+  const files = new Set(chosen.map((s) => s.fileName));
+  const transfers = plan.transfers.filter((t) => [t.out, t.in].some((leg) => leg && files.has(leg.file)));
+  const foreign = plan.accounts.filter(
+    (a) => a.role === "foreign_currency" && files.has(a.file) && a.inPeriod > 0,
+  );
+  const total = transfers.reduce((n, t) => n + t.amount, 0);
+  const text = (tiyin: number) => (tiyin / 100).toFixed(2);
+  return {
+    ...(transfers.length > 0
+      ? {
+          transfersBetweenOwnAccounts: {
+            count: transfers.length,
+            total: text(total),
+            conversion: transfers.filter((t) => t.kind === "conversion").length,
+            withoutOtherLeg: transfers.filter((t) => !t.out || !t.in).length,
+            examples: transfers.slice(0, 8).map((t) => ({
+              date: t.date,
+              amount: text(t.amount),
+              from: t.fromAccount,
+              to: t.toAccount,
+              purpose: t.purpose.replace(/\s+/g, " ").slice(0, 80),
+            })),
+            note: "Not entered as payments: money moved between the company's own accounts. Tell the accountant; they decide how these are booked.",
+          },
+        }
+      : {}),
+    ...(foreign.length > 0
+      ? {
+          foreignCurrencyAccounts: foreign.map((a) => ({
+            account: a.account,
+            currency: a.currency,
+            paymentsInPeriod: a.inPeriod,
+          })),
+        }
+      : {}),
+    ...(plan.inPassThrough > 0 ? { passThroughRowsLeftOut: plan.inPassThrough } : {}),
+    ...(plan.outsidePeriod > 0 ? { outsideThePeriod: plan.outsidePeriod } : {}),
+  };
+}
+
 /** What the model is told of the bank problems: grouped by counterparty, the rows and candidates few. */
-function summarizeBankProblems(problems: BankProblem[]) {
+function summarizeBankProblems(problems: (BankProblem & { file?: string; statement?: BankStatement })[]) {
   const limit = 40;
   return {
     count: problems.length,
-    problems: problems.slice(0, limit).map((p) => ({
-      rows: p.rows.slice(0, 20),
-      ...(p.rows.length > 20 ? { moreRows: p.rows.length - 20 } : {}),
-      code: p.code,
-      ...(p.counterparty ? { counterparty: p.counterparty } : {}),
-      message: p.message,
-      ...(p.candidates ? { candidates: p.candidates.slice(0, 5) as BankCandidate[] } : {}),
-    })),
+    problems: problems.slice(0, limit).map((p) => {
+      // The rows as they stand in the statement, so that nothing has to be read to settle them.
+      const shown = p.rows.slice(0, 6).flatMap((row) => {
+        const payment = p.statement?.payments.find((x) => x.row === row);
+        return payment
+          ? [
+              {
+                row,
+                date: payment.date,
+                amount: (payment.amount / 100).toFixed(2),
+                direction: payment.direction,
+                name: payment.counterparty.slice(0, 60),
+                ...(payment.inn ? { inn: payment.inn } : {}),
+                purpose: payment.purpose.replace(/\s+/g, " ").slice(0, 110),
+              },
+            ]
+          : [];
+      });
+      return {
+        ...(p.file ? { file: p.file } : {}),
+        rows: p.rows.slice(0, 20),
+        ...(p.rows.length > 20 ? { moreRows: p.rows.length - 20 } : {}),
+        code: p.code,
+        ...(p.counterparty ? { counterparty: p.counterparty } : {}),
+        message: p.message,
+        ...(shown.length > 0 ? { examples: shown } : {}),
+        ...(p.candidates ? { candidates: p.candidates.slice(0, 5) as BankCandidate[] } : {}),
+      };
+    }),
     ...(problems.length > limit ? { more: problems.length - limit } : {}),
   };
 }

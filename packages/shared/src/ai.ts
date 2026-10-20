@@ -325,14 +325,27 @@ export type DidoxDraftInput = z.infer<typeof DidoxDraftInput>;
 export const BankPaymentsInput = z.object({
   /** For the card's title, in the accountant's language, e.g. "Bank ko'chirmasi 01–15.09: 42 ta to'lov". */
   title: z.string().trim().min(1).max(200),
-  /** The statement's file name when several are attached; absent: the newest. */
+  /**
+   * One statement by its file name; absent: EVERY attached statement in one run (the program reads them together:
+   * it leaves out the accounts money only passes through, enters the bank's fees, and matches the transfers between
+   * the company's own accounts).
+   */
   file: z.string().min(1).max(300).optional(),
-  /** Sheet rows to take; absent: every payment. */
+  /** The period to enter, YYYY-MM-DD inclusive: the program takes the rows of it itself; do not look for them. */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** Sheet rows to take (with `file`); absent: every payment of the period. */
   rows: z.array(z.number().int().min(1)).max(5000).optional(),
   /** The organization's own bank account (a reference), when the app could not find it by number. */
   ownAccount: Ref.optional(),
   counterparties: z
-    .array(z.object({ row: z.number().int().min(1), ref: Ref }))
+    .array(z.object({ row: z.number().int().min(1), file: z.string().min(1).max(300).optional(), ref: Ref }))
     .max(2000)
     .optional(),
   /**
@@ -342,7 +355,7 @@ export const BankPaymentsInput = z.object({
   splitCommission: z.boolean().optional(),
   /** A posted payment document to copy for a row, when the counterparty has no earlier payment. */
   templates: z
-    .array(z.object({ row: z.number().int().min(1), ref: Ref }))
+    .array(z.object({ row: z.number().int().min(1), file: z.string().min(1).max(300).optional(), ref: Ref }))
     .max(2000)
     .optional(),
 });

@@ -64,6 +64,8 @@ export interface BankStatement {
   sheet: string;
   /** The organization's own account named above the table ("Выписка по счёту 2020…"), if any. */
   account: string;
+  /** "Остаток: Начало дня … Конец дня …" above the table, in tiyin, when the bank gives it. */
+  balances?: { opening: number; closing: number };
   payments: BankPayment[];
   issues: BankIssue[];
   /** Which heading was taken for which column, for the summary. */
@@ -85,6 +87,10 @@ const HEADINGS: [BankColumn, RegExp][] = [
   ["receiverAccount", /(получател|oluvchi|олувчи).*(сч[её]т|hisob|xisob)/],
   ["payerName", /плательщик|tolovchi|to'lovchi|тўловчи|ҳисоб эгаси/],
   ["receiverName", /получател|oluvchi|олувчи/],
+  // "Наименование счёта" is the counterparty's name and "№ счёта" its account (one heading holds the word "счёта"
+  // for both): the narrow readings come before the generic account rule below.
+  ["name", /наименование\s*(сч[её]та|корреспондента|контрагента)/],
+  ["account", /^(№|номер|n)\s*сч[её]т|сч[её]т\s*(№|номер)|hisob\s*(raqami|№)/],
   ["inn", /(?<!\p{L})(инн|stir|inn|пинфл|pinfl)(?!\p{L})/u],
   ["mfo", /мфо|mfo/],
   ["account", /сч[её]т|hisob|xisob|account/],
@@ -277,6 +283,28 @@ function inferColumns(sheet: SheetTable): {
   };
 }
 
+/** "Остаток: | Начало дня | 0 | | Конец дня | 63500366.52": the balances the bank prints above the table. */
+function balancesAbove(rows: string[][]): { opening: number; closing: number } | null {
+  for (const row of rows) {
+    const at = (word: RegExp) => row.findIndex((cell) => word.test(normalize(cell)));
+    const start = at(/начало дня|boshida|opening/);
+    const end = at(/конец дня|oxiri|closing/);
+    if (start < 0 || end < 0) continue;
+    const value = (from: number) => {
+      for (const cell of row.slice(from + 1)) {
+        const n = parseNumber(cell);
+        if (!Number.isNaN(n)) return n;
+      }
+      return Number.NaN;
+    };
+    const opening = value(start);
+    const closing = value(end);
+    if (!Number.isNaN(opening) && !Number.isNaN(closing))
+      return { opening: Math.round(opening * 100), closing: Math.round(closing * 100) };
+  }
+  return null;
+}
+
 export function parseBankStatement(file: TableFile): BankStatement | null {
   for (const sheet of file.sheets) {
     const named = findHeader(sheet);
@@ -382,15 +410,18 @@ export function parseBankStatement(file: TableFile): BankStatement | null {
     }
     if (payments.length === 0) continue;
 
-    const above = sheet.rows
-      .slice(0, Math.max(header.index, 0))
+    const aboveRows = sheet.rows.slice(0, Math.max(header.index, 0));
+    // Any 20-digit account the heading names (a settlement account, a special or a transit one), not only 20…
+    const above = aboveRows
       .flat()
-      .map((cell) => /\b20\d{3}\d{15}\b/.exec(cell.replace(/\s/g, ""))?.[0])
+      .map((cell) => /(?<!\d)\d{20}(?!\d)/.exec(cell.replace(/\s/g, ""))?.[0])
       .find((x): x is string => Boolean(x));
+    const balances = balancesAbove(aboveRows);
     return {
       fileName: file.name,
       sheet: sheet.name,
       account: above ?? guessed?.ownAccount ?? "",
+      ...(balances ? { balances } : {}),
       payments,
       issues,
       columns,
@@ -437,6 +468,17 @@ export function describeBankStatement(statement: BankStatement): string {
       return `${month}: in ${money(sum(of.filter((p) => p.direction === "in")))}, out ${money(sum(of.filter((p) => p.direction === "out")))} (${of.length})`;
     }),
   ];
+  if (statement.balances) {
+    // The balances the bank prints must follow from the rows: a mismatch means missing rows or swapped columns.
+    const { opening, closing } = statement.balances;
+    const expected = opening + sum(incoming) - sum(outgoing);
+    lines.push(
+      expected === closing
+        ? `Balances: opening ${money(opening)}, closing ${money(closing)}; the rows add up to them.`
+        : `Balances: opening ${money(opening)}, closing ${money(closing)}, but the rows come to ${money(expected)}: ` +
+            "some rows are missing or In and Out are swapped. Tell the accountant before entering anything.",
+    );
+  }
   if (statement.inferred) {
     lines.push(
       "The file has no headings this program knows, so the columns were found by what the cells hold. " +
