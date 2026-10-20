@@ -88,6 +88,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { readSaleKit } from "./didox/sale-kit.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
 import type { BankPayment, BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
@@ -1031,6 +1032,8 @@ export class AssistantService {
       return readTable(chat.tables ?? [], read);
     }
     if (use.name === "fetch_didox_documents") {
+      // Entering what Didox holds is transcription, not open thinking: the next steps run at the import effort.
+      run.import = true;
       return this.fetchDidox(chat, input.data as FetchDidoxInput, signal);
     }
     if (use.name === "learn_accounting_policy") {
@@ -1376,6 +1379,19 @@ export class AssistantService {
       chat.didox = mergeDidox(chat.didox ?? [], incoming);
       this.save(chat);
     }
+    // What entering the issued ones as sales needs from 1C, read here in one go, not by the model step by step.
+    let saleKit = "";
+    if (outgoing.length > 0 && outgoing.length <= 20) {
+      const connection = this.deps.store.connection(chat.companyId);
+      saleKit = await readSaleKit(
+        {
+          query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query),
+          describe: (objects: string[]) =>
+            this.deps.connector.tool(connection, "describe_objects", { objects }),
+        },
+        outgoing,
+      ).catch(() => "");
+    }
     return {
       ok: true,
       data: {
@@ -1405,6 +1421,7 @@ export class AssistantService {
                   `${d.number}|${d.date}|${d.buyer.name} (INN ${d.buyer.tin})|total ${money(d.totals.total)}|${d.kind}`,
               ),
               outgoingSummary: describeOutgoing(outgoing),
+              ...(saleKit ? { saleKit } : {}),
               outgoingNote:
                 "Issued by this company: compare with 1C (number, date, counterparty INN, amount) and report the differences. " +
                 "The summary has their lines (name, unit, quantity, price, VAT): when the accountant asks to enter them into 1C, " +
