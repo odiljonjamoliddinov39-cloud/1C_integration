@@ -413,6 +413,45 @@ export function describeBatch(batch: DidoxBatch): string {
   return out.join("\n");
 }
 
+/**
+ * The documents this company issued, with their lines, for entering them into 1C as sales: what Didox gave, not
+ * what the model remembers. An act that repeats an invoice is left out. One block per document, in the same line
+ * format as the incoming ones.
+ */
+export function describeOutgoing(documents: DidoxDocument[]): string {
+  const { postable } = batchOf(documents);
+  const out = [
+    `Issued by this company, read from Didox by the program (not by AI): ${postable.length} document(s), with their lines. Amounts are as Didox has them, VAT per line.`,
+  ];
+  for (const d of postable) {
+    out.push(
+      "",
+      `${label(d).toUpperCase()} ${d.number} of ${d.date} [${didoxKey(d)}], buyer ${d.buyer.name} (INN ${d.buyer.tin})${
+        d.contract ? `, contract ${d.contract.number} of ${d.contract.date}` : ""
+      }${d.notes.length > 0 ? `, ${d.notes.join("; ")}` : ""}`,
+      "n|name|code|unit|qty|price|VAT%|VAT|total",
+      ...d.lines.map((l) =>
+        [
+          l.n,
+          l.name,
+          l.catalogCode,
+          l.unit,
+          l.qty,
+          money(l.price),
+          l.vatRate,
+          money(l.vat),
+          money(l.total),
+        ].join("|"),
+      ),
+      `sum without VAT ${money(d.totals.amount)}, VAT ${money(d.totals.vat)}, total ${money(d.totals.total)} — ${
+        d.issues.length === 0 ? "OK" : "CHECK"
+      }`,
+      ...d.issues.map((i) => `  CHECK ${i.line === null ? "document" : `line ${i.line}`}: ${i.message}`),
+    );
+  }
+  return out.join("\n");
+}
+
 function referenceLine(d: DidoxDocument): string {
   const who = `${d.seller.name} (INN ${d.seller.tin})`;
   if (d.kind === "contract") {

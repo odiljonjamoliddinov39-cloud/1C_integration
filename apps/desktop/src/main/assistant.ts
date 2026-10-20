@@ -95,6 +95,7 @@ import {
   type DidoxDocument,
   batchOf,
   describeBatch,
+  describeOutgoing,
   didoxKey,
   money,
   parseDidoxDocument,
@@ -1403,8 +1404,11 @@ export class AssistantService {
                 (d) =>
                   `${d.number}|${d.date}|${d.buyer.name} (INN ${d.buyer.tin})|total ${money(d.totals.total)}|${d.kind}`,
               ),
+              outgoingSummary: describeOutgoing(outgoing),
               outgoingNote:
-                "Issued by this company: do not enter them; compare with 1C (number, date, counterparty INN, amount) and report the differences.",
+                "Issued by this company: compare with 1C (number, date, counterparty INN, amount) and report the differences. " +
+                "The summary has their lines (name, unit, quantity, price, VAT): when the accountant asks to enter them into 1C, " +
+                "make the sale and then the issued invoice from those lines. Never say Didox gives no lines.",
             }
           : {}),
       },

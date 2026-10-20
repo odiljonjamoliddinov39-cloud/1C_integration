@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { batchOf, describeBatch, isDidoxJson, money, parseDidoxDocument } from "./document.js";
+import {
+  batchOf,
+  describeBatch,
+  describeOutgoing,
+  isDidoxJson,
+  money,
+  parseDidoxDocument,
+} from "./document.js";
 
 const party = { name: '"TEST SELLER" MCHJ' };
 const buyer = { name: '"TEST BUYER" MCHJ' };
@@ -390,5 +397,38 @@ describe("batchOf and describeBatch", () => {
     expect(text).toContain("10403003014000001 = Банковская услуга");
     expect(text).toContain("contract 5 of 2025-12-24");
     expect(text).toContain("1 of 2 document(s) have lines to check");
+  });
+});
+
+describe("describeOutgoing", () => {
+  it("gives the lines of what the company issued, for entering it as a sale", () => {
+    const doc = parseDidoxDocument(
+      invoice(
+        {
+          sellertin: "311012912",
+          buyertin: "307816821",
+          buyer: { name: "BUXMEXMASH" },
+          facturadoc: { facturano: "2", facturadate: "2024-05-07" },
+        },
+        [
+          {
+            ordno: 1,
+            name: "Бурение",
+            count: "1",
+            summa: "216250000",
+            deliverysum: "216250000",
+            vatrate: 12,
+            vatsum: "25950000",
+            deliverysumwithvat: "242200000",
+          },
+        ],
+      ),
+    )!;
+    const text = describeOutgoing([doc]);
+    expect(text).toContain("1 document(s), with their lines");
+    expect(text).toContain("buyer BUXMEXMASH (INN 307816821)");
+    expect(text).toContain("1|Бурение||");
+    expect(text).toContain("|1|216250000.00|12|25950000.00|242200000.00");
+    expect(text).toContain("— OK");
   });
 });
