@@ -71,6 +71,7 @@ const mainRows = [
   ["16.01.2024", "4", "OWN LLC", COMPANY, TRANSIT, "1120", "", "За iBank-24-1120.00 документ №4"],
   ["16.01.2024", "4", "OWN LLC", COMPANY, TRANSIT, "5000", "", "За Комиссия за iBank-24 5000.00"],
   ["18.01.2024", "1", "OWN LLC", COMPANY, SPECIAL, "400000", "", "Блокировка средств для конвертации"],
+  ["24.01.2024", "5", "OWN LLC", COMPANY, SPECIAL, "100000", "", "Блокировка средств для конвертации"],
   ["24.01.2024", "6", "OWN LLC", COMPANY, SPECIAL, "", "100000", "Возврат средств на расчетный счет"],
   [
     "25.01.2024",
@@ -158,8 +159,8 @@ describe("a bank statement of this layout", () => {
   });
 
   it("checks the printed balances against the rows", () => {
-    // 1 000 000 + 100 000 + 70 000 + 10 000 in; out 1 120 + 5 000 + 400 000 + 85 000.
-    const closing = (1_180_000 - 491_120).toFixed(2);
+    // 1 000 000 + 100 000 + 70 000 + 10 000 in; out 1 120 + 5 000 + 400 000 + 100 000 + 85 000.
+    const closing = (1_180_000 - 591_120).toFixed(2);
     expect(describeBankStatement(read(MAIN, mainRows, ["0", closing]))).toContain("the rows add up to them");
     expect(describeBankStatement(read(MAIN, mainRows, ["0", "1.00"]))).toContain("some rows are missing");
   });
@@ -176,7 +177,7 @@ describe("the currency of an account", () => {
 
 describe("the accounts of one company read together", () => {
   const statements = () => [
-    read(MAIN, mainRows, ["0", (1_180_000 - 491_120).toFixed(2)]),
+    read(MAIN, mainRows, ["0", (1_180_000 - 591_120).toFixed(2)]),
     read(TRANSIT, transitRows),
     read(SPECIAL, specialRows),
     read(USD, usdRows),
@@ -210,10 +211,11 @@ describe("the accounts of one company read together", () => {
   it("matches each transfer between own accounts with its other leg, once", () => {
     const p = plan();
     const conversions = p.transfers.filter((t) => t.kind === "conversion");
-    expect(conversions).toHaveLength(2);
+    expect(conversions).toHaveLength(3);
     expect(conversions.every((t) => t.out && t.in)).toBe(true);
     expect(conversions.map((t) => [t.fromAccount.slice(0, 5), t.toAccount.slice(0, 5), t.amount])).toEqual([
       ["20208", "22613", 40_000_000],
+      ["20208", "22613", 10_000_000],
       ["22613", "20208", 10_000_000],
     ]);
   });
@@ -233,8 +235,23 @@ describe("the accounts of one company read together", () => {
     const text = describeLedger(plan("2024-01-01", "2024-12-31"), { from: "2024-01-01", to: "2024-12-31" });
     expect(text).toContain("pass_through");
     expect(text).toContain("foreign_currency");
-    expect(text).toContain("Transfers between the company's own accounts: 2");
+    expect(text).toContain("Transfers between the company's own accounts: 3");
     expect(text).toContain("Do not read the file");
+  });
+
+  it("compares what was paid into a pass-through account with what it took in", () => {
+    const p = plan();
+    expect(p.checks.map((c) => [c.to.slice(0, 5), c.paid, c.took])).toEqual([
+      ["16401", 612_000, 612_000],
+      ["22613", 50_000_000, 50_000_000],
+    ]);
+    expect(describeLedger(p)).toContain("equals what they took in (2 pairs");
+    // A row missing from the transit statement is told.
+    const broken = statements().map((x) =>
+      x.account === TRANSIT ? { ...x, payments: x.payments.filter((q) => q.row !== x.payments[0]?.row) } : x,
+    );
+    const text = describeLedger(planLedger(broken, { ownInn: COMPANY }));
+    expect(text).toContain("does not agree");
   });
 
   it("does not take an ordinary statement for a pass-through one", () => {

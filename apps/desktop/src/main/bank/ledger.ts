@@ -82,8 +82,19 @@ export interface Transfer {
   in: { file: string; row: number } | null;
 }
 
+/** What an account paid into a pass-through account against what that account says it took in, whole period. */
+export interface PassThroughCheck {
+  from: string;
+  to: string;
+  /** Whole tiyin. */
+  paid: number;
+  took: number;
+}
+
 export interface LedgerPlan {
   accounts: AccountView[];
+  /** The two sides of every payment into a pass-through account, compared. */
+  checks: PassThroughCheck[];
   /** Rows each statement hands to the resolver (payments and bank fees), by file name. */
   rows: Map<string, number[]>;
   /** Of those rows: the ones that are the bank's fee to a pass-through account (no counterparty). */
@@ -128,7 +139,9 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     const closedAtZero = !s.balances || (s.balances.opening === 0 && s.balances.closing === 0);
     const onlyOwnIn =
       incoming.length > 0 && incoming.every((p) => p.account !== s.account && own.has(p.account));
-    if (closedAtZero && onlyOwnIn && sumOf(incoming) === sumOf(outgoing)) passThrough.add(s.account);
+    // With printed balances the zero at both ends says it; a file missing rows is told apart by the checks below.
+    const balanced = s.balances !== undefined || sumOf(incoming) === sumOf(outgoing);
+    if (closedAtZero && onlyOwnIn && balanced) passThrough.add(s.account);
   }
 
   const passKinds = new Map<string, PassKind>();
@@ -137,7 +150,23 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     if (statement) passKinds.set(account, passKind(statement, own));
   }
 
+  // The two statements must agree on what went into a pass-through account: a difference is a missing row.
+  const checks: PassThroughCheck[] = [];
+  for (const through of passThrough) {
+    const receiver = byAccount.get(through);
+    if (!receiver) continue;
+    for (const source of statements) {
+      if (!source.account || source.account === through) continue;
+      const paid = sumOf(source.payments.filter((p) => p.direction === "out" && p.account === through));
+      const took = sumOf(
+        receiver.payments.filter((p) => p.direction === "in" && p.account === source.account),
+      );
+      if (paid > 0 || took > 0) checks.push({ from: source.account, to: through, paid, took });
+    }
+  }
+
   const plan: LedgerPlan = {
+    checks,
     accounts: [],
     rows: new Map(),
     fees: new Map(),
@@ -271,6 +300,15 @@ export function describeLedger(plan: LedgerPlan, options: LedgerOptions = {}): s
           ? `, ${unpaired} with no other leg in the attached statements`
           : ", each matched with its other leg") +
         ". They are not entered as payments; the accountant decides how they are booked.",
+    );
+  }
+  const off = plan.checks.filter((c) => c.paid !== c.took);
+  if (plan.checks.length > 0) {
+    lines.push(
+      off.length === 0
+        ? `What was paid into the pass-through accounts equals what they took in (${plan.checks.length} pairs, the whole statements).`
+        : "A pass-through account does not agree with the account that paid into it (a row is missing in one statement, tell the accountant): " +
+            off.map((c) => `${c.from} paid ${money(c.paid)}, ${c.to} took in ${money(c.took)}`).join("; "),
     );
   }
   lines.push(
