@@ -1538,6 +1538,7 @@ export class AssistantService {
           refusedBefore: proposal.items.flatMap((item, i) =>
             item.error ? [{ n: i + 1, error: item.error.code, message: item.error.message }] : [],
           ),
+          ...(tool === "propose_currency_rates" ? { next: RATES_NEXT } : {}),
         },
       };
     }
@@ -3830,6 +3831,12 @@ function lastUserText(chat: StoredChat): string {
   }
   return "";
 }
+
+/** What follows once the rates are in 1C: the documents entered before them took no rate. */
+const RATES_NEXT =
+  "The rates are in 1C. A document in this currency that was posted before them took no rate: find those of the period " +
+  "(run_query on the bank documents of the foreign accounts) and post them again with ONE propose_changes card " +
+  "(update, post: true), then check the balances of the currency accounts. Do not ask the accountant to load rates.";
 
 /** Most days of rates one card holds (the Central Bank is asked a day at a time). */
 const MAX_RATE_DAYS = 550;
