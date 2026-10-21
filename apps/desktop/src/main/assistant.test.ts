@@ -4440,3 +4440,41 @@ describe("bank accounts of the company", () => {
     expect([...t.base.objects.values()].some((o) => o.object === "Справочник.БанковскиеСчета")).toBe(false);
   });
 });
+
+describe("checking the books after an import", () => {
+  it("reads the balances once and hands the model what is wrong, not the registers", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "l1", name: "ledger_check", input: { date: "2024-10-31" } }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    const asked: string[] = [];
+    t.base.queryAnswers.unshift({
+      match: /Остатки\(/,
+      answer: (input) => {
+        asked.push(String(input.params?.Дата));
+        return {
+          columns: [],
+          rows: [
+            ["5710", "Переводы в пути", 2_742_873_478.26, 0],
+            ["5715", "Переводы в пути (вал.)", 0, 2_748_794_908.74],
+            ["5110", "Расчетный счет", 51_961.85, 0],
+          ],
+          truncated: false,
+        };
+      },
+    });
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Qoldiqlarni tekshir" });
+    expect(asked).toEqual(["2024-10-31T23:59:59"]);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("57xx");
+    expect(told).toContain("transit accounts do not close");
+    expect(told).not.toContain("5110");
+  });
+});

@@ -607,6 +607,19 @@ export const BankPaymentsInput = z.object({
 export type BankPaymentsInput = z.infer<typeof BankPaymentsInput>;
 
 /**
+ * The balances worth a look after an import, read and judged by the app: cash or bank accounts in credit, transit
+ * accounts that do not close, liability accounts in debit, the exchange differences. No input needed.
+ */
+export const LedgerCheckInput = z.object({
+  /** The day to read the balances at (YYYY-MM-DD); default today. */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type LedgerCheckInput = z.infer<typeof LedgerCheckInput>;
+
+/**
  * The Central Bank's exchange rates written to 1C's rate register (the one thing no change can reach), on one card.
  * The app reads the rates itself and writes only the days 1C has none for; with no currencies and no period it takes
  * the foreign-currency accounts of the attached statements and their period.
@@ -683,6 +696,7 @@ export const AI_TOOLS = {
   read_attachment: ReadAttachmentInput,
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
+  ledger_check: LedgerCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
   accounting_knowledge: AccountingKnowledgeInput,
@@ -731,6 +745,7 @@ export const AI_LOCAL_TOOLS = [
   "read_attachment",
   "fetch_didox_documents",
   "learn_accounting_policy",
+  "ledger_check",
   "accounting_calc",
   "company_rules",
   "accounting_knowledge",

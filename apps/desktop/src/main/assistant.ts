@@ -48,6 +48,7 @@ import {
   type FetchDidoxInput,
   type DidoxInvoicesInput,
   type CurrencyRatesToolInput,
+  type LedgerCheckInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -123,6 +124,7 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
+import { judgeBalances } from "./ledger-check.js";
 import { type CbuResult, daysBetween, fetchCbuRates, planRates } from "./currency/cbu.js";
 import {
   DOCUMENT_DOCTYPE,
@@ -159,6 +161,9 @@ const READ_BUDGET = 40;
 
 /** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
 const MAX_TURNS = 60;
+
+/** Model steps for a question that enters documents: the program does the work, the model only steers. */
+const MAX_TURNS_IMPORT = 24;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
@@ -769,7 +774,7 @@ export class AssistantService {
     run: Run,
   ): Promise<Result<null>> {
     const history = chat.messages;
-    const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
+    const maxTurns = this.deps.maxTurns ?? (run.import ? MAX_TURNS_IMPORT : MAX_TURNS);
     // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
     const learned = (await this.policyOf(chat.companyId)).text;
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -1292,6 +1297,9 @@ export class AssistantService {
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
     }
+    if (use.name === "ledger_check") {
+      return this.ledgerCheck(chat, input.data as LedgerCheckInput);
+    }
     if (use.name === "accounting_knowledge") {
       return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
     }
@@ -1707,6 +1715,34 @@ export class AssistantService {
         ),
       force,
     );
+  }
+
+  /** The balances worth a look, read in one query and judged by the program (see ledger-check.ts). */
+  private async ledgerCheck(chat: StoredChat, input: LedgerCheckInput): Promise<ToolResult> {
+    const date = input.date ?? new Date().toISOString().slice(0, 10);
+    const connection = this.deps.store.connection(chat.companyId);
+    const read = await this.deps.connector.tool(connection, "run_query", {
+      query:
+        "ВЫБРАТЬ Х.Счет.Код КАК Код, Х.Счет.Наименование КАК Имя, Х.СуммаОстатокДт КАК Дт, Х.СуммаОстатокКт КАК Кт " +
+        "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х",
+      params: { Дата: `${date}T23:59:59` },
+      limit: 1000,
+    });
+    if (!read.ok) return read;
+    const rows = ((read.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+      const code = String(cells[0] ?? "");
+      return code
+        ? [
+            {
+              code,
+              name: String(cells[1] ?? ""),
+              debit: Number(cells[2]) || 0,
+              credit: Number(cells[3]) || 0,
+            },
+          ]
+        : [];
+    });
+    return { ok: true, data: { date, ...judgeBalances(rows) } };
   }
 
   private async learnAccountingPolicy(chat: StoredChat): Promise<ToolResult> {

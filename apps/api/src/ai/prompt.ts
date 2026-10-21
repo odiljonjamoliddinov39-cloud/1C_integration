@@ -391,6 +391,12 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "cash, receivables, payables, revenue, cogs, netIncome, equity, totalAssets, totalDebt, ebit, interest, days?}; break_even " +
     "{fixedCosts, price, variableCost, targetProfit?}; allocate {total, weights[]} (shares to the cent that add up). Reads " +
     "nothing and changes nothing; a field that is missing comes back by name.",
+  ledger_check:
+    "Check the books after entering or posting documents, with ONE call and no other reading of the registers: the app reads " +
+    "the balances at a date (default today) and says what an accountant would look at: a cash or bank account in credit, " +
+    "the transit accounts (57xx) that do not close together, a liability account in debit (paid with no accrual), a " +
+    "receivable in credit, and the exchange differences (95xx/96xx). Report its findings in a few lines with what they " +
+    "most likely mean; do not run balance queries yourself to find the same things.",
   learn_accounting_policy:
     "Learn how this company works from its own 1C, with no input: its bank accounts (main, blocked, foreign-currency) and what " +
     "each is used for, the kinds of operation its bank documents carry (and whether it has ever recorded a transfer between " +
