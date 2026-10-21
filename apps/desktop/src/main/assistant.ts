@@ -126,6 +126,7 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
+import { trimOlderResults } from "./ai/history.js";
 import { judgeBalances } from "./ledger-check.js";
 import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
 import { currencyFromText } from "./bank/policy.js";
@@ -173,7 +174,7 @@ const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
-const MAX_RESULT_CHARS = 60_000;
+const MAX_RESULT_CHARS = 20_000;
 
 /** Times a bank run looks again at its unsettled rows after entering some (each new document is a template for the rest). */
 const PROGRESS_ROUNDS = 3;
@@ -793,7 +794,8 @@ export class AssistantService {
           task: run.task,
           ...(run.import ? { kind: "import" as const } : {}),
           ...(run.escalate ? { escalate: true } : {}),
-          messages: history,
+          // Results of earlier questions are cut to their start: every step re-reads the whole chat.
+          messages: trimOlderResults(history),
         },
         emit,
         signal,
