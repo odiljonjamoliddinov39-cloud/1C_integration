@@ -205,6 +205,150 @@ describe("assistant", () => {
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
   });
 
+  describe("the accounting knowledge of the engine", () => {
+    it("answers a how-is-it-booked question from its own base, with the account groups checked against the chart", async () => {
+      const { assistant, store, company, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "k1",
+                name: "accounting_knowledge",
+                input: { query: "как проводится аренда" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] }],
+      ]);
+      // The base's chart has these groups; 4410 (VAT to offset) is not among them.
+      base.queryAnswers.unshift({
+        match: /ПланСчетов\.Хозрасчетный/,
+        answer: () => ({
+          columns: ["Код"],
+          rows: [["6010"], ["9410"], ["9420"], ["9430"], ["2010"], ["3110"]],
+          truncated: false,
+        }),
+      });
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "аренду как провести?" });
+      const result = JSON.stringify(proxy.requests[1]!.messages.at(-1));
+      expect(result).toContain("entry_purchase_services");
+      expect(result).toContain("Дт 9410");
+      expect(result).toContain("accountsNotInThisBase");
+      expect(result).toContain("4410");
+      // No read of the company's data was made for the answer, only of the chart.
+      expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(1);
+    });
+
+    it("says plainly when it knows nothing about the question, so the model reasons from the company's practice", async () => {
+      const { assistant, store, company, proxy } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "k1",
+                name: "accounting_knowledge",
+                input: { query: "weather tomorrow" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "?" });
+      expect(JSON.stringify(proxy.requests[1]!.messages.at(-1))).toContain(
+        "Nothing in the knowledge base fits",
+      );
+    });
+  });
+
+  describe("the cost stop", () => {
+    it("stops the reads of 1C at the budget and tells the model to answer or ask", async () => {
+      const queries = Array.from({ length: 43 }, (_, i) => ({
+        type: "tool_use",
+        id: `q${i}`,
+        name: "run_query",
+        input: { query: "ВЫБРАТЬ 1 КАК Один" },
+      }));
+      const { assistant, store, company, proxy, base } = setup([
+        () => [{ type: "message", stopReason: "tool_use", content: queries }],
+        () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "partial" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "analyse everything" });
+      // 40 reads reached 1C; the 3 after the budget did not.
+      expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(40);
+      const answers = proxy.requests[1]!.messages.at(-1)!.content as { content?: unknown }[];
+      expect(answers).toHaveLength(43);
+      expect(JSON.stringify(answers.at(-1))).toContain("READ_BUDGET");
+      expect(JSON.stringify(answers[39])).not.toContain("READ_BUDGET");
+    });
+  });
+
+  describe("the accountant's standing rules for the company", () => {
+    const tool = (id: string, input: unknown) => () => [
+      {
+        type: "message" as const,
+        stopReason: "tool_use",
+        content: [{ type: "tool_use", id, name: "company_rules", input }],
+      },
+    ];
+    const done = () => [
+      { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+    ];
+
+    it("keeps a rule the model saves, and shows it first in the next question's practice", async () => {
+      const t = setup([
+        tool("r1", { action: "add", rule: "Didox lines of 12% VAT are written under the base's 15% rate" }),
+        done,
+        done,
+      ]);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "12% is 15% here" });
+      expect(t.store.rules(t.company.id)).toEqual([
+        "Didox lines of 12% VAT are written under the base's 15% rate",
+      ]);
+      // The tool's answer shows the numbered list, and the same chat's next step already has the rule.
+      const result = JSON.stringify(t.proxy.requests[1]!.messages.at(-1));
+      expect(result).toContain("1. Didox lines of 12% VAT");
+      expect(t.proxy.requests[1]!.policy).toContain("Standing rules the accountant gave");
+      expect(t.proxy.requests[1]!.policy).toContain("written under the base's 15% rate");
+      // And a later chat of the same company has it too.
+      await t.assistant.send({
+        companyId: t.company.id,
+        chatId: "99999999-9999-4999-8999-999999999999",
+        text: "next",
+      });
+      expect(t.proxy.requests[2]!.policy).toContain("written under the base's 15% rate");
+    });
+
+    it("keeps one copy of the same rule, and forgets one by number or by its words", () => {
+      const t = setup([]);
+      t.store.addRule(t.company.id, "Rent goes to 9410");
+      t.store.addRule(t.company.id, "rent  goes to 9410");
+      t.store.addRule(t.company.id, "Goods for resale go to 2910");
+      expect(t.store.rules(t.company.id)).toEqual(["Rent goes to 9410", "Goods for resale go to 2910"]);
+      expect(t.store.removeRule(t.company.id, 1)).toEqual(["Goods for resale go to 2910"]);
+      expect(t.store.removeRule(t.company.id, "resale")).toEqual([]);
+      expect(t.store.removeRule(t.company.id, "nothing like it")).toEqual([]);
+    });
+
+    it("asks for what an add or a remove lacks", async () => {
+      const t = setup([tool("r1", { action: "add" }), done]);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "x" });
+      expect(JSON.stringify(t.proxy.requests[1]!.messages.at(-1))).toContain("add needs the rule");
+    });
+  });
+
   describe("how the company works", () => {
     const answer = (text: string) => () => [
       { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text }] },
@@ -576,6 +720,52 @@ describe("assistant", () => {
         );
         const saved = chats.load(company.id, chats.list(company.id)[0]!.id);
         expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
+      });
+
+      it("reads the period from Didox itself in the same step, and keeps the VAT and account decisions it is given", async () => {
+        const entering = proposeThenAnswer("propose_didox_invoices", {
+          title: "Didox 2026-10",
+          from: "2026-10-01",
+          to: "2026-10-31",
+          vatRateMap: [{ from: 12, to: 15 }],
+          accountRules: [{ match: "аренд|rent", account: "9410" }],
+        });
+        const { assistant, store, company, proxy, server, base } = didoxSetup(entering);
+        const inn = base.organizations[0]!.inn;
+        server.documents = [
+          {
+            id: "a",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("1", "2026-10-09", "111111111", inn),
+          },
+          {
+            id: "b",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("2", "2026-09-09", "111111111", inn),
+          },
+        ];
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        await assistant.send({ companyId: company.id, text: "Didox 2026 oktyabr" });
+
+        // The documents of the period were read by the app, not by a step of the model; the other month is left out.
+        expect(server.requests.some((r) => r.url.pathname === "/v1/documents")).toBe(true);
+        const result = resultOf(proxy.requests) as { needsAttention?: { document: string }[] };
+        const documents = JSON.stringify(result);
+        expect(documents).toContain("111111111/1");
+        expect(documents).not.toContain("111111111/2");
+        // What the accountant decided is kept for the company, as settings and as a rule the model is shown.
+        expect(store.bookkeeping(company.id)).toEqual({
+          vatRateMap: [{ from: 12, to: 15 }],
+          accountRules: [{ match: "аренд|rent", account: "9410" }],
+        });
+        expect(store.rules(company.id)).toEqual([
+          "Didox lines of 12% VAT are written under the base's 15% rate",
+          "Lines named like «аренд|rent» are booked to account 9410",
+        ]);
       });
 
       it("makes a letter a free-form draft in Didox, as a PDF, after the card is confirmed", async () => {
@@ -1580,6 +1770,426 @@ describe("assistant", () => {
         applied: expect.any(Array),
         failed: [],
       });
+    });
+
+    it("enters the company's own Didox documents as sales copied from its last sale, on one card, unposted", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [contract, item, oldSale, unit] = [
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+      ];
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "s1", name: "propose_didox_sales", input: { title: "Sotuvlar: 1" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const buyer = base.counterparties[0]!;
+      const ownInn = base.organizations[0]!.inn;
+      base.objects.set(oldSale, {
+        object: "Документ.РеализацияТоваровУслуг",
+        fields: {
+          Номер: "РТ-000007",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", buyer.ref, buyer.name),
+          Склад: ref("Справочник.Склады", crypto.randomUUID(), "Основной"),
+          ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", crypto.randomUUID(), "старый"),
+          Комментарий: "старый",
+          СуммаВключаетНДС: false,
+          СуммаДокумента: 5600,
+        },
+        tables: {
+          Товары: [
+            {
+              Номенклатура: ref("Справочник.Номенклатура", crypto.randomUUID(), "старый"),
+              Количество: 5,
+              Цена: 1000,
+              Сумма: 5000,
+              СтавкаНДС: ref("Перечисление.СтавкиНДС", "НДС12", "12%"),
+              СуммаНДС: 600,
+              СчетДоходов: ref("ПланСчетов.Хозрасчетный", crypto.randomUUID(), "9010"),
+            },
+          ],
+          Услуги: [],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const rows = (
+        list: (string | number | boolean | { type: string; ref: string; name: string } | null)[][],
+      ) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) =>
+            rows(
+              values(input).includes(buyer.inn)
+                ? [[buyer.inn, ref("Справочник.Контрагенты", buyer.ref, buyer.name), buyer.name]]
+                : [],
+            ),
+        },
+        {
+          match: /ДоговорыКонтрагентов КАК Т ГДЕ/,
+          answer: () =>
+            rows([
+              [
+                buyer.inn,
+                ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+                "17",
+                "2026-01-08T00:00:00",
+              ],
+            ]),
+        },
+        { match: /ПРЕДСТАВЛЕНИЕ\(Т\.Ссылка\)/, answer: () => rows([["Без НДС"], ["12%"]]) },
+        {
+          match: /Перечисление\.СтавкиНДС/,
+          answer: () => rows([[ref("Перечисление.СтавкиНДС", "НДС12", "12%")]]),
+        },
+        {
+          match: /Т\.ЕдиницаИзмерения КАК Единица/,
+          answer: () =>
+            rows([
+              [ref("Справочник.Номенклатура", item, "Мыло"), ref("Справочник.ЕдиницыИзмерения", unit, "шт")],
+            ]),
+        },
+        {
+          match: /Справочник\.Номенклатура КАК Т ГДЕ Т\.Наименование В/,
+          answer: () => rows([["Жидкое мыло", ref("Справочник.Номенклатура", item, "Жидкое мыло")]]),
+        },
+        { match: /РеализацияТоваровУслуг КАК Т ГДЕ Т\.Дата МЕЖДУ/, answer: () => rows([]) },
+        {
+          match: /РеализацияТоваровУслуг КАК Т ГДЕ Т\.Проведен/,
+          answer: () => rows([[ref("Документ.РеализацияТоваровУслуг", oldSale, "продажа")]]),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Didox sotuvlarini kirit",
+        files: [
+          {
+            name: "out-24.json",
+            data: new TextEncoder().encode(
+              JSON.stringify({
+                facturaid: "out-24",
+                facturadoc: { facturano: "24", facturadate: "2026-10-13" },
+                contractdoc: { contractno: "17", contractdate: "2026-01-08" },
+                sellertin: ownInn,
+                seller: { name: "CRYSTAL" },
+                buyertin: buyer.inn,
+                buyer: { name: buyer.name },
+                productlist: {
+                  products: [
+                    {
+                      ordno: 1,
+                      name: "Жидкое мыло",
+                      catalogcode: "03401001002241001",
+                      packagename: "шт.",
+                      count: "10",
+                      summa: "1000",
+                      deliverysum: "10000",
+                      vatrate: 12,
+                      vatsum: "1200",
+                      deliverysumwithvat: "11200",
+                    },
+                  ],
+                },
+              }),
+            ),
+          },
+        ],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.РеализацияТоваровУслуг" && o.fields.Комментарий === "Didox invoice 24",
+      );
+      expect(made).toHaveLength(1);
+      expect(made[0]).toMatchObject({
+        posted: false,
+        fields: {
+          Дата: "2026-10-13",
+          СуммаДокумента: 11200,
+          Контрагент: { ref: buyer.ref },
+          ДоговорКонтрагента: { ref: contract },
+        },
+        tables: { Товары: [{ Количество: 10, Сумма: 10000, СуммаНДС: 1200, СтавкаНДС: "НДС12" }] },
+      });
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      expect(JSON.stringify(proxy.requests[1]?.messages.at(-1))).toContain("propose_post_created");
+    });
+
+    it("enters a foreign-currency account's payment in its currency, with the rate of the day from 1C", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [usdAccount, earlierPayment, contract] = [
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+      ];
+      const { assistant, store, company, events, base, proxy } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [{ type: "tool_use", id: "u1", name: "propose_bank_payments", input: { title: "USD" } }],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const counterparty = base.counterparties[0]!;
+      base.objects.set(earlierPayment, {
+        object: "Документ.СписаниеСРасчетногоСчета",
+        fields: {
+          Номер: "0000-000021",
+          Дата: "2026-08-10T00:00:00",
+          Проведен: true,
+          ВалютаДокумента: ref("Справочник.Валюты", crypto.randomUUID(), "Доллар США"),
+          Контрагент: ref("Справочник.Контрагенты", counterparty.ref, counterparty.name),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№7"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 12650,
+              КратностьВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 12650000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      const rows = (
+        list: (string | number | boolean | { type: string; ref: string; name: string } | null)[][],
+      ) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
+      base.queryAnswers.unshift(
+        { match: /КурсыВалют/, answer: (input) => rows(input.params?.Код === "840" ? [[12700.5, 1]] : []) },
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => rows([[ref("Справочник.БанковскиеСчета", usdAccount, "USD")]]),
+        },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) =>
+            rows(
+              base.counterparties
+                .filter((c) => values(input).includes(c.inn))
+                .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            ),
+        },
+        {
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
+          answer: () =>
+            rows([[ref("Документ.СписаниеСРасчетногоСчета", earlierPayment, "старый"), "старое"]]),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: () => rows([]) },
+      );
+      store.setAiEnabled(company.id, true);
+      const statement = [
+        "Выписка по счёту 22614840500000000001",
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        `10.09.2026;31;${counterparty.name};${counterparty.inn};1200,00;;Payment for goods`,
+      ].join("\n");
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "USD vypiska",
+        files: [{ name: "usd.csv", data: new TextEncoder().encode(statement) }],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.fields.НазначениеПлатежа === "Payment for goods",
+      );
+      expect(made).toHaveLength(1);
+      expect(made[0]).toMatchObject({
+        fields: { СуммаДокумента: 1200 },
+        tables: {
+          РасшифровкаПлатежа: [
+            { СуммаПлатежа: 1200, КурсВзаиморасчетов: 12700.5, СуммаВзаиморасчетов: 15240600 },
+          ],
+        },
+      });
+      expect(JSON.stringify(proxy.requests[1]?.messages.at(-1))).toContain("USD payment at the rate 12700.5");
+    });
+
+    it("enters a move between the company's own accounts as a pair of documents copied from the company's last one", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [A, B] = ["20208000100438330001", "20208000200438330002"];
+      const [refA, refB] = [crypto.randomUUID(), crypto.randomUUID()];
+      const [outDoc, inDoc] = [crypto.randomUUID(), crypto.randomUUID()];
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "t1", name: "propose_bank_payments", input: { title: "Moves" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const earlier = (object: string, kind: string, shown: string) => ({
+        object,
+        fields: {
+          Номер: "0000-000003",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          ВидОперации: ref("Перечисление.ВидыОпераций", kind, shown),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СчетПолучатель: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый-2"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+        },
+        tables: {},
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      base.objects.set(
+        outDoc,
+        earlier(
+          "Документ.СписаниеСРасчетногоСчета",
+          "ПереводНаДругойСчетОрганизации",
+          "Перевод на другой счет организации",
+        ),
+      );
+      base.objects.set(
+        inDoc,
+        earlier(
+          "Документ.ПоступлениеНаРасчетныйСчет",
+          "ПереводСДругогоСчетаОрганизации",
+          "Перевод с другого счета организации",
+        ),
+      );
+      const ownInn = base.organizations[0]!.inn;
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => ({
+            columns: [],
+            rows: [
+              [A, ref("Справочник.БанковскиеСчета", refA, "р/с 1"), ownInn],
+              [B, ref("Справочник.БанковскиеСчета", refB, "р/с 2"), ownInn],
+            ],
+            truncated: false,
+          }),
+        },
+        {
+          match: /СГРУППИРОВАТЬ ПО Т\.ВидОперации/,
+          answer: (input) => {
+            const out = String(input.query).includes("СписаниеСРасчетногоСчета");
+            return {
+              columns: [],
+              rows: [
+                [
+                  ref(
+                    out ? "Перечисление.ВидыОпераций" : "Перечисление.ВидыОпераций",
+                    out ? "ПереводНаДругойСчетОрганизации" : "ПереводСДругогоСчетаОрганизации",
+                    out ? "Перевод на другой счет организации" : "Перевод с другого счета организации",
+                  ),
+                  "2026-08-01T00:00:00",
+                ],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Т\.ВидОперации = ЗНАЧЕНИЕ\(/,
+          answer: (input) => {
+            const out = String(input.query).includes("СписаниеСРасчетногоСчета");
+            return {
+              columns: [],
+              rows: [
+                [
+                  ref(
+                    out ? "Документ.СписаниеСРасчетногоСчета" : "Документ.ПоступлениеНаРасчетныйСчет",
+                    out ? outDoc : inDoc,
+                    "док",
+                  ),
+                ],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Т\.БанковскийСчет КАК Счет, Т\.Дата/,
+          answer: () => ({ columns: [], rows: [], truncated: false }),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+      const csv = (account: string, row: string) =>
+        new TextEncoder().encode(
+          [
+            `Выписка по счёту ${account}`,
+            "Дата;№ док;Наименование корреспондента;ИНН;№ счёта;Дебет;Кредит;Назначение платежа",
+            row,
+          ].join("\n"),
+        );
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskalarni kirit",
+        files: [
+          {
+            name: "a.csv",
+            data: csv(A, `10.09.2026;77;CRYSTAL;${ownInn};${B};250000,00;;Перевод между своими счетами`),
+          },
+          {
+            name: "b.csv",
+            data: csv(B, `10.09.2026;78;CRYSTAL;${ownInn};${A};;250000,00;Перевод между своими счетами`),
+          },
+        ],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.fields.НазначениеПлатежа === "Перевод между своими счетами",
+      );
+      expect(made.map((o) => o.object).sort()).toEqual([
+        "Документ.ПоступлениеНаРасчетныйСчет",
+        "Документ.СписаниеСРасчетногоСчета",
+      ]);
+      const debit = made.find((o) => o.object === "Документ.СписаниеСРасчетногоСчета");
+      expect(debit?.fields).toMatchObject({
+        СуммаДокумента: 250000,
+        БанковскийСчет: { ref: refA },
+        СчетПолучатель: { ref: refB },
+      });
+      expect(made.every((o) => !o.posted)).toBe(true);
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      const told = JSON.stringify(proxy.requests[1]?.messages.at(-1));
+      expect(told).toContain("transfersEntered");
+      expect(told).not.toContain("transfersBetweenOwnAccounts");
     });
 
     it("enters the period asked for from every attached statement in one run, and leaves out an account money only passes through", async () => {
@@ -3293,5 +3903,59 @@ describe("assistant", () => {
       expect(t.proxy.requests[0]!.escalate).toBeUndefined();
       expect(t.proxy.requests[1]!.escalate).toBe(true);
     });
+  });
+});
+
+describe("found by the simulations", () => {
+  const toolTurn = (id: string, name: string, input: unknown): AiEvent[] => [
+    {
+      type: "message",
+      stopReason: "tool_use",
+      content: [{ type: "tool_use", id, name, input }],
+    },
+  ];
+  const endTurn = (): AiEvent[] => [
+    { type: "text", text: "ok" },
+    { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+  ];
+
+  it("a tool call with no input at all is answered as an error, and the question goes on", async () => {
+    const { assistant, store, company, proxy } = setup([
+      () => toolTurn("tu_1", "run_query", null),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    expect(await assistant.send({ companyId: company.id, text: "q" })).toEqual({ ok: true, data: null });
+    const answered = proxy.requests[1]!.messages.at(-1)!.content as { is_error?: boolean }[];
+    expect(answered[0]?.is_error).toBe(true);
+  });
+
+  it("answers the model's unanswered tool calls before the next question, so the API accepts the chat", async () => {
+    const { assistant, store, company, proxy } = setup([
+      () => toolTurn("tu_1", "list_organizations", {}),
+      // The second step of the first question fails for good.
+      () => new Response(JSON.stringify({ code: "BAD", message: "no" }), { status: 400 }),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    const first = await assistant.send({ companyId: company.id, text: "first" });
+    expect(first.ok).toBe(false);
+    const chatId = (assistant.chats(company.id)[0] ?? { id: "" }).id;
+    expect(await assistant.send({ companyId: company.id, chatId, text: "second" })).toEqual({
+      ok: true,
+      data: null,
+    });
+    // Every tool call in what the API gets has its result.
+    const messages = proxy.requests.at(-1)!.messages;
+    const calls = messages.flatMap((m) =>
+      Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => b["id"]) : [],
+    );
+    const results = messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((b) => b.type === "tool_result").map((b) => b["tool_use_id"])
+        : [],
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    expect(results.sort()).toEqual(calls.sort());
   });
 });

@@ -19,6 +19,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { SYSTEM_PROMPT } from "./ai/prompt.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { seedTemplates } from "./ai/seed.js";
 import { createDb, runMigrations } from "./db/client.js";
 import { aiBudgets, aiPolicies, aiTraces, aiUsage, plans, subscriptions } from "./db/schema.js";
 import { effectiveStatus } from "./service.js";
@@ -1056,6 +1057,27 @@ describe.skipIf(!available)("control system API", () => {
       aiCalls.length = 0;
       await chat(reg.accessToken, { company: "Crystal Water" });
       expect((aiCalls[0]?.system as unknown[]).length).toBe(3);
+    });
+
+    it("seeds the everyday questions once, refreshes an untouched seed and keeps an admin's edit", async () => {
+      const first = await seedTemplates(db.db);
+      expect(first.added).toBeGreaterThanOrEqual(20);
+      expect(await seedTemplates(db.db)).toEqual({ added: 0, updated: 0 });
+
+      // A seed nobody touched follows the code.
+      await db.sql`update query_templates set title = 'old title' where code = 'seed_cash_balance'`;
+      expect(await seedTemplates(db.db)).toEqual({ added: 0, updated: 1 });
+      const [cash] =
+        await db.sql`select title, version from query_templates where code = 'seed_cash_balance'`;
+      expect(cash).toMatchObject({ title: "Cash balance", version: 2 });
+
+      // One an admin edited (the table records who) is theirs; one deleted by an admin comes back only as a new seed.
+      const admins =
+        await db.sql`insert into admins (email, name, password_hash, role) values ('a@b.c', 'A', 'x', 'owner') returning id`;
+      await db.sql`update query_templates set title = 'mine', updated_by = ${admins[0]!.id} where code = 'seed_payables'`;
+      expect(await seedTemplates(db.db)).toEqual({ added: 0, updated: 0 });
+      const [mine] = await db.sql`select title from query_templates where code = 'seed_payables'`;
+      expect(mine?.title).toBe("mine");
     });
 
     it("answers a repeated question from the cache, until the data version or the time changes", async () => {

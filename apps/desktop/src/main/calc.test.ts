@@ -286,3 +286,19 @@ describe("the tool's input", () => {
       );
   });
 });
+
+describe("found by the simulations", () => {
+  it("finds an IRR above 1000% (a quick payback), not 'none'", () => {
+    const out = accountingCalc({ op: "npv_irr", rate: 10, cashflows: [-1000, 60000] });
+    expect(out.irrPercent).toBeCloseTo(5900, 0);
+  });
+
+  it("never prints a minus zero", () => {
+    const out = accountingCalc({
+      op: "fx_revaluation",
+      items: [{ name: "x", kind: "liability", amount: 100, bookRate: 12000, closingRate: 12000 }],
+    });
+    expect(Object.is((out.lines as { difference: number }[])[0]?.difference, 0)).toBe(true);
+    expect(Object.is(out.total, 0)).toBe(true);
+  });
+});

@@ -74,6 +74,65 @@ const FILLER = new Set([
   "к",
 ]);
 
+/**
+ * Verbs that ask for an action, not for a figure ("удали документы с пометкой удаления", "delete the duplicates"): a
+ * template only reads, so a question that asks to do something goes to the model and its confirmation cards.
+ * Whole words, so "удаления" in a phrase is not one of them.
+ */
+const ACTIONS = new Set([
+  ...[
+    "удали",
+    "удалить",
+    "проведи",
+    "провести",
+    "отправь",
+    "отправить",
+    "создай",
+    "создать",
+    "измени",
+    "изменить",
+  ],
+  ...[
+    "исправь",
+    "исправить",
+    "загрузи",
+    "загрузить",
+    "отмени",
+    "отменить",
+    "внеси",
+    "внести",
+    "запиши",
+    "записать",
+  ],
+  ...[
+    "оплати",
+    "оплатить",
+    "закрой",
+    "закрыть",
+    "перенеси",
+    "перенести",
+    "пересчитай",
+    "пометь",
+    "сними",
+    "заполни",
+  ],
+  ...[
+    "delete",
+    "remove",
+    "create",
+    "post",
+    "send",
+    "change",
+    "fix",
+    "update",
+    "close",
+    "pay",
+    "enter",
+    "write",
+  ],
+  ...["o'chir", "o'chirib", "o'chirish", "yarat", "yubor", "o'zgartir", "to'g'irla", "yoz", "kirit", "yop"],
+]);
+
 /** Legal forms that stand next to a counterparty's name. */
 const LEGAL_FORMS = new Set(["mchj", "ooo", "ооо", "мчж", "xk", "qk", "ao", "ак", "ип", "ok", "aj"]);
 
@@ -160,49 +219,225 @@ interface Found {
   value: string | number;
   /** The words of the question this value used up. */
   used: string[];
+  /** The question names a date that does not exist, or several: the model reads it. */
+  ambiguous?: true;
 }
 
+type Period = { start: string; end: string; used: string[]; ambiguous?: undefined } | { ambiguous: true };
+
+const realDate = (y: number, m: number, d: number) => m >= 1 && m <= 12 && d >= 1 && d <= lastDay(y, m);
+
+/** Every date the question writes ("15.09.2026", "15/9/26", "2026-09-15"), in order; null when one does not exist. */
+function datesIn(q: string): { iso: string; text: string }[] | null {
+  const found: { iso: string; text: string; at: number }[] = [];
+  for (const m of q.matchAll(/(?<![\d.])(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})(?![\d])/g)) {
+    const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3]?.length === 2 ? `20${m[3]}` : m[3])];
+    if (!realDate(y, mo, d)) return null;
+    found.push({ iso: isoDate(y, mo, d), text: m[0], at: m.index ?? 0 });
+  }
+  for (const m of q.matchAll(/(?<![\d])(\d{4})-(\d{2})-(\d{2})(?![\d])/g)) {
+    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    if (!realDate(y, mo, d)) return null;
+    found.push({ iso: m[0], text: m[0], at: m.index ?? 0 });
+  }
+  return found.sort((x, y) => x.at - y.at);
+}
+
+/** The months the question names (each once), with the words that named them. */
+function monthsIn(q: string): { month: number; word: string }[] {
+  const found = new Map<number, string>();
+  for (const word of words(q)) {
+    const hit = Object.entries(MONTHS).find(([name]) => word.startsWith(name));
+    if (hit) found.set(hit[1], word);
+  }
+  return [...found].map(([month, word]) => ({ month, word }));
+}
+
+const YEAR_WORDS = ["год", "года", "году", "г", "yil", "yilda", "yilga", "yilgi", "year"];
+const QUARTER_WORDS = ["квартал", "квартала", "kvartal", "chorak", "choragi", "quarter"];
+const ROMAN: Record<string, number> = { i: 1, ii: 2, iii: 3, iv: 4 };
+
+const addDays = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return isoDate(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+};
+
+const todayIso = (today: Date) =>
+  isoDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate());
+
+/** A day: the one the question writes, "yesterday", "the end of <month>", else today. */
 function findDate(question: string, today: Date): Found {
   const q = normalize(question);
-  const dmy = /(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})/.exec(q);
-  if (dmy) {
-    const [whole = "", day = "", month = "", shortOrFull = ""] = dmy;
-    const year = Number(shortOrFull.length === 2 ? `20${shortOrFull}` : shortOrFull);
-    return { value: isoDate(year, Number(month), Number(day)), used: [whole] };
+  const dates = datesIn(q);
+  if (dates === null || dates.length > 1) return { value: todayIso(today), used: [], ambiguous: true };
+  const [one] = dates;
+  if (one) return { value: one.iso, used: [one.text] };
+  if (/(?<![\p{L}])(вчера|yesterday|kecha)(?![\p{L}])/u.test(q))
+    return { value: addDays(todayIso(today), -1), used: ["вчера", "yesterday", "kecha"] };
+  const months = monthsIn(q);
+  if (/(конец|конце|end|oxiri|oxirida)/u.test(q) && months.length === 1 && months[0]) {
+    const years = [...q.matchAll(/(?<!\d)(20\d{2})(?!\d)/g)].map((m) => Number(m[1]));
+    if (new Set(years).size > 1) return { value: todayIso(today), used: [], ambiguous: true };
+    const y = years[0] ?? today.getUTCFullYear();
+    return {
+      value: isoDate(y, months[0].month, lastDay(y, months[0].month)),
+      used: [months[0].word, String(y), "конец", "конце", "end", "oxiri", "oxirida"],
+    };
   }
-  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(q);
-  if (iso) return { value: iso[0], used: [iso[0]] };
-  return { value: isoDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate()), used: [] };
+  return { value: todayIso(today), used: [] };
 }
 
-/** The month named in the question (with its year), else this month; "last month" is the one before. */
-function findMonth(question: string, today: Date): { year: number; month: number; used: string[] } {
+/**
+ * The period a question asks for: a day, a range "from … to …", a month, a quarter, a year, "last month / year /
+ * quarter", "this month / year"; this month when it names none. Two periods at once, or a date that does not exist,
+ * is ambiguous: the model reads it.
+ */
+function findPeriod(question: string, today: Date): Period {
   const q = normalize(question);
-  let year = today.getUTCFullYear();
-  let month = today.getUTCMonth() + 1;
-  const used: string[] = [];
-  if (/(прошл\p{L}* месяц|last month|o'tgan oy)/u.test(q)) {
-    month -= 1;
-    if (month === 0) {
-      month = 12;
-      year -= 1;
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth() + 1;
+  const monthRange = (y: number, m1: number, m2 = m1) => ({
+    start: isoDate(y, m1, 1),
+    end: isoDate(y, m2, lastDay(y, m2)),
+  });
+
+  const dates = datesIn(q);
+  if (dates === null || dates.length > 2) return { ambiguous: true };
+  if (dates.length === 1 && dates[0])
+    return { start: dates[0].iso, end: dates[0].iso, used: [dates[0].text] };
+  if (dates.length === 2 && dates[0] && dates[1]) {
+    if (dates[0].iso > dates[1].iso) return { ambiguous: true };
+    return {
+      start: dates[0].iso,
+      end: dates[1].iso,
+      used: [dates[0].text, dates[1].text, "по", "до", "to", "from", "gacha", "dan", "с"],
+    };
+  }
+
+  const years = [...new Set([...q.matchAll(/(?<![\d.])(20\d{2})(?![\d.])/g)].map((m) => Number(m[1])))];
+  if (years.length > 1) return { ambiguous: true };
+  const explicitYear = years[0];
+  const yearUsed = explicitYear ? [String(explicitYear), ...YEAR_WORDS] : [];
+
+  // A quarter: "3 квартал", "3-й квартал", "III квартал", "3-chorak", "Q3", "квартал 3".
+  const quarters = new Set<number>();
+  for (const m of q.matchAll(
+    /(?<![\p{L}\d])(\d|iv|iii|ii|i)\s*[-–]?\s*(?:й|ый|ой|ий|chi|nchi)?\s*[-–]?\s*(?:квартал\p{L}*|kvartal\p{L}*|chorak\p{L}*|quarter)/gu,
+  )) {
+    const n = /^\d$/.test(m[1] ?? "") ? Number(m[1]) : ROMAN[m[1] ?? ""];
+    if (n) quarters.add(n);
+  }
+  for (const m of q.matchAll(/(?<![\p{L}\d])q([1-4])(?!\d)/gu)) quarters.add(Number(m[1]));
+  for (const m of q.matchAll(/(?:квартал\p{L}*|kvartal\p{L}*|chorak\p{L}*)\s*([1-4])(?!\d)/gu))
+    quarters.add(Number(m[1]));
+  const months = monthsIn(q);
+  if (quarters.size > 1 || (quarters.size === 1 && months.length > 0) || months.length > 1)
+    return { ambiguous: true };
+  const [quarter] = [...quarters];
+  const quarterUsed = [
+    ...QUARTER_WORDS,
+    "й",
+    "ый",
+    "ой",
+    "ий",
+    "chi",
+    "nchi",
+    "q1",
+    "q2",
+    "q3",
+    "q4",
+    "i",
+    "ii",
+    "iii",
+    "iv",
+  ];
+  if (quarter && quarter >= 1 && quarter <= 4) {
+    const y = explicitYear ?? year;
+    return { ...monthRange(y, quarter * 3 - 2, quarter * 3), used: [...quarterUsed, ...yearUsed] };
+  }
+
+  const month1 = months[0];
+  if (month1) return { ...monthRange(explicitYear ?? year, month1.month), used: [month1.word, ...yearUsed] };
+  if (explicitYear) return { ...monthRange(explicitYear, 1, 12), used: yearUsed };
+
+  // Relative: last / this month, quarter, year.
+  const last = /(прошл\p{L}*|last|o'tgan|oʻtgan|previous)/u.test(q);
+  const current = /(этот|эт\p{L}*|текущ\p{L}*|this|shu|joriy)/u.test(q);
+  const has = (list: string[]) => list.some((w) => new RegExp(`(?<![\\p{L}])${w}(?![\\p{L}])`, "u").test(q));
+  if (has(["месяц", "месяца", "oy", "month"])) {
+    if (last) {
+      const [y, m] = month === 1 ? [year - 1, 12] : [year, month - 1];
+      return {
+        ...monthRange(y, m),
+        used: [
+          "прошлый",
+          "прошлого",
+          "месяц",
+          "месяца",
+          "last",
+          "previous",
+          "o'tgan",
+          "oʻtgan",
+          "oy",
+          "month",
+        ],
+      };
     }
-    return { year, month, used: ["прошлый", "месяц", "last", "o'tgan", "oy"] };
+    if (current)
+      return {
+        ...monthRange(year, month),
+        used: [
+          "этот",
+          "этого",
+          "текущий",
+          "текущего",
+          "месяц",
+          "месяца",
+          "this",
+          "shu",
+          "joriy",
+          "oy",
+          "month",
+        ],
+      };
   }
-  for (const word of words(q)) {
-    const found = Object.entries(MONTHS).find(([name]) => word.startsWith(name));
-    if (found) {
-      month = found[1];
-      used.push(word);
-      break;
-    }
+  if (has(["год", "года", "году", "yil", "year"])) {
+    if (last)
+      return {
+        ...monthRange(year - 1, 1, 12),
+        used: ["прошлый", "прошлого", "прошлом", "last", "previous", "o'tgan", "oʻtgan", ...YEAR_WORDS],
+      };
+    if (current)
+      return {
+        start: isoDate(year, 1, 1),
+        end: todayIso(today),
+        used: ["этот", "этого", "этом", "текущий", "текущего", "this", "shu", "joriy", ...YEAR_WORDS],
+      };
   }
-  const explicitYear = /\b(20\d{2})\b/.exec(q)?.[1];
-  if (explicitYear) {
-    year = Number(explicitYear);
-    used.push(explicitYear);
+  if (has(["квартал", "квартала", "chorak", "quarter", "kvartal"]) && (last || current)) {
+    const q0 = Math.floor((month - 1) / 3) + 1;
+    const [y, qq] = last ? (q0 === 1 ? [year - 1, 4] : [year, q0 - 1]) : [year, q0];
+    return {
+      ...monthRange(y, qq * 3 - 2, qq * 3),
+      used: [
+        "прошлый",
+        "прошлого",
+        "этот",
+        "этого",
+        "текущий",
+        "last",
+        "previous",
+        "this",
+        "shu",
+        "joriy",
+        "o'tgan",
+        "oʻtgan",
+        ...QUARTER_WORDS,
+      ],
+    };
   }
-  return { year, month, used };
+  return { ...monthRange(year, month), used: [] };
 }
 
 /** The template the question asks for, with its parameters, or null (the model answers). */
@@ -213,6 +448,7 @@ export function matchTemplate(
 ): TemplateMatch | null {
   const asked = words(question);
   if (asked.length === 0 || asked.length > 14) return null;
+  const actions = asked.filter((w) => ACTIONS.has(w));
   let best: { match: TemplateMatch; size: number } | null = null;
 
   for (const template of templates) {
@@ -226,13 +462,16 @@ export function matchTemplate(
         counterpartyParam = param.name;
       } else if (param.type === "date") {
         const found = findDate(question, today);
+        if (found.ambiguous) usable = false;
         params[param.name] = found.value;
         found.used.forEach((u) => used.add(u));
       } else if (param.type === "month_start" || param.type === "month_end") {
-        const { year, month, used: u } = findMonth(question, today);
-        params[param.name] =
-          param.type === "month_start" ? isoDate(year, month, 1) : isoDate(year, month, lastDay(year, month));
-        u.forEach((x) => used.add(x));
+        const period = findPeriod(question, today);
+        if (period.ambiguous) usable = false;
+        else {
+          params[param.name] = param.type === "month_start" ? period.start : period.end;
+          period.used.forEach((x) => used.add(x));
+        }
       } else if (param.type === "number") {
         const number = /(?<![\d.])-?\d+(?:[.,]\d+)?(?![\d.])/.exec(normalize(question));
         if (!number) usable = false;
@@ -256,8 +495,11 @@ export function matchTemplate(
       const phraseStems = words(phrase)
         .filter((w) => !FILLER.has(w))
         .map(stem);
-      // One word is too little to tell questions apart.
-      if (phraseStems.length < 2) continue;
+      // One word is too little to tell questions apart, except in a phrase an admin wrote on purpose
+      // ("выручка", "debitorka"): the question must still say that word and nothing else of meaning.
+      if (phraseStems.length < 2 && !(template.source === "admin" && phraseStems.length === 1)) continue;
+      // An action the phrase itself does not name ("… and delete them") is not a question to read an answer to.
+      if (actions.some((a) => !words(phrase).includes(a))) continue;
       const restStems = rest.filter((w) => !FILLER.has(w)).map(stem);
       if (!phraseStems.every((s) => restStems.includes(s))) continue;
       let counterparty: TemplateMatch["counterparty"];
@@ -396,13 +638,13 @@ export function learnFromRun(
     if (typeof value !== "string" || !DATE_VALUE.test(value)) return null;
     const types: TemplateParam["type"][] = [];
     if (findDate(question, today).value === value) types.push("date");
-    const month = findMonth(question, today);
-    if (value === isoDate(month.year, month.month, 1)) types.push("month_start");
-    if (value === isoDate(month.year, month.month, lastDay(month.year, month.month))) types.push("month_end");
+    const month = findPeriod(question, today);
+    if (!month.ambiguous && value === month.start) types.push("month_start");
+    if (!month.ambiguous && value === month.end) types.push("month_end");
     const type = types.length === 1 ? types[0] : undefined;
     if (!type || !PARAM_NAME.test(name)) return null;
     params.push({ name, type });
-    if (type !== "date") month.used.forEach((u) => consumed.add(u));
+    if (type !== "date" && !month.ambiguous) month.used.forEach((u) => consumed.add(u));
   }
 
   const meaningful = words(question).filter(

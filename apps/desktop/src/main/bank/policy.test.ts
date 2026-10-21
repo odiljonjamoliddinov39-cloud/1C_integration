@@ -78,6 +78,12 @@ function fake(over: (q: RunQueryInput) => QueryOutcome | undefined = () => undef
         ]);
       if (q.includes("ИЗ Документ.РеализацияТоваровУслуг")) return ok([[210, "2026-09-30T00:00:00"]]);
       if (q.includes("ИЗ Документ.ПоступлениеТоваровУслуг")) return ok([[95, "2026-09-28T00:00:00"]]);
+      if (q.includes("ССЫЛКА Документ.ПоступлениеТоваровУслуг"))
+        return ok([
+          ["2910", "6010", 120],
+          ["4410", "6010", 118],
+        ]);
+      if (q.includes("ССЫЛКА Документ.РеализацияТоваровУслуг")) return ok([["4010", "9020", 200]]);
       if (q.includes("Хозрасчетный") && q.includes("СчетДт"))
         return ok([
           ["5110", 400],
@@ -143,6 +149,17 @@ describe("learnPolicy", () => {
       "ПоступлениеТоваровУслуг",
     ]);
     expect(policy.postings[0]).toEqual({ code: "6010", debit: 300, credit: 380 });
+    // How its documents are booked: the company's own formulas.
+    expect(policy.patterns).toEqual([
+      { object: "РеализацияТоваровУслуг", pairs: [{ debit: "4010", credit: "9020", count: 200 }] },
+      {
+        object: "ПоступлениеТоваровУслуг",
+        pairs: [
+          { debit: "2910", credit: "6010", count: 120 },
+          { debit: "4410", credit: "6010", count: 118 },
+        ],
+      },
+    ]);
     expect(policy.currencies).toEqual([
       { currency: "UZS", contracts: 300 },
       { currency: "USD", contracts: 12 },
@@ -219,6 +236,8 @@ describe("describePolicy", () => {
     );
     expect(text).toContain("РеализацияТоваровУслуг ×210");
     expect(text).toContain("6010 300/380");
+    expect(text).toContain("- ПоступлениеТоваровУслуг: 2910→6010 ×120; 4410→6010 ×118");
+    expect(text).toContain("copy these, do not work the accounts out");
     expect(text).toContain("USD ×12");
     expect(text).toContain("No accounting policy register was found");
   });
@@ -283,7 +302,7 @@ describe("reflectOnImport", () => {
     expect(lines).toEqual([expect.stringContaining("has no bank account in 1C")]);
   });
 
-  it("says how 1C records own transfers and conversions, and that the program does not enter them yet", async () => {
+  it("says how 1C records own transfers and conversions, and that the program enters them from the last such document", async () => {
     const policy = await learnPolicy(fake(), "201607534");
     const lines = reflectOnImport(
       policy,
@@ -295,7 +314,7 @@ describe("reflectOnImport", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("own accounts (1) and conversions (2)");
     expect(lines[0]).toContain("«Перевод на другой счет организации»");
-    expect(lines[0]).toContain("does not enter those documents yet");
+    expect(lines[0]).toContain("enters them as a pair of documents");
   });
 
   it("says that nothing is known when 1C never recorded such money", async () => {

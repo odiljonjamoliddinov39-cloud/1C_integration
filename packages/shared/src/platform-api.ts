@@ -75,7 +75,7 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
  * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
  * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.7.4";
+export const EXTENSION_VERSION = "0.7.5";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
@@ -181,6 +181,8 @@ export const InvoiceLine = z.object({
   vatAmount: Money,
   /** amount + vatAmount. */
   total: Money,
+  /** The ledger account (its code in ПланСчетов.Хозрасчетный, e.g. "2910", "9410") the line is booked to; absent: as 1C's earlier receipts. */
+  account: z.string().trim().min(1).max(20).optional(),
 });
 export type InvoiceLine = z.infer<typeof InvoiceLine>;
 
@@ -206,6 +208,8 @@ export const InvoiceReceivedFields = z.object({
     .optional(),
   lines: z.array(InvoiceLine).min(1),
   comment: z.string().max(500).optional(),
+  /** An act of services: the receipt is made and no received invoice (the supplier issued none). */
+  withoutInvoice: z.boolean().optional(),
 });
 
 function checkLines(invoice: { lines: InvoiceLine[] }, ctx: z.RefinementCtx) {

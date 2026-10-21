@@ -63,7 +63,7 @@ There is no separate daily token cap any more. The limits are the plan's questio
 dollar fence per plan (monthly per account, daily per user), seeded at about 40% of each plan's price
 and edited in Admin → AI limits.
 
-Speed: a question that comes with files to enter into 1C runs at `AI_IMPORT_EFFORT` (default `medium`)
+Speed: a question that comes with files to enter into 1C runs at `AI_IMPORT_EFFORT` (default `low`)
 instead of `AI_EFFORT` (`high`), since thinking is most of the wait on a long import. Set it equal to
 `AI_EFFORT` to turn this off. If the AI provider refuses our requests (e.g. its credit ran out),
 customers see "temporarily unavailable" and the admin overview shows a red alert until an answer works.

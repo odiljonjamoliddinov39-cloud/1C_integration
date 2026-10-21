@@ -68,6 +68,12 @@ export interface Posting {
   credit: number;
 }
 
+/** How the company books a kind of document: the account pairs its entries use, most used first (last 12 months). */
+export interface Pattern {
+  object: string;
+  pairs: { debit: string; credit: string; count: number }[];
+}
+
 export interface Policy {
   accounts: OneCAccount[];
   kinds: Kind[];
@@ -75,6 +81,8 @@ export interface Policy {
   activity: Activity[];
   /** The ledger accounts its postings use (last 12 months), most used first. */
   postings: Posting[];
+  /** Its entries by kind of document: what the engine copies instead of working the accounts out. */
+  patterns: Pattern[];
   /** The currencies of its contracts with counterparties: how it deals with foreign currency. */
   currencies: { currency: string; contracts: number }[];
   /** The accounting policy register of the configuration, when one was found. */
@@ -83,8 +91,13 @@ export interface Policy {
   gaps: string[];
 }
 
-const TRANSFER_KIND =
-  /перевод\s+на\s+другой|между\s+(собственными\s+)?сч[её]т|конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен/i;
+/** A kind of operation that is a move of money between the company's own accounts, or a conversion. */
+export const TRANSFER_KIND =
+  /перевод\s+на\s+другой|перевод\s+с\s+другого|между\s+(собственными\s+)?сч[её]т|конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен|boshqa\s+(hisob|xisob)|konvertats|valyuta\s+(sotib|sotish)/i;
+
+/** Of those, the ones that exchange one currency for another. */
+export const CONVERSION_KIND =
+  /конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен|konvertats|valyuta\s+(sotib|sotish)/i;
 
 /** Registers and catalogs where configurations keep the accounting policy, tried in this order. */
 const POLICY_OBJECTS = [
@@ -132,6 +145,17 @@ export function normalCurrency(code: string): string {
   if (/^(РУБ|РУБ\.|РУБЛЬ|RUB)$/.test(key)) return "RUB";
   if (/^(ДОЛЛ|ДОЛЛАР|USD)$/.test(key)) return "USD";
   return key;
+}
+
+/** The currency a name stands for ("Доллар США", "USD", "840", "сум"), in letters; "" when it is none of the usual. */
+export function currencyFromText(text: string): string {
+  const exact = normalCurrency(text);
+  if (/^[A-Z]{3}$/.test(exact)) return exact;
+  if (/долл|dollar|\busd\b|aqsh/i.test(text)) return "USD";
+  if (/евро|euro|\beur\b/i.test(text)) return "EUR";
+  if (/рубл|rubl|\brub\b/i.test(text)) return "RUB";
+  if (/сум|so['ʻ’]m|\buzs\b/i.test(text)) return "UZS";
+  return "";
 }
 
 export function purposeOf(account: {
@@ -295,6 +319,31 @@ async function readActivity(deps: ResolverDeps): Promise<Activity[]> {
   return found.flatMap((a) => (a ? [a] : [])).sort((a, b) => b.count - a.count);
 }
 
+/** The account pairs the entries of each kind of document use: the company's own formulas, learned, not guessed. */
+async function readPatterns(deps: ResolverDeps, activity: Activity[]): Promise<Pattern[]> {
+  const since = yearAgo();
+  const found = await Promise.all(
+    activity.slice(0, 12).map(async (a): Promise<Pattern | null> => {
+      const outcome = await deps.query({
+        query:
+          "ВЫБРАТЬ ПЕРВЫЕ 6 Т.СчетДт.Код КАК Дт, Т.СчетКт.Код КАК Кт, КОЛИЧЕСТВО(*) КАК Кол ИЗ РегистрБухгалтерии.Хозрасчетный КАК Т " +
+          `ГДЕ Т.Период >= &с И Т.Регистратор ССЫЛКА Документ.${a.object} ` +
+          "СГРУППИРОВАТЬ ПО Т.СчетДт.Код, Т.СчетКт.Код УПОРЯДОЧИТЬ ПО Кол УБЫВ",
+        params: { с: since },
+        limit: 6,
+      });
+      const pairs = rowsOf(outcome).flatMap((cells) => {
+        const debit = text(cells[0]);
+        const credit = text(cells[1]);
+        const count = typeof cells[2] === "number" ? cells[2] : 0;
+        return count > 0 ? [{ debit, credit, count }] : [];
+      });
+      return pairs.length > 0 ? { object: a.object, pairs } : null;
+    }),
+  );
+  return found.flatMap((p) => (p ? [p] : []));
+}
+
 async function readPostings(deps: ResolverDeps): Promise<Posting[]> {
   const since = yearAgo();
   const byCode = new Map<string, Posting>();
@@ -346,7 +395,8 @@ export async function learnPolicy(deps: ResolverDeps, ownInn?: string): Promise<
     readPostings(deps).catch(() => []),
     readCurrencies(deps).catch(() => []),
   ]);
-  return { accounts, kinds, activity, postings, currencies, record, gaps };
+  const patterns = await readPatterns(deps, activity).catch(() => []);
+  return { accounts, kinds, activity, postings, patterns, currencies, record, gaps };
 }
 
 const HOUR = 3_600_000;
@@ -418,6 +468,7 @@ export function describePolicy(policy: Policy): string {
     policy.kinds.length === 0 &&
     policy.activity.length === 0 &&
     policy.postings.length === 0 &&
+    policy.patterns.length === 0 &&
     policy.currencies.length === 0 &&
     !policy.record
   )
@@ -468,6 +519,14 @@ export function describePolicy(policy: Policy): string {
     lines.push(
       "Ledger accounts its postings use (last 12 months, debit/credit): " +
         policy.postings.map((p) => `${p.code} ${p.debit}/${p.credit}`).join("; "),
+    );
+  }
+  if (policy.patterns.length > 0) {
+    lines.push(
+      "How its documents are booked, debit→credit ×entries (last 12 months; copy these, do not work the accounts out):",
+      ...policy.patterns.map(
+        (p) => `- ${p.object}: ${p.pairs.map((x) => `${x.debit}→${x.credit} ×${x.count}`).join("; ")}`,
+      ),
     );
   }
   if (policy.currencies.length > 0) {
@@ -529,9 +588,9 @@ export function reflectOnImport(policy: Policy, plan: LedgerPlan): string[] {
   if (own + conversions > 0) {
     if (recorded.length > 0) {
       lines.push(
-        `Transfers between the company's own accounts (${own}) and conversions (${conversions}) are not entered as payments: 1C records such money as ` +
+        `Transfers between the company's own accounts (${own}) and conversions (${conversions}) are not payments to a counterparty: 1C records such money as ` +
           recorded.map((k) => `«${k.kind}»`).join(", ") +
-          ". The program does not enter those documents yet: they are listed for the accountant.",
+          ". propose_bank_payments enters them as a pair of documents copied from the company's last such document.",
       );
     } else {
       lines.push(

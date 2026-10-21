@@ -160,13 +160,31 @@ describe("parseDidoxDocument", () => {
           count: "1",
           summa: "100",
           deliverysum: "100",
+          vatrate: 20,
+          vatsum: 20,
+          deliverysumwithvat: "120",
+        },
+      ]),
+    );
+    expect(doc?.issues.map((i) => i.code)).toEqual(["TIN_FORMAT", "VAT_RATE"]);
+  });
+
+  it("knows 15% as a rate of its own: Uzbekistan's from 2026", () => {
+    const doc = parseDidoxDocument(
+      invoice({}, [
+        {
+          ordno: 1,
+          name: "x",
+          count: "1",
+          summa: "100",
+          deliverysum: "100",
           vatrate: 15,
           vatsum: 15,
           deliverysumwithvat: "115",
         },
       ]),
     );
-    expect(doc?.issues.map((i) => i.code)).toEqual(["TIN_FORMAT", "VAT_RATE"]);
+    expect(doc?.issues).toEqual([]);
   });
 
   it("reads a line with no VAT in it as a line without VAT, not as a mismatch", () => {

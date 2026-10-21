@@ -128,6 +128,8 @@ function npvIrr(input: Extract<AccountingCalcInput, { op: "npv_irr" }>): CalcRes
   let lo = -0.99;
   let hi = 10;
   let irr: number | null = null;
+  // A quick payback has a rate far above 1000% (a thousand paid back on a hundred in a month): widen until it brackets.
+  while (npvAt(lo, flows) * npvAt(hi, flows) > 0 && hi < 1e9) hi *= 10;
   if (npvAt(lo, flows) * npvAt(hi, flows) < 0) {
     for (let i = 0; i < 200; i++) {
       const mid = (lo + hi) / 2;
@@ -257,6 +259,8 @@ function payroll(input: Extract<AccountingCalcInput, { op: "payroll" }>): CalcRe
     const k = input.taxAfterInps
       ? 1 - rates.inpsEmployee / 100 - (rates.incomeTax / 100) * (1 - rates.inpsEmployee / 100)
       : 1 - rates.inpsEmployee / 100 - rates.incomeTax / 100;
+    if (!(k > 0))
+      return { error: "The deductions are 100% or more of the pay: a gross cannot be found for this net." };
     gross = round2(input.net / k);
     // A cent of rounding is corrected by looking at the neighbours.
     for (const candidate of [gross - 0.01, gross, gross + 0.01]) {
@@ -337,12 +341,15 @@ function landedCost(input: Extract<AccountingCalcInput, { op: "landed_cost" }>):
 }
 
 function penalty(input: Extract<AccountingCalcInput, { op: "penalty" }>): CalcResult {
+  if (input.days === undefined && !(input.from && input.to))
+    return { error: "Give the number of days, or both dates (from and to): the penalty needs a period." };
   const days =
     input.days ??
     Math.max(
       0,
       Math.round((Date.parse(`${input.to}T00:00:00Z`) - Date.parse(`${input.from}T00:00:00Z`)) / 86_400_000),
     );
+  if (!Number.isFinite(days)) return { error: "A date is not a real date (check the day and the month)." };
   const rate = input.ratePerDay ?? 0.033;
   const raw = round2((input.principal * rate * days) / 100);
   const cap = input.capPercent === undefined ? null : round2((input.principal * input.capPercent) / 100);
@@ -403,7 +410,20 @@ function breakEven(input: Extract<AccountingCalcInput, { op: "break_even" }>): C
   return out;
 }
 
+/** A rounded cent below zero is "-0", which prints as "-0": every figure in a result is a plain zero then. */
+function noNegativeZero<T>(value: T): T {
+  if (typeof value === "number") return (Object.is(value, -0) ? 0 : value) as T;
+  if (Array.isArray(value)) return value.map(noNegativeZero) as T;
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, noNegativeZero(v)])) as T;
+  return value;
+}
+
 export function accountingCalc(input: AccountingCalcInput): CalcResult {
+  return noNegativeZero(calculate(input));
+}
+
+function calculate(input: AccountingCalcInput): CalcResult {
   switch (input.op) {
     case "vat":
       return vat(input);

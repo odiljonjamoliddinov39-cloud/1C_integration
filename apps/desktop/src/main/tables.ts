@@ -39,20 +39,39 @@ export function cellText(value: unknown): string {
  * often (1C saves ; and a bank's text export may use ~ or |, whatever the bank set; not guessed from one line).
  */
 export function detectDelimiter(text: string): string {
-  const lines = text
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "")
-    .slice(0, 40);
+  // Records are counted the way they are read: a delimiter or a line break inside "quotes" is part of a cell.
+  const sample = text.slice(0, 200_000);
+  const records: Record<string, number>[] = [];
+  let counts: Record<string, number> = {};
+  let inQuotes = false;
+  let any = false;
+  for (let i = 0; i < sample.length && records.length < 40; i++) {
+    const c = sample.charAt(i);
+    if (c === '"') {
+      if (inQuotes && sample[i + 1] === '"') i++;
+      else inQuotes = !inQuotes;
+      any = true;
+    } else if (!inQuotes && (c === "\n" || c === "\r")) {
+      if (c === "\r" && sample[i + 1] === "\n") i++;
+      if (any) records.push(counts);
+      counts = {};
+      any = false;
+    } else {
+      if (!inQuotes && [";", "\t", "~", "|", ","].includes(c)) counts[c] = (counts[c] ?? 0) + 1;
+      if (c.trim() !== "") any = true;
+    }
+  }
+  if (any) records.push(counts);
   let best = ";";
   let bestScore = -1;
   for (const d of [";", "\t", "~", "|", ","]) {
-    const counts = lines.map((line) => line.split(d).length - 1);
-    const modal = [...new Set(counts)].reduce(
-      (m, c) => (counts.filter((x) => x === c).length > counts.filter((x) => x === m).length ? c : m),
+    const per = records.map((r) => r[d] ?? 0);
+    const modal = [...new Set(per)].reduce(
+      (m, c) => (per.filter((x) => x === c).length > per.filter((x) => x === m).length ? c : m),
       0,
     );
-    // Lines agreeing on the count come first, then the number of cells.
-    const score = modal === 0 ? 0 : counts.filter((x) => x === modal).length * 1000 + modal;
+    // Records agreeing on the count come first, then the number of cells.
+    const score = modal === 0 ? 0 : per.filter((x) => x === modal).length * 1000 + modal;
     if (score > bestScore) {
       best = d;
       bestScore = score;
@@ -157,21 +176,67 @@ export function describeTable(file: TableFile): { text: string; whole: boolean }
   };
 }
 
-/** "1 234 567,89", "1,234,567.89", "-500" → number; NaN when the cell is not a number. */
+/**
+ * "1 234 567,89", "1,234,567.89", "1.234.567,89", "1'234.50", "-500", "500-", "(500)" → number; NaN when the cell is
+ * not a number. Of a comma and a dot the last one is the decimal separator; a lone comma is a decimal one; dots are
+ * thousands separators only when every group after the first has three digits ("01.09.2026" is a date, not a number).
+ */
 export function parseNumber(text: string): number {
-  let s = text.replace(/[\s\u00a0']/g, "");
+  let s = text.replace(/[\s\u00a0\u202f']/g, "").replace(/\u2212/g, "-");
   if (s === "") return Number.NaN;
-  if (s.includes(",") && s.includes(".")) s = s.replace(/,/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  return /^[-+]?\d*\.?\d+$/.test(s) ? Number(s) : Number.NaN;
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) {
+    negative = true;
+    s = s.slice(1, -1);
+  }
+  if (s.endsWith("-") && !s.startsWith("-")) {
+    negative = !negative;
+    s = s.slice(0, -1);
+  }
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimal = lastComma > lastDot ? "," : ".";
+    const thousands = decimal === "," ? "." : ",";
+    s = s.split(thousands).join("").replace(decimal, ".");
+  } else if (lastComma >= 0) {
+    // Several commas are thousands separators ("1,234,567"); one is a decimal comma.
+    s = (s.match(/,/g) ?? []).length > 1 ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if ((s.match(/\./g) ?? []).length > 1) {
+    s = /^[-+]?\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g, "") : "";
+  }
+  if (!/^[-+]?\d*\.?\d+$/.test(s)) return Number.NaN;
+  const value = Number(s);
+  return negative ? -value : value;
 }
 
-/** "2026-01-05…", "05.01.2026", "05/01/2026" → "2026-01-05"; null when the cell is not a date. */
+const realDay = (y: number, m: number, d: number) => {
+  if (m < 1 || m > 12 || d < 1 || y < 1900 || y > 2200) return false;
+  return d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+};
+const day2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * "2026-01-05…", "05.01.2026", "5/1/2026", "05-01-2026", "2026/01/05", "05.01.26", "05.01.2026г." → "2026-01-05";
+ * null when the cell is not a date or the day does not exist (31.02).
+ */
 export function parseDate(text: string): string | null {
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const dmy = /^(\d{1,2})[./](\d{1,2})[./](\d{4})/.exec(text);
-  if (dmy) return `${dmy[3]}-${(dmy[2] ?? "").padStart(2, "0")}-${(dmy[1] ?? "").padStart(2, "0")}`;
+  const t = text.trim();
+  const iso = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/.exec(t);
+  if (iso) {
+    const [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+    return realDay(y, m, d) ? `${y}-${day2(m)}-${day2(d)}` : null;
+  }
+  const dmy = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)/.exec(t);
+  if (dmy) {
+    const [d, m, y] = [Number(dmy[1]), Number(dmy[2]), Number(dmy[3])];
+    return realDay(y, m, d) ? `${y}-${day2(m)}-${day2(d)}` : null;
+  }
+  const short = /^(\d{1,2})[./](\d{1,2})[./](\d{2})(?!\d)/.exec(t);
+  if (short) {
+    const [d, m, y] = [Number(short[1]), Number(short[2]), 2000 + Number(short[3])];
+    return realDay(y, m, d) ? `${y}-${day2(m)}-${day2(d)}` : null;
+  }
   return null;
 }
 

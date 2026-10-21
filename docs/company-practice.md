@@ -29,9 +29,8 @@ that answers nothing gives no text at all, and the question goes on without it.
   book…" questions.
 - **Bank import** (`propose_bank_payments`) sets the statements against it (`reflectOnImport`): an account the
   statement has that 1C does not, a currency that disagrees, and how 1C books the transfers and conversions the
-  import found. The program does **not yet enter** those transfer documents; it reports them and how 1C records them.
+  import found. The program enters the transfers (`bank/transfer.ts`): see `docs/bank-statements.md`.
 
 ## Not done yet
 
-Entering transfers/conversions as 1C documents (copying the company's earlier document of that kind), foreign-currency
-documents, and a policy stored on the server between sessions.
+A policy stored on the server between sessions.

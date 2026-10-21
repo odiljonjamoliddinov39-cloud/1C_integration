@@ -41,8 +41,12 @@ import {
   type ObjectSnapshot,
   type DidoxDraftInput,
   AccountingCalcInput,
+  type AccountingKnowledgeInput,
+  searchKnowledge,
+  type CompanyRulesInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
+  type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
   type ObjectState,
@@ -89,6 +93,8 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
+import { type SalesCache, resolveSales } from "./didox/sales.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
@@ -116,7 +122,7 @@ import {
 import { documentJson } from "./didox/fetch.js";
 import { readReconciliationAct } from "./didox/reconciliation.js";
 import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
-import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
+import { type Problem, type ResolverCache, lookup, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
@@ -127,7 +133,14 @@ import type { LocalStore } from "./store.js";
  * takes (a whole bank statement with checks and cards). The user can stop it at any time. Before
  * the last turn the model is told to answer with what it has found.
  */
-const MAX_TURNS = 300;
+/** Questions that are mostly entering documents the program reads (Didox, bank statements): cheaper thinking is enough. */
+const ENTRY_WORDS = /didox|дидокс|didoks|ko['ʻ’]?chirma|выписк|bank statement/i;
+
+/** Reads of 1C a question may make through the model; the program's own reads (tools) are not counted. */
+const READ_BUDGET = 40;
+
+/** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
+const MAX_TURNS = 60;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
@@ -237,6 +250,8 @@ interface Run {
   trace: TraceBuilder;
   /** Times this question read rows of a bank statement by hand (read_attachment without totals). */
   bankRowReads: number;
+  /** Reads of 1C by the model in this question (queries, structure, objects): they are capped. */
+  reads: number;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -264,6 +279,7 @@ export class AssistantService {
   private readonly unposted = new Set<string>();
   /** What was learned from each base about its nomenclature (which attribute holds the IKPU code). */
   private readonly resolverCache = new Map<string, ResolverCache>();
+  private readonly salesCache = new Map<string, SalesCache>();
   /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
   private readonly timing = new Map<string, TaskTiming>();
 
@@ -288,6 +304,13 @@ export class AssistantService {
     if (this.deps.billing?.isReadOnly(company.inn))
       return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
+    // Taken at once, before anything is awaited: a second question sent in the same moment (a double Enter) is refused
+    // as busy, not run beside this one in the same chat.
+    const abort = new AbortController();
+    this.running.set(companyId, abort);
+    const release = () => {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+    };
 
     const chat = this.chat(companyId, chatId ?? this.open.get(companyId)?.id ?? randomUUID());
     // Everything shown in the window is also kept in the chat, so it reopens as it was.
@@ -299,6 +322,7 @@ export class AssistantService {
     try {
       attached = await readAttachments(files, this.deps.shrinkImage);
     } catch (e) {
+      release();
       if (e instanceof AttachmentError) return this.fail(notify, e.code, e.message);
       throw e;
     }
@@ -319,16 +343,29 @@ export class AssistantService {
         });
       }
     }
-    const content: AiMessage["content"] =
+    let content: AiMessage["content"] =
       blocks.length > 0 ? [...blocks, { type: "text", text: question }] : question;
     // Pages and pictures of earlier questions were read; only their names stay.
     chat.messages = dropPages(chat.messages);
+    // A question that ended without answering the model's last tool calls (a crash, a closed app) would make the API
+    // refuse every later one: they are answered first, as not run.
+    const unanswered = unansweredCalls(chat.messages);
+    if (unanswered.length > 0) {
+      const notRun = {
+        ok: false,
+        code: "NOT_RUN",
+        message: "The previous question ended before this ran",
+      } as const;
+      content = [
+        ...unanswered.map((id) => toToolResult(id, notRun)),
+        ...(typeof content === "string" ? [{ type: "text", text: content }] : content),
+      ];
+    }
     if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
+      release();
       return this.fail(notify, "CHAT_TOO_LARGE", "This chat is too large; start a new chat");
     }
 
-    const abort = new AbortController();
-    this.running.set(companyId, abort);
     chat.messages.push({ role: "user", content });
     chat.entries = [
       ...chat.entries,
@@ -359,10 +396,12 @@ export class AssistantService {
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
-          import: attached.blocks.length > 0,
+          // Files to enter, or a question about Didox or a bank statement: transcription, run at the import effort.
+          import: attached.blocks.length > 0 || ENTRY_WORDS.test(question),
           escalate: false,
           trace: new TraceBuilder(),
           bankRowReads: 0,
+          reads: 0,
         };
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
         if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
@@ -572,9 +611,11 @@ export class AssistantService {
     const history = chat.messages;
     const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
     // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
-    const { text: policy } = await this.policyOf(chat.companyId);
+    const learned = (await this.policyOf(chat.companyId)).text;
     for (let turn = 0; turn < maxTurns; turn++) {
       const stepStarted = Date.now();
+      // Read again each step: a rule the model has just saved is in force for the rest of this question.
+      const policy = this.practiceOf(chat.companyId, learned);
       const answer = await this.turnWithRetries(
         {
           company: companyName,
@@ -634,9 +675,7 @@ export class AssistantService {
       for (const use of toolUses) {
         const toolStarted = Date.now();
         const waitedBefore = this.cardWaitMs.get(chat.companyId) ?? 0;
-        const result = signal.aborted
-          ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-          : await this.runTool(chat, use, emit, signal, run);
+        const result = await this.runToolSafely(chat, use, emit, signal, run);
         // Time in 1C: what the tool took, without the card waiting for the user.
         const toolMs = Math.max(
           0,
@@ -650,10 +689,14 @@ export class AssistantService {
         // A card the user declined: the rest of the question runs on the default model.
         if (isDeclined(result)) run.escalate = true;
         if (!signal.aborted) {
-          if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) {
-            run.trace.propose(use.name, use.input, result);
-          } else {
-            run.trace.read(use.name, use.input, result);
+          try {
+            if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) {
+              run.trace.propose(use.name, use.input, result);
+            } else {
+              run.trace.read(use.name, use.input, result);
+            }
+          } catch {
+            // The trace is for learning only: a call of a shape it does not know never breaks the question.
           }
         }
         results.push(toToolResult(use.id, result, shaped(use.name, result, run.policy)));
@@ -680,11 +723,19 @@ export class AssistantService {
     if (this.deps.billing?.isReadOnly(company.inn))
       return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
-    const counted = await this.deps.billing?.countAudit(company.inn);
-    if (counted && !counted.ok) return this.fail(notify, counted.code, counted.message);
-
     const abort = new AbortController();
     this.running.set(companyId, abort);
+    let counted;
+    try {
+      counted = await this.deps.billing?.countAudit(company.inn);
+    } catch (e) {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+      throw e;
+    }
+    if (counted && !counted.ok) {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+      return this.fail(notify, counted.code, counted.message);
+    }
     const chat = this.chat(companyId, chatId);
     const emit: Emit = (event) => {
       chat.entries = applyEvent(chat.entries, event);
@@ -711,7 +762,7 @@ export class AssistantService {
     return this.task(companyId, chat, emit, async () => {
       const connection = this.deps.store.connection(companyId);
       const policy = await this.engine.policy();
-      const practice = (await this.policyOf(companyId)).text;
+      const practice = this.practiceOf(companyId, (await this.policyOf(companyId)).text);
       const queue = checks.map((check, i) => ({ check, state: view.checks[i] as AuditCheckView }));
       const worker = async () => {
         for (let next = queue.shift(); next && !abort.signal.aborted; next = queue.shift()) {
@@ -759,6 +810,7 @@ export class AssistantService {
         escalate: false,
         trace: new TraceBuilder(),
         bankRowReads: 0,
+        reads: 0,
       });
     });
   }
@@ -992,6 +1044,31 @@ export class AssistantService {
     }
   }
 
+  /**
+   * A tool never ends the question by failing: whatever it throws becomes its result, so the model is told and the
+   * conversation stays valid (every call has a result).
+   */
+  private async runToolSafely(
+    chat: StoredChat,
+    use: AiToolUse,
+    emit: Emit,
+    signal: AbortSignal,
+    run: Run,
+  ): Promise<ToolResult> {
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    try {
+      return await this.runTool(chat, use, emit, signal, run);
+    } catch (e) {
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      console.error(`The tool ${use.name} failed:`, e);
+      return {
+        ok: false,
+        code: "TOOL_FAILED",
+        message: `${use.name} failed inside the app (${e instanceof Error ? e.message : "unknown error"}); try another way or say what is missing`,
+      };
+    }
+  }
+
   private async runTool(
     chat: StoredChat,
     use: AiToolUse,
@@ -1009,6 +1086,20 @@ export class AssistantService {
       };
     }
     if (isProposalTool(use.name)) return this.propose(chat, use.name, input.data, emit, signal);
+    // The cost stop: a question that keeps reading 1C without writing is exploring. Past the budget the model is told
+    // to answer with what it has or ask, so that no question can run for an hour and use the day's limit.
+    if (use.name === "run_query" || use.name === "describe_objects" || use.name === "get_object") {
+      run.reads += 1;
+      if (run.reads > READ_BUDGET) {
+        return {
+          ok: false,
+          code: "READ_BUDGET",
+          message:
+            `${READ_BUDGET} reads of 1C were made for this question: stop reading. Answer with what you have, saying what ` +
+            "is missing, or ask the accountant one short question. A big job is split by period or by kind and done in parts.",
+        };
+      }
+    }
     if (use.name === "report_findings") {
       return { ok: false, code: "UNKNOWN_TOOL", message: "report_findings is only for audit checks" };
     }
@@ -1040,6 +1131,24 @@ export class AssistantService {
     }
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
+    }
+    if (use.name === "accounting_knowledge") {
+      return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
+    }
+    if (use.name === "company_rules") {
+      const ask = input.data as CompanyRulesInput;
+      let rules: string[];
+      if (ask.action === "add") {
+        if (!ask.rule) return { ok: false, code: "BAD_INPUT", message: "add needs the rule as one sentence" };
+        rules = this.deps.store.addRule(chat.companyId, ask.rule);
+      } else if (ask.action === "remove") {
+        if (ask.which === undefined)
+          return { ok: false, code: "BAD_INPUT", message: "remove needs the rule's number or words in it" };
+        rules = this.deps.store.removeRule(chat.companyId, ask.which);
+      } else {
+        rules = this.deps.store.rules(chat.companyId);
+      }
+      return { ok: true, data: { rules: rules.map((r, i) => `${i + 1}. ${r}`) } };
     }
     if (use.name === "accounting_calc") {
       const checked = AccountingCalcInput.safeParse(input.data);
@@ -1086,6 +1195,9 @@ export class AssistantService {
         code: "READ_ONLY",
         message: "The license is read-only: no documents can be created",
       };
+    }
+    if (tool === "propose_didox_sales") {
+      return this.proposeDidoxSales(chat, input as DidoxSalesInput, emit, signal);
     }
     if (tool === "propose_didox_invoices") {
       return this.proposeDidox(chat, input as DidoxInvoicesInput, emit, signal);
@@ -1322,6 +1434,79 @@ export class AssistantService {
   }
 
   /** What 1C says about how the company works: bank accounts and their use, transfer kinds, the policy register. */
+  /**
+   * The engine's own accounting knowledge for a question, with the account groups it names checked against this
+   * base's chart: what the base lacks is said, so that the model does not book to an account that is not there.
+   */
+  private async accountingKnowledge(chat: StoredChat, ask: AccountingKnowledgeInput): Promise<ToolResult> {
+    const found = searchKnowledge(ask.query, ask.limit ?? 3);
+    if (found.length === 0) {
+      return {
+        ok: true,
+        data: {
+          found: 0,
+          note: "Nothing in the knowledge base fits. Reason from the company's own practice (given above) and its earlier documents, and say what you assumed.",
+        },
+      };
+    }
+    const codes = [...new Set(found.flatMap((e) => e.accounts ?? []))];
+    let absent: string[] | null = null;
+    if (codes.length > 0) {
+      const connection = this.deps.store.connection(chat.companyId);
+      const rows = await lookup(
+        {
+          query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query),
+          describe: () => Promise.resolve({ ok: false as const, code: "NOT_USED", message: "" }),
+        },
+        (ph) =>
+          `ВЫБРАТЬ РАЗЛИЧНЫЕ ПОДСТРОКА(Т.Код, 1, 4) КАК Код ИЗ ПланСчетов.Хозрасчетный КАК Т ГДЕ ПОДСТРОКА(Т.Код, 1, 4) В (${ph})`,
+        codes,
+      ).catch(() => null);
+      if (rows && rows.length > 0) {
+        const have = new Set(rows.map((r) => String(r.cells[0])));
+        absent = codes.filter((c) => !have.has(c));
+      }
+    }
+    return {
+      ok: true,
+      data: {
+        found: found.length,
+        entries: found.map((e) => ({
+          id: e.id,
+          kind: e.kind,
+          title: e.title,
+          lines: e.lines,
+          ...(e.calc ? { calc: `accounting_calc op ${e.calc}` } : {}),
+          ...(e.confirm ? { confirm: e.confirm } : {}),
+          ...(absent
+            ? {
+                accountsNotInThisBase: (e.accounts ?? []).filter((c) => absent.includes(c)),
+              }
+            : {}),
+        })),
+        note: "General НСБУ practice: the company's own postings (the practice above) come first; confirm what an entry says to confirm.",
+      },
+    };
+  }
+
+  /** What the model is told about this company: the accountant's standing rules first, then what was learned from 1C. */
+  private practiceOf(companyId: string, learned: string): string {
+    const kept = this.deps.store.rules(companyId);
+    // The newest rules that fit; they are the accountant's decisions, so they are never the part that is cut.
+    const lines: string[] = [];
+    let size = 0;
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const line = `${i + 1}. ${kept[i]}`;
+      if (size + line.length > 3500) break;
+      lines.unshift(line);
+      size += line.length + 1;
+    }
+    const rules = lines.length
+      ? `Standing rules the accountant gave for this company (follow them, do not ask again, and do not contradict them):\n${lines.join("\n")}`
+      : "";
+    return [rules, learned].filter(Boolean).join("\n\n").slice(0, 12_000);
+  }
+
   private policyOf(companyId: string, force = false) {
     if (this.deps.learnPolicy === false) return Promise.resolve({ policy: null, text: "" });
     const connection = this.deps.store.connection(companyId);
@@ -1441,7 +1626,7 @@ export class AssistantService {
               outgoingNote:
                 "Issued by this company: compare with 1C (number, date, counterparty INN, amount) and report the differences. " +
                 "The summary has their lines (name, unit, quantity, price, VAT): when the accountant asks to enter them into 1C, " +
-                "make the sale and then the issued invoice from those lines. Never say Didox gives no lines.",
+                "enter the sales with propose_didox_sales (title, from, to: the app builds them from the company's last sale), then the issued invoices. Never say Didox gives no lines.",
             }
           : {}),
       },
@@ -1954,12 +2139,71 @@ export class AssistantService {
    * counterparties, contracts and items up in 1C; what is certain goes on one card, and the model
    * is told only what it must settle, with candidates: it answers with references and calls again.
    */
+  /**
+   * How the lines are written: what the accountant decided before (kept for the company) with what they decided in this
+   * call on top. A decision made here is kept at once, so the next job applies it without being told.
+   */
+  private lineRules(companyId: string, input: DidoxInvoicesInput) {
+    const fresh = {
+      ...(input.vatRateMap?.length ? { vatRateMap: input.vatRateMap } : {}),
+      ...(input.accounts ? { accounts: input.accounts } : {}),
+      ...(input.accountRules?.length ? { accountRules: input.accountRules } : {}),
+    };
+    if (Object.keys(fresh).length > 0) {
+      this.deps.store.mergeBookkeeping(companyId, fresh);
+      for (const m of input.vatRateMap ?? [])
+        this.deps.store.addRule(
+          companyId,
+          `Didox lines of ${m.from}% VAT are written under the base's ${m.to}% rate`,
+        );
+      if (input.accounts?.goods)
+        this.deps.store.addRule(companyId, `Goods received are booked to account ${input.accounts.goods}`);
+      if (input.accounts?.service)
+        this.deps.store.addRule(
+          companyId,
+          `Services received are booked to account ${input.accounts.service}`,
+        );
+      for (const r of input.accountRules ?? [])
+        this.deps.store.addRule(
+          companyId,
+          `Lines named like «${r.match}» are booked to account ${r.account}`,
+        );
+    }
+    const held = this.deps.store.bookkeeping(companyId);
+    return {
+      ...(held.vatRateMap?.length
+        ? { vatRateMap: Object.fromEntries(held.vatRateMap.map((m) => [m.from, m.to])) }
+        : {}),
+      ...(held.accounts ? { accounts: held.accounts } : {}),
+      ...(held.accountRules?.length ? { accountRules: held.accountRules } : {}),
+    };
+  }
+
   private async proposeDidox(
     chat: StoredChat,
     input: DidoxInvoicesInput,
     emit: Emit,
     signal: AbortSignal,
   ): Promise<ToolResult> {
+    // A period: the documents are read from Didox here, in the same step, instead of by a step of the model first.
+    if (input.from || input.to) {
+      emit({
+        type: "tool",
+        name: "fetch_didox_documents",
+        detail: `${input.from ?? "…"} – ${input.to ?? "…"}`,
+      });
+      const got = await this.fetchDidox(
+        chat,
+        {
+          ...(input.from ? { from: input.from } : {}),
+          ...(input.to ? { to: input.to } : {}),
+          direction: "incoming",
+          limit: 300,
+        },
+        signal,
+      );
+      if (!got.ok) return got;
+    }
     const read = chat.didox ?? [];
     if (read.length === 0) {
       return {
@@ -1973,11 +2217,16 @@ export class AssistantService {
     const done = new Set(chat.didoxDone ?? []);
     const wanted = input.documents ? new Set(input.documents) : null;
     const all = batchOf(read).postable;
-    const postable = all.filter((d) => d.kind === "invoice");
-    // An act without an invoice is a receipt of services, not a received invoice: the model enters it.
-    const actsOnly = all.filter((d) => d.kind === "act").map((d) => didoxKey(d));
+    // An invoice becomes a receipt and its received invoice; an act without an invoice, a receipt of services only.
+    const postable = all.filter((d) => d.kind === "invoice" || d.kind === "act");
     const unknown = (input.documents ?? []).filter((key) => !postable.some((d) => didoxKey(d) === key));
-    const docs = postable.filter((d) => (!wanted || wanted.has(didoxKey(d))) && !done.has(didoxKey(d)));
+    const docs = postable.filter(
+      (d) =>
+        (!wanted || wanted.has(didoxKey(d))) &&
+        !done.has(didoxKey(d)) &&
+        (!input.from || d.date >= input.from) &&
+        (!input.to || d.date <= input.to),
+    );
     if (docs.length === 0) {
       return {
         ok: true,
@@ -1985,7 +2234,6 @@ export class AssistantService {
           status: done.size > 0 ? "all_entered" : "nothing_to_enter",
           alreadyEntered: [...done],
           ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
-          ...(actsOnly.length > 0 ? { actsWithoutInvoice: actsOnly } : {}),
         },
       };
     }
@@ -2003,6 +2251,7 @@ export class AssistantService {
           counterparties: input.counterparties,
           contracts: input.contracts,
         },
+        rules: this.lineRules(chat.companyId, input),
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),
@@ -2014,12 +2263,6 @@ export class AssistantService {
     const attention = {
       needsAttention: summarizeProblems(resolved.problems),
       ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
-      ...(actsOnly.length > 0
-        ? {
-            actsWithoutInvoice: actsOnly,
-            actsNote: "Acts that have no invoice: enter each as a receipt of services.",
-          }
-        : {}),
     };
     if (resolved.ready.length === 0) {
       return {
@@ -2049,10 +2292,142 @@ export class AssistantService {
       chat.didoxDone = [...entered];
       this.save(chat);
     }
-    const hasAttention = resolved.problems.length > 0 || unknown.length > 0 || actsOnly.length > 0;
+    const hasAttention = resolved.problems.length > 0 || unknown.length > 0;
     return {
       ok: true,
       data: { ...(data ?? {}), ...(hasAttention ? { ...attention, next: DIDOX_NEXT } : {}) },
+    };
+  }
+
+  /**
+   * The company's own Didox documents entered into 1C as sales: read for the period (or the attached ones whose
+   * seller is this company), looked up and copied from the company's last sale by the program; what is certain goes
+   * on one card, unposted, and the model is told only what it must settle.
+   */
+  private async proposeDidoxSales(
+    chat: StoredChat,
+    input: DidoxSalesInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const own = this.deps.store.company(chat.companyId).inn;
+    emit({ type: "tool", name: "propose_didox_sales", detail: describe("propose_didox_sales", input) });
+    const found = new Map<string, DidoxDocument>();
+    for (const d of chat.didox ?? []) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+    if (input.from || input.to) {
+      const client = this.didoxClient(chat.companyId);
+      if (!client) {
+        return {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message:
+            "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox test button, run the test, choose the signature key and press Save for this company.",
+        };
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      try {
+        const read = await fetchDidoxDocuments(
+          client,
+          {
+            from: input.from ?? `${today.slice(0, 4)}-01-01`,
+            to: input.to ?? today,
+            direction: "outgoing",
+            limit: 300,
+          },
+          signal,
+        );
+        for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+      } catch (e) {
+        return this.didoxFailure(e);
+      }
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    }
+    const done = new Set(chat.salesDone ?? []);
+    const wanted = input.documents ? new Set(input.documents) : null;
+    const docs = [...found.values()].filter(
+      (d) =>
+        (d.kind === "invoice" || d.kind === "act") &&
+        (!wanted || wanted.has(didoxKey(d))) &&
+        !done.has(didoxKey(d)) &&
+        (!input.from || d.date >= input.from) &&
+        (!input.to || d.date <= input.to),
+    );
+    if (docs.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: done.size > 0 ? "all_entered" : "nothing_to_enter",
+          note: "No documents issued by this company were found for this request: send from and to (YYYY-MM-DD) to read them from Didox, or attach the files.",
+        },
+      };
+    }
+    const connection = this.deps.store.connection(chat.companyId);
+    const cache: SalesCache = this.salesCache.get(chat.companyId) ?? {};
+    this.salesCache.set(chat.companyId, cache);
+    const resolved = await resolveSales(
+      docs,
+      {
+        companyInn: own,
+        cache,
+        overrides: { items: input.items, counterparties: input.counterparties, contracts: input.contracts },
+        rules: this.lineRules(chat.companyId, {
+          title: input.title,
+          ...(input.vatRateMap ? { vatRateMap: input.vatRateMap } : {}),
+        }),
+        ...(input.warehouse ? { warehouse: input.warehouse } : {}),
+      },
+      {
+        query: (query) => this.deps.connector.tool(connection, "run_query", query),
+        describe: (objects) => this.deps.connector.tool(connection, "describe_objects", { objects }),
+        getObject: (object, ref) => this.deps.connector.tool(connection, "get_object", { object, ref }),
+      },
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    const attention = {
+      needsAttention: summarizeProblems(resolved.problems),
+      ...(resolved.alreadyIn1c.length > 0 ? { alreadyIn1c: resolved.alreadyIn1c } : {}),
+    };
+    if (resolved.ready.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status:
+            resolved.alreadyIn1c.length > 0 && resolved.problems.length === 0
+              ? "all_entered"
+              : "needs_attention",
+          ...attention,
+          ...(resolved.problems.length > 0 ? { next: DIDOX_SALES_NEXT } : {}),
+        },
+      };
+    }
+    const result = await this.proposeBatch(
+      chat,
+      { title: input.title, changes: resolved.ready.map((r) => r.change) },
+      emit,
+      signal,
+    );
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    if (data?.status === "done") {
+      const entered = new Set(chat.salesDone ?? []);
+      for (const { n } of data.applied ?? []) {
+        const doc = resolved.ready[n - 1]?.doc;
+        if (doc) entered.add(didoxKey(doc));
+      }
+      chat.salesDone = [...entered];
+      this.save(chat);
+    }
+    const notes = [...new Set(resolved.ready.map((r) => r.note))];
+    return {
+      ok: true,
+      data: {
+        ...(data ?? {}),
+        ...(resolved.problems.length > 0 || resolved.alreadyIn1c.length > 0 ? { ...attention } : {}),
+        ...(resolved.problems.length > 0 ? { next: DIDOX_SALES_NEXT } : {}),
+        notes,
+        after:
+          "The sales are saved unposted: post them with propose_post_created after the accountant has checked them, then issue the invoices with propose_invoices_issued.",
+      },
     };
   }
 
@@ -2113,21 +2488,13 @@ export class AssistantService {
                 return rest;
               }),
             };
-      return [{ statement, prepared, rows }];
+      const currency = plan.accounts.find((a) => a.file === statement.fileName)?.currency ?? "";
+      return [{ statement, prepared, rows, currency }];
     });
     const ledger = describeLedger(plan, ledgerOptions);
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
     const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
-    const notEntered = { ...notEnteredOf(plan, chosen), ...(reflections.length > 0 ? { reflections } : {}) };
-    if (tasks.length === 0) {
-      return {
-        ok: true,
-        data: { status: done.size > 0 ? "all_entered" : "nothing_to_enter", ledger, ...notEntered },
-      };
-    }
-    const label = (s: BankStatement) => s.account || s.fileName;
-    const several = tasks.length > 1;
 
     const connection = this.deps.store.connection(chat.companyId);
     const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
@@ -2138,6 +2505,32 @@ export class AssistantService {
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
     const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    // Money moved between the company's own accounts: a pair of documents copied from the company's own earlier ones.
+    const moved = await resolveTransfers(
+      plan.transfers,
+      statements,
+      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done },
+      bankDeps,
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    const notEntered = {
+      ...notEnteredOf(plan, chosen, moved),
+      ...(reflections.length > 0 ? { reflections } : {}),
+    };
+    if (tasks.length === 0 && moved.ready.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: done.size > 0 ? "all_entered" : "nothing_to_enter",
+          ledger,
+          ...notEntered,
+          ...(moved.alreadyIn1c.length > 0 ? { transfersAlreadyIn1c: moved.alreadyIn1c.length } : {}),
+        },
+      };
+    }
+    const label = (s: BankStatement) => s.account || s.fileName;
+    const several = tasks.length > 1;
+
     const fresh = new Set<string>();
     const madeNow: string[] = [];
     // What the model answered for a statement: its own file's, or any when it is the only one.
@@ -2164,6 +2557,7 @@ export class AssistantService {
             cache,
             createMissing: true,
             fresh,
+            currency: task.currency,
             ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
             overrides: {
               ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),
@@ -2276,13 +2670,29 @@ export class AssistantService {
       ...(alreadyIn1c.length > 0
         ? { alreadyIn1c: { count: alreadyIn1c.length, rows: alreadyIn1c.slice(0, 50) } }
         : {}),
+      ...(moved.ready.length > 0
+        ? {
+            transfersEntered: {
+              documents: moved.ready.length,
+              notes: moved.notes,
+              about:
+                "Each move between the company's own accounts is a document on each account's side, copied from the company's own earlier one: mention it to the accountant.",
+            },
+          }
+        : {}),
+      ...(moved.alreadyIn1c.length > 0 ? { transfersAlreadyIn1c: moved.alreadyIn1c.length } : {}),
     };
-    if (ready.length === 0) {
+    if (ready.length === 0 && moved.ready.length === 0) {
       return { ok: true, data: { status: "needs_attention", ...attention, next: BANK_NEXT } };
     }
+    // The payments, then the two legs of each move between the company's own accounts, on one card.
+    const items = [
+      ...ready.map((r) => ({ file: r.file, row: r.payment.row, change: r.change })),
+      ...moved.ready.map((r) => ({ file: r.file, row: r.row, change: r.change })),
+    ];
     const proposal = {
       title: input.title,
-      changes: ready.map(({ change }) => change),
+      changes: items.map(({ change }) => change),
     };
     const result = await this.proposeBatch(chat, proposal, emit, signal);
     if (!result.ok) return result;
@@ -2290,13 +2700,13 @@ export class AssistantService {
     if (data?.status === "done") {
       const entered = new Set(chat.bankDone ?? []);
       for (const { n } of data.applied ?? []) {
-        const item = ready[n - 1];
-        if (item) entered.add(doneKey(item.file, item.payment.row));
+        const item = items[n - 1];
+        if (item) entered.add(doneKey(item.file, item.row));
       }
       chat.bankDone = [...entered];
       this.save(chat);
     }
-    const hasAttention = problems.length > 0;
+    const hasAttention = problems.length > 0 || moved.problems.length > 0;
     return {
       ok: true,
       data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
@@ -2441,6 +2851,16 @@ export class AssistantService {
   }
 }
 
+/** The ids of the tool calls in the last message when it is the model's and nobody answered them. */
+function unansweredCalls(messages: AiMessage[]): string[] {
+  const last = messages.at(-1);
+  if (last?.role !== "assistant" || !Array.isArray(last.content)) return [];
+  return last.content.flatMap((block) => {
+    const use = AiToolUse.safeParse(block);
+    return use.success ? [use.data.id] : [];
+  });
+}
+
 /**
  * A chat saved while the app was closed mid-answer: a card nobody answered was never written to
  * 1C, and a tool call without a result would make the API refuse the next question.
@@ -2511,11 +2931,13 @@ function describe(name: string, input: unknown): string {
     const batch = input as { title: string; invoices: unknown[] };
     return `${batch.invoices.length} · ${batch.title}`;
   }
-  if (name === "propose_didox_invoices") {
+  if (name === "propose_didox_invoices" || name === "propose_didox_sales") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
   }
   if (name === "accounting_calc") return String((input as { op?: string }).op ?? "");
+  if (name === "company_rules") return String((input as { action?: string }).action ?? "");
+  if (name === "accounting_knowledge") return String((input as { query?: string }).query ?? "");
   if (name === "fetch_didox_documents") {
     const read = input as FetchDidoxInput;
     return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;
@@ -2719,6 +3141,9 @@ interface DidoxOrigin {
   counterparty: string;
 }
 
+const DIDOX_SALES_NEXT =
+  "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_sales again with items / counterparties / contracts / vatRateMap (references and numbers only); sales already entered are not offered again.";
+
 const DIDOX_NEXT =
   "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_invoices again with items / counterparties / contracts (references only); documents already entered are not offered again.";
 
@@ -2728,10 +3153,17 @@ const BANK_ROW_READS = 4;
 const BANK_NEXT =
   "Settle these (find the counterparty in 1C by name, create what is missing with propose_changes, or ask the accountant) and call propose_bank_payments again with counterparties / templates / ownAccount (references and sheet rows only); payments already entered are not offered again.";
 
-/** What the program did not enter, and why: the transfers between the company's own accounts, other currencies, the period. */
-function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
+/** What the program did not enter, and why: the transfers it could not make, other currencies, the period. */
+function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[], moved: TransfersResolved) {
   const files = new Set(chosen.map((s) => s.fileName));
-  const transfers = plan.transfers.filter((t) => [t.out, t.in].some((leg) => leg && files.has(leg.file)));
+  const handled = new Set(moved.ready.map((r) => r.transfer));
+  const settledLegs = new Set([...moved.ready, ...moved.alreadyIn1c].map((l) => `${l.file}#${l.row}`));
+  const transfers = plan.transfers.filter(
+    (t) =>
+      [t.out, t.in].some((leg) => leg && files.has(leg.file)) &&
+      !handled.has(t) &&
+      ![t.out, t.in].some((leg) => leg && settledLegs.has(`${leg.file}#${leg.row}`)),
+  );
   const foreign = plan.accounts.filter(
     (a) => a.role === "foreign_currency" && files.has(a.file) && a.inPeriod > 0,
   );
@@ -2752,7 +3184,8 @@ function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
               to: t.toAccount,
               purpose: t.purpose.replace(/\s+/g, " ").slice(0, 80),
             })),
-            note: "Not entered as payments: money moved between the company's own accounts. Tell the accountant; they decide how these are booked.",
+            why: [...new Set(moved.problems.map((p) => p.message))].slice(0, 5),
+            note: "Not entered: the program could not make these documents (see why). Tell the accountant; they decide how these are booked.",
           },
         }
       : {}),
@@ -2762,6 +3195,7 @@ function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
             account: a.account,
             currency: a.currency,
             paymentsInPeriod: a.inPeriod,
+            entered: `in ${a.currency}, copied from the counterparty's last payment in that currency, with the rate of the payment's day from 1C: check the rate`,
           })),
         }
       : {}),
@@ -2832,7 +3266,8 @@ function mergeBank(before: BankStatement[], added: BankStatement[]): BankStateme
 }
 
 function mergeDidox(before: DidoxDocument[], added: DidoxDocument[]): DidoxDocument[] {
-  const key = (d: DidoxDocument) => `${d.kind}|${didoxKey(d)}`;
+  // A seller's number can come again on another day: the id (else the date) tells two documents apart.
+  const key = (d: DidoxDocument) => `${d.kind}|${d.seller.tin}/${d.number}|${d.id || d.date}`;
   const map = new Map(before.map((d) => [key(d), d]));
   for (const d of added) map.set(key(d), d);
   return [...map.values()];

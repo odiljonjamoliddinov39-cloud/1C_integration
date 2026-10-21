@@ -36,6 +36,9 @@ export interface Problem {
     | "CONTRACT_AMBIGUOUS"
     | "ITEM_NOT_FOUND"
     | "ITEM_CHOOSE"
+    | "VAT_RATE_MISSING"
+    | "NO_TEMPLATE"
+    | "BAD_TEMPLATE"
     | "VALIDATION";
   message: string;
   candidates?: Candidate[];
@@ -56,6 +59,8 @@ export interface Resolved {
 /** What is learned from 1C once per base: which attribute of the nomenclature holds the IKPU code. */
 export interface ResolverCache {
   ikpuAttribute?: string | null;
+  /** The VAT rates (percent) the base has, read once; null when 1C could not say. */
+  vatRates?: number[] | null;
 }
 
 /** Problems of the supplier's own figures stop a document; an unusual VAT rate is only shown. */
@@ -148,29 +153,61 @@ export const isService = (l: DidoxLine) =>
 
 const sum = (tiyin: number) => Math.round(tiyin) / 100;
 
+/** What the accountant decided for how the lines are written: another VAT rate the base has, the ledger accounts. */
+export interface LineRules {
+  /** A rate on the Didox line → the rate the base has. */
+  vatRateMap?: Record<number, number>;
+  accounts?: { goods?: string | undefined; service?: string | undefined };
+  /** The first rule whose words are in the line's name decides the account. */
+  accountRules?: { match: string; account: string }[];
+}
+
+/** The ledger account a line goes to under the rules, or undefined (then 1C's habit from earlier receipts). */
+export function accountFor(line: DidoxLine, kind: "goods" | "service", rules: LineRules): string | undefined {
+  for (const rule of rules.accountRules ?? []) {
+    try {
+      if (new RegExp(rule.match, "iu").test(`${line.name} ${line.catalogName}`)) return rule.account;
+    } catch {
+      // A rule that is not a valid pattern is read as plain words.
+      if (`${line.name} ${line.catalogName}`.toLowerCase().includes(rule.match.toLowerCase()))
+        return rule.account;
+    }
+  }
+  return rules.accounts?.[kind];
+}
+
 export function draftOf(
   doc: DidoxDocument,
   counterparty: { ref: string } | { inn: string },
   contract: { ref: string } | { number: string; date?: string } | undefined,
   itemRefs: string[],
+  rules: LineRules = {},
 ): InvoiceReceivedDraft {
   return {
     number: doc.number,
     date: doc.date,
     counterparty,
     ...(contract ? { contract } : {}),
-    lines: doc.lines.map((l, i) => ({
-      item: { ref: itemRefs[i] ?? "" },
-      kind: isService(l) ? ("service" as const) : ("goods" as const),
-      ...(l.unit ? { unit: l.unit } : {}),
-      quantity: l.qty,
-      price: sum(l.price),
-      amount: sum(l.amount),
-      vatRate: l.vatRate,
-      vatAmount: sum(l.vat),
-      total: sum(l.total),
-    })),
+    lines: doc.lines.map((l, i) => {
+      const kind = isService(l) || doc.kind === "act" ? ("service" as const) : ("goods" as const);
+      const account = accountFor(l, kind, rules);
+      return {
+        item: { ref: itemRefs[i] ?? "" },
+        kind,
+        // The unit is the one the supplier's document has (шт, кг, услуга…), never a guess.
+        ...(l.unit ? { unit: l.unit } : {}),
+        quantity: l.qty,
+        price: sum(l.price),
+        amount: sum(l.amount),
+        vatRate: rules.vatRateMap?.[l.vatRate] ?? l.vatRate,
+        vatAmount: sum(l.vat),
+        total: sum(l.total),
+        ...(account ? { account } : {}),
+      };
+    }),
     comment: `Didox ${doc.kind} ${doc.number}`,
+    // An act of services has no supplier's invoice: the receipt only.
+    ...(doc.kind === "act" ? { withoutInvoice: true } : {}),
   } as InvoiceReceivedDraft;
 }
 
@@ -243,13 +280,116 @@ const day = (iso: string) => iso.slice(0, 10);
 const contractTitle = (number: string, date: string) =>
   `№${number}${date ? ` от ${day(date).split("-").reverse().join(".")}` : ""}`;
 
+/** The percent a name of a VAT rate stands for ("НДС12", "12%", "Без НДС"): its digits, none meaning 0. */
+export const percentOfName = (name: string): number => {
+  const digits = name.replace(/\D/g, "");
+  return digits === "" ? 0 : Number(digits);
+};
+
+/** The VAT rates the base has (the enumeration of rates), once per base; null when 1C could not say. */
+export async function vatRatesOf(deps: ResolverDeps, cache: ResolverCache): Promise<number[] | null> {
+  if (cache.vatRates !== undefined) return cache.vatRates;
+  const outcome = await deps.query({
+    query: "ВЫБРАТЬ ПРЕДСТАВЛЕНИЕ(Т.Ссылка) КАК Представление ИЗ Перечисление.СтавкиНДС КАК Т",
+    limit: 50,
+  });
+  if (!outcome.ok) return null;
+  const rates = ((outcome.data as { rows?: unknown[][] }).rows ?? [])
+    .map((cells) => (typeof cells[0] === "string" ? percentOfName(cells[0]) : null))
+    .filter((r): r is number => r !== null);
+  // A failed or empty look is not remembered: the base may have been busy.
+  if (rates.length === 0) return null;
+  cache.vatRates = [...new Set(rates)];
+  return cache.vatRates;
+}
+
+/** What 1C holds of the items the lines name: by exact name and by IKPU code. */
+export interface ItemTables {
+  /** The attribute of the nomenclature that holds the IKPU code, when found. */
+  attribute: string | null;
+  byName: Map<string, Candidate[]>;
+  byCode: Map<string, Candidate[]>;
+}
+
+export async function lookupItems(
+  lines: DidoxLine[],
+  deps: ResolverDeps,
+  cache: ResolverCache,
+): Promise<ItemTables> {
+  const attribute = lines.length ? await ikpuAttribute(deps, cache) : null;
+  const byName = new Map<string, Candidate[]>();
+  const byCode = new Map<string, Candidate[]>();
+  const names = [...new Set(lines.map((line) => line.name).filter(Boolean))];
+  const nameRows = names.length
+    ? await lookup(
+        deps,
+        (ph) =>
+          `ВЫБРАТЬ Т.Наименование КАК Наименование, Т.Ссылка КАК Ссылка ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.Наименование В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
+        names,
+      )
+    : [];
+  for (const { cells } of nameRows ?? []) {
+    const ref = refOf(cells[1]);
+    if (ref)
+      byName.set(textOf(cells[0]).toLowerCase(), [
+        ...(byName.get(textOf(cells[0]).toLowerCase()) ?? []),
+        { ref, name: textOf(cells[0]) },
+      ]);
+  }
+  const codes = [...new Set(lines.map((line) => line.catalogCode).filter(Boolean))];
+  if (attribute && codes.length) {
+    const codeRows = await lookup(
+      deps,
+      (ph) =>
+        `ВЫБРАТЬ Т.${attribute} КАК Код, Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.${attribute} В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
+      codes,
+    );
+    for (const { cells } of codeRows ?? []) {
+      const ref = refOf(cells[1]);
+      const code = textOf(cells[0]).trim();
+      if (ref) byCode.set(code, [...(byCode.get(code) ?? []), { ref, name: textOf(cells[2]) }]);
+    }
+  }
+  return { attribute, byName, byCode };
+}
+
+/** The item a line stands for, or why it is not certain (and the candidates). */
+export function itemFor(
+  line: DidoxLine,
+  items: ItemTables,
+):
+  | { ref: string }
+  | { ref: null; code: "ITEM_CHOOSE" | "ITEM_NOT_FOUND"; message: string; candidates?: Candidate[] } {
+  const sameName = items.byName.get(line.name.toLowerCase()) ?? [];
+  const sameCode = items.byCode.get(line.catalogCode) ?? [];
+  const [named] = sameName;
+  if (sameName.length === 1 && named && (sameCode.length === 0 || sameCode.some((c) => c.ref === named.ref)))
+    return { ref: named.ref };
+  const match = matchItem(line.name, sameCode, isService(line));
+  if (match.kind === "match") return { ref: match.ref };
+  const what = `"${line.name}" (IKPU ${line.catalogCode || "-"}, ${line.qty} ${line.unit})`;
+  if (match.kind === "choose") {
+    return {
+      ref: null,
+      code: "ITEM_CHOOSE",
+      message: `${what}: ${sameCode.length} items share the code, none is certain`,
+      candidates: match.candidates,
+    };
+  }
+  return {
+    ref: null,
+    code: "ITEM_NOT_FOUND",
+    message: `${what}: no item in 1C${items.attribute ? "" : " (the IKPU attribute of the nomenclature was not found, so only exact names are looked up)"}`,
+  };
+}
+
 /**
  * Looks everything up and sorts the documents: those ready for a card, with their drafts, and what
  * is left for the model, each with the little it needs to decide.
  */
 export async function resolveDocuments(
   docs: DidoxDocument[],
-  options: { companyInn?: string; overrides?: Overrides; cache?: ResolverCache },
+  options: { companyInn?: string; overrides?: Overrides; cache?: ResolverCache; rules?: LineRules },
   deps: ResolverDeps,
 ): Promise<Resolved> {
   const problems: Problem[] = [];
@@ -407,42 +547,36 @@ export async function resolveDocuments(
   }
   live = afterContracts;
 
-  // 4. Items: by the exact name, else by the IKPU code with the name to tell which.
-  const lines = live.flatMap((doc) => doc.lines.map((line) => ({ doc, line })));
-  const attribute = lines.length ? await ikpuAttribute(deps, cache) : null;
-  const byName = new Map<string, Candidate[]>();
-  const byCode = new Map<string, Candidate[]>();
-  const names = [...new Set(lines.map(({ line }) => line.name).filter(Boolean))];
-  const nameRows = names.length
-    ? await lookup(
-        deps,
-        (ph) =>
-          `ВЫБРАТЬ Т.Наименование КАК Наименование, Т.Ссылка КАК Ссылка ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.Наименование В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
-        names,
-      )
-    : [];
-  for (const { cells } of nameRows ?? []) {
-    const ref = refOf(cells[1]);
-    if (ref)
-      byName.set(textOf(cells[0]).toLowerCase(), [
-        ...(byName.get(textOf(cells[0]).toLowerCase()) ?? []),
-        { ref, name: textOf(cells[0]) },
-      ]);
-  }
-  const codes = [...new Set(lines.map(({ line }) => line.catalogCode).filter(Boolean))];
-  if (attribute && codes.length) {
-    const codeRows = await lookup(
-      deps,
-      (ph) =>
-        `ВЫБРАТЬ Т.${attribute} КАК Код, Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.${attribute} В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
-      codes,
-    );
-    for (const { cells } of codeRows ?? []) {
-      const ref = refOf(cells[1]);
-      const code = textOf(cells[0]).trim();
-      if (ref) byCode.set(code, [...(byCode.get(code) ?? []), { ref, name: textOf(cells[2]) }]);
+  // 3b. The VAT rates the base has: a line of a rate it lacks cannot be written, and the accountant decides what to
+  // do (another rate the base has, or no VAT), so that is asked once here, not found out document by document.
+  const baseRates = live.length > 0 ? await vatRatesOf(deps, cache) : null;
+  if (baseRates) {
+    const stillLive: DidoxDocument[] = [];
+    for (const doc of live) {
+      const missing = [
+        ...new Set(
+          doc.lines
+            .map((l) => options.rules?.vatRateMap?.[l.vatRate] ?? l.vatRate)
+            .filter((rate) => !baseRates.includes(rate)),
+        ),
+      ];
+      if (missing.length === 0) stillLive.push(doc);
+      else
+        problem(
+          doc,
+          "VAT_RATE_MISSING",
+          `the lines have VAT ${missing.map((r) => `${r}%`).join(", ")}, which this 1C does not have (it has ${baseRates.map((r) => `${r}%`).join(", ")}): ask the accountant once which of its rates to write them under (vatRateMap {from, to}), then call again`,
+        );
     }
+    live = stillLive;
   }
+
+  // 4. Items: by the exact name, else by the IKPU code with the name to tell which.
+  const items = await lookupItems(
+    live.flatMap((doc) => doc.lines),
+    deps,
+    cache,
+  );
 
   const ready: Resolved["ready"] = [];
   for (const doc of live) {
@@ -455,43 +589,20 @@ export async function resolveDocuments(
         refs.push(chosen.ref);
         continue;
       }
-      const sameName = byName.get(line.name.toLowerCase()) ?? [];
-      const sameCode = byCode.get(line.catalogCode) ?? [];
-      let ref: string | null = null;
-      const [named] = sameName;
-      if (
-        sameName.length === 1 &&
-        named &&
-        (sameCode.length === 0 || sameCode.some((c) => c.ref === named.ref))
-      ) {
-        ref = named.ref;
-      } else {
-        const match = matchItem(line.name, sameCode, isService(line));
-        if (match.kind === "match") ref = match.ref;
-        else {
-          open += 1;
-          const what = `"${line.name}" (IKPU ${line.catalogCode || "-"}, ${line.qty} ${line.unit})`;
-          if (match.kind === "choose") {
-            problem(doc, "ITEM_CHOOSE", `${what}: ${sameCode.length} items share the code, none is certain`, {
-              line: line.n,
-              candidates: match.candidates,
-            });
-          } else {
-            problem(
-              doc,
-              "ITEM_NOT_FOUND",
-              `${what}: no item in 1C${attribute ? "" : " (the IKPU attribute of the nomenclature was not found, so only exact names are looked up)"}`,
-              { line: line.n },
-            );
-          }
-        }
+      const found = itemFor(line, items);
+      if (found.ref === null) {
+        open += 1;
+        problem(doc, found.code, found.message, {
+          line: line.n,
+          ...(found.candidates ? { candidates: found.candidates } : {}),
+        });
       }
-      refs.push(ref ?? "");
+      refs.push(found.ref ?? "");
     }
     if (open > 0) continue;
     const counterparty = counterpartyRef.get(key);
     if (!counterparty) continue;
-    const draft = draftOf(doc, counterparty, contractRef.get(key), refs);
+    const draft = draftOf(doc, counterparty, contractRef.get(key), refs, options.rules);
     const valid = InvoiceReceivedDraft.safeParse(draft);
     if (!valid.success) {
       problem(

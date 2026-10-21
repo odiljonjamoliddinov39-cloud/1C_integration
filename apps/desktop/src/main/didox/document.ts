@@ -66,10 +66,16 @@ export interface DidoxDocument {
   notes: string[];
   /** Free-form documents: the file the sender attached. */
   fileName: string;
+  /**
+   * Set when the seller used the same number for another document (numbers start again every year): the key of this
+   * one carries its date, so that neither is taken for the other.
+   */
+  keySuffix?: string;
 }
 
 /** VAT rates in use in Uzbekistan; others are shown, not refused. */
-const KNOWN_VAT_RATES = new Set([0, 12]);
+// 12% until the end of 2025, 15% from 2026: a document of either year is not a surprise.
+const KNOWN_VAT_RATES = new Set([0, 12, 15]);
 
 const str = (value: unknown): string =>
   typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
@@ -247,7 +253,7 @@ function check(doc: DidoxDocument) {
         `${l.qty} × ${money(l.price)} = ${money(expected)}, the document says ${money(l.amount)}`,
       );
     }
-    if (!KNOWN_VAT_RATES.has(l.vatRate)) issue(l.n, "VAT_RATE", `VAT rate ${l.vatRate}% is not 0 or 12`);
+    if (!KNOWN_VAT_RATES.has(l.vatRate)) issue(l.n, "VAT_RATE", `VAT rate ${l.vatRate}% is not 0, 12 or 15`);
     const vat = Math.round((l.amount * l.vatRate) / 100);
     if (Math.abs(vat - l.vat) > 1) {
       issue(
@@ -270,7 +276,8 @@ function check(doc: DidoxDocument) {
 }
 
 /** How a document is named to the model and in what the model sends back: "312318957/24". */
-export const didoxKey = (d: { seller: DidoxParty; number: string }) => `${d.seller.tin}/${d.number}`;
+export const didoxKey = (d: { seller: DidoxParty; number: string; keySuffix?: string }) =>
+  `${d.seller.tin}/${d.number}${d.keySuffix ?? ""}`;
 
 /** What documents of one archive come to: those that become entries in 1C, and those that do not. */
 export interface DidoxBatch {
@@ -288,23 +295,35 @@ export interface DidoxBatch {
  * twice counts once.
  */
 export function batchOf(documents: DidoxDocument[]): DidoxBatch {
-  const key = (d: DidoxDocument) => `${d.seller.tin}|${d.number}`;
-  const invoices = new Map<string, DidoxDocument>();
+  const base = (d: DidoxDocument) => `${d.seller.tin}|${d.number}`;
+  // The same seller's number may come again on another day (numbering starts over every year): that is another
+  // document. The same document sent twice has the same Didox id, or the same date.
+  const sameDocument = (a: DidoxDocument, b: DidoxDocument) =>
+    a.id !== "" && b.id !== "" ? a.id === b.id : a.date === b.date;
+  const invoices = new Map<string, DidoxDocument[]>();
   const postable: DidoxDocument[] = [];
   const reference: DidoxDocument[] = [];
+  const seenActs: DidoxDocument[] = [];
   const seen = new Set<string>();
   let pairedActs = 0;
 
   for (const d of documents) {
     if (d.kind !== "invoice") continue;
-    if (seen.has(`invoice|${key(d)}`)) continue;
-    seen.add(`invoice|${key(d)}`);
-    invoices.set(key(d), d);
+    const same = invoices.get(base(d)) ?? [];
+    if (same.some((x) => sameDocument(x, d))) continue;
+    // The second document of a number carries its date in its key.
+    if (same.length > 0) d.keySuffix = `@${d.date}`;
+    invoices.set(base(d), [...same, d]);
     postable.push(d);
   }
+  const nearest = (list: DidoxDocument[], date: string) =>
+    [...list].sort(
+      (a, b) =>
+        Math.abs(Date.parse(a.date) - Date.parse(date)) - Math.abs(Date.parse(b.date) - Date.parse(date)),
+    )[0];
   for (const d of documents) {
     if (d.kind === "act") {
-      const invoice = invoices.get(key(d));
+      const invoice = nearest(invoices.get(base(d)) ?? [], d.date);
       if (invoice) {
         pairedActs += 1;
         if (invoice.totals.total !== d.totals.total) {
@@ -316,11 +335,12 @@ export function batchOf(documents: DidoxDocument[]): DidoxBatch {
         }
         continue;
       }
-      if (seen.has(`act|${key(d)}`)) continue;
-      seen.add(`act|${key(d)}`);
+      if (seenActs.some((x) => base(x) === base(d) && sameDocument(x, d))) continue;
+      if (seenActs.some((x) => base(x) === base(d))) d.keySuffix = `@${d.date}`;
+      seenActs.push(d);
       postable.push(d);
     } else if (d.kind !== "invoice") {
-      const id = `${d.kind}|${key(d)}|${d.date}`;
+      const id = `${d.kind}|${base(d)}|${d.date}`;
       if (seen.has(id)) continue;
       seen.add(id);
       reference.push(d);

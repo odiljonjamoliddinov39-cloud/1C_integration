@@ -94,7 +94,7 @@ function value(token: Token): unknown {
  */
 export function decodeTable(text: string): { columns: string[]; rows: unknown[][] } | null {
   const lines = text.split("\n");
-  const head = /^rows\[\d+\]\{(.*)\}:$/.exec(lines[0] ?? "");
+  const head = /^rows\[\d+\]\{(.*)\}:$/s.exec(lines[0] ?? "");
   if (!head) return null;
   const columns = splitCells(head[1] ?? "").map((t) => t.text);
   const rows: unknown[][] = [];

@@ -290,3 +290,21 @@ The attribute that holds the IKPU code is found in the nomenclature's metadata b
 
 Documents whose buyer is not this base's company are named and not entered. An act with no invoice is
 for the model to enter as a receipt of services.
+
+## The company's own documents as sales (`propose_didox_sales`)
+
+The documents this company issued (it is the seller) are entered into 1C as sales by the program, in the desktop
+app (`didox/sales.ts`), not by the model and not by the 1C extension:
+
+1. The app reads them from Didox for the period (`from`, `to`) or takes the attached files whose seller is the company.
+2. The buyer is found by INN, its contract by the number and date the document names (else the only contract it has),
+   the items by the name on the line and the IKPU code (the same matching as for received documents), the base's VAT
+   rates against those on the lines (the accountant's `vatRateMap` is kept per company).
+3. The sale is a copy of the company's newest posted «Реализация» to the same buyer (else the newest of all) that has
+   the table the document needs (goods for an invoice, services for an act): its operation, warehouse and ledger
+   accounts stay; the date, buyer, contract, lines, amounts (with or without VAT in them, as the company's sales
+   have it) and the VAT rate change. It is saved unposted.
+4. A sale 1C already has (the same buyer, day and total) is left out; what cannot be settled comes back with
+   candidates; the model answers with references and calls again.
+5. After the accountant checks and posts the sales (`propose_post_created`), the issued invoices follow with
+   `propose_invoices_issued`.

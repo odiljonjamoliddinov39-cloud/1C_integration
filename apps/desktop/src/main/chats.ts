@@ -29,6 +29,8 @@ export interface StoredChat extends ChatSummary {
   didox?: DidoxDocument[];
   /** Keys of the Didox documents already entered into 1C from this chat. */
   didoxDone?: string[];
+  /** Keys of the company's own Didox documents already entered into 1C as sales from this chat. */
+  salesDone?: string[];
   /** Bank statements read from the files attached to this chat, whole, for propose_bank_payments. */
   bank?: BankStatement[];
   /** Payments already entered into 1C from this chat, as "file#row". */
