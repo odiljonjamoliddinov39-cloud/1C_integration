@@ -165,7 +165,7 @@ export const ATTACHMENTS = {
     ".json",
     ".zip",
   ],
-  maxFiles: 5,
+  maxFiles: 20,
   maxBytes: 10 * 1024 * 1024,
 } as const;
 
