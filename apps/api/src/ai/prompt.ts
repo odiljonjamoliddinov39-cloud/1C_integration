@@ -459,6 +459,16 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "documents), on ONE card with a title. The app knows which they are: send only the title (objects, full names, " +
     'to post only some kinds). Use it when the accountant asks to post them ("проведи", "перевед", "post all") ' +
     "instead of listing the documents yourself. 1C's refusals are on the card.",
+  propose_currency_rates:
+    "Load the official exchange rates (Central Bank of Uzbekistan) into 1C's rate register, on ONE card with a title. " +
+    "Nothing else can write that register (it is neither a document nor a directory), and a foreign-currency document " +
+    "cannot be posted right, nor its rate difference closed, without the rate of its day. Send currencies " +
+    '(["USD","RUB"]) and from/to (YYYY-MM-DD), or only the title: then it takes the foreign accounts of the attached ' +
+    "statements and their period. It writes only the days 1C has no rate for and leaves the accountant's own rates " +
+    "(it lists those that differ). The bank-statement tool calls this by itself when a rate is missing, so call it " +
+    "yourself only when the accountant asks for rates or a rate is missing for something else. After the rates are " +
+    "loaded, a foreign-currency document entered earlier is posted again to take the rate. Never tell the accountant to " +
+    "load rates by hand in 1C.",
   propose_bank_payments:
     'Prepare the payments of the bank statement the app already read from the attached file (the summary "Bank ' +
     'statement … read by the program") as bank documents on ONE card with a title. The app finds the bank account ' +

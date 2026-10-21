@@ -230,7 +230,7 @@ const rateOfRow = (row: Record<string, unknown>) => {
 };
 
 /** The numeric and the letter code a currency has in 1C's catalog (it keeps one or the other). */
-const CURRENCY_CODES: Record<string, string[]> = {
+export const CURRENCY_CODES: Record<string, string[]> = {
   USD: ["840", "USD"],
   EUR: ["978", "EUR"],
   RUB: ["643", "RUB"],

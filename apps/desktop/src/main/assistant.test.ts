@@ -93,6 +93,7 @@ function setup(
   didox?: { eimzo: EImzoClient; fetch: typeof fetch },
   renderPdf?: (html: string) => Promise<Uint8Array>,
   learnPolicy = false,
+  rates?: { fetch: typeof fetch },
 ) {
   const base = new FakePlatform();
   const dir = mkdtempSync(join(tmpdir(), "platform-"));
@@ -129,6 +130,7 @@ function setup(
     learnPolicy,
     ...(didox ? { didox } : {}),
     ...(renderPdf ? { renderPdf } : {}),
+    ...(rates ? { rates } : {}),
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
@@ -4253,5 +4255,152 @@ describe("a batch of hundreds of documents", () => {
   it("leaves a small batch as it is", () => {
     const data = { status: "done", applied: [state(1, true)], failed: [] };
     expect(compactBatch(data)).toBe(data);
+  });
+});
+
+describe("exchange rates", () => {
+  const cbu = (async (url: string) => {
+    const day = /(\d{4}-\d{2}-\d{2})/.exec(url)?.[1] ?? "";
+    // The bank changes the rate every day (a number from the day), so that no day repeats the one before.
+    const rate = 12_000 + Number(day.slice(8));
+    return new Response(
+      JSON.stringify([{ Code: "840", Ccy: "USD", Nominal: "1", Rate: String(rate), Date: day }]),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+  const call = [
+    () => [
+      {
+        type: "message" as const,
+        stopReason: "tool_use",
+        content: [
+          {
+            type: "tool_use",
+            id: "r1",
+            name: "propose_currency_rates",
+            input: { title: "USD kurslari", currencies: ["USD"], from: "2024-01-01", to: "2024-01-05" },
+          },
+        ],
+      },
+    ],
+    () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+  ];
+
+  async function run(existing: [string, number][] = [], fetchImpl: typeof fetch = cbu) {
+    const t = setup(call, "active", undefined, undefined, undefined, false, { fetch: fetchImpl });
+    t.base.queryAnswers.unshift({
+      match: /КурсыВалют/,
+      answer: () => ({
+        columns: ["Период", "Курс", "Кратность"],
+        rows: existing.map(([day, rate]) => [`${day}T00:00:00`, rate, 1]),
+        truncated: false,
+      }),
+    });
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({ companyId: t.company.id, text: "USD kurslarini yukla" });
+    const timer = setInterval(() => {
+      const card = t.events.find((e) => e.type === "confirm");
+      if (card?.type === "confirm") {
+        clearInterval(timer);
+        t.assistant.decide(card.companyId, card.id, true);
+      }
+    }, 1);
+    await sending;
+    clearInterval(timer);
+    return t;
+  }
+
+  it("writes the Central Bank's rates for the days 1C has none for, on one card", async () => {
+    const t = await run([["2024-01-03", 12_003]]);
+    const card = t.events.find((e) => e.type === "confirm");
+    expect(card).toMatchObject({
+      proposal: { kind: "batch", items: [{ object: "РегистрСведений.КурсыВалют", error: null }] },
+    });
+    const written = t.base.currencyRates.get("840");
+    // The 3rd is in 1C already (and equal); the others are written.
+    expect([...(written?.keys() ?? [])]).toEqual(["2024-01-01", "2024-01-02", "2024-01-04", "2024-01-05"]);
+    expect(written?.get("2024-01-04")).toEqual({ rate: 12_004, multiplicity: 1 });
+  });
+
+  it("writes nothing when 1C has every rate, and says so", async () => {
+    const t = await run(
+      ["01", "02", "03", "04", "05"].map((d, i) => [`2024-01-${d}`, 12_000 + i + 1] as [string, number]),
+    );
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    expect(t.base.currencyRates.size).toBe(0);
+  });
+
+  it("says the bank's site did not answer instead of writing a guess", async () => {
+    const offline = (async () => {
+      throw new Error("offline");
+    }) as unknown as typeof fetch;
+    const t = await run([], offline);
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    expect(t.base.currencyRates.size).toBe(0);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("RATES_UNAVAILABLE");
+  });
+
+  it("loads the rates a dollar account's payments need before it enters them, with no word from the model", async () => {
+    const t = setup(
+      [
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "b1",
+                name: "propose_bank_payments",
+                input: { title: "USD ko'chirma", from: "2024-03-01", to: "2024-03-05" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ],
+      "active",
+      undefined,
+      undefined,
+      undefined,
+      false,
+      { fetch: cbu },
+    );
+    t.base.queryAnswers.unshift({
+      match: /КурсыВалют/,
+      answer: () => ({ columns: [], rows: [], truncated: false }),
+    });
+    t.store.setAiEnabled(t.company.id, true);
+    const statement = [
+      "Выписка по счёту 22614840505733821001 за период 01.03.2024 - 05.03.2024;;;;;;",
+      "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+      "01.03.2024;1;Acme LLC;300555777;1000,00;;Payment under contract 7",
+      "05.03.2024;2;Acme LLC;300555777;2000,00;;Payment under contract 7",
+    ].join("\n");
+    const sending = t.assistant.send({
+      companyId: t.company.id,
+      text: "Vypiskani kirit",
+      files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
+    });
+    const answered = new Set<string>();
+    const timer = setInterval(() => {
+      for (const e of t.events) {
+        if (e.type === "confirm" && !answered.has(e.id)) {
+          answered.add(e.id);
+          t.assistant.decide(e.companyId, e.id, true);
+        }
+      }
+    }, 1);
+    await sending;
+    clearInterval(timer);
+    const first = t.events.find((e) => e.type === "confirm");
+    expect(first).toMatchObject({
+      proposal: { kind: "batch", items: [{ object: "РегистрСведений.КурсыВалют" }] },
+    });
+    // From a week before the first payment (the rate in force that day) to the last payment.
+    const days = [...(t.base.currencyRates.get("840")?.keys() ?? [])];
+    expect(days[0]).toBe("2024-02-23");
+    expect(days.at(-1)).toBe("2024-03-05");
   });
 });

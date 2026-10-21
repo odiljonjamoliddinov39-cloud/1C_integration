@@ -607,6 +607,31 @@ export const BankPaymentsInput = z.object({
 export type BankPaymentsInput = z.infer<typeof BankPaymentsInput>;
 
 /**
+ * The Central Bank's exchange rates written to 1C's rate register (the one thing no change can reach), on one card.
+ * The app reads the rates itself and writes only the days 1C has none for; with no currencies and no period it takes
+ * the foreign-currency accounts of the attached statements and their period.
+ */
+export const CurrencyRatesToolInput = z.object({
+  /** For the card's title, in the accountant's language, e.g. "Valyuta kurslari 2024: USD, RUB". */
+  title: z.string().trim().min(1).max(200),
+  /** Letter codes: "USD", "RUB", "EUR". */
+  currencies: z
+    .array(z.string().regex(/^[A-Z]{3}$/))
+    .min(1)
+    .max(4)
+    .optional(),
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type CurrencyRatesToolInput = z.infer<typeof CurrencyRatesToolInput>;
+
+/**
  * Posts the documents this chat has created and left unposted (a bank statement's payments, a batch of
  * documents): the app knows which they are, so the model sends nothing but a title.
  */
@@ -675,6 +700,7 @@ export const AI_TOOLS = {
   propose_didox_reconciliation: DidoxReconciliationInput,
   propose_didox_delete_draft: DidoxDeleteDraftInput,
   propose_bank_payments: BankPaymentsInput,
+  propose_currency_rates: CurrencyRatesToolInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
   report_findings: ReportFindingsInput,
@@ -695,6 +721,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_didox_reconciliation",
   "propose_didox_delete_draft",
   "propose_bank_payments",
+  "propose_currency_rates",
   "propose_post_created",
   "propose_delete_marked",
 ] as const;

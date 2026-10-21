@@ -6,6 +6,8 @@ import {
   DeleteMarkedPreview,
   DeleteMarkedResult,
   CreateInvoiceResult,
+  CurrencyRatesInput,
+  CurrencyRatesResult,
   GetObjectInput,
   ObjectSnapshot,
   ObjectState,
@@ -96,6 +98,11 @@ export class PlatformApiClient {
    */
   async deleteMarked(input: DeleteMarkedInput = {}): Promise<DeleteMarkedResult> {
     return this.invoke("DeleteMarked", DeleteMarkedResult, this.valid(DeleteMarkedInput, input));
+  }
+
+  /** Writes exchange rates to 1C's rate register; a day that has a rate already is left as it is. */
+  async setCurrencyRates(input: CurrencyRatesInput): Promise<CurrencyRatesResult> {
+    return this.invoke("SetCurrencyRates", CurrencyRatesResult, this.valid(CurrencyRatesInput, input));
   }
 
   close(): Promise<void> {

@@ -194,3 +194,20 @@ result was cut by the result limit so that its failures were never seen. Fixed:
   1C's catalog, the row carries the rate of the payment's day from 1C's rates, and the settlement is in the currency when
   the contract is in it, otherwise in soums at the rate. It says so in a note (check the first document). Left to the
   accountant: no rate of that day in 1C, no such currency item, or a contract in a third currency.
+
+## Exchange rates (PlatformAPI 0.8.0)
+
+A payment in a currency needs that currency's rate of its day in 1C, and 1C keeps rates in a register
+(`РегистрСведений.КурсыВалют`) that is neither a document nor a directory: no change can write to it, and the accountant
+was told to load the rates by hand in 1C. Now:
+
+- `SetCurrencyRates` (PlatformAPI): writes rates to the register in one transaction; a day that has a rate already is
+  left as it is (the answer lists the days that differ).
+- The app reads the Central Bank's rates (cbu.uz, one answer per day, a few at a time) and shows ONE card per run with
+  what 1C lacks: the currency, the period, the number of rates, the first and the last, how many 1C has already
+  (`propose_currency_rates`, `currency/cbu.ts`). A day that only repeats the rate before it is not written (1C carries a
+  rate forward). No internet or no answer from the bank: nothing is written and the card says so.
+- A bank run does this by itself, before it resolves a payment on a foreign-currency account: from a week before the
+  first payment (the rate in force on that day) to the last one. If the accountant declines, or the bank cannot be
+  reached, `ratesNotLoaded` says why.
+- Documents in a currency entered before the rates were loaded take the rate when they are posted again.
