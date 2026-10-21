@@ -10,7 +10,8 @@
  *  - a payment to such a pass-through account is the bank's fee: it is entered as a fee, with no counterparty;
  *  - a payment between two of the company's own accounts is matched with its other leg and reported as one
  *    transfer, not entered as a payment;
- *  - a statement of a foreign-currency account is reported, not entered (its documents are in a currency);
+ *  - a statement of a foreign-currency account is entered in its currency (the payments are in dollars, euros…, with the
+ *    rate of the payment's day); a move between accounts of two currencies is a conversion, reported with its legs;
  *  - everything else is a payment to hand to the resolver, inside the period asked for.
  */
 import { parseAcquiring } from "./acquiring.js";
@@ -45,7 +46,7 @@ export type AccountRole =
   | "settlement"
   /** Money only passes through it; its payments are in other statements. */
   | "pass_through"
-  /** A foreign-currency account: reported, not entered. */
+  /** A foreign-currency account: its payments are entered in the currency. */
   | "foreign_currency"
   /** No payments in the period asked for. */
   | "empty";
@@ -205,10 +206,10 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
       plan.inPassThrough += inPeriod.length;
       continue;
     }
-    if (currency !== "" && currency !== "UZS") {
+    const foreign = currency !== "" && currency !== "UZS";
+    if (foreign) {
       view.role = "foreign_currency";
-      view.reason = `an account in ${currency}: its documents are in a currency, not entered here`;
-      continue;
+      view.reason = `an account in ${currency}: its payments are entered in ${currency}, with the rate of the payment's day`;
     }
     if (inPeriod.length === 0) {
       view.role = "empty";
@@ -294,7 +295,7 @@ export function describeLedger(plan: LedgerPlan, options: LedgerOptions = {}): s
   for (const a of plan.accounts) {
     lines.push(
       `- ${a.account || a.file} (${a.currency || "?"}) ${a.role}: ${a.inPeriod} of ${a.payments} payments in the period` +
-        (a.role === "settlement"
+        (a.role === "settlement" || a.role === "foreign_currency"
           ? `; ${a.toEnter} to enter (${a.fees} bank fees)${a.transfers > 0 ? `, ${a.transfers} transfers between own accounts` : ""}`
           : `; ${a.reason}`),
     );

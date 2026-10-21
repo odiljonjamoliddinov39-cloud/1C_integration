@@ -10,7 +10,7 @@
 import type { ChangeInput } from "@platform/shared";
 
 import { type QueryOutcome, lookup, refOf, textOf } from "../didox/resolve.js";
-import type { Transfer } from "./ledger.js";
+import { type Transfer, currencyOfAccount } from "./ledger.js";
 import { CONVERSION_KIND, TRANSFER_KIND } from "./policy.js";
 import {
   type BankCache,
@@ -227,6 +227,17 @@ export async function resolveTransfers(
     const payment: BankPayment | undefined = statement?.payments.find((p) => p.row === leg.row);
     if (!payment) {
       fail(leg, "the row is not in the statement");
+      continue;
+    }
+    if (
+      currencyOfAccount(leg.own) !== "" &&
+      currencyOfAccount(leg.other) !== "" &&
+      currencyOfAccount(leg.own) !== currencyOfAccount(leg.other)
+    ) {
+      fail(
+        leg,
+        `a conversion between ${currencyOfAccount(leg.own) || "?"} and ${currencyOfAccount(leg.other) || "?"} accounts: its two legs have different amounts and a rate, which the statements do not pair (enter it with the accountant)`,
+      );
       continue;
     }
     const ownRef = accountRef.get(leg.own) || null;

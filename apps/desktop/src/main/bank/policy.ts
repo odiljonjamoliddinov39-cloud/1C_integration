@@ -147,6 +147,17 @@ export function normalCurrency(code: string): string {
   return key;
 }
 
+/** The currency a name stands for ("Доллар США", "USD", "840", "сум"), in letters; "" when it is none of the usual. */
+export function currencyFromText(text: string): string {
+  const exact = normalCurrency(text);
+  if (/^[A-Z]{3}$/.test(exact)) return exact;
+  if (/долл|dollar|\busd\b|aqsh/i.test(text)) return "USD";
+  if (/евро|euro|\beur\b/i.test(text)) return "EUR";
+  if (/рубл|rubl|\brub\b/i.test(text)) return "RUB";
+  if (/сум|so['ʻ’]m|\buzs\b/i.test(text)) return "UZS";
+  return "";
+}
+
 export function purposeOf(account: {
   name: string;
   currency: string;

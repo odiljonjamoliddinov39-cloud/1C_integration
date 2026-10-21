@@ -1825,7 +1825,13 @@ describe("assistant", () => {
         deletionMark: false,
         version: 1,
       });
-      const rows = (list: unknown[][]) => ({ columns: [], rows: list, truncated: false });
+      const rows = (
+        list: (string | number | boolean | { type: string; ref: string; name: string } | null)[][],
+      ) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
       const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
       base.queryAnswers.unshift(
         {
@@ -1927,6 +1933,110 @@ describe("assistant", () => {
       });
       expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
       expect(JSON.stringify(proxy.requests[1]?.messages.at(-1))).toContain("propose_post_created");
+    });
+
+    it("enters a foreign-currency account's payment in its currency, with the rate of the day from 1C", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [usdAccount, earlierPayment, contract] = [
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+      ];
+      const { assistant, store, company, events, base, proxy } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [{ type: "tool_use", id: "u1", name: "propose_bank_payments", input: { title: "USD" } }],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const counterparty = base.counterparties[0]!;
+      base.objects.set(earlierPayment, {
+        object: "Документ.СписаниеСРасчетногоСчета",
+        fields: {
+          Номер: "0000-000021",
+          Дата: "2026-08-10T00:00:00",
+          Проведен: true,
+          ВалютаДокумента: ref("Справочник.Валюты", crypto.randomUUID(), "Доллар США"),
+          Контрагент: ref("Справочник.Контрагенты", counterparty.ref, counterparty.name),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№7"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 12650,
+              КратностьВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 12650000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      const rows = (
+        list: (string | number | boolean | { type: string; ref: string; name: string } | null)[][],
+      ) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
+      base.queryAnswers.unshift(
+        { match: /КурсыВалют/, answer: (input) => rows(input.params?.Код === "840" ? [[12700.5, 1]] : []) },
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => rows([[ref("Справочник.БанковскиеСчета", usdAccount, "USD")]]),
+        },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) =>
+            rows(
+              base.counterparties
+                .filter((c) => values(input).includes(c.inn))
+                .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            ),
+        },
+        {
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
+          answer: () =>
+            rows([[ref("Документ.СписаниеСРасчетногоСчета", earlierPayment, "старый"), "старое"]]),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: () => rows([]) },
+      );
+      store.setAiEnabled(company.id, true);
+      const statement = [
+        "Выписка по счёту 22614840500000000001",
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        `10.09.2026;31;${counterparty.name};${counterparty.inn};1200,00;;Payment for goods`,
+      ].join("\n");
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "USD vypiska",
+        files: [{ name: "usd.csv", data: new TextEncoder().encode(statement) }],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.fields.НазначениеПлатежа === "Payment for goods",
+      );
+      expect(made).toHaveLength(1);
+      expect(made[0]).toMatchObject({
+        fields: { СуммаДокумента: 1200 },
+        tables: {
+          РасшифровкаПлатежа: [
+            { СуммаПлатежа: 1200, КурсВзаиморасчетов: 12700.5, СуммаВзаиморасчетов: 15240600 },
+          ],
+        },
+      });
+      expect(JSON.stringify(proxy.requests[1]?.messages.at(-1))).toContain("USD payment at the rate 12700.5");
     });
 
     it("enters a move between the company's own accounts as a pair of documents copied from the company's last one", async () => {

@@ -2473,7 +2473,8 @@ export class AssistantService {
                 return rest;
               }),
             };
-      return [{ statement, prepared, rows }];
+      const currency = plan.accounts.find((a) => a.file === statement.fileName)?.currency ?? "";
+      return [{ statement, prepared, rows, currency }];
     });
     const ledger = describeLedger(plan, ledgerOptions);
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
@@ -2541,6 +2542,7 @@ export class AssistantService {
             cache,
             createMissing: true,
             fresh,
+            currency: task.currency,
             ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
             overrides: {
               ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),
@@ -3178,6 +3180,7 @@ function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[], moved: Transfer
             account: a.account,
             currency: a.currency,
             paymentsInPeriod: a.inPeriod,
+            entered: `in ${a.currency}, copied from the counterparty's last payment in that currency, with the rate of the payment's day from 1C: check the rate`,
           })),
         }
       : {}),

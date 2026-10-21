@@ -13,6 +13,7 @@ import type { ChangeInput, RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
 import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
+import { currencyFromText } from "./policy.js";
 import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
@@ -92,6 +93,8 @@ export interface BankCache {
   snapshots: Map<string, Template | null>;
   /** The company's posted tax payments (newest first), read once; null when 1C could not say. */
   tax?: TaxHistory[] | null;
+  /** The exchange rates read from 1C: "USD|2026-09-10" → soums per unit, null when 1C has none. */
+  rates?: Map<string, number | null>;
 }
 
 export interface TaxHistory {
@@ -218,6 +221,65 @@ export function refTo(existing: unknown, ref: string, fallbackType: string): { t
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
 
+/** The numeric and the letter code a currency has in 1C's catalog (it keeps one or the other). */
+const CURRENCY_CODES: Record<string, string[]> = {
+  USD: ["840", "USD"],
+  EUR: ["978", "EUR"],
+  RUB: ["643", "RUB"],
+  GBP: ["826", "GBP"],
+};
+
+/** Soums per unit of a currency on a day, from 1C's exchange rates; null when 1C has none for it. */
+async function rateOn(
+  deps: BankDeps,
+  cache: BankCache,
+  currency: string,
+  date: string,
+): Promise<number | null> {
+  cache.rates ??= new Map();
+  const key = `${currency}|${date}`;
+  if (cache.rates.has(key)) return cache.rates.get(key) ?? null;
+  let rate: number | null = null;
+  for (const code of CURRENCY_CODES[currency] ?? [currency]) {
+    const outcome = await deps.query({
+      query:
+        "ВЫБРАТЬ ПЕРВЫЕ 1 Т.Курс КАК Курс, Т.Кратность КАК Кратность ИЗ РегистрСведений.КурсыВалют.СрезПоследних(&Дата, Валюта.Код = &Код) КАК Т",
+      params: { Дата: `${date}T23:59:59`, Код: code },
+      limit: 1,
+    });
+    if (!outcome.ok) continue;
+    const row = (outcome.data as { rows?: unknown[][] }).rows?.[0];
+    const value = Number(row?.[0]);
+    const multiplicity = Number(row?.[1] ?? 1) || 1;
+    if (Number.isFinite(value) && value > 0) {
+      rate = Math.round((value / multiplicity) * 1e6) / 1e6;
+      break;
+    }
+  }
+  cache.rates.set(key, rate);
+  return rate;
+}
+
+/** The currency an earlier document is in, in letters: its currency attribute, else "unknown" when a rate row says it is foreign. */
+function templateCurrency(template: Template): string | null {
+  const own = textOf(template.fields["ВалютаДокумента"]);
+  const named = own ? currencyFromText(own) : "";
+  if (named) return named;
+  for (const rows of Object.values(template.tables))
+    for (const row of rows) {
+      const rate = parsePositive(row["КурсВзаиморасчетов"] ?? row["Курс"] ?? 1);
+      if (rate !== 1 && Number.isFinite(rate)) return "foreign";
+    }
+  return null;
+}
+
+/** Can this earlier document be copied for a payment on an account in this currency? */
+function sameCurrency(template: Template, currency: string): boolean {
+  const have = templateCurrency(template);
+  if (currency === "UZS" || currency === "") return have === null || have === "UZS";
+  return have === currency || (have === "foreign" && currency !== "UZS");
+}
+
 const refIn = (value: unknown): string | null => refOf(value);
 
 /**
@@ -269,6 +331,8 @@ export interface CopyContext {
   counterpartyAccount?: string | null;
   /** Fields set last, when the earlier document has them (the tax period of a tax payment). */
   set?: Record<string, unknown>;
+  /** The payment is in a foreign currency: its rate (soums per unit) on the payment's day, when 1C has it. */
+  foreign?: { currency: string; rate: number | null };
 }
 
 /** The copied document with this payment's own date, amount, number and purpose, or why it cannot be made. */
@@ -276,7 +340,8 @@ export function copyTemplate(
   template: Template,
   payment: BankPayment,
   context: CopyContext | string | null = {},
-): { ok: true; change: ChangeInput } | { ok: false; message: string } {
+): { ok: true; change: ChangeInput; notes?: string[] } | { ok: false; message: string } {
+  const notes: string[] = [];
   const ctx: CopyContext = typeof context === "string" ? { ownAccount: context } : (context ?? {});
   const amountKey = first(FIELD_NAMES.amount, template.fields);
   if (!amountKey) return { ok: false, message: `${template.object} has no ${FIELD_NAMES.amount[0]} to set` };
@@ -337,6 +402,10 @@ export function copyTemplate(
   fields[first(FIELD_NAMES.date, template.fields) ?? "Дата"] = payment.date;
   for (const [name, value] of Object.entries(ctx.set ?? {}))
     if (name in template.fields) fields[name] = value;
+  // A document in a currency carries the rate of its day.
+  if (ctx.foreign?.rate)
+    for (const name of ["КурсДокумента", "КурсВалюты"])
+      if (name in template.fields) fields[name] = ctx.foreign.rate;
 
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const [name, rows] of Object.entries(template.tables)) {
@@ -357,22 +426,43 @@ export function copyTemplate(
     }
     const row = rows[0] ?? {};
     const rate = parsePositive(row["КурсВзаиморасчетов"] ?? row["Курс"] ?? 1);
-    if (rate !== 1) {
+    if (rate !== 1 && !ctx.foreign) {
       return {
         ok: false,
         message: `the earlier payment is in a foreign currency (rate ${rate}): enter it by hand`,
+      };
+    }
+    if (rate === 1 && ctx.foreign) {
+      return {
+        ok: false,
+        message: `the earlier payment is in soums, the account is in ${ctx.foreign.currency}: its payment to copy must be in ${ctx.foreign.currency}`,
       };
     }
     const rowTotal = parsePositive(row["СуммаПлатежа"] ?? row["Сумма"]);
     if (!(rowTotal > 0) || Math.abs(rowTotal - oldTotal) > 0.005) {
       return { ok: false, message: `the earlier payment's ${name} does not add up to its amount` };
     }
+    // Settled in soums (the settlement amount is the payment at the rate) or in the payment's own currency.
+    const settlement = parsePositive(row["СуммаВзаиморасчетов"]);
+    const inSoums = ctx.foreign && settlement > 0 && Math.abs(settlement - rowTotal) > rowTotal * 0.01;
+    const newRate = ctx.foreign?.rate ?? null;
+    const multiplicity = parsePositive(row["КратностьВзаиморасчетов"] ?? row["Кратность"] ?? 1) || 1;
     const scaled: Record<string, unknown> = {};
     for (const [column, value] of Object.entries(row)) {
-      scaled[column] =
-        MONEY_COLUMNS.includes(column) && typeof value === "number"
-          ? round2((value * amount) / oldTotal)
-          : writable(value);
+      if (column === "СуммаВзаиморасчетов" && inSoums && newRate !== null && typeof value === "number") {
+        scaled[column] = round2((amount * newRate) / multiplicity);
+      } else if (MONEY_COLUMNS.includes(column) && typeof value === "number") {
+        scaled[column] = round2((value * amount) / oldTotal);
+      } else if (ctx.foreign && newRate !== null && (column === "КурсВзаиморасчетов" || column === "Курс")) {
+        scaled[column] = newRate;
+      } else scaled[column] = writable(value);
+    }
+    if (ctx.foreign) {
+      notes.push(
+        newRate === null
+          ? `the exchange rate of ${ctx.foreign.currency} on ${payment.date} was not found in 1C: the earlier payment's rate (${rate}) is kept; check it`
+          : `${ctx.foreign.currency} payment at the rate ${newRate} of ${payment.date}${inSoums ? " (settled in soums)" : ""}; check the rate and the settlement amounts`,
+      );
     }
     if (ctx.contract && "ДоговорКонтрагента" in row)
       scaled["ДоговорКонтрагента"] = refTo(
@@ -391,6 +481,7 @@ export function copyTemplate(
       ...(Object.keys(tables).length > 0 ? { tables } : {}),
       post: false,
     },
+    ...(notes.length > 0 ? { notes } : {}),
   };
 }
 
@@ -420,11 +511,15 @@ export async function resolvePayments(
     fresh?: Set<string>;
     /** Book an acquiring receipt gross and its commission as a document of its own (default: yes). */
     splitCommission?: boolean;
+    /** The currency of the statement's account in letters ("" or "UZS": soums). */
+    currency?: string;
   },
   deps: BankDeps,
 ): Promise<BankResolved> {
   const overrides = options.overrides ?? {};
   const cache = options.cache ?? { lists: new Map(), snapshots: new Map() };
+  const currency = options.currency ?? "";
+  const foreignAccount = currency !== "" && currency !== "UZS";
   const problems: BankProblem[] = [];
   const notes: BankNote[] = [];
   const alreadyIn1c: number[] = [];
@@ -691,8 +786,8 @@ export async function resolvePayments(
     const template = asked
       ? await snapshot(deps, cache, object, asked.ref)
       : fresh
-        ? await kindTemplate(deps, cache, object, payment)
-        : await findTemplate(deps, cache, object, payment, who);
+        ? await kindTemplate(deps, cache, object, payment, currency)
+        : await findTemplate(deps, cache, object, payment, who, currency);
     if (!template) {
       addProblem(
         payment,
@@ -785,11 +880,15 @@ export async function resolvePayments(
       contract,
       ownAccount,
       counterpartyAccount: accountsOf.get(`${who?.key ?? ""}|${payment.account}`) ?? null,
+      // An account in a currency: the payment is in that currency, at the rate of its day.
+      ...(foreignAccount
+        ? { foreign: { currency, rate: await rateOn(deps, cache, currency, day(payment.date)) } }
+        : {}),
     };
     // A card (acquiring) receipt: the statement has the net, the company books the gross and the bank's
     // commission as a bank-fee document of its own.
     const acquiring =
-      payment.direction === "in" && options.splitCommission !== false
+      payment.direction === "in" && options.splitCommission !== false && !foreignAccount
         ? parseAcquiring(payment.purpose, payment.amount)
         : null;
     if (acquiring) {
@@ -820,6 +919,7 @@ export async function resolvePayments(
       continue;
     }
     ready.push({ payment, change: made.change });
+    for (const note of made.notes ?? []) addNote([payment.row], note);
   }
   return {
     missing: [...missingByKey.values()],
@@ -982,13 +1082,21 @@ async function kindTemplate(
   cache: BankCache,
   object: string,
   payment: BankPayment,
+  currency = "",
 ): Promise<Template | null> {
   const list = await loadList(deps, cache, object, null);
+  const foreign = currency !== "" && currency !== "UZS";
   // Newest first, until one can be copied; a bound keeps a base with no usable payment from being read whole.
   for (const candidate of list.slice(0, KIND_TEMPLATE_CANDIDATES)) {
     const template = await snapshot(deps, cache, object, candidate.ref);
-    if (!template || !refOf(template.fields["ДоговорКонтрагента"])) continue;
-    if (copyTemplate(template, payment, { counterparty: DUMMY, contract: DUMMY }).ok) return template;
+    if (!template || !refOf(template.fields["ДоговорКонтрагента"]) || !sameCurrency(template, currency))
+      continue;
+    const ctx: CopyContext = {
+      counterparty: DUMMY,
+      contract: DUMMY,
+      ...(foreign ? { foreign: { currency, rate: 1 } } : {}),
+    };
+    if (copyTemplate(template, payment, ctx).ok) return template;
   }
   return null;
 }
@@ -1076,10 +1184,19 @@ async function findTemplate(
   object: string,
   payment: BankPayment,
   who: Who | null,
+  currency = "",
 ): Promise<Template | null> {
   const list = await loadList(deps, cache, object, who);
   const shape = shapeOf(payment.purpose);
   const same = shape.length >= 8 ? list.find((c) => shapeOf(c.purpose) === shape) : undefined;
   const chosen = same ?? (who ? list[0] : undefined);
-  return chosen ? snapshot(deps, cache, object, chosen.ref) : null;
+  if (!chosen) return null;
+  const first = await snapshot(deps, cache, object, chosen.ref);
+  if (!first || sameCurrency(first, currency)) return first;
+  // The newest payment is in another currency than the account: the counterparty's newest in this one is the template.
+  for (const candidate of list.filter((c) => c.ref !== chosen.ref).slice(0, 8)) {
+    const template = await snapshot(deps, cache, object, candidate.ref);
+    if (template && sameCurrency(template, currency)) return template;
+  }
+  return first;
 }

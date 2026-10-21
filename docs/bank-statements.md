@@ -155,8 +155,14 @@ currency). `bank/ledger.ts` reads them together, in whole tiyin, with no AI, bef
   its statement); a leg already in 1C (the same account, day and amount) is left out; when 1C has no such document or
   the account, the reason comes back and nothing is guessed. A payment to the company's own INN from an account that
   is not attached is a transfer too (or a fee, when its purpose reads as one).
-- **Currency**: digits 6–8 of the account (`000` UZS, `643` RUB, `840` USD, `978` EUR); a foreign-currency account is
-  reported, not entered.
+- **Currency**: digits 6–8 of the account (`000` UZS, `643` RUB, `840` USD, `978` EUR). A foreign-currency account is
+  **entered in its currency**: each payment is copied from the counterparty's newest posted payment _in that
+  currency_ (an earlier one in soums is never copied for a dollar account, nor the reverse), the amounts are those of
+  the statement, and the exchange rate is the one of the payment's day from 1C's rate register
+  (`РегистрСведений.КурсыВалют`; the catalog's numeric code or letters are tried). Where the earlier payment settled
+  in soums, the settlement amount follows the new rate; where it settled in the currency, it follows the payment.
+  When 1C has no rate for the day the earlier payment's rate is kept and a note says so. A conversion between a
+  soum account and a currency account has two legs of different amounts; the program reports it, it does not pair it.
 - **One run**: with no `file`, every attached statement is handled in one run and one card; answers to what could not
   be settled carry the file. What cannot be settled comes back with each row's date, amount, name and purpose.
 - A statement of a few payments that names its own account is read by the program too (it is one account of several).

@@ -281,4 +281,11 @@ describe("money moved between the company's own accounts", () => {
     );
     expect(out.problems[0]?.message).toContain("no attribute for the other account");
   });
+
+  it("does not enter a conversion between a soum and a dollar account: the legs have different amounts", async () => {
+    const usd = "20208840300438330003";
+    const out = await run([move({ toAccount: usd, in: null })], {}, ["a.xlsx"]);
+    expect(out.ready).toEqual([]);
+    expect(out.problems[0]?.message).toContain("a conversion between UZS and USD accounts");
+  });
 });

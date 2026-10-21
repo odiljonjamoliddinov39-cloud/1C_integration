@@ -466,7 +466,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "without file: it reads the accounts together, leaves out an account that money only passes through, enters the " +
     "bank's fees as fees, enters each transfer between the company's own accounts as a pair of documents copied from the " +
     "company's own last such document (transfersEntered), and reports what it could not (transfersBetweenOwnAccounts with " +
-    "the reason, foreignCurrencyAccounts): tell the accountant about those; its reflections " +
+    "the reason): tell the accountant about those. A statement of a foreign-currency account is entered in its currency " +
+    "(foreignCurrencyAccounts): each payment is copied from the counterparty's last payment in that currency, with the " +
+    "rate of the payment's day from 1C's rates (a note says when 1C had none and the earlier rate was kept: pass it on); " +
+    "a conversion between a soum and a currency account is not paired by the program: tell the accountant. Its reflections " +
     "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
     "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
     "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +
