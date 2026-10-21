@@ -4409,3 +4409,126 @@ describe("exchange rates", () => {
     expect(days.at(-1)).toBe("2024-03-05");
   });
 });
+
+describe("bank accounts of the company", () => {
+  it("are never created by the assistant: a counterparty's or a branch's account is not needed", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "a1",
+              name: "propose_change",
+              input: {
+                action: "create",
+                object: "Справочник.БанковскиеСчета",
+                fields: { НомерСчета: "20214000505122905003", Наименование: "HAYOT BANK" },
+              },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Hisob och" });
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("BANK_ACCOUNT_NOT_CREATED");
+    expect([...t.base.objects.values()].some((o) => o.object === "Справочник.БанковскиеСчета")).toBe(false);
+  });
+});
+
+describe("checking the books after an import", () => {
+  it("reads the balances once and hands the model what is wrong, not the registers", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "l1", name: "ledger_check", input: { date: "2024-10-31" } }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    const asked: string[] = [];
+    t.base.queryAnswers.unshift({
+      match: /Остатки\(/,
+      answer: (input) => {
+        asked.push(String(input.params?.Дата));
+        return {
+          columns: [],
+          rows: [
+            ["5710", "Переводы в пути", 2_742_873_478.26, 0],
+            ["5715", "Переводы в пути (вал.)", 0, 2_748_794_908.74],
+            ["5110", "Расчетный счет", 51_961.85, 0],
+          ],
+          truncated: false,
+        };
+      },
+    });
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Qoldiqlarni tekshir" });
+    expect(asked).toEqual(["2024-10-31T23:59:59"]);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("57xx");
+    expect(told).toContain("transit accounts do not close");
+    expect(told).not.toContain("5110");
+  });
+});
+
+describe("currency revaluation", () => {
+  it("works out what the month-end revaluation must give, from the balances and the rates of the day", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "v1",
+              name: "revaluation_check",
+              input: { from: "2024-11-05", to: "2024-12-20" },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    const dates: string[] = [];
+    t.base.queryAnswers.unshift(
+      {
+        match: /КурсыВалют/,
+        answer: (input) => ({
+          columns: [],
+          rows: input.params?.Код === "840" ? [[12_800, 1]] : [],
+          truncated: false,
+        }),
+      },
+      {
+        match: /Остатки\(/,
+        answer: (input) => {
+          dates.push(String(input.params?.Дата));
+          return {
+            columns: [],
+            rows: [
+              ["5210", "840", 100, 0, 1_270_000, 0],
+              ["6015", "840", 0, 100, 0, 1_270_000],
+            ],
+            truncated: false,
+          };
+        },
+      },
+    );
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Qayta baholash" });
+    expect(dates).toEqual(["2024-11-30T23:59:59", "2024-12-31T23:59:59"]);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("Дт 5210 / Кт 9540 (exchange gain) 10000");
+    expect(told).toContain("Дт 9620 (exchange loss) / Кт 6015 10000");
+    expect(told).toContain("Переоценка валютных средств");
+  });
+});

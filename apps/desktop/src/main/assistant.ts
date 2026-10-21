@@ -48,6 +48,8 @@ import {
   type FetchDidoxInput,
   type DidoxInvoicesInput,
   type CurrencyRatesToolInput,
+  type LedgerCheckInput,
+  type RevaluationCheckInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -93,6 +95,7 @@ import {
   type BankProblem,
   type BankResolved,
   CURRENCY_CODES,
+  rateOn,
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
@@ -123,6 +126,9 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
+import { judgeBalances } from "./ledger-check.js";
+import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
+import { currencyFromText } from "./bank/policy.js";
 import { type CbuResult, daysBetween, fetchCbuRates, planRates } from "./currency/cbu.js";
 import {
   DOCUMENT_DOCTYPE,
@@ -159,6 +165,9 @@ const READ_BUDGET = 40;
 
 /** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
 const MAX_TURNS = 60;
+
+/** Model steps for a question that enters documents: the program does the work, the model only steers. */
+const MAX_TURNS_IMPORT = 24;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
@@ -769,7 +778,7 @@ export class AssistantService {
     run: Run,
   ): Promise<Result<null>> {
     const history = chat.messages;
-    const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
+    const maxTurns = this.deps.maxTurns ?? (run.import ? MAX_TURNS_IMPORT : MAX_TURNS);
     // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
     const learned = (await this.policyOf(chat.companyId)).text;
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -1292,6 +1301,12 @@ export class AssistantService {
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
     }
+    if (use.name === "revaluation_check") {
+      return this.revaluationCheck(chat, input.data as RevaluationCheckInput);
+    }
+    if (use.name === "ledger_check") {
+      return this.ledgerCheck(chat, input.data as LedgerCheckInput);
+    }
     if (use.name === "accounting_knowledge") {
       return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
     }
@@ -1413,6 +1428,9 @@ export class AssistantService {
     } else if (tool === "propose_change") {
       const change = this.unpostedIfImport(companyId, input as ChangeInput);
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
+      if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+        return { ok: false, code: "BANK_ACCOUNT_NOT_CREATED", message: NO_BANK_ACCOUNTS };
+      }
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
       if (!preview.ok) return preview;
       const shown = preview.data as ChangePreview;
@@ -1704,6 +1722,98 @@ export class AssistantService {
         ),
       force,
     );
+  }
+
+  /**
+   * What the month-end revaluation has to produce, month by month, read from 1C and the rates of the day (the rate
+   * register); see currency/revaluation.ts.
+   */
+  private async revaluationCheck(chat: StoredChat, input: RevaluationCheckInput): Promise<ToolResult> {
+    const dates = monthEnds(input.from, input.to);
+    if (dates.length === 0) return { ok: false, code: "NO_PERIOD", message: "from must not be after to" };
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const deps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const findings: Revaluation[] = [];
+    const noRate = new Set<string>();
+    for (const date of dates) {
+      const read = await run("run_query", {
+        query:
+          "ВЫБРАТЬ Х.Счет.Код КАК Счет, Х.Валюта.Код КАК Валюта, СУММА(Х.ВалютнаяСуммаОстатокДт) КАК ВДт, " +
+          "СУММА(Х.ВалютнаяСуммаОстатокКт) КАК ВКт, СУММА(Х.СуммаОстатокДт) КАК Дт, СУММА(Х.СуммаОстатокКт) КАК Кт " +
+          "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х " +
+          "ГДЕ Х.Валюта <> ЗНАЧЕНИЕ(Справочник.Валюты.ПустаяСсылка) СГРУППИРОВАТЬ ПО Х.Счет.Код, Х.Валюта.Код",
+        params: { Дата: `${date}T23:59:59` },
+        limit: 1000,
+      });
+      if (!read.ok) return read;
+      const balances: CurrencyBalance[] = ((read.data as { rows?: unknown[][] }).rows ?? []).map((c) => ({
+        account: String(c[0] ?? ""),
+        currency: currencyFromText(String(c[1] ?? "")),
+        currencyNet: (Number(c[2]) || 0) - (Number(c[3]) || 0),
+        soumNet: (Number(c[4]) || 0) - (Number(c[5]) || 0),
+      }));
+      const rates = new Map<string, number | null>();
+      for (const currency of new Set(balances.map((b) => b.currency)))
+        if (currency && currency !== "UZS") rates.set(currency, await rateOn(deps, cache, currency, date));
+      const month = revalue(date, balances, (currency) => rates.get(currency) ?? null);
+      findings.push(...month.found);
+      for (const c of month.noRate) noRate.add(c);
+    }
+    findings.sort((a, b) => Math.abs(b.adjustment) - Math.abs(a.adjustment));
+    const gain = findings.filter((f) => f.adjustment > 0).reduce((n, f) => n + f.adjustment, 0);
+    const loss = findings.filter((f) => f.adjustment < 0).reduce((n, f) => n - f.adjustment, 0);
+    return {
+      ok: true,
+      data: {
+        months: dates.length,
+        differences: findings.length,
+        ...(findings.length === 0 ? { status: "revalued: the balances in soums agree with the rates" } : {}),
+        totals: { gain: Math.round(gain * 100) / 100, loss: Math.round(loss * 100) / 100 },
+        ...(noRate.size > 0
+          ? { noRate: [...noRate], noRateNote: "load the rates first (propose_currency_rates)" }
+          : {}),
+        findings: findings.slice(0, 40),
+        next:
+          findings.length === 0
+            ? "Nothing to revalue."
+            : "These are the amounts 1C's own revaluation must produce (Закрытие месяца → Переоценка валютных средств, for each month in turn: it is a regulated operation, not a document the app can create). Tell the accountant to run it for the months listed, then call this tool again: the differences must be gone.",
+      },
+    };
+  }
+
+  /** The balances worth a look, read in one query and judged by the program (see ledger-check.ts). */
+  private async ledgerCheck(chat: StoredChat, input: LedgerCheckInput): Promise<ToolResult> {
+    const date = input.date ?? new Date().toISOString().slice(0, 10);
+    const connection = this.deps.store.connection(chat.companyId);
+    const read = await this.deps.connector.tool(connection, "run_query", {
+      query:
+        "ВЫБРАТЬ Х.Счет.Код КАК Код, Х.Счет.Наименование КАК Имя, Х.СуммаОстатокДт КАК Дт, Х.СуммаОстатокКт КАК Кт " +
+        "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х",
+      params: { Дата: `${date}T23:59:59` },
+      limit: 1000,
+    });
+    if (!read.ok) return read;
+    const rows = ((read.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+      const code = String(cells[0] ?? "");
+      return code
+        ? [
+            {
+              code,
+              name: String(cells[1] ?? ""),
+              debit: Number(cells[2]) || 0,
+              credit: Number(cells[3]) || 0,
+            },
+          ]
+        : [];
+    });
+    return { ok: true, data: { date, ...judgeBalances(rows) } };
   }
 
   private async learnAccountingPolicy(chat: StoredChat): Promise<ToolResult> {
@@ -2206,6 +2316,18 @@ export class AssistantService {
           continue;
         }
         const change = this.unpostedIfImport(chatCompanyId, item.change);
+        if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+          entries.push({
+            item: {
+              action: change.action,
+              object: change.object,
+              preview: null,
+              error: { code: "BANK_ACCOUNT_NOT_CREATED", message: NO_BANK_ACCOUNTS },
+            },
+            apply: null,
+          });
+          continue;
+        }
         const preview = await this.deps.connector.tool(connection, "previewChange", change);
         const shown = preview.ok ? (preview.data as ChangePreview) : null;
         entries.push({
@@ -2920,6 +3042,10 @@ export class AssistantService {
       const currency = plan.accounts.find((a) => a.file === statement.fileName)?.currency ?? "";
       return [{ statement, prepared, rows, currency }];
     });
+    // The accounts in the order the accountant works them: the currency ones (dollar, then ruble), then the soum ones.
+    const rank = (currency: string) =>
+      ({ USD: 0, EUR: 1, RUB: 2 })[currency] ?? (currency && currency !== "UZS" ? 3 : 4);
+    tasks.sort((a, b) => rank(a.currency) - rank(b.currency));
     const ledger = describeLedger(plan, ledgerOptions);
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
@@ -3831,6 +3957,11 @@ function lastUserText(chat: StoredChat): string {
   }
   return "";
 }
+
+/** The bank accounts directory: the assistant never adds to it (the company's own accounts are few and known). */
+const BANK_ACCOUNTS = "Справочник.БанковскиеСчета";
+const NO_BANK_ACCOUNTS =
+  "The assistant does not create bank accounts: the company's own accounts (the main one, the block one, the dollar and the ruble ones) are already in 1C, and a counterparty's or a bank branch's account is not needed. Use one of the existing accounts, or tell the accountant which own account is missing so that they add it in 1C.";
 
 /** What follows once the rates are in 1C: the documents entered before them took no rate. */
 const RATES_NEXT =

@@ -221,6 +221,10 @@ export function refTo(existing: unknown, ref: string, fallbackType: string): { t
   return { type, ref };
 }
 
+/** Names under which a bank writes its own ledger lines in a statement: not counterparties of the company. */
+const BANK_INTERNAL =
+  /^(к\s+получению|к\s+оплате|депозит\p{L}*\s+до\s+востреб|срочн\p{L}*\s+депозит|транзитн\p{L}*\s+сч[её]т|сч[её]т\s+(по\s+учету|№)|головн\p{L}*\s+офис)/iu;
+
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
 
 /** The rate a document row carries: 0 is a rate that was never filled in, which is how a soum payment can be left. */
@@ -713,7 +717,15 @@ export async function resolvePayments(
     else if (matches.length === 0) {
       // A company's INN is 9 digits; a person's (14) is not written here, and a nameless row cannot be created. A payer known by name only
       // is created under the zeros the bank wrote, so a later statement finds it by name again.
-      if (
+      if (BANK_INTERNAL.test(p.counterparty.trim())) {
+        // The bank's own ledger lines ("К получению с Головного Офиса - Долларов США", a demand deposit, a transit
+        // account) are not counterparties: creating one fills the directory with the bank's bookkeeping.
+        addProblem(
+          p,
+          "COUNTERPARTY_NOT_FOUND",
+          `"${p.counterparty.trim()}" looks like an internal account of the bank, not a counterparty: it is not created; the accountant says which of the company's accounts or counterparties it is`,
+        );
+      } else if (
         options.createMissing &&
         p.counterparty.trim() !== "" &&
         (who.field === "Наименование" || p.inn.length === 9)

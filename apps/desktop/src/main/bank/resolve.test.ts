@@ -756,6 +756,23 @@ describe("bank payments for 1C", () => {
       first.d,
     );
     expect(person.missing).toEqual([]);
+    // The bank's own ledger lines are not counterparties: none is created, and the row says why.
+    const internal = await resolvePayments(
+      statement([
+        payment({ row: 6, inn: "207117389", counterparty: "К получению с Головного Офиса - Долларов США" }),
+        payment({ row: 7, inn: "901000080", counterparty: "Депозит до востребования 32511" }),
+        payment({
+          row: 8,
+          inn: "207275139",
+          counterparty: "транзитный счет для зач на ПК физ лиц налич ср-ва",
+        }),
+      ]),
+      { createMissing: true },
+      first.d,
+    );
+    expect(internal.missing).toEqual([]);
+    expect(internal.problems).toHaveLength(3);
+    expect(internal.problems[0]?.message).toContain("internal account of the bank");
 
     // Round 2: the counterparty exists now: its contract is offered, made like the company's other contracts.
     const created = deps({

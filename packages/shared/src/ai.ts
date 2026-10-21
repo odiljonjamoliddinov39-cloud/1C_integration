@@ -607,6 +607,32 @@ export const BankPaymentsInput = z.object({
 export type BankPaymentsInput = z.infer<typeof BankPaymentsInput>;
 
 /**
+ * The balances worth a look after an import, read and judged by the app: cash or bank accounts in credit, transit
+ * accounts that do not close, liability accounts in debit, the exchange differences. No input needed.
+ */
+export const LedgerCheckInput = z.object({
+  /** The day to read the balances at (YYYY-MM-DD); default today. */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type LedgerCheckInput = z.infer<typeof LedgerCheckInput>;
+
+/**
+ * What the month-end revaluation of currency balances has to produce, worked out by the app: for each month's end in
+ * the period, the currency accounts and currency settlement accounts at the Central Bank's rate of that day against
+ * what 1C carries. 1C's own «Закрытие месяца → Переоценка валютных средств» does the revaluation; this says what it
+ * must give, and after it has run, whether it did (no differences left).
+ */
+export const RevaluationCheckInput = z.object({
+  /** YYYY-MM-DD; the months from the one holding `from` to the one holding `to`, at most 36. */
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export type RevaluationCheckInput = z.infer<typeof RevaluationCheckInput>;
+
+/**
  * The Central Bank's exchange rates written to 1C's rate register (the one thing no change can reach), on one card.
  * The app reads the rates itself and writes only the days 1C has none for; with no currencies and no period it takes
  * the foreign-currency accounts of the attached statements and their period.
@@ -683,6 +709,8 @@ export const AI_TOOLS = {
   read_attachment: ReadAttachmentInput,
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
+  ledger_check: LedgerCheckInput,
+  revaluation_check: RevaluationCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
   accounting_knowledge: AccountingKnowledgeInput,
@@ -731,6 +759,8 @@ export const AI_LOCAL_TOOLS = [
   "read_attachment",
   "fetch_didox_documents",
   "learn_accounting_policy",
+  "ledger_check",
+  "revaluation_check",
   "accounting_calc",
   "company_rules",
   "accounting_knowledge",

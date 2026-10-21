@@ -63,7 +63,7 @@ program" (totals by month, the columns it took, rows to look at) and no rows: en
 propose_bank_payments (title, and from/to for the period asked) FIRST, before reading 1C yourself, and never read the statement's rows with read_attachment to find them (after a few reads the app refuses): it finds the account and the counterparties and \
 copies each counterparty's last posted payment (for rows with no INN, such as acquiring or bank fees, the last one of \
 the same kind) with this payment's date, amount, number and purpose, and takes the contract the purpose names, so \
-the contract and the accounts are the company's own; the documents are left unposted. Its notes are what the program \
+the contract and the accounts are the company's own; the documents are left unposted. The company has few bank accounts (the main one, the block one, a dollar and a ruble one) and they are already in 1C: never create bank accounts for a counterparty, a bank branch or a payment (the app refuses), and never create counterparties for a bank's own ledger lines («К получению с Головного Офиса…», «Депозит до востребования», «транзитный счет…»); the statements are worked in the order dollar, ruble, block, main. Its notes are what the program \
 decided on its own (a contract the purpose names that 1C does not have): report them in your answer. It returns only what it could not settle (a counterparty with no INN \
 or not in 1C, no earlier payment to copy, a split or foreign-currency payment, a tax or budget payment): settle those (find the counterparty \
 by name, create what is missing with propose_changes, ask the accountant when unsure) and call it again with \
@@ -391,6 +391,20 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "cash, receivables, payables, revenue, cogs, netIncome, equity, totalAssets, totalDebt, ebit, interest, days?}; break_even " +
     "{fixedCosts, price, variableCost, targetProfit?}; allocate {total, weights[]} (shares to the cent that add up). Reads " +
     "nothing and changes nothing; a field that is missing comes back by name.",
+  ledger_check:
+    "Check the books after entering or posting documents, with ONE call and no other reading of the registers: the app reads " +
+    "the balances at a date (default today) and says what an accountant would look at: a cash or bank account in credit, " +
+    "the transit accounts (57xx) that do not close together, a liability account in debit (paid with no accrual), a " +
+    "receivable in credit, and the exchange differences (95xx/96xx). Report its findings in a few lines with what they " +
+    "most likely mean; do not run balance queries yourself to find the same things.",
+  revaluation_check:
+    "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
+    "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +
+    "dollars) at the Central Bank's rate of that day against what 1C carries, with the gain or loss and the entry. 1C does the " +
+    "revaluation in «Закрытие месяца → Переоценка валютных средств», a regulated operation that is not a document, so you cannot " +
+    "create it: say which months need it, the amounts it must give, and after the accountant has run it call this tool again, " +
+    "the differences must be gone. Never make up exchange-difference documents by hand to close the balances. If it says " +
+    "noRate, load the rates first (propose_currency_rates).",
   learn_accounting_policy:
     "Learn how this company works from its own 1C, with no input: its bank accounts (main, blocked, foreign-currency) and what " +
     "each is used for, the kinds of operation its bank documents carry (and whether it has ever recorded a transfer between " +

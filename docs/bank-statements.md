@@ -227,3 +227,35 @@ Unposted documents of those operations are templates too, so the first one is en
 What the program cannot know is said: no document to copy, no rate of the day, no such currency in the catalog. The
 difference between the bank's rate and the Central Bank's stays as 1C posts it (the accountant closes it on the
 exchange-difference accounts); the note on each leg says so.
+
+## What a real 2024 run showed after the rates (balances, accounts, cost)
+
+- **The transit accounts did not close** (5700 in the balance sheet was red). The dollar leg of a conversion was booked
+  at the Central Bank's rate of the day, the soum leg at what was really paid: the difference stayed on 5710/5715. The
+  two legs are now paired (the accounts mirror each other, within three days, the rate within 10% of the bank's) and the
+  currency leg is booked at the conversion's own rate (soums paid ÷ currency received), so the two sides close; only the
+  difference to the Central Bank's rate is an exchange difference, for the month-end revaluation. A leg with no partner
+  keeps the Central Bank's rate.
+- **Red 6400/6500** (tax and contribution accounts in debit) are payments with no accrual behind them: the base has the
+  bank statement but no payroll or tax accruals. The program does not hide it; `ledger_check` names it.
+- **Bank accounts are never created** (the run made accounts for bank branches and for counterparties): the company has
+  its own few (main, block, dollar, ruble), and the app refuses to create `Справочник.БанковскиеСчета` items.
+  The bank's own ledger lines in a statement («К получению с Головного Офиса…», «Депозит до востребования», «транзитный
+  счет…») are not created as counterparties either; the row says why.
+- **Statements are worked in the order dollar, ruble, then the soum accounts.**
+- **Cost.** The model used to read the registers again and again to see the same things. `ledger_check` reads the
+  balances once and judges them (cash or bank in credit, transit not closing, liability in debit, receivable in credit,
+  exchange differences 95xx/96xx); a question that enters documents is capped at 24 model steps (60 for other questions):
+  the program does the work and the model steers, and what is left is continued with the next message.
+
+## Month-end revaluation of currency balances
+
+The revaluation of dollar and ruble balances at each month's end is a regulated operation of 1C («Закрытие месяца →
+Переоценка валютных средств»), not a document the app can create, and an exchange-difference document made by hand to
+close the balances would only hide a wrong rate. What the app does (`revaluation_check`, `currency/revaluation.ts`):
+
+- For each month's end in the period it reads the currency accounts and the currency settlement accounts (an advance in
+  dollars) in one query, takes the rate of that day from the rate register, and works out what each balance in soums
+  should be, against what 1C carries: the adjustment, the side (gain on 9540, loss on 9620) and the entry.
+- It says which months need the operation and the amounts it must give; the accountant runs 1C's revaluation for those
+  months, and the same call afterwards must find no differences. It needs the rates loaded first.
