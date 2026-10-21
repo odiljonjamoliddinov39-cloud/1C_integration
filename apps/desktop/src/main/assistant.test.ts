@@ -4669,4 +4669,17 @@ describe("the program works with no model", () => {
     expect(second).toContain("bilim bazasida");
     expect(second).toContain("«ko'chirmani kirit»");
   });
+
+  it("works out a VAT and a pay-roll sum with no model, with the program's own calculator", async () => {
+    const t = setup([]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "1 000 000 so'm dan QQS hisobla" });
+    const chatId = t.chats.list(t.company.id)[0]!.id;
+    expect(JSON.stringify(t.chats.load(t.company.id, chatId)!.messages.at(-1))).toContain("120 000");
+    await t.assistant.send({ companyId: t.company.id, chatId, text: "oylik 10 000 000 so'm uchun soliqlar" });
+    expect(JSON.stringify(t.chats.load(t.company.id, chatId)!.messages.at(-1))).toContain(
+      "Ish haqi va soliqlar",
+    );
+    expect(t.proxy.requests).toHaveLength(0);
+  });
 });

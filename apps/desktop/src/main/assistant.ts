@@ -130,6 +130,7 @@ import { compactOlderTurns } from "./ai/history.js";
 import {
   balancesText,
   batchText,
+  calcText,
   MODEL_OFF_CODES,
   failureText,
   offlineAnswer,
@@ -617,6 +618,14 @@ export class AssistantService {
           signal,
         );
         return done(result, (data) => ratesText(data, lang));
+      }
+      case "calc": {
+        emit({ type: "tool", name: "accounting_calc", detail: task.input.op });
+        return this.reply(
+          chat,
+          calcText(task.input.op, accountingCalc(task.input as AccountingCalcInput), lang),
+          emit,
+        );
       }
       case "balances": {
         emit({ type: "tool", name: "ledger_check", detail: task.date });

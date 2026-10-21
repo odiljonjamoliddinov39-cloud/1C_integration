@@ -127,6 +127,22 @@ the whole year of Didox again at each step, and receipts that 1C would not post 
   «NOT READY TO POST: …» and the model fixes the named fields in one card before «проведи». Line accounts are never
   guessed: they come from the company's earlier documents, `accountRules`, or are named by `notReady`.
 
+## Engine first, model last (`engine-tasks.ts`)
+
+A request the program can do is done by the program, with no model call and no tokens:
+a bank statement, Didox receipts and sales, currency rates, balance and revaluation checks,
+and a VAT or payroll figure asked in plain words. The answer is written in the accountant's
+language (Uzbek, Russian, English). The model is called only for what the program cannot decide.
+
+When the model is not available (`AI_BUDGET_EXCEEDED`, `AI_USER_DAILY_LIMIT`, `AI_QUESTIONS_LIMIT`,
+`AI_DAILY_LIMIT`, `AI_QUOTA_EXCEEDED`, `AI_NOT_CONFIGURED`, `AI_OUT_OF_SERVICE`, `AI_PROVIDER_BILLING`,
+`AI_UNAVAILABLE`) the question is answered from the knowledge base (`offlineAnswer`) instead of an error,
+and the jobs above keep working unchanged.
+
+Cost of the model steps that remain: a step is sent the earlier questions as question and answer only
+(`history.ts`); tool calls, results and thinking of earlier questions are dropped from what is sent
+(the stored chat is untouched), so a step costs the same on the hundredth question as on the second.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.

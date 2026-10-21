@@ -15,7 +15,13 @@ export type EngineTask =
   | { kind: "didox_sales"; from: string; to: string }
   | { kind: "rates"; from?: string; to?: string; currencies?: string[] }
   | { kind: "balances"; date: string }
-  | { kind: "revaluation"; from: string; to: string };
+  | { kind: "revaluation"; from: string; to: string }
+  | {
+      kind: "calc";
+      input:
+        | { op: "vat"; amount: number; rate: number; mode: "exclusive" | "inclusive" }
+        | { op: "payroll"; gross?: number; net?: number };
+    };
 
 const norm = (text: string) =>
   text
@@ -48,6 +54,34 @@ export function periodIn(text: string): { from: string; to: string } | null {
   return null;
 }
 
+/** The amount a message names: "1 000 000", "1,250,000.50", "12 млн"; null when there is none. */
+export function amountIn(text: string): number | null {
+  const t = norm(text).replace(/\d{1,2}\s*%/g, " ");
+  const found = [
+    ...t.matchAll(
+      /(\d{1,3}(?:[\s,.]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(млн|mln|million|миллион|ming|минг|тыс)?/gu,
+    ),
+  ];
+  let best: number | null = null;
+  for (const m of found) {
+    let raw = m[1] ?? "";
+    // "1 000 000" and "1,000,000" are thousands; "1250000.50" and "1250,5" have a fraction.
+    if (/^\d{1,3}(?:[\s,.]\d{3})+$/.test(raw)) raw = raw.replace(/[\s,.]/g, "");
+    else
+      raw = raw
+        .replace(/\s/g, "")
+        .replace(/,(\d{1,2})$/, ".$1")
+        .replace(/,/g, "");
+    let n = Number(raw);
+    if (!Number.isFinite(n)) continue;
+    const unit = m[2] ?? "";
+    if (/млн|mln|million|миллион/.test(unit)) n *= 1_000_000;
+    else if (/ming|минг|тыс/.test(unit)) n *= 1000;
+    if (best === null || n > best) best = n;
+  }
+  return best !== null && best >= 1 ? best : null;
+}
+
 export function readEngineTask(text: string, ctx: { hasBank: boolean; today: string }): EngineTask | null {
   const t = norm(text);
   if (t.trim().length > 400) return null;
@@ -75,6 +109,23 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
   }
   if (ctx.hasBank && ENTER.test(t) && (STATEMENT.test(t) || !DIDOX.test(t)))
     return { kind: "bank", ...(period ?? {}) };
+  // A sum to work out: VAT, or the pay-roll taxes of a salary.
+  const amount = amountIn(t);
+  if (amount !== null) {
+    if (/(qqs|ндс|vat|қҚс|ққс)/u.test(t)) {
+      const rate = Number(/(\d{1,2}(?:[.,]\d)?)\s*%/.exec(t)?.[1]?.replace(",", ".") ?? 12);
+      const inclusive =
+        /(ichida|ичида|включ|с ндс|ндс билан|qqs bilan|ққс билан|including|incl|inclusive)/u.test(t);
+      return {
+        kind: "calc",
+        input: { op: "vat", amount, rate, mode: inclusive ? "inclusive" : "exclusive" },
+      };
+    }
+    if (/(oylik|ойлик|зарплат|salary|jshds|жшдс|ндфл|ndfl|inps|инпс|иншп|payroll)/u.test(t)) {
+      const net = /(qo'lga|қўлга|на руки|net\b|чист|olinadigan|олинадиган)/u.test(t);
+      return { kind: "calc", input: { op: "payroll", ...(net ? { net: amount } : { gross: amount }) } };
+    }
+  }
   return null;
 }
 
@@ -310,4 +361,26 @@ export function offlineAnswer(question: string, lang: Lang): string {
       `${e.title}\n${e.lines.map((l) => `  – ${l}`).join("\n")}${e.confirm ? `\n  ${w.confirm} ${e.confirm}` : ""}`,
   );
   return `${w.head}\n\n${parts.join("\n\n")}`;
+}
+
+const CALC_TITLE = {
+  vat: { ru: "НДС", uz: "QQS", en: "VAT" },
+  payroll: { ru: "Заработная плата и налоги", uz: "Ish haqi va soliqlar", en: "Pay-roll and taxes" },
+} as const;
+
+/** A calculation's result, one figure a line (nested figures flattened one level), in the accountant's language. */
+export function calcText(op: "vat" | "payroll", result: Record<string, unknown>, lang: Lang): string {
+  const lines: string[] = [CALC_TITLE[op][lang]];
+  const show = (key: string, value: unknown) => {
+    if (typeof value === "number") lines.push(`  ${key}: ${money(value)}`);
+    else if (typeof value === "string" || typeof value === "boolean")
+      lines.push(`  ${key}: ${String(value)}`);
+  };
+  for (const [key, value] of Object.entries(result)) {
+    if (value && typeof value === "object" && !Array.isArray(value))
+      for (const [k, v] of Object.entries(value)) show(`${key}.${k}`, v);
+    else show(key, value);
+  }
+  lines.push(T[lang].sources);
+  return lines.join("\n");
 }

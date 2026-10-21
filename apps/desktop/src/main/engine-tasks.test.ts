@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  amountIn,
   balancesText,
   batchText,
+  calcText,
   periodIn,
   ratesText,
   readEngineTask,
@@ -149,5 +151,35 @@ describe("the jobs the program does by itself", () => {
         "uz",
       ),
     ).toContain("yozildi: 497 ta");
+  });
+
+  it("reads an amount: with spaces, commas, a fraction, a unit; and not a percent or a year", () => {
+    expect(amountIn("1 000 000 so'm QQS")).toBe(1_000_000);
+    expect(amountIn("1,250,000.50 dan")).toBe(1_250_000.5);
+    expect(amountIn("12 млн сумма")).toBe(12_000_000);
+    expect(amountIn("1250,5 so'm")).toBe(1250.5);
+    expect(amountIn("12% QQS 800000")).toBe(800_000);
+    expect(amountIn("qanday hisoblanadi")).toBeNull();
+  });
+
+  it("knows a VAT and a pay-roll sum to work out", () => {
+    expect(readEngineTask("1 000 000 so'm dan QQS hisobla", noBank)).toEqual({
+      kind: "calc",
+      input: { op: "vat", amount: 1_000_000, rate: 12, mode: "exclusive" },
+    });
+    expect(readEngineTask("1 120 000 so'm QQS ichida, 12% QQS qancha", noBank)).toEqual({
+      kind: "calc",
+      input: { op: "vat", amount: 1_120_000, rate: 12, mode: "inclusive" },
+    });
+    expect(readEngineTask("oylik 10 000 000 JShDS va INPS", noBank)).toEqual({
+      kind: "calc",
+      input: { op: "payroll", gross: 10_000_000 },
+    });
+    expect(readEngineTask("на руки 8 млн зарплата", noBank)).toEqual({
+      kind: "calc",
+      input: { op: "payroll", net: 8_000_000 },
+    });
+    expect(readEngineTask("QQS nima?", noBank)).toBeNull();
+    expect(calcText("vat", { vat: 120_000, total: 1_120_000 }, "uz")).toContain("vat: 120 000");
   });
 });
