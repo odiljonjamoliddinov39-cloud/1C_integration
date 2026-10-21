@@ -130,7 +130,12 @@ function setup(
     learnPolicy,
     ...(didox ? { didox } : {}),
     ...(renderPdf ? { renderPdf } : {}),
-    ...(rates ? { rates } : {}),
+    // Never the real Central Bank: a test that needs rates hands in its own.
+    rates: rates ?? {
+      fetch: (async () => {
+        throw new Error("offline in tests");
+      }) as unknown as typeof fetch,
+    },
   });
   return { assistant, store, chats, dir, company, events, proxy, base, session };
 }
