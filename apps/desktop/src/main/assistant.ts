@@ -41,6 +41,8 @@ import {
   type ObjectSnapshot,
   type DidoxDraftInput,
   AccountingCalcInput,
+  type AccountingKnowledgeInput,
+  searchKnowledge,
   type CompanyRulesInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
@@ -117,7 +119,7 @@ import {
 import { documentJson } from "./didox/fetch.js";
 import { readReconciliationAct } from "./didox/reconciliation.js";
 import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
-import { type Problem, type ResolverCache, resolveDocuments } from "./didox/resolve.js";
+import { type Problem, type ResolverCache, lookup, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
@@ -130,6 +132,9 @@ import type { LocalStore } from "./store.js";
  */
 /** Questions that are mostly entering documents the program reads (Didox, bank statements): cheaper thinking is enough. */
 const ENTRY_WORDS = /didox|дидокс|didoks|ko['ʻ’]?chirma|выписк|bank statement/i;
+
+/** Reads of 1C a question may make through the model; the program's own reads (tools) are not counted. */
+const READ_BUDGET = 40;
 
 /** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
 const MAX_TURNS = 60;
@@ -242,6 +247,8 @@ interface Run {
   trace: TraceBuilder;
   /** Times this question read rows of a bank statement by hand (read_attachment without totals). */
   bankRowReads: number;
+  /** Reads of 1C by the model in this question (queries, structure, objects): they are capped. */
+  reads: number;
 }
 
 type Emit = (event: DistributiveOmit<AssistantEvent, "companyId">) => void;
@@ -369,6 +376,7 @@ export class AssistantService {
           escalate: false,
           trace: new TraceBuilder(),
           bankRowReads: 0,
+          reads: 0,
         };
         const result = await this.converse(chat, company.name, emit, abort.signal, run);
         if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
@@ -767,6 +775,7 @@ export class AssistantService {
         escalate: false,
         trace: new TraceBuilder(),
         bankRowReads: 0,
+        reads: 0,
       });
     });
   }
@@ -1017,6 +1026,20 @@ export class AssistantService {
       };
     }
     if (isProposalTool(use.name)) return this.propose(chat, use.name, input.data, emit, signal);
+    // The cost stop: a question that keeps reading 1C without writing is exploring. Past the budget the model is told
+    // to answer with what it has or ask, so that no question can run for an hour and use the day's limit.
+    if (use.name === "run_query" || use.name === "describe_objects" || use.name === "get_object") {
+      run.reads += 1;
+      if (run.reads > READ_BUDGET) {
+        return {
+          ok: false,
+          code: "READ_BUDGET",
+          message:
+            `${READ_BUDGET} reads of 1C were made for this question: stop reading. Answer with what you have, saying what ` +
+            "is missing, or ask the accountant one short question. A big job is split by period or by kind and done in parts.",
+        };
+      }
+    }
     if (use.name === "report_findings") {
       return { ok: false, code: "UNKNOWN_TOOL", message: "report_findings is only for audit checks" };
     }
@@ -1048,6 +1071,9 @@ export class AssistantService {
     }
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
+    }
+    if (use.name === "accounting_knowledge") {
+      return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
     }
     if (use.name === "company_rules") {
       const ask = input.data as CompanyRulesInput;
@@ -1345,6 +1371,61 @@ export class AssistantService {
   }
 
   /** What 1C says about how the company works: bank accounts and their use, transfer kinds, the policy register. */
+  /**
+   * The engine's own accounting knowledge for a question, with the account groups it names checked against this
+   * base's chart: what the base lacks is said, so that the model does not book to an account that is not there.
+   */
+  private async accountingKnowledge(chat: StoredChat, ask: AccountingKnowledgeInput): Promise<ToolResult> {
+    const found = searchKnowledge(ask.query, ask.limit ?? 3);
+    if (found.length === 0) {
+      return {
+        ok: true,
+        data: {
+          found: 0,
+          note: "Nothing in the knowledge base fits. Reason from the company's own practice (given above) and its earlier documents, and say what you assumed.",
+        },
+      };
+    }
+    const codes = [...new Set(found.flatMap((e) => e.accounts ?? []))];
+    let absent: string[] | null = null;
+    if (codes.length > 0) {
+      const connection = this.deps.store.connection(chat.companyId);
+      const rows = await lookup(
+        {
+          query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query),
+          describe: () => Promise.resolve({ ok: false as const, code: "NOT_USED", message: "" }),
+        },
+        (ph) =>
+          `ВЫБРАТЬ РАЗЛИЧНЫЕ ПОДСТРОКА(Т.Код, 1, 4) КАК Код ИЗ ПланСчетов.Хозрасчетный КАК Т ГДЕ ПОДСТРОКА(Т.Код, 1, 4) В (${ph})`,
+        codes,
+      ).catch(() => null);
+      if (rows && rows.length > 0) {
+        const have = new Set(rows.map((r) => String(r.cells[0])));
+        absent = codes.filter((c) => !have.has(c));
+      }
+    }
+    return {
+      ok: true,
+      data: {
+        found: found.length,
+        entries: found.map((e) => ({
+          id: e.id,
+          kind: e.kind,
+          title: e.title,
+          lines: e.lines,
+          ...(e.calc ? { calc: `accounting_calc op ${e.calc}` } : {}),
+          ...(e.confirm ? { confirm: e.confirm } : {}),
+          ...(absent
+            ? {
+                accountsNotInThisBase: (e.accounts ?? []).filter((c) => absent.includes(c)),
+              }
+            : {}),
+        })),
+        note: "General НСБУ practice: the company's own postings (the practice above) come first; confirm what an entry says to confirm.",
+      },
+    };
+  }
+
   /** What the model is told about this company: the accountant's standing rules first, then what was learned from 1C. */
   private practiceOf(companyId: string, learned: string): string {
     const kept = this.deps.store.rules(companyId);
@@ -2616,6 +2697,7 @@ function describe(name: string, input: unknown): string {
   }
   if (name === "accounting_calc") return String((input as { op?: string }).op ?? "");
   if (name === "company_rules") return String((input as { action?: string }).action ?? "");
+  if (name === "accounting_knowledge") return String((input as { query?: string }).query ?? "");
   if (name === "fetch_didox_documents") {
     const read = input as FetchDidoxInput;
     return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;

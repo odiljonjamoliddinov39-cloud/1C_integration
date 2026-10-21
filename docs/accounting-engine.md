@@ -61,6 +61,29 @@ or a counterparty.
 - **A step cap** (60 per question) and a recipe in the prompt: correct by deleting the wrong documents and entering them
   again with the tool and the right rules, not by editing one by one; stop exploring after about eight steps without a write.
 
+## The engine's own database (seeded), so the model is only the small part
+
+The work is split in tiers, the cheapest that can do it first:
+
+1. **Seeded template library** (`packages/shared/src/seed-templates.ts`, put into the table when the server starts; an admin's
+   edits are kept, an untouched seed follows the code). About 22 everyday questions in Russian, Uzbek and English, answered by
+   a fixed 1C query and rendered by the program, **no model, no cost**: cash and bank balances, balance of any account,
+   receivables and payables by counterparty, a counterparty's balance, stock balances, revenue, cost of sales, period
+   expenses, sales and purchases by counterparty and in total, bank receipts and payments, unposted documents, documents
+   marked for deletion, duplicate receipts, currency rates. Matching is strict (every word of one phrase and no other
+   meaningful word), a query a configuration does not accept falls back to the model, every answer has "Ask AI anyway".
+2. **Program workflows**: bank statements, taxes, terminals, Didox receipts and sales (see above).
+3. **Knowledge and arithmetic tools**: `accounting_knowledge` (`packages/shared/src/knowledge.ts`) gives typical entries,
+   formulas, procedures (month-end, VAT reconciliation with Didox, stock count, audit by query, bank reconciliation) and
+   the tax reference in a few lines, found by the words of the question, with the account groups checked against **this
+   base's chart**; `accounting_calc` does the arithmetic.
+4. **Learned, not guessed**: the policy now carries **how the company books each kind of document** (the account pairs of
+   its entries, last 12 months), so entries are copied from its own books.
+5. **The model**: only what has no rule, with a **cost stop** (60 steps, 40 reads of 1C per question) so that nothing can
+   run for an hour and use the day's limit.
+
+The engine also learns new templates from finished questions (existing); the seed gives it a start on day one.
+
 ## Not done
 
 - Entering transfers between own accounts and currency conversions as 1C documents (they are reported with how 1C records them).

@@ -78,6 +78,12 @@ function fake(over: (q: RunQueryInput) => QueryOutcome | undefined = () => undef
         ]);
       if (q.includes("ИЗ Документ.РеализацияТоваровУслуг")) return ok([[210, "2026-09-30T00:00:00"]]);
       if (q.includes("ИЗ Документ.ПоступлениеТоваровУслуг")) return ok([[95, "2026-09-28T00:00:00"]]);
+      if (q.includes("ССЫЛКА Документ.ПоступлениеТоваровУслуг"))
+        return ok([
+          ["2910", "6010", 120],
+          ["4410", "6010", 118],
+        ]);
+      if (q.includes("ССЫЛКА Документ.РеализацияТоваровУслуг")) return ok([["4010", "9020", 200]]);
       if (q.includes("Хозрасчетный") && q.includes("СчетДт"))
         return ok([
           ["5110", 400],
@@ -143,6 +149,17 @@ describe("learnPolicy", () => {
       "ПоступлениеТоваровУслуг",
     ]);
     expect(policy.postings[0]).toEqual({ code: "6010", debit: 300, credit: 380 });
+    // How its documents are booked: the company's own formulas.
+    expect(policy.patterns).toEqual([
+      { object: "РеализацияТоваровУслуг", pairs: [{ debit: "4010", credit: "9020", count: 200 }] },
+      {
+        object: "ПоступлениеТоваровУслуг",
+        pairs: [
+          { debit: "2910", credit: "6010", count: 120 },
+          { debit: "4410", credit: "6010", count: 118 },
+        ],
+      },
+    ]);
     expect(policy.currencies).toEqual([
       { currency: "UZS", contracts: 300 },
       { currency: "USD", contracts: 12 },
@@ -219,6 +236,8 @@ describe("describePolicy", () => {
     );
     expect(text).toContain("РеализацияТоваровУслуг ×210");
     expect(text).toContain("6010 300/380");
+    expect(text).toContain("- ПоступлениеТоваровУслуг: 2910→6010 ×120; 4410→6010 ×118");
+    expect(text).toContain("copy these, do not work the accounts out");
     expect(text).toContain("USD ×12");
     expect(text).toContain("No accounting policy register was found");
   });

@@ -163,7 +163,7 @@ shortages, goods in transit, consignment: the same method, from an earlier examp
 The account numbers above are the usual НСБУ ones: check them against ПланСчетов.Хозрасчетный (Код, Наименование) \
 when something does not fit.
 
-Working like a senior accountant (ACCA / IFRS level, over this company's own 1C). The accountant works with you as with a \
+Working like a senior accountant (ACCA / IFRS level, over this company's own 1C). The engine carries the general knowledge itself: ask accounting_knowledge for the entries, formulas, checklists and tax reference of a task instead of recalling them, and accounting_calc for every figure; use your own reasoning for what they do not cover. The accountant works with you as with a \
 colleague: do not refuse a task of accounting, tax, audit or analysis because it is not a listed tool; reason it through and do it.
 - Method for every task: understand what is asked and for which period; use how this company works (its practice is \
 given above) and look at an earlier document of the same kind; read only what the answer needs; do every calculation \
@@ -358,6 +358,15 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "{goods, service} (codes such as 2910) and accountRules [{match: words of the line's name, account}] such as " +
     '"аренд|ижара|rent" → 9410; without them the account is the one 1C\'s earlier receipts used. Never enter these by ' +
     "hand with propose_changes: a hand-made receipt has no received invoice and costs many steps.",
+  accounting_knowledge:
+    "The engine's own accounting knowledge, found by the words of a question: typical entries (purchase of goods, services " +
+    "such as rent, sale, import with a customs declaration, fixed assets, payroll, currency, loans, bad debts, closing), " +
+    "formulas (VAT, costing, ratios, NPV and IRR, break-even, penalty) with the accounting_calc operation that does their " +
+    "arithmetic, procedures (month-end checklist, VAT reconciliation with Didox, stock count, audit by query, bank " +
+    "reconciliation) and the tax reference (rates to confirm). Call it BEFORE reasoning about how something is booked or " +
+    "checked: it costs a few lines and saves the long reading and thinking. The account groups in it are checked against " +
+    "this base's chart (accountsNotInThisBase); the company's own postings (the practice above) come first. Reads nothing " +
+    "of the company's data and changes nothing.",
   company_rules:
     "The accountant's standing decisions for this company, kept between chats and shown to you with every question " +
     '("Standing rules the accountant gave"). action add {rule}: save one short, complete sentence when the accountant ' +

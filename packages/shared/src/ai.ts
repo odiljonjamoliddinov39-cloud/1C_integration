@@ -403,6 +403,15 @@ export const CompanyRulesInput = z.object({
 });
 export type CompanyRulesInput = z.infer<typeof CompanyRulesInput>;
 
+/** Looks the engine's own accounting knowledge up (typical entries, formulas, procedures, tax reference). */
+export const AccountingKnowledgeInput = z.object({
+  /** What is asked, in the accountant's words: "how is rent booked", "импорт ГТД проводки", "month end checklist". */
+  query: z.string().trim().min(2).max(300),
+  /** How many entries at most, 3 by default. */
+  limit: z.number().int().min(1).max(6).optional(),
+});
+export type AccountingKnowledgeInput = z.infer<typeof AccountingKnowledgeInput>;
+
 /**
  * Documents read from Didox itself (its API, no files): the period by the document's own date. Reads only.
  * The incoming ones (our INN is the buyer) go into the chat the same way attached Didox files do, so
@@ -643,6 +652,7 @@ export const AI_TOOLS = {
   learn_accounting_policy: z.object({}),
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
+  accounting_knowledge: AccountingKnowledgeInput,
   check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
@@ -686,6 +696,7 @@ export const AI_LOCAL_TOOLS = [
   "learn_accounting_policy",
   "accounting_calc",
   "company_rules",
+  "accounting_knowledge",
   "report_findings",
   "check_changes",
 ] as const;

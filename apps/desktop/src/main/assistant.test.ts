@@ -205,6 +205,94 @@ describe("assistant", () => {
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
   });
 
+  describe("the accounting knowledge of the engine", () => {
+    it("answers a how-is-it-booked question from its own base, with the account groups checked against the chart", async () => {
+      const { assistant, store, company, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "k1",
+                name: "accounting_knowledge",
+                input: { query: "как проводится аренда" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] }],
+      ]);
+      // The base's chart has these groups; 4410 (VAT to offset) is not among them.
+      base.queryAnswers.unshift({
+        match: /ПланСчетов\.Хозрасчетный/,
+        answer: () => ({
+          columns: ["Код"],
+          rows: [["6010"], ["9410"], ["9420"], ["9430"], ["2010"], ["3110"]],
+          truncated: false,
+        }),
+      });
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "аренду как провести?" });
+      const result = JSON.stringify(proxy.requests[1]!.messages.at(-1));
+      expect(result).toContain("entry_purchase_services");
+      expect(result).toContain("Дт 9410");
+      expect(result).toContain("accountsNotInThisBase");
+      expect(result).toContain("4410");
+      // No read of the company's data was made for the answer, only of the chart.
+      expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(1);
+    });
+
+    it("says plainly when it knows nothing about the question, so the model reasons from the company's practice", async () => {
+      const { assistant, store, company, proxy } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "k1",
+                name: "accounting_knowledge",
+                input: { query: "weather tomorrow" },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "?" });
+      expect(JSON.stringify(proxy.requests[1]!.messages.at(-1))).toContain(
+        "Nothing in the knowledge base fits",
+      );
+    });
+  });
+
+  describe("the cost stop", () => {
+    it("stops the reads of 1C at the budget and tells the model to answer or ask", async () => {
+      const queries = Array.from({ length: 43 }, (_, i) => ({
+        type: "tool_use",
+        id: `q${i}`,
+        name: "run_query",
+        input: { query: "ВЫБРАТЬ 1 КАК Один" },
+      }));
+      const { assistant, store, company, proxy, base } = setup([
+        () => [{ type: "message", stopReason: "tool_use", content: queries }],
+        () => [{ type: "message", stopReason: "end_turn", content: [{ type: "text", text: "partial" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "analyse everything" });
+      // 40 reads reached 1C; the 3 after the budget did not.
+      expect(base.calls.filter((c) => c.fn === "RunQuery")).toHaveLength(40);
+      const answers = proxy.requests[1]!.messages.at(-1)!.content as { content?: unknown }[];
+      expect(answers).toHaveLength(43);
+      expect(JSON.stringify(answers.at(-1))).toContain("READ_BUDGET");
+      expect(JSON.stringify(answers[39])).not.toContain("READ_BUDGET");
+    });
+  });
+
   describe("the accountant's standing rules for the company", () => {
     const tool = (id: string, input: unknown) => () => [
       {

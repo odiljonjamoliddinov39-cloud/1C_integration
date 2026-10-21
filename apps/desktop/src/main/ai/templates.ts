@@ -256,8 +256,9 @@ export function matchTemplate(
       const phraseStems = words(phrase)
         .filter((w) => !FILLER.has(w))
         .map(stem);
-      // One word is too little to tell questions apart.
-      if (phraseStems.length < 2) continue;
+      // One word is too little to tell questions apart, except in a phrase an admin wrote on purpose
+      // ("выручка", "debitorka"): the question must still say that word and nothing else of meaning.
+      if (phraseStems.length < 2 && !(template.source === "admin" && phraseStems.length === 1)) continue;
       const restStems = rest.filter((w) => !FILLER.has(w)).map(stem);
       if (!phraseStems.every((s) => restStems.includes(s))) continue;
       let counterparty: TemplateMatch["counterparty"];
