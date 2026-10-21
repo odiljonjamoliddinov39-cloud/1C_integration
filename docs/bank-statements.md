@@ -166,3 +166,31 @@ currency). `bank/ledger.ts` reads them together, in whole tiyin, with no AI, bef
 - **One run**: with no `file`, every attached statement is handled in one run and one card; answers to what could not
   be settled carry the file. What cannot be settled comes back with each row's date, amount, name and purpose.
 - A statement of a few payments that names its own account is read by the program too (it is one account of several).
+
+## What is missing is said at once
+
+The moment the first look at the statement is done (before any card, before any model step) the accountant gets a
+list, in the language of the last message: the counterparties and contracts 1C lacks, and the rows the program cannot
+settle with the reason and the count (`bank/gaps.ts`). The model is told (`alreadyShownToAccountant`) not to list them
+again. Counterparties and contracts are then offered for creation on cards, as before.
+
+## A base with no posted payments (found in a real 2024 run)
+
+A year of statements into a fresh base took ~85 minutes and the month's AI budget: only 20 payments had an earlier
+posted document to copy, the model typed the rest (163 bank fees among them) in batches, and the 348-document posting
+result was cut by the result limit so that its failures were never seen. Fixed:
+
+- **Templates may be unposted.** The earlier payment is looked for among documents not marked for deletion, the posted
+  ones first. Documents the program made a moment ago are templates for the rest.
+- **Looked at again at once.** After a card is applied, the rows that had no template are resolved again (up to three
+  passes, no model step between), each pass on the documents the previous one made.
+- **A rate of 0 is soums.** A soum document whose settlement rate was never filled in (0) was refused as "in a foreign
+  currency (rate 0)"; it is now a soum document (124 rows in the run).
+- **Big batches show their failures first.** Over 30 documents the model gets the counts, the failures and the
+  refusals, then a sample, never the whole list.
+
+- **A payment in a currency with only soum payments in the base.** The program makes the first one itself from the
+  counterparty's (or, for a new one, the newest copyable) soum payment: the document currency is the currency item of
+  1C's catalog, the row carries the rate of the payment's day from 1C's rates, and the settlement is in the currency when
+  the contract is in it, otherwise in soums at the rate. It says so in a note (check the first document). Left to the
+  accountant: no rate of that day in 1C, no such currency item, or a contract in a third currency.

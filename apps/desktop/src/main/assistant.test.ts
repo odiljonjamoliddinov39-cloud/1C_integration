@@ -15,7 +15,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
-import { AssistantService, auditToCsv, createdState } from "./assistant.js";
+import { AssistantService, auditToCsv, compactBatch, createdState } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
 import { TraceLog } from "./ai/backfill.js";
 import { CostEngine } from "./ai/engine.js";
@@ -2506,6 +2506,11 @@ describe("assistant", () => {
         e.type === "confirm" && e.proposal.kind === "batch" ? [e.proposal] : [],
       );
       expect(cards.map((c) => c.items.length)).toEqual([1, 1, 5]);
+      // What is missing in 1C is said at once, before the first card.
+      const firstCard = events.findIndex((e) => e.type === "confirm");
+      const gaps = events.findIndex((e) => e.type === "text" && /Sam active group 786 mchj/.test(e.text));
+      expect(gaps).toBeGreaterThanOrEqual(0);
+      expect(gaps).toBeLessThan(firstCard);
       expect(cards.map((c) => c.items[0]?.object)).toEqual([
         "Справочник.Контрагенты",
         "Справочник.ДоговорыКонтрагентов",
@@ -4223,5 +4228,30 @@ describe("a receipt 1C would not post", () => {
   it("stays as it was for a receipt that is ready", () => {
     const result = createdState("Документ.ПоступлениеТоваровУслуг", { ok: true, data: made });
     expect(presentation(result)).toBe("0000-000055 · 2024-02-29");
+  });
+});
+
+describe("a batch of hundreds of documents", () => {
+  const state = (n: number, posted: boolean) => ({
+    n,
+    object: { object: "Документ.СписаниеСРасчетногоСчета", ref: `r${n}`, presentation: `№${n}`, posted },
+  });
+
+  it("is shown to the model as counts and the failures first, so a long list cannot cut them off", () => {
+    const applied = Array.from({ length: 345 }, (_, i) => state(i + 1, i % 2 === 0));
+    const failed = [{ n: 346, error: "WRITE_FAILED", message: "Не заполнено поле «Договор»" }];
+    const shown = compactBatch({ status: "done", applied, failed, refusedBefore: [] }) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(shown).slice(0, 4)).toEqual(["status", "counts", "failed", "refusedBefore"]);
+    expect(shown.counts).toEqual({ applied: 345, posted: 173, notPosted: 172 });
+    expect(shown.failed).toEqual(failed);
+    expect(JSON.stringify(shown).length).toBeLessThan(2000);
+  });
+
+  it("leaves a small batch as it is", () => {
+    const data = { status: "done", applied: [state(1, true)], failed: [] };
+    expect(compactBatch(data)).toBe(data);
   });
 });

@@ -139,11 +139,32 @@ describe("a payment on a foreign-currency account, copied from the counterparty'
   });
 });
 
-function deps(rates: Record<string, number> = { "840": 12_700.5 }) {
+describe("a soum document whose rate was never filled in", () => {
+  it("is a soum payment (rate 0), not a foreign one: it can be copied", () => {
+    const doc = uzsDoc();
+    const row = doc.tables.РасшифровкаПлатежа[0];
+    if (row) row.КурсВзаиморасчетов = 0;
+    const made = copyTemplate(
+      { object: "Документ.СписаниеСРасчетногоСчета", ref: DOC_UZS, ...doc },
+      payment(),
+      {
+        ownAccount: OWN,
+      },
+    );
+    expect(made.ok).toBe(true);
+  });
+});
+
+const USD_ITEM = "99999999-9999-4999-8999-999999999990";
+
+function deps(
+  rates: Record<string, number> = { "840": 12_700.5 },
+  options: { onlySoums?: boolean; contractIn?: string } = {},
+) {
   const seen: string[] = [];
   const docs = [
     { ref: DOC_UZS, snapshot: uzsDoc() }, // the newest, in soums
-    { ref: DOC_USD, snapshot: usdDoc() },
+    ...(options.onlySoums ? [] : [{ ref: DOC_USD, snapshot: usdDoc() }]),
   ];
   const d: BankDeps = {
     async query(input) {
@@ -154,6 +175,7 @@ function deps(rates: Record<string, number> = { "840": 12_700.5 }) {
         const rate = rates[String(input.params?.Код)];
         return rows(rate ? [[rate, 1]] : []);
       }
+      if (q.includes("Справочник.Валюты")) return rows([[ref("Справочник.Валюты", USD_ITEM, "Доллар США")]]);
       if (q.includes("Справочник.БанковскиеСчета") && q.includes("НомерСчета В"))
         return rows([[ref("Справочник.БанковскиеСчета", OWN, "USD")]]);
       if (q.includes("Справочник.Контрагенты"))
@@ -168,6 +190,15 @@ function deps(rates: Record<string, number> = { "840": 12_700.5 }) {
       return { ok: true, data: [] };
     },
     async getObject(object, id) {
+      if (object === "Справочник.ДоговорыКонтрагентов" && options.contractIn)
+        return {
+          ok: true,
+          data: {
+            object,
+            ref: id,
+            fields: { ВалютаВзаиморасчетов: ref("Справочник.Валюты", USD_ITEM, options.contractIn) },
+          },
+        };
       const found = docs.find((x) => x.ref === id);
       return found
         ? { ok: true, data: { object, ref: id, ...found.snapshot } }
@@ -220,5 +251,47 @@ describe("a foreign-currency statement", () => {
     const out = await resolvePayments(statement([payment({ amount: 700_000_000 })]), {}, deps().d);
     expect(out.problems).toEqual([]);
     expect(out.ready[0]?.change.fields?.ДоговорКонтрагента).toMatchObject({ ref: CONTRACT_UZS });
+  });
+});
+
+describe("the first payment in a currency, when the counterparty has only payments in soums", () => {
+  const onlySoums = { onlySoums: true };
+
+  it("is made by the program from the soum payment: the currency item, the rate of the day, settled in soums", async () => {
+    const { d } = deps(undefined, onlySoums);
+    const out = await resolvePayments(statement([payment()]), { currency: "USD" }, d);
+    expect(out.problems).toEqual([]);
+    const change = out.ready[0]?.change;
+    expect(change?.fields).toMatchObject({
+      ВалютаДокумента: { ref: USD_ITEM },
+      СуммаДокумента: 1200,
+    });
+    expect(change?.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СуммаПлатежа: 1200,
+      КурсВзаиморасчетов: 12_700.5,
+      СуммаВзаиморасчетов: 15_240_600,
+    });
+    expect(out.notes[0]?.message).toContain("made from the counterparty's payment in soums");
+  });
+
+  it("settles in the currency when the contract is in that currency", async () => {
+    const { d } = deps(undefined, { ...onlySoums, contractIn: "USD" });
+    const out = await resolvePayments(statement([payment()]), { currency: "USD" }, d);
+    expect(out.ready[0]?.change.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СуммаПлатежа: 1200,
+      КурсВзаиморасчетов: 1,
+      СуммаВзаиморасчетов: 1200,
+    });
+  });
+
+  it("leaves it to the accountant when 1C has no rate of the day, or the contract is in a third currency", async () => {
+    const noRate = deps({}, onlySoums);
+    const a = await resolvePayments(statement([payment()]), { currency: "USD" }, noRate.d);
+    expect(a.ready).toEqual([]);
+    expect(a.problems[0]?.message).toContain("rate");
+    const third = deps(undefined, { ...onlySoums, contractIn: "EUR" });
+    const b = await resolvePayments(statement([payment()]), { currency: "USD" }, third.d);
+    expect(b.ready).toEqual([]);
+    expect(b.problems[0]?.message).toContain("must be in USD");
   });
 });

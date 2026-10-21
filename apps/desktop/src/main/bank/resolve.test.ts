@@ -338,6 +338,19 @@ describe("bank payments for 1C", () => {
     ).toBe(true);
   });
 
+  it("looks for the earlier payment among unposted documents too, the posted ones first (a base the program has just filled)", async () => {
+    const { d, seen } = deps();
+    await resolvePayments(statement([payment()]), {}, d);
+    const asked = seen.filter(
+      (q) => /ИЗ Документ\.\S+ КАК Т ГДЕ/.test(q.query) && q.query.includes("НазначениеПлатежа"),
+    );
+    expect(asked.length).toBeGreaterThan(0);
+    for (const q of asked) {
+      expect(q.query).not.toContain("Т.Проведен И");
+      expect(q.query).toContain("УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ");
+    }
+  });
+
   it("copies a payment of the same kind for rows with no INN: acquiring and bank fees", async () => {
     const acquiring =
       "00634SmartVista - Выручка CRYSTAL WATER TRADE 483,610.84 сум с 12.10.2026 по 12.10.2026 ( TID 30061802)";

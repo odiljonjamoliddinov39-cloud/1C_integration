@@ -89,7 +89,7 @@ async function transferList(
   const refs: string[] = [];
   for (const kind of found.slice(0, 2)) {
     const list = await deps.query({
-      query: `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления И Т.ВидОперации = ЗНАЧЕНИЕ(${kind.value}) УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+      query: `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ НЕ Т.ПометкаУдаления И Т.ВидОперации = ЗНАЧЕНИЕ(${kind.value}) УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`,
       limit: 20,
       refs: true,
     });
