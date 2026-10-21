@@ -211,3 +211,19 @@ was told to load the rates by hand in 1C. Now:
   first payment (the rate in force on that day) to the last one. If the accountant declines, or the bank cannot be
   reached, `ratesNotLoaded` says why.
 - Documents in a currency entered before the rates were loaded take the rate when they are posted again.
+
+## Conversions between a soum and a currency account
+
+1C refuses «Перевод на другой счёт» when the receiving account is in another currency («валюта счета получателя не
+совпадает»), and the two legs of a conversion have different amounts anyway. The company's way (found in the real 2024
+run) is what the program now does, each leg a document of its own in its own currency (`bank/transfer.ts`):
+
+- the paying side: «Прочее списание» (to the transit account, 5710 in that base), copied from the company's earlier
+  document of that operation;
+- the receiving side: «Перевод с другого счёта», copied from the company's earlier one; a dollar receipt made from a
+  soum one takes the currency item of 1C's catalog and the rate of the day (from the rates loaded above).
+
+Unposted documents of those operations are templates too, so the first one is entered by hand once and the rest copy it.
+What the program cannot know is said: no document to copy, no rate of the day, no such currency in the catalog. The
+difference between the bank's rate and the Central Bank's stays as 1C posts it (the accountant closes it on the
+exchange-difference accounts); the note on each leg says so.

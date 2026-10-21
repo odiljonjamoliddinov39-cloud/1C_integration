@@ -15,6 +15,9 @@ const OUT_DOC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const OUT_OTHER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const IN_DOC = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const ORG = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const USD = "20208840300438330003";
+const REF_USD = "99999999-9999-4999-8999-999999999999";
+const USD_ITEM = "88888888-8888-4888-8888-888888888888";
 
 const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
 const account = (id: string, name = "р/с") => ref("Справочник.БанковскиеСчета", id, name);
@@ -91,6 +94,8 @@ interface World {
   /** account ref, day, amount in soums */
   existing?: [string, string, string, number][];
   kinds?: boolean;
+  /** Soums per dollar on the day, when 1C has a rate. */
+  rate?: number;
 }
 
 function deps(world: World = {}) {
@@ -117,6 +122,8 @@ function deps(world: World = {}) {
       const object = q.includes("СписаниеСРасчетногоСчета")
         ? "Документ.СписаниеСРасчетногоСчета"
         : "Документ.ПоступлениеНаРасчетныйСчет";
+      if (q.includes("КурсыВалют")) return rows(world.rate ? [[world.rate, 1]] : []);
+      if (q.includes("Справочник.Валюты")) return rows([[ref("Справочник.Валюты", USD_ITEM, "Доллар США")]]);
       if (q.includes("Справочник.БанковскиеСчета")) {
         return rows(
           (
@@ -146,6 +153,9 @@ function deps(world: World = {}) {
             "2026-08-01T00:00:00",
           ],
           [ref(enumType, "ОплатаПоставщику", "Оплата поставщику"), "2026-09-01T00:00:00"],
+          ...(object.includes("Списание")
+            ? [[ref(enumType, "ПрочееСписание", "Прочее списание"), "2026-08-15T00:00:00"]]
+            : []),
         ]);
       }
       if (q.includes("Т.ВидОперации = ЗНАЧЕНИЕ(")) {
@@ -282,10 +292,82 @@ describe("money moved between the company's own accounts", () => {
     expect(out.problems[0]?.message).toContain("no attribute for the other account");
   });
 
-  it("does not enter a conversion between a soum and a dollar account: the legs have different amounts", async () => {
-    const usd = "20208840300438330003";
-    const out = await run([move({ toAccount: usd, in: null })], {}, ["a.xlsx"]);
-    expect(out.ready).toEqual([]);
-    expect(out.problems[0]?.message).toContain("a conversion between UZS and USD accounts");
+  describe("a conversion between a soum account and a dollar account", () => {
+    // 1C refuses «Перевод на другой счёт» between accounts of two currencies: the company writes the soums off as
+    // «Прочее списание» and takes the dollars in as «Перевод с другого счёта», each in its own currency.
+    const writeOff = () =>
+      earlier("Документ.СписаниеСРасчетногоСчета", {
+        ВидОперации: ref(
+          "Перечисление.ВидыОперацийСписаниеДенежныхСредств",
+          "ПрочееСписание",
+          "Прочее списание",
+        ),
+        СчетПолучатель: undefined,
+      });
+    const takeIn = () =>
+      earlier("Документ.ПоступлениеНаРасчетныйСчет", {
+        ВалютаДокумента: ref("Справочник.Валюты", "77777777-7777-4777-8777-777777777777", "сум"),
+      });
+    const world = (over: Partial<World> = {}): World => ({
+      accounts: [
+        [A, REF_A],
+        [USD, REF_USD],
+      ],
+      rate: 12_700.5,
+      docs: [
+        { object: "Документ.СписаниеСРасчетногоСчета", ref: OUT_DOC, kind: "x", snapshot: writeOff() },
+        { object: "Документ.ПоступлениеНаРасчетныйСчет", ref: IN_DOC, kind: "x", snapshot: takeIn() },
+      ],
+      ...over,
+    });
+    const buy = move({
+      kind: "conversion",
+      toAccount: USD,
+      amount: 127_005_000,
+      out: { file: "a.xlsx", row: 5 },
+      in: { file: "c.xlsx", row: 3 },
+    });
+    const files = [
+      statement("a.xlsx", A, [payment({ row: 5, account: USD, amount: 127_005_000 })]),
+      statement("c.xlsx", USD, [
+        payment({ row: 3, direction: "in", account: A, amount: 10_000, purpose: "Конвертация" }),
+      ]),
+    ];
+    const resolve = (w: World) =>
+      resolveTransfers(
+        [buy],
+        files,
+        { ownInn: "300000001", files: new Set(["a.xlsx", "c.xlsx"]) },
+        deps(w).d,
+      );
+
+    it("is entered as a write-off in soums and a receipt in dollars, each leg in its own currency", async () => {
+      const out = await resolve(world());
+      expect(out.problems).toEqual([]);
+      const [debit, receipt] = out.ready;
+      expect(debit).toMatchObject({ side: "out", file: "a.xlsx" });
+      expect(debit?.change.fields).toMatchObject({
+        СуммаДокумента: 1_270_050,
+        ВидОперации: "ПрочееСписание",
+        БанковскийСчет: { ref: REF_A },
+      });
+      expect(receipt).toMatchObject({ side: "in", file: "c.xlsx" });
+      expect(receipt?.change.fields).toMatchObject({
+        СуммаДокумента: 100,
+        БанковскийСчет: { ref: REF_USD },
+        СчетПолучатель: { ref: REF_A },
+        ВалютаДокумента: { ref: USD_ITEM },
+      });
+      expect(out.notes.join(" ")).toContain("each leg is its own document in its own currency");
+    });
+
+    it("says what is missing instead of guessing: no write-off to copy, or no rate of the day", async () => {
+      const noWriteOff = await resolve(world({ docs: world().docs!.filter((d) => d.ref !== OUT_DOC) }));
+      expect(noWriteOff.ready.map((r) => r.side)).toEqual(["in"]);
+      expect(noWriteOff.problems[0]?.message).toContain("Прочее списание");
+      const noRate = await resolve(world({ rate: 0 }));
+      expect(noRate.ready.map((r) => r.side)).toEqual(["out"]);
+      expect(noRate.problems[0]?.message).toContain("rate");
+    });
   });
 });
