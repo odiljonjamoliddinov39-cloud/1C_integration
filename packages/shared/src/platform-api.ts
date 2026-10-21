@@ -46,6 +46,8 @@ export const ERROR_CODES = [
   "INTERNAL",
   // client
   "COM_UNAVAILABLE",
+  /** The COM connector (comcntr.dll) is not registered for this process; the app can register it. */
+  "COM_NOT_REGISTERED",
   "CONNECT_FAILED",
   "BAD_RESPONSE",
 ] as const;

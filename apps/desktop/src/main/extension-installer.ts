@@ -16,6 +16,7 @@ import { join, win32 } from "node:path";
 
 import type { ConnectionInput, Result } from "../shared/ipc.js";
 import { decodeText } from "./attachments.js";
+import { compareVersions } from "./com-register.js";
 
 export const EXTENSION_NAME = "PlatformAPI";
 /** A large file base can take a while to restructure. */
@@ -195,16 +196,6 @@ export async function findDesigner(
   );
   const newest = found.sort((a, b) => compareVersions(b.name, a.name))[0];
   return newest?.exe ?? null;
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < 4; i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
 }
 
 export function runDesigner(exe: string, args: string[]): Promise<{ code: number | null }> {

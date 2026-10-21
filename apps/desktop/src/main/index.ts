@@ -14,6 +14,12 @@ import type { ShrinkImage } from "./attachments.js";
 import { BillingState } from "./billing.js";
 import { TraceLog } from "./ai/backfill.js";
 import { ChatStore } from "./chats.js";
+import {
+  findComConnectors,
+  isComRegistered,
+  registerComConnector,
+  runRegsvr32Elevated,
+} from "./com-register.js";
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
@@ -176,6 +182,14 @@ void app.whenReady().then(async () => {
         findDesigner: () => findDesigner(),
         run: runDesigner,
       }),
+    registerComConnector: () =>
+      registerComConnector({
+        platform: process.platform,
+        arch: process.arch,
+        find: () => findComConnectors(),
+        register: runRegsvr32Elevated,
+        isRegistered: isComRegistered,
+      }),
     saveFile: async (defaultName, content) => {
       const result = await dialog.showSaveDialog({
         defaultPath: join(app.getPath("documents"), defaultName),
@@ -207,6 +221,7 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));
   ipcMain.handle(CHANNELS.removeCompany, (_e, id: unknown) => handlers.removeCompany(id));
   ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
+  ipcMain.handle(CHANNELS.registerCom, () => handlers.registerComConnector());
   ipcMain.handle(CHANNELS.installExtension, (_e, input: unknown) => handlers.installExtensionInto(input));
   ipcMain.handle(CHANNELS.billingGet, () => handlers.billing());
   ipcMain.handle(CHANNELS.billingRefresh, () => handlers.billingRefresh());

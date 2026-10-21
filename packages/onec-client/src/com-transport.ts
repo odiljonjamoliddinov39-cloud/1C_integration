@@ -63,7 +63,7 @@ export class ComTransport implements PlatformTransport {
       connector = new winax.Object(progId);
     } catch (e) {
       throw new OneCError(
-        "COM_UNAVAILABLE",
+        "COM_NOT_REGISTERED",
         `${progId} is not registered. As administrator run: regsvr32 "C:\\Program Files\\1cv8\\<version>\\bin\\comcntr.dll" ` +
           `(this process is ${process.arch}; the 1C platform must be the same bitness)`,
         { cause: comMessage(e) },

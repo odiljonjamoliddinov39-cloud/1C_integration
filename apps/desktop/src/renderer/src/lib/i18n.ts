@@ -373,6 +373,12 @@ const en = {
     installing: "Loading PlatformAPI into the 1C base (up to a minute)…",
     installHint:
       "The base opens, but it has no PlatformAPI extension yet. The app can load it itself; your configuration and data stay as they are.",
+    registerCom: "Fix automatically",
+    registeringCom: "Waiting for Windows approval…",
+    registerComHint:
+      "1C is installed on this PC without its COM connector (or only as a 32-bit platform), so the app cannot talk to it. The app can register the 64-bit connector itself.",
+    registerComConfirm:
+      "Register the 1C COM connector (regsvr32 on comcntr.dll)? Windows will ask for administrator approval. Nothing else on this PC changes.",
     installConfirm:
       "Load PlatformAPI into this 1C base? Only the app's extension changes. Close 1C and the Configurator for this base first, and use a 1C user with administrator rights.",
     connected: "Connected to {{config}} {{version}}, extension {{extension}}",
@@ -414,6 +420,14 @@ const en = {
   },
   errors: {
     COM_UNAVAILABLE: "The 1C COM connector is not available on this PC.",
+    COM_NOT_REGISTERED: "The 1C COM connector is not registered for this app.",
+    COM_REGISTER_UNSUPPORTED: "The 1C COM connector works on Windows only.",
+    COM_REGISTER_WRONG_BITNESS:
+      "Only a 32-bit 1C platform is installed, and this app is 64-bit: install the 64-bit 1C platform (the same version).",
+    COM_REGISTER_NO_PLATFORM:
+      "No 1C platform was found in Program Files: install 1C and tick «COM connector» in the installer.",
+    COM_REGISTER_DENIED: "Windows did not get administrator approval, so nothing was registered.",
+    COM_REGISTER_FAILED: "Windows could not register the 1C COM connector.",
     CONNECT_FAILED: "1C refused the connection.",
     NOT_FOUND: "The PlatformAPI extension is not installed in this infobase.",
     BAD_RESPONSE: "1C answered in an unexpected format (check the extension version).",
@@ -843,6 +857,12 @@ const ru: Dict = {
     installing: "Загружаем PlatformAPI в базу 1С (до минуты)…",
     installHint:
       "База открывается, но в ней ещё нет расширения PlatformAPI. Приложение может загрузить его само; конфигурация и данные не меняются.",
+    registerCom: "Исправить автоматически",
+    registeringCom: "Ждём подтверждения Windows…",
+    registerComHint:
+      "1С установлена на этом ПК без COM-соединения (или только 32-разрядная), поэтому приложение не может с ней работать. Приложение может само зарегистрировать 64-разрядный коннектор.",
+    registerComConfirm:
+      "Зарегистрировать COM-коннектор 1С (regsvr32 для comcntr.dll)? Windows запросит подтверждение администратора. Больше ничего на этом ПК не меняется.",
     installConfirm:
       "Загрузить PlatformAPI в эту базу 1С? Меняется только расширение приложения. Закройте 1С и Конфигуратор для этой базы и используйте пользователя 1С с правами администратора.",
     connected: "Подключено: {{config}} {{version}}, расширение {{extension}}",
@@ -884,6 +904,14 @@ const ru: Dict = {
   },
   errors: {
     COM_UNAVAILABLE: "COM-соединение 1С недоступно на этом ПК.",
+    COM_NOT_REGISTERED: "COM-коннектор 1С не зарегистрирован для этого приложения.",
+    COM_REGISTER_UNSUPPORTED: "COM-соединение 1С работает только в Windows.",
+    COM_REGISTER_WRONG_BITNESS:
+      "Установлена только 32-разрядная платформа 1С, а приложение 64-разрядное: установите 64-разрядную платформу 1С (той же версии).",
+    COM_REGISTER_NO_PLATFORM:
+      "Платформа 1С в Program Files не найдена: установите 1С и отметьте «Компонент COM-соединения» в установщике.",
+    COM_REGISTER_DENIED: "Windows не получила подтверждение администратора, ничего не зарегистрировано.",
+    COM_REGISTER_FAILED: "Windows не смогла зарегистрировать COM-коннектор 1С.",
     CONNECT_FAILED: "1С отказала в подключении.",
     NOT_FOUND: "В базе не установлено расширение PlatformAPI.",
     BAD_RESPONSE: "1С ответила в неожиданном формате (проверьте версию расширения).",
@@ -1316,6 +1344,12 @@ const uz: Dict = {
     installing: "PlatformAPI 1C bazasiga yuklanmoqda (bir daqiqagacha)…",
     installHint:
       "Baza ochiladi, lekin unda hali PlatformAPI kengaytmasi yoʻq. Dastur uni oʻzi yuklay oladi; konfiguratsiya va maʼlumotlar oʻzgarmaydi.",
+    registerCom: "Avtomatik tuzatish",
+    registeringCom: "Windows tasdiqlashini kutmoqda…",
+    registerComHint:
+      "Bu kompyuterda 1C COM ulanish komponentisiz (yoki faqat 32-bitli) oʻrnatilgan, shuning uchun dastur u bilan ishlay olmaydi. Dastur 64-bitli ulagichni oʻzi roʻyxatdan oʻtkaza oladi.",
+    registerComConfirm:
+      "1C COM ulagichini roʻyxatdan oʻtkazamizmi (comcntr.dll uchun regsvr32)? Windows administrator tasdigʻini soʻraydi. Kompyuterda boshqa hech narsa oʻzgarmaydi.",
     installConfirm:
       "PlatformAPI ni shu 1C bazasiga yuklaymizmi? Faqat dasturning kengaytmasi oʻzgaradi. Avval 1C va shu baza uchun Konfiguratorni yoping, administrator huquqli 1C foydalanuvchisidan foydalaning.",
     connected: "Ulandi: {{config}} {{version}}, kengaytma {{extension}}",
@@ -1357,6 +1391,14 @@ const uz: Dict = {
   },
   errors: {
     COM_UNAVAILABLE: "Ushbu kompyuterda 1C COM ulanishi mavjud emas.",
+    COM_NOT_REGISTERED: "1C COM ulagichi bu dastur uchun roʻyxatdan oʻtmagan.",
+    COM_REGISTER_UNSUPPORTED: "1C COM ulanishi faqat Windows'da ishlaydi.",
+    COM_REGISTER_WRONG_BITNESS:
+      "Faqat 32-bitli 1C platformasi oʻrnatilgan, dastur esa 64-bitli: 64-bitli 1C platformasini (xuddi shu versiya) oʻrnating.",
+    COM_REGISTER_NO_PLATFORM:
+      "Program Files'da 1C platformasi topilmadi: 1C ni oʻrnating va oʻrnatuvchida «COM ulanish komponenti» ni belgilang.",
+    COM_REGISTER_DENIED: "Windows administrator tasdigʻini olmadi, hech narsa roʻyxatdan oʻtmadi.",
+    COM_REGISTER_FAILED: "Windows 1C COM ulagichini roʻyxatdan oʻtkaza olmadi.",
     CONNECT_FAILED: "1C ulanishni rad etdi.",
     NOT_FOUND: "Bazada PlatformAPI kengaytmasi oʻrnatilmagan.",
     BAD_RESPONSE: "1C kutilmagan formatda javob berdi (kengaytma versiyasini tekshiring).",
