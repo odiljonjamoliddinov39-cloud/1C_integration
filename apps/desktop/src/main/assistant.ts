@@ -128,6 +128,9 @@ import type { LocalStore } from "./store.js";
  * takes (a whole bank statement with checks and cards). The user can stop it at any time. Before
  * the last turn the model is told to answer with what it has found.
  */
+/** Questions that are mostly entering documents the program reads (Didox, bank statements): cheaper thinking is enough. */
+const ENTRY_WORDS = /didox|дидокс|didoks|ko['ʻ’]?chirma|выписк|bank statement/i;
+
 /** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
 const MAX_TURNS = 60;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
@@ -361,7 +364,8 @@ export class AssistantService {
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
-          import: attached.blocks.length > 0,
+          // Files to enter, or a question about Didox or a bank statement: transcription, run at the import effort.
+          import: attached.blocks.length > 0 || ENTRY_WORDS.test(question),
           escalate: false,
           trace: new TraceBuilder(),
           bankRowReads: 0,
@@ -1991,12 +1995,71 @@ export class AssistantService {
    * counterparties, contracts and items up in 1C; what is certain goes on one card, and the model
    * is told only what it must settle, with candidates: it answers with references and calls again.
    */
+  /**
+   * How the lines are written: what the accountant decided before (kept for the company) with what they decided in this
+   * call on top. A decision made here is kept at once, so the next job applies it without being told.
+   */
+  private lineRules(companyId: string, input: DidoxInvoicesInput) {
+    const fresh = {
+      ...(input.vatRateMap?.length ? { vatRateMap: input.vatRateMap } : {}),
+      ...(input.accounts ? { accounts: input.accounts } : {}),
+      ...(input.accountRules?.length ? { accountRules: input.accountRules } : {}),
+    };
+    if (Object.keys(fresh).length > 0) {
+      this.deps.store.mergeBookkeeping(companyId, fresh);
+      for (const m of input.vatRateMap ?? [])
+        this.deps.store.addRule(
+          companyId,
+          `Didox lines of ${m.from}% VAT are written under the base's ${m.to}% rate`,
+        );
+      if (input.accounts?.goods)
+        this.deps.store.addRule(companyId, `Goods received are booked to account ${input.accounts.goods}`);
+      if (input.accounts?.service)
+        this.deps.store.addRule(
+          companyId,
+          `Services received are booked to account ${input.accounts.service}`,
+        );
+      for (const r of input.accountRules ?? [])
+        this.deps.store.addRule(
+          companyId,
+          `Lines named like «${r.match}» are booked to account ${r.account}`,
+        );
+    }
+    const held = this.deps.store.bookkeeping(companyId);
+    return {
+      ...(held.vatRateMap?.length
+        ? { vatRateMap: Object.fromEntries(held.vatRateMap.map((m) => [m.from, m.to])) }
+        : {}),
+      ...(held.accounts ? { accounts: held.accounts } : {}),
+      ...(held.accountRules?.length ? { accountRules: held.accountRules } : {}),
+    };
+  }
+
   private async proposeDidox(
     chat: StoredChat,
     input: DidoxInvoicesInput,
     emit: Emit,
     signal: AbortSignal,
   ): Promise<ToolResult> {
+    // A period: the documents are read from Didox here, in the same step, instead of by a step of the model first.
+    if (input.from || input.to) {
+      emit({
+        type: "tool",
+        name: "fetch_didox_documents",
+        detail: `${input.from ?? "…"} – ${input.to ?? "…"}`,
+      });
+      const got = await this.fetchDidox(
+        chat,
+        {
+          ...(input.from ? { from: input.from } : {}),
+          ...(input.to ? { to: input.to } : {}),
+          direction: "incoming",
+          limit: 300,
+        },
+        signal,
+      );
+      if (!got.ok) return got;
+    }
     const read = chat.didox ?? [];
     if (read.length === 0) {
       return {
@@ -2013,7 +2076,13 @@ export class AssistantService {
     // An invoice becomes a receipt and its received invoice; an act without an invoice, a receipt of services only.
     const postable = all.filter((d) => d.kind === "invoice" || d.kind === "act");
     const unknown = (input.documents ?? []).filter((key) => !postable.some((d) => didoxKey(d) === key));
-    const docs = postable.filter((d) => (!wanted || wanted.has(didoxKey(d))) && !done.has(didoxKey(d)));
+    const docs = postable.filter(
+      (d) =>
+        (!wanted || wanted.has(didoxKey(d))) &&
+        !done.has(didoxKey(d)) &&
+        (!input.from || d.date >= input.from) &&
+        (!input.to || d.date <= input.to),
+    );
     if (docs.length === 0) {
       return {
         ok: true,
@@ -2038,13 +2107,7 @@ export class AssistantService {
           counterparties: input.counterparties,
           contracts: input.contracts,
         },
-        rules: {
-          ...(input.vatRateMap?.length
-            ? { vatRateMap: Object.fromEntries(input.vatRateMap.map((m) => [m.from, m.to])) }
-            : {}),
-          ...(input.accounts ? { accounts: input.accounts } : {}),
-          ...(input.accountRules?.length ? { accountRules: input.accountRules } : {}),
-        },
+        rules: this.lineRules(chat.companyId, input),
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),

@@ -159,6 +159,18 @@ export const DidoxInvoicesInput = z.object({
   title: z.string().trim().min(1).max(200),
   /** Documents as the summary names them ("312318957/24"); absent: every one that is ready. */
   documents: z.array(z.string().min(1).max(80)).max(500).optional(),
+  /**
+   * A period (YYYY-MM-DD, by the documents' own dates) to read from Didox first: the app reads the incoming documents
+   * itself, applies the company's standing rules and makes the card, in one step. Absent: the documents already in the chat.
+   */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   /** The model's answers to what the app could not settle: an item for a line, a counterparty, a contract. */
   items: z
     .array(z.object({ document: z.string().min(1).max(80), line: z.number().int().min(1), ref: Ref }))

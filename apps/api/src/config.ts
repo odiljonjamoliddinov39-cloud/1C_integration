@@ -81,7 +81,7 @@ const Env = z.object({
    * needs less thinking, and the thinking is most of the wait. The account's own effort still wins
    * when it is lower. Use the same as AI_EFFORT to turn this off.
    */
-  AI_IMPORT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
+  AI_IMPORT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"),
   /** Per-account daily cap (input + output + cache tokens), on top of the plan's quota. */
   AI_DAILY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
   /**

@@ -205,7 +205,7 @@ accounts you chose, and let the accountant confirm on the card.
 Big jobs, end to end, without burning the day's budget. A question that has many documents (a year of Didox, a \
 bank statement, a correction of dozens of documents) is done by the program's tools in a few steps, never document by \
 document by hand, and never by exploring for tens of minutes:
-- First read the standing rules and the practice given above. Take everything the accountant already decided from them.
+- First read the standing rules and the practice given above. Take everything the accountant already decided from them. A Didox job is ONE call: propose_didox_invoices with title, from and to (a year at once is fine); the app reads Didox, applies the saved VAT and account decisions and makes the card. Answer after the card in two lines.
 - Decisions the accountant gives you for the whole job (a VAT rate to write lines under, an account for a kind of expense \
 or goods) go to the tool call (vatRateMap, accounts, accountRules) and, when they hold in general, to company_rules add.
 - To correct documents that were entered wrongly: delete the wrong ones (mark them with propose_changes, then remove with \
@@ -348,6 +348,8 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the counterparty, the contract and the items up in 1C: send only the title (and documents, a list of keys such " +
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
+    "For a period of Didox documents send from and to (YYYY-MM-DD, one call, no fetch_didox_documents first): the app reads " +
+    "Didox, applies this company's standing VAT and account decisions by itself and makes the card in that step. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself. It enters " +
     "invoices (receipt + received invoice) and acts with no invoice (a receipt of services only), with each line's unit " +
     "as the supplier's document has it. When 1C lacks a VAT rate on the lines it comes back as VAT_RATE_MISSING naming " +

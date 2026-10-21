@@ -45,6 +45,15 @@ interface StoredCompany {
   didox?: { baseUrl: string; serialNumber: string };
   /** What the accountant decided about how this company is booked ("12% is written under the base's 15%"), kept for every chat. */
   rules?: string[];
+  /** The accountant's decisions the program applies by itself when it writes documents from Didox. */
+  bookkeeping?: Bookkeeping;
+}
+
+/** How lines are written: a VAT rate under another the base has, and the ledger accounts. */
+export interface Bookkeeping {
+  vatRateMap?: { from: number; to: number }[];
+  accounts?: { goods?: string; service?: string };
+  accountRules?: { match: string; account: string }[];
 }
 
 /** Signed-in state. The refresh token is encrypted; the license token is signed, not secret. */
@@ -169,6 +178,31 @@ export class LocalStore {
     c.aiEnabled = enabled;
     this.save();
     return view(c);
+  }
+
+  bookkeeping(id: string): Bookkeeping {
+    return structuredClone(this.find(id).bookkeeping ?? {});
+  }
+
+  /** Keeps what the accountant decided for how lines are written; a later decision on the same thing replaces the earlier. */
+  mergeBookkeeping(id: string, add: Bookkeeping): Bookkeeping {
+    const c = this.find(id);
+    const held: Bookkeeping = c.bookkeeping ?? {};
+    const vat = new Map((held.vatRateMap ?? []).map((m) => [m.from, m.to]));
+    for (const m of add.vatRateMap ?? []) vat.set(m.from, m.to);
+    const rules = new Map((held.accountRules ?? []).map((r) => [r.match.toLowerCase(), r]));
+    for (const r of add.accountRules ?? []) rules.set(r.match.toLowerCase(), r);
+    const accounts = { ...held.accounts, ...add.accounts };
+    const next: Bookkeeping = {
+      ...(vat.size ? { vatRateMap: [...vat].map(([from, to]) => ({ from, to })) } : {}),
+      ...(Object.keys(accounts).length ? { accounts } : {}),
+      ...(rules.size ? { accountRules: [...rules.values()].slice(-MAX_RULES) } : {}),
+    };
+    if (JSON.stringify(next) !== JSON.stringify(held)) {
+      c.bookkeeping = next;
+      this.save();
+    }
+    return structuredClone(next);
   }
 
   /** The accountant's rules for this company, in the order they were given. */

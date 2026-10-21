@@ -634,6 +634,52 @@ describe("assistant", () => {
         expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
       });
 
+      it("reads the period from Didox itself in the same step, and keeps the VAT and account decisions it is given", async () => {
+        const entering = proposeThenAnswer("propose_didox_invoices", {
+          title: "Didox 2026-10",
+          from: "2026-10-01",
+          to: "2026-10-31",
+          vatRateMap: [{ from: 12, to: 15 }],
+          accountRules: [{ match: "аренд|rent", account: "9410" }],
+        });
+        const { assistant, store, company, proxy, server, base } = didoxSetup(entering);
+        const inn = base.organizations[0]!.inn;
+        server.documents = [
+          {
+            id: "a",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("1", "2026-10-09", "111111111", inn),
+          },
+          {
+            id: "b",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("2", "2026-09-09", "111111111", inn),
+          },
+        ];
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        await assistant.send({ companyId: company.id, text: "Didox 2026 oktyabr" });
+
+        // The documents of the period were read by the app, not by a step of the model; the other month is left out.
+        expect(server.requests.some((r) => r.url.pathname === "/v1/documents")).toBe(true);
+        const result = resultOf(proxy.requests) as { needsAttention?: { document: string }[] };
+        const documents = JSON.stringify(result);
+        expect(documents).toContain("111111111/1");
+        expect(documents).not.toContain("111111111/2");
+        // What the accountant decided is kept for the company, as settings and as a rule the model is shown.
+        expect(store.bookkeeping(company.id)).toEqual({
+          vatRateMap: [{ from: 12, to: 15 }],
+          accountRules: [{ match: "аренд|rent", account: "9410" }],
+        });
+        expect(store.rules(company.id)).toEqual([
+          "Didox lines of 12% VAT are written under the base's 15% rate",
+          "Lines named like «аренд|rent» are booked to account 9410",
+        ]);
+      });
+
       it("makes a letter a free-form draft in Didox, as a PDF, after the card is confirmed", async () => {
         const letter = proposeThenAnswer("propose_didox_document", {
           title: "Xat - NAVRO'Z-PTK",
