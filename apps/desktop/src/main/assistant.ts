@@ -162,6 +162,12 @@ const LAST_STEP_NOTE =
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
 const MAX_RESULT_CHARS = 60_000;
+
+/** Times a bank run looks again at its unsettled rows after entering some (each new document is a template for the rest). */
+const PROGRESS_ROUNDS = 3;
+
+/** A batch with more documents than this is shown to the model as counts, failures and a sample. */
+const BATCH_SAMPLE_FROM = 30;
 /** Sent with the results when a turn reached the output limit inside a tool call, which was not run. */
 const CUT_TOOL_NOTE =
   "Your last tool call reached the output limit and was cut off, so it was not run. Send it again in " +
@@ -2631,6 +2637,7 @@ export class AssistantService {
     input: BankPaymentsInput,
     emit: Emit,
     signal: AbortSignal,
+    pass = 0,
   ): Promise<ToolResult> {
     const statements = chat.bank ?? [];
     const named = input.file
@@ -2761,7 +2768,7 @@ export class AssistantService {
         results.push({ task, resolved });
       }
       // The gaps are told at once, before the cards: the accountant need not wait for the model to find them.
-      if (round === 0) {
+      if (round === 0 && pass === 0) {
         const told = gapsText(langOf(lastUserText(chat)), gapsOf(results.map((r) => r.resolved)));
         if (told) {
           emit({ type: "text", text: told });
@@ -2909,6 +2916,24 @@ export class AssistantService {
       }
       chat.bankDone = [...entered];
       this.save(chat);
+    }
+    // Rows that had no earlier document to copy may have one now: those just entered. Looked at again at once,
+    // with no step of the model between (a base with no posted payment otherwise costs a step per kind of payment).
+    const enteredNow = (data?.applied ?? []).length;
+    if (
+      pass < PROGRESS_ROUNDS &&
+      data?.status === "done" &&
+      enteredNow > 0 &&
+      problems.some((p) => p.code === "NO_TEMPLATE")
+    ) {
+      const next = await this.proposeBank(chat, input, emit, signal, pass + 1);
+      const more = next.ok ? (next.data as { enteredBefore?: number } | null) : null;
+      if (next.ok && more && (next.data as { status?: string }).status === "done") {
+        return {
+          ok: true,
+          data: { ...(next.data as object), enteredBefore: enteredNow + (more.enteredBefore ?? 0) },
+        };
+      }
     }
     const hasAttention = problems.length > 0 || moved.problems.length > 0;
     return {
@@ -3098,9 +3123,36 @@ function isDeclined(result: ToolResult): boolean {
   return result.ok && (result.data as { status?: unknown } | null)?.status === "declined_by_user";
 }
 
+/**
+ * A big batch (hundreds of documents) as the model sees it: the counts and what failed first, then a sample. The
+ * full list used to fill the result limit and cut the failures off, so that "nothing failed" and "the failures were
+ * cut" looked the same.
+ */
+export function compactBatch(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const { applied, ...rest } = data as { applied?: unknown } & Record<string, unknown>;
+  if (!Array.isArray(applied) || applied.length <= BATCH_SAMPLE_FROM) return data;
+  const states = applied as { n?: number; object?: { posted?: boolean; presentation?: string } }[];
+  const posted = states.filter((a) => a.object?.posted).length;
+  const { status, failed, refusedBefore, ...others } = rest;
+  return {
+    status,
+    counts: { applied: states.length, posted, notPosted: states.length - posted },
+    failed: failed ?? [],
+    refusedBefore: refusedBefore ?? [],
+    ...others,
+    appliedSample: [...states.slice(0, 3), ...states.slice(-2)].map((a) => ({
+      n: a.n,
+      presentation: a.object?.presentation,
+      posted: a.object?.posted,
+    })),
+  };
+}
+
 function toToolResult(toolUseId: string, result: ToolResult, text: string | null = null): AiContentBlock {
   const body =
-    text ?? JSON.stringify(result.ok ? result.data : { error: result.code, message: result.message });
+    text ??
+    JSON.stringify(result.ok ? compactBatch(result.data) : { error: result.code, message: result.message });
   const content =
     body.length > MAX_RESULT_CHARS
       ? `${body.slice(0, MAX_RESULT_CHARS)}… [cut: the result was ${body.length} characters; ask for fewer rows or columns]`

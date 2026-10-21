@@ -139,6 +139,22 @@ describe("a payment on a foreign-currency account, copied from the counterparty'
   });
 });
 
+describe("a soum document whose rate was never filled in", () => {
+  it("is a soum payment (rate 0), not a foreign one: it can be copied", () => {
+    const doc = uzsDoc();
+    const row = doc.tables.РасшифровкаПлатежа[0];
+    if (row) row.КурсВзаиморасчетов = 0;
+    const made = copyTemplate(
+      { object: "Документ.СписаниеСРасчетногоСчета", ref: DOC_UZS, ...doc },
+      payment(),
+      {
+        ownAccount: OWN,
+      },
+    );
+    expect(made.ok).toBe(true);
+  });
+});
+
 function deps(rates: Record<string, number> = { "840": 12_700.5 }) {
   const seen: string[] = [];
   const docs = [

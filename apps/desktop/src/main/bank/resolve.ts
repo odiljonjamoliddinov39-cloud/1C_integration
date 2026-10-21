@@ -221,6 +221,12 @@ export function refTo(existing: unknown, ref: string, fallbackType: string): { t
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
 
+/** The rate a document row carries: 0 is a rate that was never filled in, which is how a soum payment can be left. */
+const rateOfRow = (row: Record<string, unknown>) => {
+  const rate = parsePositive(row["КурсВзаиморасчетов"] ?? row["Курс"] ?? 1);
+  return rate === 0 ? 1 : rate;
+};
+
 /** The numeric and the letter code a currency has in 1C's catalog (it keeps one or the other). */
 const CURRENCY_CODES: Record<string, string[]> = {
   USD: ["840", "USD"],
@@ -267,7 +273,7 @@ function templateCurrency(template: Template): string | null {
   if (named) return named;
   for (const rows of Object.values(template.tables))
     for (const row of rows) {
-      const rate = parsePositive(row["КурсВзаиморасчетов"] ?? row["Курс"] ?? 1);
+      const rate = rateOfRow(row);
       if (rate !== 1 && Number.isFinite(rate)) return "foreign";
     }
   return null;
@@ -426,7 +432,7 @@ export function copyTemplate(
       };
     }
     const row = rows[0] ?? {};
-    const rate = parsePositive(row["КурсВзаиморасчетов"] ?? row["Курс"] ?? 1);
+    const rate = rateOfRow(row);
     if (rate !== 1 && !ctx.foreign) {
       return {
         ok: false,
@@ -1039,7 +1045,7 @@ export async function snapshot(
   return template;
 }
 
-/** Posted documents of a kind, newest first, with their purposes: of one counterparty (by INN or name), or the newest of all. */
+/** Documents of a kind, the posted ones first and then the newest (one the program itself made a moment ago is a template too, in a base with no posted one), with their purposes: of one counterparty (by INN or name), or the newest of all. */
 async function loadList(
   deps: BankDeps,
   cache: BankCache,
@@ -1051,8 +1057,8 @@ async function loadList(
   if (cached) return cached;
   const outcome = await deps.query({
     query: who
-      ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен И Т.Контрагент.${who.field} = &${who.field === "ИНН" ? "инн" : "имя"} УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`
-      : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ Т.Проведен УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+      ? `ВЫБРАТЬ ПЕРВЫЕ 20 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ НЕ Т.ПометкаУдаления И Т.Контрагент.${who.field} = &${who.field === "ИНН" ? "инн" : "имя"} УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`
+      : `ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.НазначениеПлатежа КАК Назначение ИЗ ${object} КАК Т ГДЕ НЕ Т.ПометкаУдаления УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`,
     ...(who ? { params: { [who.field === "ИНН" ? "инн" : "имя"]: who.value } } : {}),
     limit: who ? 20 : 300,
     refs: true,
