@@ -727,6 +727,49 @@ describe("assistant", () => {
         expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
       });
 
+      it("does not read the same period from Didox twice within minutes", async () => {
+        const call = (id: string) => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id,
+                name: "fetch_didox_documents",
+                input: { from: "2026-10-01", to: "2026-10-31", direction: "incoming" },
+              },
+            ],
+          },
+        ];
+        const { assistant, store, company, server, base } = didoxSetup([
+          () => call("f1"),
+          () => call("f2"),
+          () => [
+            { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+          ],
+        ]);
+        const inn = base.organizations[0]!.inn;
+        server.documents = [
+          {
+            id: "a",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("1", "2026-10-09", "111111111", inn),
+          },
+        ];
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        await assistant.send({ companyId: company.id, text: "Didoxdan ol" });
+        const lists = server.requests.filter(
+          (r) => r.url.pathname.includes("/documents") && r.method === "GET",
+        );
+        const afterFirst = lists.length;
+        expect(afterFirst).toBeGreaterThan(0);
+        // The second call reused the first read: the list was asked for once.
+        expect(new Set(lists.map((r) => r.url.search)).size).toBe(lists.length);
+      });
+
       it("reads the period from Didox itself in the same step, and keeps the VAT and account decisions it is given", async () => {
         const entering = proposeThenAnswer("propose_didox_invoices", {
           title: "Didox 2026-10",
@@ -4090,5 +4133,69 @@ describe("found by the simulations", () => {
     );
     expect(calls.length).toBeGreaterThan(0);
     expect(results.sort()).toEqual(calls.sort());
+  });
+});
+
+describe("speed of entering documents", () => {
+  const endTurn = (): AiEvent[] => [
+    { type: "text", text: "ok" },
+    { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+  ];
+
+  it("runs a whole chat that enters Didox documents at the import effort, whatever the words of each message", async () => {
+    const { assistant, store, company, proxy } = setup([() => endTurn(), () => endTurn(), () => endTurn()]);
+    store.setAiEnabled(company.id, true);
+    const chatId = "5c1f0b0e-3b1a-4d7e-9a55-0a1b2c3d4e5f";
+    // Uzbek in Cyrillic: the words the user really writes.
+    await assistant.send({
+      companyId: company.id,
+      chatId,
+      text: "Дидокдаги 2024 йилги ҳисоб-фактураларни кирит",
+    });
+    await assistant.send({ companyId: company.id, chatId, text: "ҳа, давом эт" });
+    expect(proxy.requests.map((r) => r.kind)).toEqual(["import", "import"]);
+    // Another chat is not affected.
+    await assistant.send({
+      companyId: company.id,
+      chatId: "7d2e1c1f-4c2b-4e8f-8b66-1b2c3d4e5f60",
+      text: "Qarzdorlar ro'yxati qanday?",
+    });
+    expect(proxy.requests[2]?.kind).toBeUndefined();
+  });
+
+  it("leaves a catalog item made on the way out of the documents that 'post them' means", async () => {
+    const { assistant, store, company, events, proxy } = setup([
+      () => [
+        {
+          type: "message",
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "p1",
+              name: "propose_change",
+              input: { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "A" } },
+            },
+          ],
+        },
+      ],
+      () => endTurn(),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    const chatId = "6e3f2d2a-5d3c-4f90-8c77-2c3d4e5f6071";
+    const sending = assistant.send({ companyId: company.id, chatId, text: "A ni qo'sh" });
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = events.find((e) => e.type === "confirm");
+        if (card?.type !== "confirm") return;
+        clearInterval(timer);
+        assistant.decide(card.companyId, card.id, true);
+        resolve();
+      }, 1);
+    });
+    await sending;
+    await assistant.send({ companyId: company.id, chatId, text: "?" });
+    expect(proxy.requests.at(-1)?.policy).toMatch(/nothing created here/);
   });
 });

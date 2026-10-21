@@ -103,6 +103,21 @@ settles it first, with no model step:
 A message that names an object, a period, a counterparty or a number ("проведи реализации за сентябрь") is a real
 request and goes to the model as before.
 
+## Why entering a year of Didox took an hour, and what was done
+
+A real session (Didox 2024 in Uzbek Cyrillic) took ~63 minutes: dozens of model steps at about a minute each, a read of
+the whole year of Didox again at each step, and receipts that 1C would not post rebuilt step by step. Fixed:
+
+- **The import effort is sticky.** `ENTRY_WORDS` knows Uzbek Cyrillic and Latin (дидок…, кўчирма, ҳисоб-фактура,
+  кирит…) and, once a chat begins entering documents (a word or a file), `chat.entry` keeps every follow-up message
+  ("ҳа", "давом эт") at the cheap import effort — before, only the first message was.
+- **"Post them" means documents.** A counterparty or an item made on the way is no longer in `chat.created`; the
+  invoices the program builds itself (received, issued) are, so a bare «проведи» posts them.
+- **A read of Didox is reused for five minutes** per company, direction and period (`readDidox`).
+- **1C's own reasons for not posting.** PlatformAPI 0.7.6 returns `POST_FAILED` with the messages 1C gave the user (a
+  missing balance, an empty field) instead of a bare "write failed", so the card and the model can fix the cause at
+  once. Update PlatformAPI from the app (the update button) to get it.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.

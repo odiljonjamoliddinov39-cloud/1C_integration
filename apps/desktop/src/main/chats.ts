@@ -40,6 +40,8 @@ export interface StoredChat extends ChatSummary {
   didoxDrafts?: { key: string; id: string }[];
   /** Documents this chat created in 1C and left unposted: what "post them" means. */
   created?: CreatedDocument[];
+  /** Entering documents (Didox, a statement, files) began in this chat: its next steps run at the import effort too. */
+  entry?: boolean;
   /** The options the app offered for a short message, waiting for the answer ("2", "all", a kind of document). */
   pending?: PendingChoice;
 }

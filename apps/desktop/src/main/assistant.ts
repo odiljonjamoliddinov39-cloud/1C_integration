@@ -144,7 +144,11 @@ import type { LocalStore } from "./store.js";
  * the last turn the model is told to answer with what it has found.
  */
 /** Questions that are mostly entering documents the program reads (Didox, bank statements): cheaper thinking is enough. */
-const ENTRY_WORDS = /didox|дидокс|didoks|ko['ʻ’]?chirma|выписк|bank statement/i;
+const ENTRY_WORDS =
+  /didox|дидокс|дидок|didoks|ko['ʻ’]?chirma|кўчирма|кучирма|выписк|bank statement|hisob[- ]?faktura|ҳисоб[- ]?фактура|счет[- ]?фактур|счёт[- ]?фактур|кирит|киргиз|kirit|вводи|внес[иё]|занеси|оприходуй/i;
+
+/** How long a read of Didox is reused (a re-read of a year takes minutes; documents signed meanwhile are rare). */
+const DIDOX_READ_TTL_MS = 5 * 60_000;
 
 /** Reads of 1C a question may make through the model; the program's own reads (tools) are not counted. */
 const READ_BUDGET = 40;
@@ -290,6 +294,11 @@ export class AssistantService {
   /** What was learned from each base about its nomenclature (which attribute holds the IKPU code). */
   private readonly resolverCache = new Map<string, ResolverCache>();
   private readonly salesCache = new Map<string, SalesCache>();
+  /** What Didox returned for a period a minute ago: a re-read of a whole year is minutes, and nothing changed since. */
+  private readonly didoxReads = new Map<
+    string,
+    { at: number; read: Awaited<ReturnType<typeof fetchDidoxDocuments>> }
+  >();
   /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
   private readonly timing = new Map<string, TaskTiming>();
 
@@ -406,11 +415,13 @@ export class AssistantService {
           }
         }
         if (attached.blocks.length > 0 && !asksToPost(question)) this.unposted.add(companyId);
+        // Once a chat starts entering documents, every follow-up ("Дидокдан 2024 ни ҳам кирит", "ҳа") is the same work.
+        if (attached.blocks.length > 0 || ENTRY_WORDS.test(question)) chat.entry = true;
         const run: Run = {
           policy: await this.engine.policy(),
           task: classifyTask(question, attached.blocks.length > 0),
           // Files to enter, or a question about Didox or a bank statement: transcription, run at the import effort.
-          import: attached.blocks.length > 0 || ENTRY_WORDS.test(question),
+          import: chat.entry === true,
           escalate: false,
           trace: new TraceBuilder(),
           bankRowReads: 0,
@@ -1374,7 +1385,9 @@ export class AssistantService {
         }
         entries.forEach((entry, i) => {
           const done = results[i];
-          if (entry.change?.action === "create" && done?.ok) this.noteCreated(chat, done.state);
+          // A document the program built (a received or issued invoice) is the chat's as much as one created by a change.
+          if ((entry.change?.action === "create" || !entry.change) && done?.ok)
+            this.noteCreated(chat, done.state);
         });
         return { ok: true, data: results };
       };
@@ -1697,6 +1710,23 @@ export class AssistantService {
    * Reads documents from Didox's API. The incoming ones (the company is the buyer) join the chat's Didox
    * documents, as attached files do; the outgoing ones are listed for comparing with 1C. Nothing is changed.
    */
+  private async readDidox(
+    companyId: string,
+    client: DidoxClient,
+    options: Parameters<typeof fetchDidoxDocuments>[1],
+    signal: AbortSignal,
+  ): Promise<Awaited<ReturnType<typeof fetchDidoxDocuments>>> {
+    const key = `${companyId}|${options.direction}|${options.from ?? ""}|${options.to ?? ""}|${options.limit ?? ""}`;
+    const kept = this.didoxReads.get(key);
+    if (kept && Date.now() - kept.at < DIDOX_READ_TTL_MS) return kept.read;
+    const read = await fetchDidoxDocuments(client, options, signal);
+    if (!signal.aborted) {
+      this.didoxReads.set(key, { at: Date.now(), read });
+      if (this.didoxReads.size > 20) this.didoxReads.delete(this.didoxReads.keys().next().value as string);
+    }
+    return read;
+  }
+
   private async fetchDidox(
     chat: StoredChat,
     input: FetchDidoxInput,
@@ -1718,7 +1748,8 @@ export class AssistantService {
     const to = input.to ?? today;
     let read: Awaited<ReturnType<typeof fetchDidoxDocuments>>;
     try {
-      read = await fetchDidoxDocuments(
+      read = await this.readDidox(
+        chat.companyId,
         client,
         { from, to, direction: input.direction ?? "incoming", limit: input.limit ?? 100 },
         signal,
@@ -2482,7 +2513,8 @@ export class AssistantService {
       }
       const today = new Date().toISOString().slice(0, 10);
       try {
-        const read = await fetchDidoxDocuments(
+        const read = await this.readDidox(
+          chat.companyId,
           client,
           {
             from: input.from ?? `${today.slice(0, 4)}-01-01`,
@@ -2888,7 +2920,8 @@ export class AssistantService {
 
   /** A document this chat created and left unposted, so that "post them" needs no list from the model. */
   private noteCreated(chat: StoredChat, state: ObjectState): void {
-    if (state.posted || !state.ref) return;
+    // Documents only: a counterparty or an item made on the way is not something to post.
+    if (state.posted || !state.ref || !state.object.startsWith("Документ.")) return;
     const list = (chat.created ?? []).filter((d) => d.ref !== state.ref);
     list.push({ object: state.object, ref: state.ref, presentation: state.presentation });
     chat.created = list.slice(-1000);
