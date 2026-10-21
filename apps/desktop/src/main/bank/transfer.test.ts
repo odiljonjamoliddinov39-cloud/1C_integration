@@ -307,6 +307,7 @@ describe("money moved between the company's own accounts", () => {
     const takeIn = () =>
       earlier("Документ.ПоступлениеНаРасчетныйСчет", {
         ВалютаДокумента: ref("Справочник.Валюты", "77777777-7777-4777-8777-777777777777", "сум"),
+        КурсДокумента: 1,
       });
     const world = (over: Partial<World> = {}): World => ({
       accounts: [
@@ -361,13 +362,52 @@ describe("money moved between the company's own accounts", () => {
       expect(out.notes.join(" ")).toContain("each leg is its own document in its own currency");
     });
 
+    it("books the dollar leg at the conversion's own rate (soums paid ÷ dollars received), so the two sides close", async () => {
+      // 1 285 000 soums paid for 100 dollars: 12 850, not the Central Bank's 12 700.50.
+      const files2 = [
+        statement("a.xlsx", A, [payment({ row: 5, account: USD, amount: 128_500_000 })]),
+        statement("c.xlsx", USD, [
+          payment({ row: 3, direction: "in", account: A, amount: 10_000, purpose: "Конвертация" }),
+        ]),
+      ];
+      const out = await resolveTransfers(
+        [{ ...buy, amount: 128_500_000 }],
+        files2,
+        { ownInn: "300000001", files: new Set(["a.xlsx", "c.xlsx"]) },
+        deps(world()).d,
+      );
+      expect(out.problems).toEqual([]);
+      const receipt = out.ready.find((r) => r.side === "in");
+      expect(receipt?.change.fields).toMatchObject({ КурсДокумента: 12_850, СуммаДокумента: 100 });
+      expect(out.notes.join(" ")).toContain("conversion's own rate");
+    });
+
+    it("keeps the Central Bank's rate for a leg whose other side is not attached or does not fit", async () => {
+      const out = await resolveTransfers(
+        [buy],
+        files,
+        { ownInn: "300000001", files: new Set(["c.xlsx"]) },
+        deps(world()).d,
+      );
+      expect(out.ready[0]?.change.fields).toMatchObject({ КурсДокумента: 12_700.5 });
+      expect(out.notes.join(" ")).not.toContain("conversion's own rate");
+    });
+
     it("says what is missing instead of guessing: no write-off to copy, or no rate of the day", async () => {
       const noWriteOff = await resolve(world({ docs: world().docs!.filter((d) => d.ref !== OUT_DOC) }));
       expect(noWriteOff.ready.map((r) => r.side)).toEqual(["in"]);
       expect(noWriteOff.problems[0]?.message).toContain("Прочее списание");
-      const noRate = await resolve(world({ rate: 0 }));
-      expect(noRate.ready.map((r) => r.side)).toEqual(["out"]);
-      expect(noRate.problems[0]?.message).toContain("rate");
+      // No Central Bank rate: a paired leg still has the conversion's own rate; a lone one has none.
+      const paired = await resolve(world({ rate: 0 }));
+      expect(paired.ready.map((r) => r.side)).toEqual(["out", "in"]);
+      const lone = await resolveTransfers(
+        [buy],
+        files,
+        { ownInn: "300000001", files: new Set(["c.xlsx"]) },
+        deps(world({ rate: 0 })).d,
+      );
+      expect(lone.ready).toEqual([]);
+      expect(lone.problems[0]?.message).toContain("rate");
     });
   });
 });

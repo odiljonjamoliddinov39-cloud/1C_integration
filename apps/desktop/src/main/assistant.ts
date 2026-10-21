@@ -1413,6 +1413,9 @@ export class AssistantService {
     } else if (tool === "propose_change") {
       const change = this.unpostedIfImport(companyId, input as ChangeInput);
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
+      if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+        return { ok: false, code: "BANK_ACCOUNT_NOT_CREATED", message: NO_BANK_ACCOUNTS };
+      }
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
       if (!preview.ok) return preview;
       const shown = preview.data as ChangePreview;
@@ -2206,6 +2209,18 @@ export class AssistantService {
           continue;
         }
         const change = this.unpostedIfImport(chatCompanyId, item.change);
+        if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+          entries.push({
+            item: {
+              action: change.action,
+              object: change.object,
+              preview: null,
+              error: { code: "BANK_ACCOUNT_NOT_CREATED", message: NO_BANK_ACCOUNTS },
+            },
+            apply: null,
+          });
+          continue;
+        }
         const preview = await this.deps.connector.tool(connection, "previewChange", change);
         const shown = preview.ok ? (preview.data as ChangePreview) : null;
         entries.push({
@@ -2920,6 +2935,10 @@ export class AssistantService {
       const currency = plan.accounts.find((a) => a.file === statement.fileName)?.currency ?? "";
       return [{ statement, prepared, rows, currency }];
     });
+    // The accounts in the order the accountant works them: the currency ones (dollar, then ruble), then the soum ones.
+    const rank = (currency: string) =>
+      ({ USD: 0, EUR: 1, RUB: 2 })[currency] ?? (currency && currency !== "UZS" ? 3 : 4);
+    tasks.sort((a, b) => rank(a.currency) - rank(b.currency));
     const ledger = describeLedger(plan, ledgerOptions);
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
@@ -3831,6 +3850,11 @@ function lastUserText(chat: StoredChat): string {
   }
   return "";
 }
+
+/** The bank accounts directory: the assistant never adds to it (the company's own accounts are few and known). */
+const BANK_ACCOUNTS = "Справочник.БанковскиеСчета";
+const NO_BANK_ACCOUNTS =
+  "The assistant does not create bank accounts: the company's own accounts (the main one, the block one, the dollar and the ruble ones) are already in 1C, and a counterparty's or a bank branch's account is not needed. Use one of the existing accounts, or tell the accountant which own account is missing so that they add it in 1C.";
 
 /** What follows once the rates are in 1C: the documents entered before them took no rate. */
 const RATES_NEXT =

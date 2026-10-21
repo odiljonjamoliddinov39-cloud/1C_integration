@@ -4409,3 +4409,34 @@ describe("exchange rates", () => {
     expect(days.at(-1)).toBe("2024-03-05");
   });
 });
+
+describe("bank accounts of the company", () => {
+  it("are never created by the assistant: a counterparty's or a branch's account is not needed", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "a1",
+              name: "propose_change",
+              input: {
+                action: "create",
+                object: "Справочник.БанковскиеСчета",
+                fields: { НомерСчета: "20214000505122905003", Наименование: "HAYOT BANK" },
+              },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Hisob och" });
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("BANK_ACCOUNT_NOT_CREATED");
+    expect([...t.base.objects.values()].some((o) => o.object === "Справочник.БанковскиеСчета")).toBe(false);
+  });
+});

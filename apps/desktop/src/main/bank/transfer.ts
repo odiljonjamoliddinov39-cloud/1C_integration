@@ -250,6 +250,42 @@ export async function resolveTransfers(
     }
   }
 
+  // A conversion is two legs on two statements, in two currencies. The currency leg is booked at the conversion's own
+  // rate (the soums paid ÷ the currency received), not the Central Bank's, so that the two sides close each other in
+  // the transit accounts; only the difference to the Central Bank's rate is an exchange difference, and 1C finds it
+  // when the month is revalued. At the bank's rate of the day the transit accounts keep a residue of each conversion.
+  const paymentOf = (leg: Leg) =>
+    statements.find((s) => s.fileName === leg.file)?.payments.find((p) => p.row === leg.row);
+  const isCross = (leg: Leg) => {
+    const a = currencyOfAccount(leg.own);
+    const b = currencyOfAccount(leg.other);
+    return a !== "" && b !== "" && a !== b;
+  };
+  const conversionRate = new Map<Leg, { rate: number; bank: number | null }>();
+  const soumLegs = legs.filter((l) => isCross(l) && currencyOfAccount(l.own) === "UZS");
+  const taken = new Set<Leg>();
+  for (const foreign of legs.filter((l) => isCross(l) && currencyOfAccount(l.own) !== "UZS")) {
+    const fp = paymentOf(foreign);
+    if (!fp || !(fp.amount > 0)) continue;
+    const bank = await rateOn(deps, cache, currencyOfAccount(foreign.own), day(fp.date));
+    let best: { soum: Leg; rate: number; score: number } | null = null;
+    for (const soum of soumLegs) {
+      if (taken.has(soum) || soum.own !== foreign.other || soum.other !== foreign.own) continue;
+      const sp = paymentOf(soum);
+      if (!sp) continue;
+      const gap = Math.abs(Date.parse(day(sp.date)) - Date.parse(day(fp.date))) / 86_400_000;
+      if (gap > 3) continue;
+      const rate = sp.amount / fp.amount;
+      if (bank !== null && Math.abs(rate / bank - 1) > 0.1) continue;
+      const score = gap * 1000 + (bank !== null ? Math.abs(rate / bank - 1) : 0);
+      if (!best || score < best.score) best = { soum, rate, score };
+    }
+    if (best) {
+      taken.add(best.soum);
+      conversionRate.set(foreign, { rate: Math.round(best.rate * 1e6) / 1e6, bank });
+    }
+  }
+
   for (const leg of legs) {
     const statement = statements.find((s) => s.fileName === leg.file);
     const payment: BankPayment | undefined = statement?.payments.find((p) => p.row === leg.row);
@@ -314,10 +350,15 @@ export async function resolveTransfers(
     }
     const context: CopyContext = { ownAccount: ownRef };
     if (cross && ownCurrency !== "UZS") {
+      const paired = conversionRate.get(leg);
       context.foreign = {
         currency: ownCurrency,
-        rate: await rateOn(deps, cache, ownCurrency, day(payment.date)),
+        rate: paired?.rate ?? (await rateOn(deps, cache, ownCurrency, day(payment.date))),
       };
+      if (paired) {
+        const note = `${ownCurrency} leg of a conversion booked at the conversion's own rate (the soums paid ÷ the ${ownCurrency} received), so that the two sides close each other in the transit accounts; the Central Bank's rate of the day is only for revaluing at the month's end`;
+        if (!result.notes.includes(note)) result.notes.push(note);
+      }
       if (!sameCurrency(template, ownCurrency)) {
         const convert = await conversionFor(deps, cache, ownCurrency, null);
         if (!convert) {
