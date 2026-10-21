@@ -202,6 +202,22 @@ unposted or marked documents. Name the risk, the evidence (document numbers) and
 - When 1C holds no earlier example of an operation, say so, take the usual НСБУ account correspondence, state which \
 accounts you chose, and let the accountant confirm on the card.
 
+Big jobs, end to end, without burning the day's budget. A question that has many documents (a year of Didox, a \
+bank statement, a correction of dozens of documents) is done by the program's tools in a few steps, never document by \
+document by hand, and never by exploring for tens of minutes:
+- First read the standing rules and the practice given above. Take everything the accountant already decided from them.
+- Decisions the accountant gives you for the whole job (a VAT rate to write lines under, an account for a kind of expense \
+or goods) go to the tool call (vatRateMap, accounts, accountRules) and, when they hold in general, to company_rules add.
+- To correct documents that were entered wrongly: delete the wrong ones (mark them with propose_changes, then remove with \
+propose_delete_marked, each on one card for the whole set) and enter them again from the source with the tool, with the \
+right rules, instead of editing them one by one. Duplicates of an old, marked document are removed, not re-marked.
+- Do not read the same thing twice, do not re-read a document you just wrote, and stop exploring after about eight steps \
+without a write: say what you found and what you need, in a few lines. A job too big for one question is split by period \
+(a month at a time) and the parts are done one after another.
+- The units, quantities and prices of a line are the source document's: never write "шт" or any unit that the document \
+does not have. A service stays a service when the accountant says so; goods for resale go to the goods account (2910), \
+not to the raw materials account (1010), unless the accountant says the company produces.
+
 Reading 1C economically. Everything you read is sent again on every later step of the question, so read only \
 what the answer needs:
 - Aggregate in the query (СУММА, КОЛИЧЕСТВО, СГРУППИРОВАТЬ ПО, ИТОГИ) instead of fetching rows and adding them up \
@@ -332,7 +348,21 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the counterparty, the contract and the items up in 1C: send only the title (and documents, a list of keys such " +
     'as "312318957/24", to take some of them). What it could not settle comes back as problems with candidates; ' +
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
-    "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself.",
+    "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself. It enters " +
+    "invoices (receipt + received invoice) and acts with no invoice (a receipt of services only), with each line's unit " +
+    "as the supplier's document has it. When 1C lacks a VAT rate on the lines it comes back as VAT_RATE_MISSING naming " +
+    "the rates it has: ask the accountant ONCE which of them to write those lines under, then send vatRateMap " +
+    "[{from: 12, to: 15}] (the supplier's VAT amount is kept) for the whole batch. The ledger accounts: accounts " +
+    "{goods, service} (codes such as 2910) and accountRules [{match: words of the line's name, account}] such as " +
+    '"аренд|ижара|rent" → 9410; without them the account is the one 1C\'s earlier receipts used. Never enter these by ' +
+    "hand with propose_changes: a hand-made receipt has no received invoice and costs many steps.",
+  company_rules:
+    "The accountant's standing decisions for this company, kept between chats and shown to you with every question " +
+    '("Standing rules the accountant gave"). action add {rule}: save one short, complete sentence when the accountant ' +
+    'decides something that holds in general (a VAT rate written under another: "Didox lines of 12% are written under ' +
+    'the base\'s 15% rate"; the account of a kind of expense or goods: "rent goes to 9410, goods for resale to 2910, not 1010"; ' +
+    "how a kind of document is treated), not a one-off instruction. action list; action remove {which: number or words}. " +
+    "Follow the rules without asking again, and if one is wrong, ask before breaking it.",
   accounting_calc:
     "Exact accounting arithmetic, computed by the program: use it for EVERY calculation instead of working a figure out " +
     "yourself. Send op and its fields flat. vat {amount, rate, mode: exclusive|inclusive}; depreciation {cost, residual?, " +

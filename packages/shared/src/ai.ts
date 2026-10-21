@@ -172,6 +172,31 @@ export const DidoxInvoicesInput = z.object({
     .array(z.object({ document: z.string().min(1).max(80), ref: Ref }))
     .max(500)
     .optional(),
+  /**
+   * A VAT rate the base does not have, entered under another it has: {from: 12, to: 15} writes the lines of 12% with
+   * the base's 15% rate and the VAT amount the supplier's document says. Only when the accountant decided so.
+   */
+  vatRateMap: z
+    .array(z.object({ from: z.number().min(0).max(100), to: z.number().min(0).max(100) }))
+    .max(10)
+    .optional(),
+  /** The ledger accounts (codes) the lines are booked to: by kind, and by words in the line's name (the first rule that fits). */
+  accounts: z
+    .object({
+      goods: z.string().trim().min(1).max(20).optional(),
+      service: z.string().trim().min(1).max(20).optional(),
+    })
+    .optional(),
+  accountRules: z
+    .array(
+      z.object({
+        /** Words of the line's name, any of them (case does not matter): "аренда|ижара|rent". */
+        match: z.string().trim().min(1).max(200),
+        account: z.string().trim().min(1).max(20),
+      }),
+    )
+    .max(40)
+    .optional(),
 });
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
@@ -352,6 +377,19 @@ export const ACCOUNTING_CALC_OPS = [
   "allocate",
 ] as const;
 export const AccountingCalcTool = z.looseObject({ op: z.enum(ACCOUNTING_CALC_OPS) });
+
+/**
+ * The accountant's standing decisions for this company, kept between chats and sent with every question: a VAT rate
+ * written under another, the ledger account of a kind of expense or goods, how a kind of document is treated.
+ */
+export const CompanyRulesInput = z.object({
+  action: z.enum(["list", "add", "remove"]),
+  /** For add: one short sentence, complete in itself ("Didox lines of 12% VAT are written under the base's 15% rate"). */
+  rule: z.string().trim().min(3).max(400).optional(),
+  /** For remove: the rule's number in the list, or words it has. */
+  which: z.union([z.number().int().min(1).max(100), z.string().trim().min(2).max(100)]).optional(),
+});
+export type CompanyRulesInput = z.infer<typeof CompanyRulesInput>;
 
 /**
  * Documents read from Didox itself (its API, no files): the period by the document's own date. Reads only.
@@ -592,6 +630,7 @@ export const AI_TOOLS = {
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
   accounting_calc: AccountingCalcTool,
+  company_rules: CompanyRulesInput,
   check_changes: CheckChangesInput,
   propose_change: ChangeInput,
   propose_changes: ChangeBatchInput,
@@ -634,6 +673,7 @@ export const AI_LOCAL_TOOLS = [
   "fetch_didox_documents",
   "learn_accounting_policy",
   "accounting_calc",
+  "company_rules",
   "report_findings",
   "check_changes",
 ] as const;

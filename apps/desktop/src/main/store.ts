@@ -22,6 +22,10 @@ export interface SecretBox {
   decrypt(encrypted: string): string;
 }
 
+/** The most rules kept per company, and how long one can be. */
+export const MAX_RULES = 40;
+const MAX_RULE_CHARS = 400;
+
 interface StoredCompany {
   id: string;
   backendCompanyId: string | null;
@@ -39,6 +43,8 @@ interface StoredCompany {
   aiEnabled?: boolean;
   /** How this company reaches Didox (the API address and the E-IMZO key to sign in with). */
   didox?: { baseUrl: string; serialNumber: string };
+  /** What the accountant decided about how this company is booked ("12% is written under the base's 15%"), kept for every chat. */
+  rules?: string[];
 }
 
 /** Signed-in state. The refresh token is encrypted; the license token is signed, not secret. */
@@ -163,6 +169,40 @@ export class LocalStore {
     c.aiEnabled = enabled;
     this.save();
     return view(c);
+  }
+
+  /** The accountant's rules for this company, in the order they were given. */
+  rules(id: string): string[] {
+    return [...(this.find(id).rules ?? [])];
+  }
+
+  /** Keeps a rule (a short sentence); the same one twice is kept once. Returns the rules now held. */
+  addRule(id: string, rule: string): string[] {
+    const c = this.find(id);
+    const text = rule.trim().replace(/\s+/g, " ").slice(0, MAX_RULE_CHARS);
+    const held = c.rules ?? [];
+    if (text && !held.some((r) => r.toLowerCase() === text.toLowerCase())) {
+      // The oldest goes when there are too many: the newest decision is the one the accountant just made.
+      c.rules = [...held, text].slice(-MAX_RULES);
+      this.save();
+    }
+    return [...(c.rules ?? [])];
+  }
+
+  /** Forgets the rule with this number (1 is the first), or the one that has these words. */
+  removeRule(id: string, which: number | string): string[] {
+    const c = this.find(id);
+    const held = c.rules ?? [];
+    const at =
+      typeof which === "number"
+        ? which - 1
+        : held.findIndex((r) => r.toLowerCase().includes(which.trim().toLowerCase()));
+    if (at >= 0 && at < held.length) {
+      c.rules = held.filter((_, i) => i !== at);
+      if (c.rules.length === 0) delete c.rules;
+      this.save();
+    }
+    return [...(c.rules ?? [])];
   }
 
   setDidox(id: string, didox: { baseUrl: string; serialNumber: string } | null): CompanyView {

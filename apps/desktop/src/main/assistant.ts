@@ -41,6 +41,7 @@ import {
   type ObjectSnapshot,
   type DidoxDraftInput,
   AccountingCalcInput,
+  type CompanyRulesInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
   type InvoiceIssuedPreview,
@@ -127,7 +128,8 @@ import type { LocalStore } from "./store.js";
  * takes (a whole bank statement with checks and cards). The user can stop it at any time. Before
  * the last turn the model is told to answer with what it has found.
  */
-const MAX_TURNS = 300;
+/** Model steps for one question: a job that needs more is split by the model into parts, not left to run for an hour. */
+const MAX_TURNS = 60;
 /** Sent with the tool results before the last turn, so a long check ends with an answer, not an error. */
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
@@ -572,9 +574,11 @@ export class AssistantService {
     const history = chat.messages;
     const maxTurns = this.deps.maxTurns ?? MAX_TURNS;
     // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
-    const { text: policy } = await this.policyOf(chat.companyId);
+    const learned = (await this.policyOf(chat.companyId)).text;
     for (let turn = 0; turn < maxTurns; turn++) {
       const stepStarted = Date.now();
+      // Read again each step: a rule the model has just saved is in force for the rest of this question.
+      const policy = this.practiceOf(chat.companyId, learned);
       const answer = await this.turnWithRetries(
         {
           company: companyName,
@@ -711,7 +715,7 @@ export class AssistantService {
     return this.task(companyId, chat, emit, async () => {
       const connection = this.deps.store.connection(companyId);
       const policy = await this.engine.policy();
-      const practice = (await this.policyOf(companyId)).text;
+      const practice = this.practiceOf(companyId, (await this.policyOf(companyId)).text);
       const queue = checks.map((check, i) => ({ check, state: view.checks[i] as AuditCheckView }));
       const worker = async () => {
         for (let next = queue.shift(); next && !abort.signal.aborted; next = queue.shift()) {
@@ -1041,6 +1045,21 @@ export class AssistantService {
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
     }
+    if (use.name === "company_rules") {
+      const ask = input.data as CompanyRulesInput;
+      let rules: string[];
+      if (ask.action === "add") {
+        if (!ask.rule) return { ok: false, code: "BAD_INPUT", message: "add needs the rule as one sentence" };
+        rules = this.deps.store.addRule(chat.companyId, ask.rule);
+      } else if (ask.action === "remove") {
+        if (ask.which === undefined)
+          return { ok: false, code: "BAD_INPUT", message: "remove needs the rule's number or words in it" };
+        rules = this.deps.store.removeRule(chat.companyId, ask.which);
+      } else {
+        rules = this.deps.store.rules(chat.companyId);
+      }
+      return { ok: true, data: { rules: rules.map((r, i) => `${i + 1}. ${r}`) } };
+    }
     if (use.name === "accounting_calc") {
       const checked = AccountingCalcInput.safeParse(input.data);
       if (!checked.success) {
@@ -1322,6 +1341,24 @@ export class AssistantService {
   }
 
   /** What 1C says about how the company works: bank accounts and their use, transfer kinds, the policy register. */
+  /** What the model is told about this company: the accountant's standing rules first, then what was learned from 1C. */
+  private practiceOf(companyId: string, learned: string): string {
+    const kept = this.deps.store.rules(companyId);
+    // The newest rules that fit; they are the accountant's decisions, so they are never the part that is cut.
+    const lines: string[] = [];
+    let size = 0;
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const line = `${i + 1}. ${kept[i]}`;
+      if (size + line.length > 3500) break;
+      lines.unshift(line);
+      size += line.length + 1;
+    }
+    const rules = lines.length
+      ? `Standing rules the accountant gave for this company (follow them, do not ask again, and do not contradict them):\n${lines.join("\n")}`
+      : "";
+    return [rules, learned].filter(Boolean).join("\n\n").slice(0, 12_000);
+  }
+
   private policyOf(companyId: string, force = false) {
     if (this.deps.learnPolicy === false) return Promise.resolve({ policy: null, text: "" });
     const connection = this.deps.store.connection(companyId);
@@ -1973,9 +2010,8 @@ export class AssistantService {
     const done = new Set(chat.didoxDone ?? []);
     const wanted = input.documents ? new Set(input.documents) : null;
     const all = batchOf(read).postable;
-    const postable = all.filter((d) => d.kind === "invoice");
-    // An act without an invoice is a receipt of services, not a received invoice: the model enters it.
-    const actsOnly = all.filter((d) => d.kind === "act").map((d) => didoxKey(d));
+    // An invoice becomes a receipt and its received invoice; an act without an invoice, a receipt of services only.
+    const postable = all.filter((d) => d.kind === "invoice" || d.kind === "act");
     const unknown = (input.documents ?? []).filter((key) => !postable.some((d) => didoxKey(d) === key));
     const docs = postable.filter((d) => (!wanted || wanted.has(didoxKey(d))) && !done.has(didoxKey(d)));
     if (docs.length === 0) {
@@ -1985,7 +2021,6 @@ export class AssistantService {
           status: done.size > 0 ? "all_entered" : "nothing_to_enter",
           alreadyEntered: [...done],
           ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
-          ...(actsOnly.length > 0 ? { actsWithoutInvoice: actsOnly } : {}),
         },
       };
     }
@@ -2003,6 +2038,13 @@ export class AssistantService {
           counterparties: input.counterparties,
           contracts: input.contracts,
         },
+        rules: {
+          ...(input.vatRateMap?.length
+            ? { vatRateMap: Object.fromEntries(input.vatRateMap.map((m) => [m.from, m.to])) }
+            : {}),
+          ...(input.accounts ? { accounts: input.accounts } : {}),
+          ...(input.accountRules?.length ? { accountRules: input.accountRules } : {}),
+        },
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),
@@ -2014,12 +2056,6 @@ export class AssistantService {
     const attention = {
       needsAttention: summarizeProblems(resolved.problems),
       ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
-      ...(actsOnly.length > 0
-        ? {
-            actsWithoutInvoice: actsOnly,
-            actsNote: "Acts that have no invoice: enter each as a receipt of services.",
-          }
-        : {}),
     };
     if (resolved.ready.length === 0) {
       return {
@@ -2049,7 +2085,7 @@ export class AssistantService {
       chat.didoxDone = [...entered];
       this.save(chat);
     }
-    const hasAttention = resolved.problems.length > 0 || unknown.length > 0 || actsOnly.length > 0;
+    const hasAttention = resolved.problems.length > 0 || unknown.length > 0;
     return {
       ok: true,
       data: { ...(data ?? {}), ...(hasAttention ? { ...attention, next: DIDOX_NEXT } : {}) },
@@ -2516,6 +2552,7 @@ function describe(name: string, input: unknown): string {
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
   }
   if (name === "accounting_calc") return String((input as { op?: string }).op ?? "");
+  if (name === "company_rules") return String((input as { action?: string }).action ?? "");
   if (name === "fetch_didox_documents") {
     const read = input as FetchDidoxInput;
     return `${read.from ?? "…"} – ${read.to ?? "…"}${read.direction ? ` · ${read.direction}` : ""}`;

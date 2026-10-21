@@ -52,6 +52,8 @@ export class FakeDidox {
     /** The document itself (what `GET /v1/documents/{id}` gives); the list does not carry it. */
     json?: unknown;
     updated?: string;
+    /** The document's own date, when the list carries it. */
+    docdate?: string;
   }[] = [];
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();

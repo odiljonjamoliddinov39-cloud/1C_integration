@@ -77,6 +77,38 @@ describe("Didox documents read through the API", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("finds a month long past among the documents issued since, which must not use up the limit", async () => {
+    const { server, client } = setup();
+    // 150 documents of this year, newest first, then three of January 2024.
+    const recent = Array.from({ length: 150 }, (_, i) => ({
+      id: `n${i}`,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      updated: "2026-10-10 10:00:00",
+      docdate: "2026-10-09",
+      json: invoice(`N${i}`, "2026-10-09", "111111111", "302936161"),
+    }));
+    const january = ["1", "2", "3"].map((n) => ({
+      id: `j${n}`,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      updated: "2024-02-01 10:00:00",
+      docdate: "2024-01-31",
+      json: invoice(`J${n}`, "2024-01-31", "111111111", "302936161"),
+    }));
+    server.documents = [...recent, ...january];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2024-01-01",
+      to: "2024-01-31",
+      limit: 10,
+    });
+    expect(result.documents.map((d) => d.number)).toEqual(["J1", "J2", "J3"]);
+    expect(result.truncated).toBe(false);
+  });
+
   it("reads both directions, oldest first, and stops at the limit", async () => {
     const { server, client } = setup();
     server.documents = [

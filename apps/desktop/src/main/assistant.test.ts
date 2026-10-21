@@ -205,6 +205,62 @@ describe("assistant", () => {
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
   });
 
+  describe("the accountant's standing rules for the company", () => {
+    const tool = (id: string, input: unknown) => () => [
+      {
+        type: "message" as const,
+        stopReason: "tool_use",
+        content: [{ type: "tool_use", id, name: "company_rules", input }],
+      },
+    ];
+    const done = () => [
+      { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+    ];
+
+    it("keeps a rule the model saves, and shows it first in the next question's practice", async () => {
+      const t = setup([
+        tool("r1", { action: "add", rule: "Didox lines of 12% VAT are written under the base's 15% rate" }),
+        done,
+        done,
+      ]);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "12% is 15% here" });
+      expect(t.store.rules(t.company.id)).toEqual([
+        "Didox lines of 12% VAT are written under the base's 15% rate",
+      ]);
+      // The tool's answer shows the numbered list, and the same chat's next step already has the rule.
+      const result = JSON.stringify(t.proxy.requests[1]!.messages.at(-1));
+      expect(result).toContain("1. Didox lines of 12% VAT");
+      expect(t.proxy.requests[1]!.policy).toContain("Standing rules the accountant gave");
+      expect(t.proxy.requests[1]!.policy).toContain("written under the base's 15% rate");
+      // And a later chat of the same company has it too.
+      await t.assistant.send({
+        companyId: t.company.id,
+        chatId: "99999999-9999-4999-8999-999999999999",
+        text: "next",
+      });
+      expect(t.proxy.requests[2]!.policy).toContain("written under the base's 15% rate");
+    });
+
+    it("keeps one copy of the same rule, and forgets one by number or by its words", () => {
+      const t = setup([]);
+      t.store.addRule(t.company.id, "Rent goes to 9410");
+      t.store.addRule(t.company.id, "rent  goes to 9410");
+      t.store.addRule(t.company.id, "Goods for resale go to 2910");
+      expect(t.store.rules(t.company.id)).toEqual(["Rent goes to 9410", "Goods for resale go to 2910"]);
+      expect(t.store.removeRule(t.company.id, 1)).toEqual(["Goods for resale go to 2910"]);
+      expect(t.store.removeRule(t.company.id, "resale")).toEqual([]);
+      expect(t.store.removeRule(t.company.id, "nothing like it")).toEqual([]);
+    });
+
+    it("asks for what an add or a remove lacks", async () => {
+      const t = setup([tool("r1", { action: "add" }), done]);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "x" });
+      expect(JSON.stringify(t.proxy.requests[1]!.messages.at(-1))).toContain("add needs the rule");
+    });
+  });
+
   describe("how the company works", () => {
     const answer = (text: string) => () => [
       { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text }] },

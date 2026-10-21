@@ -109,6 +109,8 @@ interface World {
   items?: [string, string, string][];
   /** Items by name only: [name, ref]. */
   describe?: { name: string; synonym: string }[];
+  /** The VAT rates the base has, as it names them ("Без НДС", "15%"). */
+  vatRates?: string[];
 }
 
 function deps(world: World, calls: string[] = []): ResolverDeps {
@@ -126,6 +128,7 @@ function deps(world: World, calls: string[] = []): ResolverDeps {
     async query({ query, params }) {
       calls.push(query);
       const values = Object.values(params ?? {}).map(String);
+      if (query.includes("Перечисление.СтавкиНДС")) return ok((world.vatRates ?? []).map((name) => [name]));
       if (query.includes("Справочник.Контрагенты"))
         return ok(
           (world.counterparties ?? [])
@@ -227,8 +230,103 @@ describe("resolveDocuments", () => {
       total: 2056320,
       kind: "goods",
     });
-    // counterparties, contracts, names, codes: four queries for the whole batch, not one per line.
-    expect(calls).toHaveLength(4);
+    // counterparties, contracts, VAT rates, names, codes: five queries for the whole batch, not one per line.
+    expect(calls).toHaveLength(5);
+  });
+
+  describe("VAT rates, accounts and acts", () => {
+    const world = (): World => ({
+      counterparties: [NAVROZ],
+      contracts: [CONTRACT],
+      items: [["03401001002241001", "00000003-0000-4000-8000-000000000003", "Жидкое мыло CRISTAL 480 мл"]],
+      vatRates: ["Без НДС", "15%"],
+    });
+    const soap = () => [goods(1, "Жидкое мыло CRISTAL 480 мл", "03401001002241001", "270", "6800")];
+
+    it("asks once when the base lacks the rate on the lines, naming the rates it has", async () => {
+      const resolved = await resolveDocuments([doc("1", soap())], { companyInn: "303212825" }, deps(world()));
+      expect(resolved.ready).toEqual([]);
+      expect(resolved.problems).toEqual([
+        expect.objectContaining({
+          document: "201607534/1",
+          code: "VAT_RATE_MISSING",
+          message: expect.stringContaining("which this 1C does not have (it has 0%, 15%)"),
+        }),
+      ]);
+    });
+
+    it("writes a rate the base lacks under the rate the accountant chose, keeping the supplier's VAT amount", async () => {
+      const resolved = await resolveDocuments(
+        [doc("1", soap())],
+        { companyInn: "303212825", rules: { vatRateMap: { 12: 15 } } },
+        deps(world()),
+      );
+      expect(resolved.problems).toEqual([]);
+      expect(resolved.ready[0]?.draft.lines[0]).toMatchObject({
+        vatRate: 15,
+        vatAmount: 220_320,
+        total: 2_056_320,
+      });
+    });
+
+    it("books a line to the account its name or its kind asks for, and keeps the supplier's unit", async () => {
+      const lines = [
+        goods(1, "Жидкое мыло CRISTAL 480 мл", "03401001002241001", "270", "6800"),
+        { ...goods(2, "Аренда склада за ноябрь", "03401001002241001", "1", "100000"), packagename: "услуга" },
+      ];
+      const w = world();
+      w.items = [
+        ["03401001002241001", "00000003-0000-4000-8000-000000000003", "Жидкое мыло CRISTAL 480 мл"],
+        ["03401001002241001", "00000006-0000-4000-8000-000000000006", "Аренда склада за ноябрь"],
+      ];
+      const resolved = await resolveDocuments(
+        [doc("1", lines)],
+        {
+          companyInn: "303212825",
+          rules: {
+            vatRateMap: { 12: 15 },
+            accounts: { goods: "2910", service: "9430" },
+            accountRules: [{ match: "аренд|ижара|rent", account: "9410" }],
+          },
+        },
+        deps(w),
+      );
+      expect(resolved.problems).toEqual([]);
+      const [soapLine, rentLine] = resolved.ready[0]!.draft.lines;
+      expect(soapLine).toMatchObject({ kind: "goods", account: "2910", unit: "шт." });
+      expect(rentLine).toMatchObject({ kind: "service", account: "9410", unit: "услуга" });
+    });
+
+    it("takes an act with no invoice as a receipt of services without a received invoice", async () => {
+      const act = parseDidoxDocument({
+        actdoc: { actno: "7510", actdate: "2024-08-31" },
+        sellertin: "201607534",
+        sellername: "AIRPORTS CARGO",
+        buyertin: "303212825",
+        buyername: "CRYSTAL",
+        productlist: {
+          products: [
+            {
+              ordno: 1,
+              name: "Услуги по хранению",
+              count: "1",
+              summa: "1000",
+              totalsumwithoutvat: "1000",
+              vatrate: 0,
+              vatsum: 0,
+              totalsum: "1000",
+              catalogcode: "10701001001000000",
+            },
+          ],
+        },
+      })!;
+      const w = world();
+      w.items = [["10701001001000000", "00000007-0000-4000-8000-000000000007", "Услуги хранения"]];
+      const resolved = await resolveDocuments([act], { companyInn: "303212825" }, deps(w));
+      expect(resolved.problems).toEqual([]);
+      expect(resolved.ready[0]?.draft).toMatchObject({ withoutInvoice: true });
+      expect(resolved.ready[0]?.draft.lines[0]).toMatchObject({ kind: "service", vatRate: 0 });
+    });
   });
 
   it("leaves the documents of another company's base, with the reason", async () => {

@@ -32,7 +32,7 @@ export interface FetchResult {
 
 const PAGE = 100;
 /** Pages of one list read at most (the dates cannot always be asked of Didox, so this bounds the walk). */
-const MAX_PAGES = 30;
+const MAX_PAGES = 100;
 const PARALLEL = 4;
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -58,14 +58,18 @@ export function idOf(item: Record<string, unknown>): string {
   return "";
 }
 
-/** A YYYY-MM-DD date out of whatever date field a list entry has, or "". */
-function dayOf(item: Record<string, unknown>): string {
+/**
+ * A YYYY-MM-DD date out of whatever date field a list entry has, or "". `exact`: it is the document's own date
+ * (not the day it was last changed, which can be much later), so it can keep a document out of a period both ways.
+ */
+function dayOf(item: Record<string, unknown>): { day: string; exact: boolean } {
   for (const key of ["docdate", "doc_date", "date", "updated", "updatedAt"]) {
     const value = item[key];
     const match = typeof value === "string" ? /^(\d{4})-(\d{2})-(\d{2})/.exec(value) : null;
-    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+    if (match)
+      return { day: `${match[1]}-${match[2]}-${match[3]}`, exact: key === "docdate" || key === "doc_date" };
   }
-  return "";
+  return { day: "", exact: false };
 }
 
 /** The document JSON in a list entry or a details answer, however it is wrapped; null when there is none. */
@@ -122,12 +126,15 @@ export async function fetchDidoxDocuments(
       for (const item of items) {
         const id = idOf(item);
         if (!id || entries.has(id)) continue;
-        const day = dayOf(item);
+        const { day, exact } = dayOf(item);
         // Lists come newest first; an entry last changed before the period began is not read.
         if (day && options.from && day < options.from) {
           older += 1;
           continue;
         }
+        // A document dated after the period is not one of it, and must not use up the limit: a month two years back
+        // lies behind everything issued since.
+        if (exact && day && options.to && day > options.to) continue;
         entries.set(id, item);
       }
       if (items.length < PAGE || older === items.length) break;

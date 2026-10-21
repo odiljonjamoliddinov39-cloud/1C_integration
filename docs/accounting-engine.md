@@ -44,6 +44,23 @@ tax work, import, terminals, month and year end, analysis and audit procedures. 
 present a rate or deadline of the law as certain when it may have changed, and never invent a figure, an account
 or a counterparty.
 
+## Big jobs: a year of Didox documents, corrections
+
+- **Receipts by the program, not by the model.** `propose_didox_invoices` builds the receipt and its received invoice
+  for every document (invoices), and a receipt of services only for an act that has no invoice. Units, quantities and
+  prices are the supplier's lines'; the unit is never a guess.
+- **A VAT rate the base lacks** (a base set to 15% asked to take 2024's 12% documents) is found before any write:
+  `VAT_RATE_MISSING` names the rates the base has, the accountant decides once, and `vatRateMap` writes the lines under
+  the chosen rate with the supplier's own VAT amount.
+- **Ledger accounts** by kind (`accounts`: goods, service) and by words in the line's name (`accountRules`, e.g. rent
+  → 9410, goods for resale → 2910); PlatformAPI 0.7.5 sets the line's account (`account`) from the code.
+- **Standing rules** (`company_rules`): what the accountant decides for the company in general is kept, sent with
+  every question and followed without asking again.
+- **Months found among years**: the Didox list is read with the document's own date, so a month in 2024 is found
+  behind everything issued since, and what lies outside the period does not use up the limit.
+- **A step cap** (60 per question) and a recipe in the prompt: correct by deleting the wrong documents and entering them
+  again with the tool and the right rules, not by editing one by one; stop exploring after about eight steps without a write.
+
 ## Not done
 
 - Entering transfers between own accounts and currency conversions as 1C documents (they are reported with how 1C records them).
