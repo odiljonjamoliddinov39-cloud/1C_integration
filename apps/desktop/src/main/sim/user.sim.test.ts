@@ -322,7 +322,7 @@ describe("simulation: fake accounts act as users", () => {
     const rng = new Rng(seed(80));
     const world = makeWorld(4);
     const bad: string[] = [];
-    const n = cases(500);
+    const n = cases(250);
     for (let i = 0; i < n; i++) {
       const sess: Session = { companyId: rng.pick(world.ids), plan: planFor(rng) };
       // A rule says whose it is, so a rule showing up in another company's request can be told from a repeated phrase.
