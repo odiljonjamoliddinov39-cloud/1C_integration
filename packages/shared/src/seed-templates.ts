@@ -54,7 +54,8 @@ const turnoverBy = (prefix: string) =>
   `ГДЕ ПОДСТРОКА(Т.Счет.Код, 1, 2) = "${prefix}" ` +
   `СГРУППИРОВАТЬ ПО Т.Счет.Код, Т.Счет.Наименование УПОРЯДОЧИТЬ ПО Счет`;
 
-const DOC_KINDS: [string, string][] = [
+/** The main kinds of documents the seeded questions and the posting helper work on: title as 1C shows it, object name. */
+export const DOC_KINDS: [string, string][] = [
   ["Поступление товаров и услуг", "ПоступлениеТоваровУслуг"],
   ["Реализация товаров и услуг", "РеализацияТоваровУслуг"],
   ["Счёт-фактура выданный", "СчетФактураВыданный"],

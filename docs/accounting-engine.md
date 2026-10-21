@@ -84,8 +84,52 @@ The work is split in tiers, the cheapest that can do it first:
 
 The engine also learns new templates from finished questions (existing); the seed gives it a start on day one.
 
+## Knowing the task before searching (`router.ts`)
+
+A short message names a task but often not its object. A bare "проведи" / "proveden" / "o'tkaz" / "post them" used to
+go to the model as it was, and the model searched all of 1C and Didox for what might need posting. Now the program
+settles it first, with no model step:
+
+1. **This chat made documents and left them unposted** (`chat.created`): the posting card is made at once.
+2. **It made none**: one read (the seeded "unposted documents" query over the last two months) and the answer is a
+   numbered list: _1. all unposted (15) · 2. only «Поступление…» (12) · 3. only «Реализация…» (3) · 4. another period or
+   kind — say which_. The answer "2", "all", "да", "hammasi" or a word of the kind picks it (`readChoice`); the program
+   then finds those documents and puts them on one card. Options expire after six hours; any other message drops them.
+3. **Any other message** goes to the model with a "State of this chat" line (documents created and unposted, Didox
+   documents and files in the chat), and the prompt rule _know the task before you read anything_: a message that names
+   a task but not its object is answered by ONE question with 2–4 numbered options, never by a search of 1C and Didox;
+   a question about 1C documents does not start with Didox, nor the reverse.
+
+A message that names an object, a period, a counterparty or a number ("проведи реализации за сентябрь") is a real
+request and goes to the model as before.
+
+## Why entering a year of Didox took an hour, and what was done
+
+A real session (Didox 2024 in Uzbek Cyrillic) took ~63 minutes: dozens of model steps at about a minute each, a read of
+the whole year of Didox again at each step, and receipts that 1C would not post rebuilt step by step. Fixed:
+
+- **The import effort is sticky.** `ENTRY_WORDS` knows Uzbek Cyrillic and Latin (дидок…, кўчирма, ҳисоб-фактура,
+  кирит…) and, once a chat begins entering documents (a word or a file), `chat.entry` keeps every follow-up message
+  ("ҳа", "давом эт") at the cheap import effort — before, only the first message was.
+- **"Post them" means documents.** A counterparty or an item made on the way is no longer in `chat.created`; the
+  invoices the program builds itself (received, issued) are, so a bare «проведи» posts them.
+- **A read of Didox is reused for five minutes** per company, direction and period (`readDidox`).
+- **1C's own reasons for not posting.** PlatformAPI 0.7.6 returns `POST_FAILED` with the messages 1C gave the user (a
+  missing balance, an empty field) instead of a bare "write failed", so the card and the model can fix the cause at
+  once. Update PlatformAPI from the app (the update button) to get it.
+
+- **Receipts that 1C will post (PlatformAPI 0.7.7).** The builder takes the header and the line accounts from the
+  company's posted receipts (this supplier's first). In a base with none it used to leave them empty, and 1C refused
+  to post. Now the technical fields get the form's usual defaults (multiplicity and rate 1, advance offset
+  "Автоматически", the contract's currency or 860, the only warehouse, settlement accounts from the contract or the
+  standard 6010/4310), and the result says which were guessed (`defaults`). Right after saving, 1C's own
+  `ПроверитьЗаполнение` runs and what it finds unfilled comes back as `notReady`; the card shows
+  «NOT READY TO POST: …» and the model fixes the named fields in one card before «проведи». Line accounts are never
+  guessed: they come from the company's earlier documents, `accountRules`, or are named by `notReady`.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.
 - Pairing the two legs of a conversion between a soum and a currency account (different amounts, a rate) to enter it as a conversion document: it is reported with the reason.
+- Verified only against a fake 1C: the defaults of 0.7.7 and `ПроверитьЗаполнение` need the first real run.
 - Everything that copies the company's earlier documents (transfers, conversions in soums, sales, currency payments) was verified against a fake 1C: the attribute names of the real configuration decide the first real run.

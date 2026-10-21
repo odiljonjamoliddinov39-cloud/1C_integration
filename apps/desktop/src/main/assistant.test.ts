@@ -15,7 +15,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
-import { AssistantService, auditToCsv } from "./assistant.js";
+import { AssistantService, auditToCsv, createdState } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
 import { TraceLog } from "./ai/backfill.js";
 import { CostEngine } from "./ai/engine.js";
@@ -183,6 +183,8 @@ describe("assistant", () => {
     expect(proxy.requests[0]).toEqual({
       company: company.name,
       tools: CHAT_TOOLS,
+      // What the chat holds, so that a short message is read against it (here: nothing yet).
+      policy: expect.stringContaining("State of this chat"),
       // A short read of a figure: the proxy may give it to the cheaper model, when the policy has one.
       task: "lookup",
       messages: [{ role: "user", content: "5110 qoldig'i qancha?" }],
@@ -404,7 +406,10 @@ describe("assistant", () => {
         ok: true,
         data: null,
       });
-      expect(t.proxy.requests[0]!.policy).toBeUndefined();
+      // Nothing learned about the company: only the state of the chat is sent.
+      expect(t.proxy.requests[0]!.policy).toMatch(
+        /^State of this chat[^\n]*nothing created here, nothing attached\.$/,
+      );
     });
   });
 
@@ -720,6 +725,49 @@ describe("assistant", () => {
         );
         const saved = chats.load(company.id, chats.list(company.id)[0]!.id);
         expect(saved?.didox?.map((d) => d.number)).toEqual(["1"]);
+      });
+
+      it("does not read the same period from Didox twice within minutes", async () => {
+        const call = (id: string) => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id,
+                name: "fetch_didox_documents",
+                input: { from: "2026-10-01", to: "2026-10-31", direction: "incoming" },
+              },
+            ],
+          },
+        ];
+        const { assistant, store, company, server, base } = didoxSetup([
+          () => call("f1"),
+          () => call("f2"),
+          () => [
+            { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+          ],
+        ]);
+        const inn = base.organizations[0]!.inn;
+        server.documents = [
+          {
+            id: "a",
+            doctype: "002",
+            status: 3,
+            owner: 0,
+            json: factura("1", "2026-10-09", "111111111", inn),
+          },
+        ];
+        store.setDidox(company.id, { baseUrl: "https://didox.test/", serialNumber: "5A3C0F11" });
+        await assistant.send({ companyId: company.id, text: "Didoxdan ol" });
+        const lists = server.requests.filter(
+          (r) => r.url.pathname.includes("/documents") && r.method === "GET",
+        );
+        const afterFirst = lists.length;
+        expect(afterFirst).toBeGreaterThan(0);
+        // The second call reused the first read: the list was asked for once.
+        expect(new Set(lists.map((r) => r.url.search)).size).toBe(lists.length);
       });
 
       it("reads the period from Didox itself in the same step, and keeps the VAT and account decisions it is given", async () => {
@@ -2556,6 +2604,134 @@ describe("assistant", () => {
       expect(JSON.stringify(proxy.requests.at(-1)?.messages.at(-1))).toContain("nothing_to_post");
     });
 
+    it("a bare 'проведи' posts what the chat made, with no model step and no search", async () => {
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "c1",
+                name: "propose_changes",
+                input: {
+                  title: "2 ta to'lov",
+                  defaults: { action: "create", object: "Документ.СписаниеСРасчетногоСчета", post: false },
+                  changes: [
+                    { fields: { Номер: "A1", СуммаДокумента: 100 } },
+                    { fields: { Номер: "A2", СуммаДокумента: 200 } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "end_turn",
+            content: [{ type: "text", text: "Kiritildi." }],
+          },
+        ],
+      ]);
+      store.setAiEnabled(company.id, true);
+      const approve = () => {
+        const answered = new Set<string>();
+        return setInterval(() => {
+          for (const e of events)
+            if (e.type === "confirm" && !answered.has(e.id)) {
+              answered.add(e.id);
+              assistant.decide(e.companyId, e.id, true);
+            }
+        }, 1);
+      };
+      let timer = approve();
+      await assistant.send({ companyId: company.id, text: "Kirit" });
+      clearInterval(timer);
+      const steps = proxy.requests.length;
+      const reads = () => base.calls.filter((c) => c.fn === "RunQuery").length;
+      const before = reads();
+      timer = approve();
+      const second = await assistant.send({ companyId: company.id, text: "проведи" });
+      clearInterval(timer);
+
+      expect(second).toEqual({ ok: true, data: null });
+      // The model was not asked, and 1C was not searched: the chat knew what to post.
+      expect(proxy.requests).toHaveLength(steps);
+      expect(reads()).toBe(before);
+      const documents = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.СписаниеСРасчетногоСчета",
+      );
+      expect(documents).toHaveLength(2);
+      expect(documents.every((d) => d.posted)).toBe(true);
+      const texts = events.filter((e) => e.type === "text").map((e) => (e.type === "text" ? e.text : ""));
+      expect(texts.at(-1)).toContain("проведено 2");
+    });
+
+    it("a bare 'проведи' in a chat that made nothing offers numbered options from one read, and '2' does it", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const sales = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      const { assistant, store, company, events, proxy, base } = setup([]);
+      for (const id of sales)
+        base.objects.set(id, {
+          object: "Документ.РеализацияТоваровУслуг",
+          fields: { Номер: id.slice(0, 4), Дата: "2026-10-05T00:00:00" },
+          tables: {},
+          posted: false,
+          deletionMark: false,
+          version: 1,
+        });
+      const rows = (list: (string | number | { type: string; ref: string; name: string })[][]) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
+      base.queryAnswers.unshift(
+        {
+          match: /КОЛИЧЕСТВО\(\*\) КАК Документов/,
+          answer: () =>
+            rows([
+              ["Реализация товаров и услуг", 3],
+              ["Поступление товаров и услуг", 12],
+            ]),
+        },
+        {
+          match: /ПЕРВЫЕ 301 Т\.Ссылка КАК Ссылка ИЗ Документ\.РеализацияТоваровУслуг/,
+          answer: () => rows(sales.map((id) => [ref("Документ.РеализацияТоваровУслуг", id, "продажа")])),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+
+      const first = await assistant.send({ companyId: company.id, text: "проведи" });
+      expect(first).toEqual({ ok: true, data: null });
+      const shown = events
+        .filter((e) => e.type === "text")
+        .map((e) => (e.type === "text" ? e.text : ""))
+        .join("");
+      expect(shown).toContain("1. Все непроведённые (15)");
+      expect(shown).toContain("2. Только «Поступление товаров и услуг» (12)");
+      expect(shown).toContain("3. Только «Реализация товаров и услуг» (3)");
+      expect(proxy.requests).toHaveLength(0);
+
+      const sending = assistant.send({ companyId: company.id, text: "реализации" });
+      await answerCards(events, assistant, true);
+      await sending;
+      expect(proxy.requests).toHaveLength(0);
+      expect(sales.every((id) => base.objects.get(id)?.posted === true)).toBe(true);
+    });
+
+    it("'проведи' with an object or a period is the model's, with the state of the chat", async () => {
+      const { assistant, store, company, proxy } = setup([
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "?" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "проведи реализации за сентябрь" });
+      expect(proxy.requests).toHaveLength(1);
+      expect(proxy.requests[0]?.policy).toContain("State of this chat");
+      expect(proxy.requests[0]?.policy).toContain("nothing created here, nothing attached");
+    });
+
     it("checks changes in 1C without a card when asked for a dry run", async () => {
       const { assistant, store, company, events, proxy, base } = setup(
         proposeThenAnswer("check_changes", {
@@ -3957,5 +4133,95 @@ describe("found by the simulations", () => {
     );
     expect(calls.length).toBeGreaterThan(0);
     expect(results.sort()).toEqual(calls.sort());
+  });
+});
+
+describe("speed of entering documents", () => {
+  const endTurn = (): AiEvent[] => [
+    { type: "text", text: "ok" },
+    { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+  ];
+
+  it("runs a whole chat that enters Didox documents at the import effort, whatever the words of each message", async () => {
+    const { assistant, store, company, proxy } = setup([() => endTurn(), () => endTurn(), () => endTurn()]);
+    store.setAiEnabled(company.id, true);
+    const chatId = "5c1f0b0e-3b1a-4d7e-9a55-0a1b2c3d4e5f";
+    // Uzbek in Cyrillic: the words the user really writes.
+    await assistant.send({
+      companyId: company.id,
+      chatId,
+      text: "Дидокдаги 2024 йилги ҳисоб-фактураларни кирит",
+    });
+    await assistant.send({ companyId: company.id, chatId, text: "ҳа, давом эт" });
+    expect(proxy.requests.map((r) => r.kind)).toEqual(["import", "import"]);
+    // Another chat is not affected.
+    await assistant.send({
+      companyId: company.id,
+      chatId: "7d2e1c1f-4c2b-4e8f-8b66-1b2c3d4e5f60",
+      text: "Qarzdorlar ro'yxati qanday?",
+    });
+    expect(proxy.requests[2]?.kind).toBeUndefined();
+  });
+
+  it("leaves a catalog item made on the way out of the documents that 'post them' means", async () => {
+    const { assistant, store, company, events, proxy } = setup([
+      () => [
+        {
+          type: "message",
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "p1",
+              name: "propose_change",
+              input: { action: "create", object: "Справочник.Контрагенты", fields: { Наименование: "A" } },
+            },
+          ],
+        },
+      ],
+      () => endTurn(),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    const chatId = "6e3f2d2a-5d3c-4f90-8c77-2c3d4e5f6071";
+    const sending = assistant.send({ companyId: company.id, chatId, text: "A ni qo'sh" });
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = events.find((e) => e.type === "confirm");
+        if (card?.type !== "confirm") return;
+        clearInterval(timer);
+        assistant.decide(card.companyId, card.id, true);
+        resolve();
+      }, 1);
+    });
+    await sending;
+    await assistant.send({ companyId: company.id, chatId, text: "?" });
+    expect(proxy.requests.at(-1)?.policy).toMatch(/nothing created here/);
+  });
+});
+
+describe("a receipt 1C would not post", () => {
+  const made = {
+    ref: "11111111-1111-4111-8111-111111111111",
+    number: "0000-000055",
+    date: "2024-02-29T12:00:00",
+    posted: false as const,
+    duplicate: false,
+  };
+
+  const presentation = (r: ReturnType<typeof createdState>) => (r && r.ok ? r.state.presentation : "");
+
+  it("says what is not filled and what was guessed, so the model fixes it before the posting card", () => {
+    const result = createdState("Документ.ПоступлениеТоваровУслуг", {
+      ok: true,
+      data: { ...made, notReady: "Не заполнено поле «Склад»", defaults: ["КурсВзаиморасчетов"] },
+    });
+    expect(presentation(result)).toContain("NOT READY TO POST: Не заполнено поле «Склад»");
+    expect(presentation(result)).toContain("filled by default: КурсВзаиморасчетов");
+  });
+
+  it("stays as it was for a receipt that is ready", () => {
+    const result = createdState("Документ.ПоступлениеТоваровУслуг", { ok: true, data: made });
+    expect(presentation(result)).toBe("0000-000055 · 2024-02-29");
   });
 });
