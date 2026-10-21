@@ -77,7 +77,7 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
  * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
  * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.7.6";
+export const EXTENSION_VERSION = "0.7.7";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
@@ -246,6 +246,10 @@ export const CreateInvoiceResult = z.object({
   invoice: z.object({ ref: Uuid, number: z.string() }).optional(),
   /** Why the invoice could not be made; the receipt is saved all the same. */
   invoiceError: z.string().optional(),
+  /** What 1C says is not filled in the saved receipt, i.e. why it would refuse to post it. */
+  notReady: z.string().optional(),
+  /** Header fields that nothing in the base could give and that were set to the form's usual defaults. */
+  defaults: z.array(z.string()).optional(),
 });
 export type CreateInvoiceResult = z.infer<typeof CreateInvoiceResult>;
 

@@ -15,7 +15,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
-import { AssistantService, auditToCsv } from "./assistant.js";
+import { AssistantService, auditToCsv, createdState } from "./assistant.js";
 import type { AuditCheck } from "./audit-checks.js";
 import { TraceLog } from "./ai/backfill.js";
 import { CostEngine } from "./ai/engine.js";
@@ -4197,5 +4197,31 @@ describe("speed of entering documents", () => {
     await sending;
     await assistant.send({ companyId: company.id, chatId, text: "?" });
     expect(proxy.requests.at(-1)?.policy).toMatch(/nothing created here/);
+  });
+});
+
+describe("a receipt 1C would not post", () => {
+  const made = {
+    ref: "11111111-1111-4111-8111-111111111111",
+    number: "0000-000055",
+    date: "2024-02-29T12:00:00",
+    posted: false as const,
+    duplicate: false,
+  };
+
+  const presentation = (r: ReturnType<typeof createdState>) => (r && r.ok ? r.state.presentation : "");
+
+  it("says what is not filled and what was guessed, so the model fixes it before the posting card", () => {
+    const result = createdState("Документ.ПоступлениеТоваровУслуг", {
+      ok: true,
+      data: { ...made, notReady: "Не заполнено поле «Склад»", defaults: ["КурсВзаиморасчетов"] },
+    });
+    expect(presentation(result)).toContain("NOT READY TO POST: Не заполнено поле «Склад»");
+    expect(presentation(result)).toContain("filled by default: КурсВзаиморасчетов");
+  });
+
+  it("stays as it was for a receipt that is ready", () => {
+    const result = createdState("Документ.ПоступлениеТоваровУслуг", { ok: true, data: made });
+    expect(presentation(result)).toBe("0000-000055 · 2024-02-29");
   });
 });

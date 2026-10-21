@@ -118,8 +118,18 @@ the whole year of Didox again at each step, and receipts that 1C would not post 
   missing balance, an empty field) instead of a bare "write failed", so the card and the model can fix the cause at
   once. Update PlatformAPI from the app (the update button) to get it.
 
+- **Receipts that 1C will post (PlatformAPI 0.7.7).** The builder takes the header and the line accounts from the
+  company's posted receipts (this supplier's first). In a base with none it used to leave them empty, and 1C refused
+  to post. Now the technical fields get the form's usual defaults (multiplicity and rate 1, advance offset
+  "Автоматически", the contract's currency or 860, the only warehouse, settlement accounts from the contract or the
+  standard 6010/4310), and the result says which were guessed (`defaults`). Right after saving, 1C's own
+  `ПроверитьЗаполнение` runs and what it finds unfilled comes back as `notReady`; the card shows
+  «NOT READY TO POST: …» and the model fixes the named fields in one card before «проведи». Line accounts are never
+  guessed: they come from the company's earlier documents, `accountRules`, or are named by `notReady`.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.
 - Pairing the two legs of a conversion between a soum and a currency account (different amounts, a rate) to enter it as a conversion document: it is reported with the reason.
+- Verified only against a fake 1C: the defaults of 0.7.7 and `ПроверитьЗаполнение` need the first real run.
 - Everything that copies the company's earlier documents (transfers, conversions in soums, sales, currency payments) was verified against a fake 1C: the attribute names of the real configuration decide the first real run.

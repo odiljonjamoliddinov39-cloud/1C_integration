@@ -3487,7 +3487,7 @@ function draftPreview(object: string, presentation: string, fields: [string, unk
   };
 }
 
-function createdState(object: string, result: ToolResult): BatchItemResult {
+export function createdState(object: string, result: ToolResult): BatchItemResult {
   if (!result.ok) return { ok: false, code: result.code, message: result.message };
   const document = result.data as CreateInvoiceResult;
   return {
@@ -3498,7 +3498,10 @@ function createdState(object: string, result: ToolResult): BatchItemResult {
       presentation:
         `${document.number} · ${document.date.slice(0, 10)}${document.duplicate ? " (already existed)" : ""}` +
         (document.invoice ? `; received invoice ${document.invoice.number} made, unposted` : "") +
-        (document.invoiceError ? `; received invoice NOT made: ${document.invoiceError}` : ""),
+        (document.invoiceError ? `; received invoice NOT made: ${document.invoiceError}` : "") +
+        // What 1C would refuse to post, known now: the accountant or the model fixes it before the posting card.
+        (document.notReady ? `; NOT READY TO POST: ${document.notReady}` : "") +
+        (document.defaults?.length ? `; filled by default: ${document.defaults.join(", ")}` : ""),
       posted: false,
       deletionMark: false,
       version: "",
