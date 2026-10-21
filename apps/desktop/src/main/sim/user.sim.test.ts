@@ -413,4 +413,49 @@ describe("simulation: fake accounts act as users", () => {
     expect(results).toHaveLength(70);
     expect(results.filter((r) => String(r.content).includes("READ_BUDGET"))).toHaveLength(30);
   });
+
+  it("stopping, and asking again while it answers, never corrupts the chat", async () => {
+    const rng = new Rng(seed(81));
+    const world = makeWorld(2);
+    const bad: string[] = [];
+    const n = cases(150);
+    for (let i = 0; i < n; i++) {
+      const companyId = rng.pick(world.ids);
+      world.current.plan = planFor(rng);
+      const from = world.events.length;
+      const before = world.requests.length;
+      const first = world.assistant.send({ companyId, text: `Question ${i}` });
+      // The user is impatient: a second question at once, a stop a moment later, or both.
+      let second: ReturnType<typeof world.assistant.send> | null = null;
+      if (rng.chance(0.5)) second = world.assistant.send({ companyId, text: `Impatient ${i}` });
+      if (rng.chance(0.5)) {
+        for (let k = rng.int(0, 5); k > 0; k--) await Promise.resolve();
+        world.assistant.stop(companyId);
+      }
+      const results = await Promise.all([first, ...(second ? [second] : [])]);
+      for (const r of results) {
+        if (!r.ok && !["BUSY", "AI_ABORTED", "AI_TOO_MANY_STEPS", "STOPPED"].includes(r.code))
+          bad.push(`#${i} unexpected ${r.code} ${r.message}`);
+      }
+      if (second && results[1] && results[1].ok === true)
+        bad.push(`#${i} a second question was answered while the first ran`);
+      const mine = world.events.slice(from).filter((e) => e.companyId === companyId);
+      const accepted = results.filter((r) => r.ok || r.code !== "BUSY").length;
+      const terminals = mine.filter((e) => e.type === "done" || e.type === "error").length;
+      // One end per question that ran, and one "busy" error for the one that did not.
+      if (terminals !== results.length)
+        bad.push(`#${i} ${terminals} terminal events for ${results.length} questions (${accepted} ran)`);
+      for (const r of world.requests.slice(before)) {
+        const problem = validConversation(r.input);
+        if (problem) bad.push(`#${i} invalid conversation: ${problem}`);
+      }
+      // Ready for the next: a plain question gets its answer.
+      world.current.plan = { steps: [], text: "ok" };
+      const next = await world.assistant.send({ companyId, text: `After ${i}` });
+      if (!next.ok) bad.push(`#${i} the next question failed: ${next.code}`);
+      if (rng.chance(0.2)) world.assistant.reset(companyId);
+      if (bad.length > 15) break;
+    }
+    expect(bad.slice(0, 8), `${bad.length} problems`).toEqual([]);
+  }, 120_000);
 });

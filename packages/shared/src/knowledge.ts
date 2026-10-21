@@ -579,29 +579,79 @@ const NOISE = new Set([
   "kerak",
 ]);
 
+/** Edit distance with a swap of neighbours counted as one edit (a typo is usually one of the four). */
+function distance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [
+    i,
+    ...Array<number>(b.length).fill(0),
+  ]);
+  for (let j = 0; j <= b.length; j++) (d[0] as number[])[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let best = Math.min(
+        (d[i - 1]?.[j] ?? 0) + 1,
+        (d[i]?.[j - 1] ?? 0) + 1,
+        (d[i - 1]?.[j - 1] ?? 0) + cost,
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+        best = Math.min(best, (d[i - 2]?.[j - 2] ?? 0) + 1);
+      (d[i] as number[])[j] = best;
+    }
+  }
+  return d[a.length]?.[b.length] ?? 0;
+}
+
+/** The word of a question is a topic word with one typo: a letter lost, doubled, swapped or replaced (endings aside). */
+function nearly(word: string, topicWord: string): boolean {
+  const t = topicWord.slice(0, 7);
+  if (t.length < 5 || word.length < t.length - 1) return false;
+  for (let length = t.length - 1; length <= Math.min(word.length, t.length + 1); length++)
+    if (distance(t, word.slice(0, length)) <= 1) return true;
+  return false;
+}
+
+/** Every word of every topic and title, once, and each entry's own: what the search compares a question with. */
+const INDEX = (() => {
+  const perEntry = KNOWLEDGE.map((entry) => ({
+    entry,
+    topicWords: new Set(entry.topics.flatMap(wordsOf)),
+    topicStems: new Set(entry.topics.flatMap(wordsOf).map(stemOf)),
+    titleStems: new Set(wordsOf(entry.title).map(stemOf)),
+  }));
+  const known = new Set(perEntry.flatMap((e) => [...e.topicStems, ...e.titleStems]));
+  const all = [...new Set(perEntry.flatMap((e) => [...e.topicWords]))];
+  return { perEntry, known, all };
+})();
+
 /** The entries a question is about, best first. An entry needs a topic word of the question to count. */
 export function searchKnowledge(query: string, limit = 4): KnowledgeEntry[] {
-  const asked = [
-    ...new Set(
-      wordsOf(query)
-        .filter((w) => !NOISE.has(w))
-        .map(stemOf),
-    ),
-  ];
+  const raw = wordsOf(query).filter((w) => !NOISE.has(w));
+  const asked = [...new Set(raw.map(stemOf))];
   if (asked.length === 0) return [];
-  const scored = KNOWLEDGE.map((entry) => {
-    const topicStems = new Set(entry.topics.flatMap(wordsOf).map(stemOf));
-    const titleStems = new Set(wordsOf(entry.title).map(stemOf));
-    let score = 0;
-    for (const s of asked) {
-      if (topicStems.has(s)) score += 2;
-      else if (titleStems.has(s)) score += 1;
-    }
-    // A whole topic phrase in the question is a stronger sign than scattered words.
-    const q = clean(query);
-    for (const topic of entry.topics) if (topic.length >= 6 && q.includes(clean(topic).trim())) score += 3;
-    return { entry, score };
-  })
+  // A word of five letters or more that no topic has may carry a typo: the topic words one typo away stand for it.
+  const mistyped = [...new Set(raw)]
+    .filter((w) => w.length >= 5 && !INDEX.known.has(stemOf(w)))
+    .map((w) => ({
+      w,
+      near: new Set(INDEX.all.filter((t) => Math.abs(t.length - w.length) <= 3 && nearly(w, t))),
+    }))
+    .filter((x) => x.near.size > 0);
+  const q = clean(query);
+  const scored = INDEX.perEntry
+    .map(({ entry, topicWords, topicStems, titleStems }) => {
+      let score = 0;
+      for (const s of asked) {
+        if (topicStems.has(s)) score += 2;
+        else if (titleStems.has(s)) score += 1;
+      }
+      // A word with one typo counts a little less than an exact one (two, from six letters on).
+      for (const { w, near } of mistyped)
+        if ([...topicWords].some((t) => near.has(t))) score += w.length >= 6 ? 2 : 1.5;
+      // A whole topic phrase in the question is a stronger sign than scattered words.
+      for (const topic of entry.topics) if (topic.length >= 6 && q.includes(clean(topic).trim())) score += 3;
+      return { entry, score };
+    })
     .filter((x) => x.score >= 2)
     .sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map((x) => x.entry);

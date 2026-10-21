@@ -73,6 +73,8 @@ describe.skipIf(!available)("simulation: fake accounts use the AI", () => {
       AUTH_RATE_PER_MINUTE: "100000",
       ENTITLEMENTS_CACHE_SECONDS: "0",
       BILLING_JOBS: "off",
+      ADMIN_EMAIL: "boss@platform.uz",
+      ADMIN_PASSWORD: "admin-password-123",
     });
     app = await buildApp(db.db, config, { aiModel: fakeModel });
   });
@@ -187,4 +189,170 @@ describe.skipIf(!available)("simulation: fake accounts use the AI", () => {
     }
     expect(problems.slice(0, 10), `${problems.length} problems`).toEqual([]);
   }, 300_000);
+
+  it("junk sent to any route is refused politely: never a server error", async () => {
+    const random = rng(Number(process.env.SIM_SEED ?? 20261021) + 300);
+    const reg = (
+      await call("POST", "/v1/auth/register", undefined, {
+        email: "fuzzer@example.com",
+        password: "correct-horse-battery",
+        name: "Fuzzer",
+        accountName: "Fuzz Company",
+      })
+    ).json();
+    const token = reg.accessToken as string;
+    const adminLogin = await call("POST", "/v1/admin/login", undefined, {
+      email: "boss@platform.uz",
+      password: "admin-password-123",
+    });
+    const adminToken = adminLogin.statusCode === 200 ? (adminLogin.json().accessToken as string) : undefined;
+
+    expect(adminToken, "the admin signs in, so the admin routes are attacked too").toBeTruthy();
+    const routes: [string, string, "user" | "admin" | "none"][] = [
+      ["POST", "/v1/auth/register", "none"],
+      ["POST", "/v1/auth/login", "none"],
+      ["POST", "/v1/auth/refresh", "none"],
+      ["POST", "/v1/auth/logout", "user"],
+      ["POST", "/v1/ai/chat", "user"],
+      ["POST", "/v1/ai/templates/reject", "user"],
+      ["POST", "/v1/ai/traces", "user"],
+      ["POST", "/v1/ai/answers", "user"],
+      ["POST", "/v1/ai/answers/lookup", "user"],
+      ["POST", "/v1/ai/free", "user"],
+      ["PUT", "/v1/ai/digest", "user"],
+      ["POST", "/v1/audits/runs", "user"],
+      ["POST", "/v1/billing/trial", "user"],
+      ["POST", "/v1/billing/quote", "user"],
+      ["POST", "/v1/billing/checkout", "user"],
+      ["POST", "/v1/billing/change-plan", "user"],
+      ["POST", "/v1/billing/payme", "none"],
+      ["POST", "/v1/companies", "user"],
+      ["POST", "/v1/companies/active", "user"],
+      ["POST", "/v1/users", "user"],
+      ["POST", "/v1/usage/import", "user"],
+      ["POST", "/v1/devices/activate", "user"],
+      ["POST", "/v1/license/check", "user"],
+      ["POST", "/v1/admin/ai-settings", "admin"],
+      ["PUT", "/v1/admin/ai-policies", "admin"],
+      ["PUT", "/v1/admin/query-templates", "admin"],
+      ["POST", "/v1/admin/promo-codes", "admin"],
+      ["POST", "/v1/admin/admins", "admin"],
+      ["PUT", "/v1/admin/plans/free", "admin"],
+      ["PUT", "/v1/admin/addons/addon_user", "admin"],
+      ["POST", "/v1/admin/engine/run", "admin"],
+    ];
+    const scalar = () =>
+      [
+        null,
+        true,
+        0,
+        -1,
+        1e308,
+        "",
+        "x".repeat(random.int(1, 3000)),
+        "\u0000",
+        "' OR 1=1 --",
+        "../../etc/passwd",
+        "😀".repeat(5),
+        NaN as unknown as number,
+      ][random.int(0, 11)];
+    const junk = (depth = 0): unknown => {
+      const k = random.int(0, depth > 2 ? 2 : 5);
+      if (k === 0) return scalar();
+      if (k === 1) return Array.from({ length: random.int(0, 4) }, () => junk(depth + 1));
+      if (k === 2)
+        return {
+          email: scalar(),
+          password: scalar(),
+          name: scalar(),
+          company: scalar(),
+          messages: scalar(),
+          code: scalar(),
+          plan: scalar(),
+        };
+      if (k === 3)
+        return {
+          messages: Array.from({ length: random.int(0, 4) }, () => ({
+            role: scalar(),
+            content: junk(depth + 1),
+          })),
+        };
+      if (k === 4)
+        return Object.fromEntries(
+          Array.from({ length: random.int(0, 5) }, () => [String(scalar()).slice(0, 12), junk(depth + 1)]),
+        );
+      return { id: scalar(), type: scalar(), params: junk(depth + 1), key: scalar(), value: junk(depth + 1) };
+    };
+    const serverErrors: string[] = [];
+    const n = Math.max(30, Math.round(250 * scale));
+    for (let i = 0; i < n; i++) {
+      const [method, url, who] = routes[random.int(0, routes.length - 1)]!;
+      const authToken = who === "user" ? token : who === "admin" ? adminToken : undefined;
+      const res = await app.inject({
+        method: method as "POST" | "PUT",
+        url,
+        remoteAddress: `10.7.${random.int(0, 250)}.${random.int(1, 250)}`,
+        payload: JSON.stringify(junk()),
+        headers: {
+          "content-type": "application/json",
+          ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
+        },
+      });
+      if (res.statusCode >= 500)
+        serverErrors.push(`${method} ${url} → ${res.statusCode} ${res.body.slice(0, 120)}`);
+    }
+    // Bodies that are not JSON at all.
+    for (const body of ["", "{", "null", "[1,2", "\u0000\u0001", '{"a":' + "[".repeat(2000)]) {
+      for (const [method, url] of routes.slice(0, 6) as [string, string, string][]) {
+        const res = await app.inject({
+          method: method as "POST",
+          url,
+          payload: body,
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        });
+        if (res.statusCode >= 500)
+          serverErrors.push(`${method} ${url} raw ${JSON.stringify(body).slice(0, 20)} → ${res.statusCode}`);
+      }
+    }
+    expect(serverErrors.slice(0, 10), `${serverErrors.length} server errors`).toEqual([]);
+  }, 180_000);
+
+  it("holds the limit when one account asks many questions at the same moment", async () => {
+    const reg = (
+      await call("POST", "/v1/auth/register", undefined, {
+        email: "racer@example.com",
+        password: "correct-horse-battery",
+        name: "Racer",
+        accountName: "Racing Company",
+      })
+    ).json();
+    const free = await db.db.query.plans.findFirst({ where: eq(plans.code, "free") });
+    await db.db
+      .update(subscriptions)
+      .set({ planId: free!.id, status: "active", endsAt: new Date(Date.now() + 20 * 86_400_000) })
+      .where(eq(subscriptions.accountId, reg.me.account.id));
+    const limit = free!.aiQuestionsPerMonth;
+    expect(limit).toBeGreaterThan(0);
+    const token = reg.accessToken as string;
+    const results = await Promise.all(
+      Array.from({ length: limit * 3 }, (_, n) =>
+        call(
+          "POST",
+          "/v1/ai/chat",
+          token,
+          { company: "X", messages: [{ role: "user", content: `parallel question ${n}` }] },
+          "10.9.9.9",
+        ),
+      ),
+    );
+    const ok = results.filter((r) => r.statusCode === 200).length;
+    const blocked = results.filter((r) => r.statusCode === 402).length;
+    const used = (await call("GET", "/v1/billing/entitlements", token, undefined, "10.9.9.9")).json().usage
+      .aiQuestions;
+    // Never more than the plan allows, never a server error; what was counted is what was answered.
+    expect(results.filter((r) => r.statusCode >= 500).length).toBe(0);
+    expect(ok).toBeLessThanOrEqual(limit);
+    expect(used).toBe(ok);
+    expect(ok + blocked).toBe(results.length);
+  }, 120_000);
 });

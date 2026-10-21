@@ -304,6 +304,13 @@ export class AssistantService {
     if (this.deps.billing?.isReadOnly(company.inn))
       return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
+    // Taken at once, before anything is awaited: a second question sent in the same moment (a double Enter) is refused
+    // as busy, not run beside this one in the same chat.
+    const abort = new AbortController();
+    this.running.set(companyId, abort);
+    const release = () => {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+    };
 
     const chat = this.chat(companyId, chatId ?? this.open.get(companyId)?.id ?? randomUUID());
     // Everything shown in the window is also kept in the chat, so it reopens as it was.
@@ -315,6 +322,7 @@ export class AssistantService {
     try {
       attached = await readAttachments(files, this.deps.shrinkImage);
     } catch (e) {
+      release();
       if (e instanceof AttachmentError) return this.fail(notify, e.code, e.message);
       throw e;
     }
@@ -354,11 +362,10 @@ export class AssistantService {
       ];
     }
     if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
+      release();
       return this.fail(notify, "CHAT_TOO_LARGE", "This chat is too large; start a new chat");
     }
 
-    const abort = new AbortController();
-    this.running.set(companyId, abort);
     chat.messages.push({ role: "user", content });
     chat.entries = [
       ...chat.entries,
@@ -716,11 +723,19 @@ export class AssistantService {
     if (this.deps.billing?.isReadOnly(company.inn))
       return this.fail(notify, "COMPANY_READ_ONLY", READ_ONLY_MESSAGE);
     if (this.running.has(companyId)) return this.fail(notify, "BUSY", "The assistant is still answering");
-    const counted = await this.deps.billing?.countAudit(company.inn);
-    if (counted && !counted.ok) return this.fail(notify, counted.code, counted.message);
-
     const abort = new AbortController();
     this.running.set(companyId, abort);
+    let counted;
+    try {
+      counted = await this.deps.billing?.countAudit(company.inn);
+    } catch (e) {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+      throw e;
+    }
+    if (counted && !counted.ok) {
+      if (this.running.get(companyId) === abort) this.running.delete(companyId);
+      return this.fail(notify, counted.code, counted.message);
+    }
     const chat = this.chat(companyId, chatId);
     const emit: Emit = (event) => {
       chat.entries = applyEvent(chat.entries, event);
@@ -3251,7 +3266,8 @@ function mergeBank(before: BankStatement[], added: BankStatement[]): BankStateme
 }
 
 function mergeDidox(before: DidoxDocument[], added: DidoxDocument[]): DidoxDocument[] {
-  const key = (d: DidoxDocument) => `${d.kind}|${didoxKey(d)}`;
+  // A seller's number can come again on another day: the id (else the date) tells two documents apart.
+  const key = (d: DidoxDocument) => `${d.kind}|${d.seller.tin}/${d.number}|${d.id || d.date}`;
   const map = new Map(before.map((d) => [key(d), d]));
   for (const d of added) map.set(key(d), d);
   return [...map.values()];

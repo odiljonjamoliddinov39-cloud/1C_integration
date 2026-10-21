@@ -297,7 +297,7 @@ export const shapeOf = (purpose: string) =>
 /** The contract a payment purpose names ("Договор 4/28 от 01.01.2026г", "по дог. № 17 от 08.01.2026"). */
 export function contractMention(purpose: string): { number: string; date: string } | null {
   const found =
-    /(?:догов\p{L}*|дог\.?|dog\p{L}*|шартном\p{L}*)(?:\s*номер\p{L}*)?\s*(?:№|N\b|no\b)?\.?\s*([\p{L}\d][\p{L}\d\-/.]*?)\s*(?:от|dan|ot)?\s*(\d{2})\.(\d{2})\.(\d{4})/iu.exec(
+    /(?:догов\p{L}*|дог\.?|dog\p{L}*|шартном\p{L}*|shartnom\p{L}*)(?:\s*номер\p{L}*)?\s*(?:№|N\b|no\b)?\.?\s*([\p{L}\d][\p{L}\d\-/.]*?)\s*(?:от|dan|ot)?\s*(\d{2})\.(\d{2})\.(\d{4})/iu.exec(
       purpose,
     );
   if (!found) return null;
@@ -318,8 +318,9 @@ const normalNumber = (n: string) =>
 export function isTaxPayment(payment: BankPayment): boolean {
   if (payment.direction !== "out") return false;
   const who =
-    /moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
-  const what = /(?<!\p{L})(солиқ\p{L}*|soliq\p{L}*|налог\p{L}*|инпс|inps|ндфл|жшдс|jshds)(?!\p{L})/iu;
+    /(?<!\p{L})(гнк|гни|дск|dsq|gnk)(?!\p{L})|moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
+  const what =
+    /(?<!\p{L})(солиқ\p{L}*|soliq\p{L}*|налог\p{L}*|инпс|inps|ндфл|жшдс|jshds|ндс|qqs|акциз\p{L}*|aksiz\p{L}*)(?!\p{L})/iu;
   return who.test(payment.counterparty) || what.test(payment.purpose);
 }
 
