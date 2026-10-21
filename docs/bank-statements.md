@@ -189,5 +189,8 @@ result was cut by the result limit so that its failures were never seen. Fixed:
 - **Big batches show their failures first.** Over 30 documents the model gets the counts, the failures and the
   refusals, then a sample, never the whole list.
 
-Still by hand for the first one: a payment in a currency when the base has no payment in that currency to copy (the
-model enters one, the rest copy it).
+- **A payment in a currency with only soum payments in the base.** The program makes the first one itself from the
+  counterparty's (or, for a new one, the newest copyable) soum payment: the document currency is the currency item of
+  1C's catalog, the row carries the rate of the payment's day from 1C's rates, and the settlement is in the currency when
+  the contract is in it, otherwise in soums at the rate. It says so in a note (check the first document). Left to the
+  accountant: no rate of that day in 1C, no such currency item, or a contract in a third currency.
