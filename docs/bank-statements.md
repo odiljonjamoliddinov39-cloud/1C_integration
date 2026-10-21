@@ -166,3 +166,10 @@ currency). `bank/ledger.ts` reads them together, in whole tiyin, with no AI, bef
 - **One run**: with no `file`, every attached statement is handled in one run and one card; answers to what could not
   be settled carry the file. What cannot be settled comes back with each row's date, amount, name and purpose.
 - A statement of a few payments that names its own account is read by the program too (it is one account of several).
+
+## What is missing is said at once
+
+The moment the first look at the statement is done (before any card, before any model step) the accountant gets a
+list, in the language of the last message: the counterparties and contracts 1C lacks, and the rows the program cannot
+settle with the reason and the count (`bank/gaps.ts`). The model is told (`alreadyShownToAccountant`) not to list them
+again. Counterparties and contracts are then offered for creation on cards, as before.

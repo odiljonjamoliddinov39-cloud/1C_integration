@@ -120,6 +120,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
+import { gapsOf, gapsText } from "./bank/gaps.js";
 import {
   DOCUMENT_DOCTYPE,
   RECONCILIATION_DOCTYPE,
@@ -2727,6 +2728,7 @@ export class AssistantService {
         o.file ? o.file.toLowerCase() === statement.fileName.toLowerCase() : tasks.length === 1,
       );
     let results: { task: (typeof tasks)[number]; resolved: BankResolved }[];
+    let toldGaps = false;
     // A counterparty the statements name and 1C lacks is created first (one card), then its contract (one card),
     // then the payments: each round is looked up again, with no step of the model between.
     for (let round = 0; ; round++) {
@@ -2757,6 +2759,14 @@ export class AssistantService {
         );
         if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
         results.push({ task, resolved });
+      }
+      // The gaps are told at once, before the cards: the accountant need not wait for the model to find them.
+      if (round === 0) {
+        const told = gapsText(langOf(lastUserText(chat)), gapsOf(results.map((r) => r.resolved)));
+        if (told) {
+          emit({ type: "text", text: told });
+          toldGaps = true;
+        }
       }
       if (round >= 3) break;
       const missing = [
@@ -2845,6 +2855,12 @@ export class AssistantService {
     const attention = {
       ledger,
       ...notEntered,
+      ...(toldGaps
+        ? {
+            alreadyShownToAccountant:
+              "The program has already listed what is missing to the accountant: do not list it again, say what happens next.",
+          }
+        : {}),
       ...(madeNow.length > 0 ? { createdInThisRun: madeNow } : {}),
       ...(notCreated.length > 0 ? { notCreated } : {}),
       ...(problems.length > 0 ? { needsAttention: summarizeBankProblems(problems) } : {}),
@@ -3507,4 +3523,21 @@ export function createdState(object: string, result: ToolResult): BatchItemResul
       version: "",
     },
   };
+}
+
+/** The last thing the accountant wrote in this chat: the language the program answers in. */
+function lastUserText(chat: StoredChat): string {
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const m = chat.messages[i];
+    if (m?.role !== "user") continue;
+    const text =
+      typeof m.content === "string"
+        ? m.content
+        : (m.content as { type: string; text?: string }[])
+            .filter((b) => b.type === "text")
+            .map((b) => b.text ?? "")
+            .join(" ");
+    if (text.trim()) return text;
+  }
+  return "";
 }

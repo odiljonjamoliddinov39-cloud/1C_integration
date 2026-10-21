@@ -2506,6 +2506,11 @@ describe("assistant", () => {
         e.type === "confirm" && e.proposal.kind === "batch" ? [e.proposal] : [],
       );
       expect(cards.map((c) => c.items.length)).toEqual([1, 1, 5]);
+      // What is missing in 1C is said at once, before the first card.
+      const firstCard = events.findIndex((e) => e.type === "confirm");
+      const gaps = events.findIndex((e) => e.type === "text" && /Sam active group 786 mchj/.test(e.text));
+      expect(gaps).toBeGreaterThanOrEqual(0);
+      expect(gaps).toBeLessThan(firstCard);
       expect(cards.map((c) => c.items[0]?.object)).toEqual([
         "Справочник.Контрагенты",
         "Справочник.ДоговорыКонтрагентов",
