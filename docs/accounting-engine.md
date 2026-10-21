@@ -86,5 +86,4 @@ The engine also learns new templates from finished questions (existing); the see
 
 ## Not done
 
-- A deterministic sale builder in the 1C extension (the sale is still made by the model from the kit).
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.

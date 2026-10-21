@@ -212,6 +212,14 @@ export const DidoxInvoicesInput = z.object({
 });
 export type DidoxInvoicesInput = z.infer<typeof DidoxInvoicesInput>;
 
+/**
+ * The company's own Didox documents (it is the seller) entered into 1C as sales, by the app: it reads them for the
+ * period (or takes the attached ones), looks the buyer, the contract and the items up, and copies the company's last
+ * sale for the accounts and the warehouse. Same answers as for the received ones; a warehouse may be given.
+ */
+export const DidoxSalesInput = DidoxInvoicesInput.extend({ warehouse: Ref.optional() });
+export type DidoxSalesInput = z.infer<typeof DidoxSalesInput>;
+
 const Money = z.number().finite().min(-1e15).max(1e15);
 const Percent = z.number().finite().min(0).max(1000);
 
@@ -661,6 +669,7 @@ export const AI_TOOLS = {
   propose_invoice_received: InvoiceReceivedDraft,
   propose_invoices_received: InvoicesReceivedInput,
   propose_didox_invoices: DidoxInvoicesInput,
+  propose_didox_sales: DidoxSalesInput,
   propose_didox_draft: DidoxDraftInput,
   propose_didox_document: DidoxDocumentInput,
   propose_didox_reconciliation: DidoxReconciliationInput,
@@ -680,6 +689,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_invoice_received",
   "propose_invoices_received",
   "propose_didox_invoices",
+  "propose_didox_sales",
   "propose_didox_draft",
   "propose_didox_document",
   "propose_didox_reconciliation",

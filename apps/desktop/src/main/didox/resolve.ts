@@ -37,6 +37,8 @@ export interface Problem {
     | "ITEM_NOT_FOUND"
     | "ITEM_CHOOSE"
     | "VAT_RATE_MISSING"
+    | "NO_TEMPLATE"
+    | "BAD_TEMPLATE"
     | "VALIDATION";
   message: string;
   candidates?: Candidate[];
@@ -285,7 +287,7 @@ export const percentOfName = (name: string): number => {
 };
 
 /** The VAT rates the base has (the enumeration of rates), once per base; null when 1C could not say. */
-async function vatRatesOf(deps: ResolverDeps, cache: ResolverCache): Promise<number[] | null> {
+export async function vatRatesOf(deps: ResolverDeps, cache: ResolverCache): Promise<number[] | null> {
   if (cache.vatRates !== undefined) return cache.vatRates;
   const outcome = await deps.query({
     query: "ВЫБРАТЬ ПРЕДСТАВЛЕНИЕ(Т.Ссылка) КАК Представление ИЗ Перечисление.СтавкиНДС КАК Т",
@@ -299,6 +301,86 @@ async function vatRatesOf(deps: ResolverDeps, cache: ResolverCache): Promise<num
   if (rates.length === 0) return null;
   cache.vatRates = [...new Set(rates)];
   return cache.vatRates;
+}
+
+/** What 1C holds of the items the lines name: by exact name and by IKPU code. */
+export interface ItemTables {
+  /** The attribute of the nomenclature that holds the IKPU code, when found. */
+  attribute: string | null;
+  byName: Map<string, Candidate[]>;
+  byCode: Map<string, Candidate[]>;
+}
+
+export async function lookupItems(
+  lines: DidoxLine[],
+  deps: ResolverDeps,
+  cache: ResolverCache,
+): Promise<ItemTables> {
+  const attribute = lines.length ? await ikpuAttribute(deps, cache) : null;
+  const byName = new Map<string, Candidate[]>();
+  const byCode = new Map<string, Candidate[]>();
+  const names = [...new Set(lines.map((line) => line.name).filter(Boolean))];
+  const nameRows = names.length
+    ? await lookup(
+        deps,
+        (ph) =>
+          `ВЫБРАТЬ Т.Наименование КАК Наименование, Т.Ссылка КАК Ссылка ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.Наименование В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
+        names,
+      )
+    : [];
+  for (const { cells } of nameRows ?? []) {
+    const ref = refOf(cells[1]);
+    if (ref)
+      byName.set(textOf(cells[0]).toLowerCase(), [
+        ...(byName.get(textOf(cells[0]).toLowerCase()) ?? []),
+        { ref, name: textOf(cells[0]) },
+      ]);
+  }
+  const codes = [...new Set(lines.map((line) => line.catalogCode).filter(Boolean))];
+  if (attribute && codes.length) {
+    const codeRows = await lookup(
+      deps,
+      (ph) =>
+        `ВЫБРАТЬ Т.${attribute} КАК Код, Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.${attribute} В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
+      codes,
+    );
+    for (const { cells } of codeRows ?? []) {
+      const ref = refOf(cells[1]);
+      const code = textOf(cells[0]).trim();
+      if (ref) byCode.set(code, [...(byCode.get(code) ?? []), { ref, name: textOf(cells[2]) }]);
+    }
+  }
+  return { attribute, byName, byCode };
+}
+
+/** The item a line stands for, or why it is not certain (and the candidates). */
+export function itemFor(
+  line: DidoxLine,
+  items: ItemTables,
+):
+  | { ref: string }
+  | { ref: null; code: "ITEM_CHOOSE" | "ITEM_NOT_FOUND"; message: string; candidates?: Candidate[] } {
+  const sameName = items.byName.get(line.name.toLowerCase()) ?? [];
+  const sameCode = items.byCode.get(line.catalogCode) ?? [];
+  const [named] = sameName;
+  if (sameName.length === 1 && named && (sameCode.length === 0 || sameCode.some((c) => c.ref === named.ref)))
+    return { ref: named.ref };
+  const match = matchItem(line.name, sameCode, isService(line));
+  if (match.kind === "match") return { ref: match.ref };
+  const what = `"${line.name}" (IKPU ${line.catalogCode || "-"}, ${line.qty} ${line.unit})`;
+  if (match.kind === "choose") {
+    return {
+      ref: null,
+      code: "ITEM_CHOOSE",
+      message: `${what}: ${sameCode.length} items share the code, none is certain`,
+      candidates: match.candidates,
+    };
+  }
+  return {
+    ref: null,
+    code: "ITEM_NOT_FOUND",
+    message: `${what}: no item in 1C${items.attribute ? "" : " (the IKPU attribute of the nomenclature was not found, so only exact names are looked up)"}`,
+  };
 }
 
 /**
@@ -490,41 +572,11 @@ export async function resolveDocuments(
   }
 
   // 4. Items: by the exact name, else by the IKPU code with the name to tell which.
-  const lines = live.flatMap((doc) => doc.lines.map((line) => ({ doc, line })));
-  const attribute = lines.length ? await ikpuAttribute(deps, cache) : null;
-  const byName = new Map<string, Candidate[]>();
-  const byCode = new Map<string, Candidate[]>();
-  const names = [...new Set(lines.map(({ line }) => line.name).filter(Boolean))];
-  const nameRows = names.length
-    ? await lookup(
-        deps,
-        (ph) =>
-          `ВЫБРАТЬ Т.Наименование КАК Наименование, Т.Ссылка КАК Ссылка ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.Наименование В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
-        names,
-      )
-    : [];
-  for (const { cells } of nameRows ?? []) {
-    const ref = refOf(cells[1]);
-    if (ref)
-      byName.set(textOf(cells[0]).toLowerCase(), [
-        ...(byName.get(textOf(cells[0]).toLowerCase()) ?? []),
-        { ref, name: textOf(cells[0]) },
-      ]);
-  }
-  const codes = [...new Set(lines.map(({ line }) => line.catalogCode).filter(Boolean))];
-  if (attribute && codes.length) {
-    const codeRows = await lookup(
-      deps,
-      (ph) =>
-        `ВЫБРАТЬ Т.${attribute} КАК Код, Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.Номенклатура КАК Т ГДЕ Т.${attribute} В (${ph}) И НЕ Т.ПометкаУдаления И НЕ Т.ЭтоГруппа`,
-      codes,
-    );
-    for (const { cells } of codeRows ?? []) {
-      const ref = refOf(cells[1]);
-      const code = textOf(cells[0]).trim();
-      if (ref) byCode.set(code, [...(byCode.get(code) ?? []), { ref, name: textOf(cells[2]) }]);
-    }
-  }
+  const items = await lookupItems(
+    live.flatMap((doc) => doc.lines),
+    deps,
+    cache,
+  );
 
   const ready: Resolved["ready"] = [];
   for (const doc of live) {
@@ -537,38 +589,15 @@ export async function resolveDocuments(
         refs.push(chosen.ref);
         continue;
       }
-      const sameName = byName.get(line.name.toLowerCase()) ?? [];
-      const sameCode = byCode.get(line.catalogCode) ?? [];
-      let ref: string | null = null;
-      const [named] = sameName;
-      if (
-        sameName.length === 1 &&
-        named &&
-        (sameCode.length === 0 || sameCode.some((c) => c.ref === named.ref))
-      ) {
-        ref = named.ref;
-      } else {
-        const match = matchItem(line.name, sameCode, isService(line));
-        if (match.kind === "match") ref = match.ref;
-        else {
-          open += 1;
-          const what = `"${line.name}" (IKPU ${line.catalogCode || "-"}, ${line.qty} ${line.unit})`;
-          if (match.kind === "choose") {
-            problem(doc, "ITEM_CHOOSE", `${what}: ${sameCode.length} items share the code, none is certain`, {
-              line: line.n,
-              candidates: match.candidates,
-            });
-          } else {
-            problem(
-              doc,
-              "ITEM_NOT_FOUND",
-              `${what}: no item in 1C${attribute ? "" : " (the IKPU attribute of the nomenclature was not found, so only exact names are looked up)"}`,
-              { line: line.n },
-            );
-          }
-        }
+      const found = itemFor(line, items);
+      if (found.ref === null) {
+        open += 1;
+        problem(doc, found.code, found.message, {
+          line: line.n,
+          ...(found.candidates ? { candidates: found.candidates } : {}),
+        });
       }
-      refs.push(ref ?? "");
+      refs.push(found.ref ?? "");
     }
     if (open > 0) continue;
     const counterparty = counterpartyRef.get(key);

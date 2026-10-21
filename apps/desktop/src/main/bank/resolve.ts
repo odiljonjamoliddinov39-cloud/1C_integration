@@ -197,7 +197,7 @@ const first = (keys: string[], have: Record<string, unknown>) => keys.find((k) =
  * value's NAME, which GetObject gives as `ref` (its `name` is the presentation, "Оплата покупателя",
  * which 1C does not know as a value).
  */
-function writable(value: unknown): unknown {
+export function writable(value: unknown): unknown {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const v = value as { type?: unknown; ref?: unknown };
     if (typeof v.ref === "string" && typeof v.type === "string") {

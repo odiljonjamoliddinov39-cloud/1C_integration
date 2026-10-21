@@ -1772,6 +1772,163 @@ describe("assistant", () => {
       });
     });
 
+    it("enters the company's own Didox documents as sales copied from its last sale, on one card, unposted", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [contract, item, oldSale, unit] = [
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+        crypto.randomUUID(),
+      ];
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "s1", name: "propose_didox_sales", input: { title: "Sotuvlar: 1" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const buyer = base.counterparties[0]!;
+      const ownInn = base.organizations[0]!.inn;
+      base.objects.set(oldSale, {
+        object: "Документ.РеализацияТоваровУслуг",
+        fields: {
+          Номер: "РТ-000007",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", buyer.ref, buyer.name),
+          Склад: ref("Справочник.Склады", crypto.randomUUID(), "Основной"),
+          ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", crypto.randomUUID(), "старый"),
+          Комментарий: "старый",
+          СуммаВключаетНДС: false,
+          СуммаДокумента: 5600,
+        },
+        tables: {
+          Товары: [
+            {
+              Номенклатура: ref("Справочник.Номенклатура", crypto.randomUUID(), "старый"),
+              Количество: 5,
+              Цена: 1000,
+              Сумма: 5000,
+              СтавкаНДС: ref("Перечисление.СтавкиНДС", "НДС12", "12%"),
+              СуммаНДС: 600,
+              СчетДоходов: ref("ПланСчетов.Хозрасчетный", crypto.randomUUID(), "9010"),
+            },
+          ],
+          Услуги: [],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const rows = (list: unknown[][]) => ({ columns: [], rows: list, truncated: false });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) =>
+            rows(
+              values(input).includes(buyer.inn)
+                ? [[buyer.inn, ref("Справочник.Контрагенты", buyer.ref, buyer.name), buyer.name]]
+                : [],
+            ),
+        },
+        {
+          match: /ДоговорыКонтрагентов КАК Т ГДЕ/,
+          answer: () =>
+            rows([
+              [
+                buyer.inn,
+                ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+                "17",
+                "2026-01-08T00:00:00",
+              ],
+            ]),
+        },
+        { match: /ПРЕДСТАВЛЕНИЕ\(Т\.Ссылка\)/, answer: () => rows([["Без НДС"], ["12%"]]) },
+        {
+          match: /Перечисление\.СтавкиНДС/,
+          answer: () => rows([[ref("Перечисление.СтавкиНДС", "НДС12", "12%")]]),
+        },
+        {
+          match: /Т\.ЕдиницаИзмерения КАК Единица/,
+          answer: () =>
+            rows([
+              [ref("Справочник.Номенклатура", item, "Мыло"), ref("Справочник.ЕдиницыИзмерения", unit, "шт")],
+            ]),
+        },
+        {
+          match: /Справочник\.Номенклатура КАК Т ГДЕ Т\.Наименование В/,
+          answer: () => rows([["Жидкое мыло", ref("Справочник.Номенклатура", item, "Жидкое мыло")]]),
+        },
+        { match: /РеализацияТоваровУслуг КАК Т ГДЕ Т\.Дата МЕЖДУ/, answer: () => rows([]) },
+        {
+          match: /РеализацияТоваровУслуг КАК Т ГДЕ Т\.Проведен/,
+          answer: () => rows([[ref("Документ.РеализацияТоваровУслуг", oldSale, "продажа")]]),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Didox sotuvlarini kirit",
+        files: [
+          {
+            name: "out-24.json",
+            data: new TextEncoder().encode(
+              JSON.stringify({
+                facturaid: "out-24",
+                facturadoc: { facturano: "24", facturadate: "2026-10-13" },
+                contractdoc: { contractno: "17", contractdate: "2026-01-08" },
+                sellertin: ownInn,
+                seller: { name: "CRYSTAL" },
+                buyertin: buyer.inn,
+                buyer: { name: buyer.name },
+                productlist: {
+                  products: [
+                    {
+                      ordno: 1,
+                      name: "Жидкое мыло",
+                      catalogcode: "03401001002241001",
+                      packagename: "шт.",
+                      count: "10",
+                      summa: "1000",
+                      deliverysum: "10000",
+                      vatrate: 12,
+                      vatsum: "1200",
+                      deliverysumwithvat: "11200",
+                    },
+                  ],
+                },
+              }),
+            ),
+          },
+        ],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.РеализацияТоваровУслуг" && o.fields.Комментарий === "Didox invoice 24",
+      );
+      expect(made).toHaveLength(1);
+      expect(made[0]).toMatchObject({
+        posted: false,
+        fields: {
+          Дата: "2026-10-13",
+          СуммаДокумента: 11200,
+          Контрагент: { ref: buyer.ref },
+          ДоговорКонтрагента: { ref: contract },
+        },
+        tables: { Товары: [{ Количество: 10, Сумма: 10000, СуммаНДС: 1200, СтавкаНДС: "НДС12" }] },
+      });
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      expect(JSON.stringify(proxy.requests[1]?.messages.at(-1))).toContain("propose_post_created");
+    });
+
     it("enters a move between the company's own accounts as a pair of documents copied from the company's last one", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const [A, B] = ["20208000100438330001", "20208000200438330002"];

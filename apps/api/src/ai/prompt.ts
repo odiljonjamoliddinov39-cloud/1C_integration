@@ -79,7 +79,7 @@ fills each from its sale. For one sale propose_invoice_issued; for several, find
 one query and send them all with propose_invoices_issued: one card, one confirmation (sales that already have an \
 invoice are left out by themselves). To get the documents from Didox itself (no files from the accountant) call fetch_didox_documents, then \
 enter the incoming ones with propose_didox_invoices; a received document goes to a receipt (Поступление) and a received \
-invoice, an issued one is checked against 1C and never entered twice. When the accountant asks to create the issued documents in 1C ("create the outgoing documents for May"), the fetch result has their lines (outgoingSummary): enter each one that 1C lacks as a sale (Документ.РеализацияТоваровУслуг, unposted, copy the company's latest sale as the template, the buyer's contract "№б/н от <date>" made first if missing) with the lines exactly as Didox has them, then, once it is applied, its issued invoice with propose_invoice_issued. Never send it to Didox again (it is already there) and never say Didox gives no lines: ask the accountant only for what the summary does not have. Be quick: the fetch result has saleKit, what the program already read from 1C (warehouses, the buyer and its contracts with refs, the items by the Didox names, the VAT rates the base has, the sales already there, the newest posted sale to copy): use it and do not query those again; read anything else (the ledger accounts, the contract kinds) in ONE step (several run_query calls at once); build the sale from the learned practice where 1C has no sale to copy, and do not spend steps re-checking what 1C already accepted. A VAT rate the base lacks (12%) is for the accountant to decide: say so in the answer, do not probe for it step after step. To send an issued invoice to the buyer through Didox, read it from 1C (it \
+invoice, an issued one is checked against 1C and never entered twice. When the accountant asks to create the issued documents in 1C ("create the outgoing documents for May"), call propose_didox_sales (title, from, to): the app reads Didox, looks the buyer, its contract and the items up, copies the company's latest sale (unposted) with the lines exactly as Didox has them, and puts them on one card; settle only the problems it returns (references; a VAT rate the base lacks is for the accountant to decide once, then vatRateMap), then, after the accountant has checked and posted the sales (propose_post_created), make the issued invoices with propose_invoices_issued. Never send them to Didox again (they are already there) and never say Didox gives no lines. Use propose_changes for a sale only when the tool cannot make it (it says why). To send an issued invoice to the buyer through Didox, read it from 1C (it \
 must be posted and have its real number) and call propose_didox_draft: it makes a DRAFT in Didox (never signs or sends); \
 the accountant checks and signs it in Didox. Say so in your answer. Always in this order: the document is applied \
 in 1C first (its card confirmed), and only then goes to Didox, with onec: {object, ref} of the saved 1C document and the \
@@ -403,9 +403,19 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "incoming ones (this company is the buyer) are then in the chat exactly as if their files were attached: enter " +
     "them with propose_didox_invoices (title only). The outgoing ones (this company is the seller) come back with " +
     "their lines (outgoingSummary): compare them with 1C (run_query: number, date, counterparty INN, amount) and " +
-    "report what is missing in 1C or differs; when the accountant asks to create them in 1C, enter each as a sale " +
-    "and an issued invoice from those lines. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
+    "report what is missing in 1C or differs; when the accountant asks to create them in 1C, call propose_didox_sales " +
+    "(title, from, to): the app makes the sales itself, then the issued invoices follow. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
     "tell the accountant where to connect it (Companies, Didox test, Save for this company).",
+  propose_didox_sales:
+    "Enter the documents THIS company issued in Didox (it is the seller) into 1C as sales, on ONE card with a title, " +
+    "built by the app: send from and to (YYYY-MM-DD, one call, no fetch_didox_documents first; it reads Didox itself) " +
+    'or documents (keys such as "312318957/24"). The app looks the buyer, its contract and the items up and copies the ' +
+    "company's last posted sale (to that buyer, else the newest) for the accounts, warehouse and operation, changing " +
+    "the date, buyer, contract, lines and sums; an invoice goes to the goods table and an act of services to the " +
+    "services one. The sales are saved unposted. What it could not settle comes back as problems with candidates: " +
+    "answer with references in items (document, line, ref), counterparties and contracts, vatRateMap {from, to} when " +
+    "the accountant decided to write a rate the base lacks under another, and call it again. Never write sale lines " +
+    "yourself. After the accountant checks them: propose_post_created, then propose_invoices_issued for the issued invoices.",
   propose_didox_reconciliation:
     "Send a reconciliation act (акт сверки) to a counterparty through Didox, as a DRAFT on ONE card, from the act " +
     "that is ALREADY SAVED in 1C (Документ.АктСверкиВзаиморасчетов; make it in 1C first with propose_changes, confirm " +

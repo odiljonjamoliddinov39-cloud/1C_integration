@@ -46,6 +46,7 @@ import {
   type CompanyRulesInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
+  type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
   type ObjectState,
@@ -93,6 +94,7 @@ import {
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
+import { type SalesCache, resolveSales } from "./didox/sales.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
@@ -277,6 +279,7 @@ export class AssistantService {
   private readonly unposted = new Set<string>();
   /** What was learned from each base about its nomenclature (which attribute holds the IKPU code). */
   private readonly resolverCache = new Map<string, ResolverCache>();
+  private readonly salesCache = new Map<string, SalesCache>();
   /** Per company: where the current task's time goes (model, 1C), to show and to name a slow step. */
   private readonly timing = new Map<string, TaskTiming>();
 
@@ -1178,6 +1181,9 @@ export class AssistantService {
         message: "The license is read-only: no documents can be created",
       };
     }
+    if (tool === "propose_didox_sales") {
+      return this.proposeDidoxSales(chat, input as DidoxSalesInput, emit, signal);
+    }
     if (tool === "propose_didox_invoices") {
       return this.proposeDidox(chat, input as DidoxInvoicesInput, emit, signal);
     }
@@ -1605,7 +1611,7 @@ export class AssistantService {
               outgoingNote:
                 "Issued by this company: compare with 1C (number, date, counterparty INN, amount) and report the differences. " +
                 "The summary has their lines (name, unit, quantity, price, VAT): when the accountant asks to enter them into 1C, " +
-                "make the sale and then the issued invoice from those lines. Never say Didox gives no lines.",
+                "enter the sales with propose_didox_sales (title, from, to: the app builds them from the company's last sale), then the issued invoices. Never say Didox gives no lines.",
             }
           : {}),
       },
@@ -2279,6 +2285,138 @@ export class AssistantService {
   }
 
   /**
+   * The company's own Didox documents entered into 1C as sales: read for the period (or the attached ones whose
+   * seller is this company), looked up and copied from the company's last sale by the program; what is certain goes
+   * on one card, unposted, and the model is told only what it must settle.
+   */
+  private async proposeDidoxSales(
+    chat: StoredChat,
+    input: DidoxSalesInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const own = this.deps.store.company(chat.companyId).inn;
+    emit({ type: "tool", name: "propose_didox_sales", detail: describe("propose_didox_sales", input) });
+    const found = new Map<string, DidoxDocument>();
+    for (const d of chat.didox ?? []) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+    if (input.from || input.to) {
+      const client = this.didoxClient(chat.companyId);
+      if (!client) {
+        return {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message:
+            "Didox is not connected for this company. Ask the accountant to open Companies, press the Didox test button, run the test, choose the signature key and press Save for this company.",
+        };
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      try {
+        const read = await fetchDidoxDocuments(
+          client,
+          {
+            from: input.from ?? `${today.slice(0, 4)}-01-01`,
+            to: input.to ?? today,
+            direction: "outgoing",
+            limit: 300,
+          },
+          signal,
+        );
+        for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+      } catch (e) {
+        return this.didoxFailure(e);
+      }
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    }
+    const done = new Set(chat.salesDone ?? []);
+    const wanted = input.documents ? new Set(input.documents) : null;
+    const docs = [...found.values()].filter(
+      (d) =>
+        (d.kind === "invoice" || d.kind === "act") &&
+        (!wanted || wanted.has(didoxKey(d))) &&
+        !done.has(didoxKey(d)) &&
+        (!input.from || d.date >= input.from) &&
+        (!input.to || d.date <= input.to),
+    );
+    if (docs.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: done.size > 0 ? "all_entered" : "nothing_to_enter",
+          note: "No documents issued by this company were found for this request: send from and to (YYYY-MM-DD) to read them from Didox, or attach the files.",
+        },
+      };
+    }
+    const connection = this.deps.store.connection(chat.companyId);
+    const cache: SalesCache = this.salesCache.get(chat.companyId) ?? {};
+    this.salesCache.set(chat.companyId, cache);
+    const resolved = await resolveSales(
+      docs,
+      {
+        companyInn: own,
+        cache,
+        overrides: { items: input.items, counterparties: input.counterparties, contracts: input.contracts },
+        rules: this.lineRules(chat.companyId, {
+          title: input.title,
+          ...(input.vatRateMap ? { vatRateMap: input.vatRateMap } : {}),
+        }),
+        ...(input.warehouse ? { warehouse: input.warehouse } : {}),
+      },
+      {
+        query: (query) => this.deps.connector.tool(connection, "run_query", query),
+        describe: (objects) => this.deps.connector.tool(connection, "describe_objects", { objects }),
+        getObject: (object, ref) => this.deps.connector.tool(connection, "get_object", { object, ref }),
+      },
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    const attention = {
+      needsAttention: summarizeProblems(resolved.problems),
+      ...(resolved.alreadyIn1c.length > 0 ? { alreadyIn1c: resolved.alreadyIn1c } : {}),
+    };
+    if (resolved.ready.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status:
+            resolved.alreadyIn1c.length > 0 && resolved.problems.length === 0
+              ? "all_entered"
+              : "needs_attention",
+          ...attention,
+          ...(resolved.problems.length > 0 ? { next: DIDOX_SALES_NEXT } : {}),
+        },
+      };
+    }
+    const result = await this.proposeBatch(
+      chat,
+      { title: input.title, changes: resolved.ready.map((r) => r.change) },
+      emit,
+      signal,
+    );
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    if (data?.status === "done") {
+      const entered = new Set(chat.salesDone ?? []);
+      for (const { n } of data.applied ?? []) {
+        const doc = resolved.ready[n - 1]?.doc;
+        if (doc) entered.add(didoxKey(doc));
+      }
+      chat.salesDone = [...entered];
+      this.save(chat);
+    }
+    const notes = [...new Set(resolved.ready.map((r) => r.note))];
+    return {
+      ok: true,
+      data: {
+        ...(data ?? {}),
+        ...(resolved.problems.length > 0 || resolved.alreadyIn1c.length > 0 ? { ...attention } : {}),
+        ...(resolved.problems.length > 0 ? { next: DIDOX_SALES_NEXT } : {}),
+        notes,
+        after:
+          "The sales are saved unposted: post them with propose_post_created after the accountant has checked them, then issue the invoices with propose_invoices_issued.",
+      },
+    };
+  }
+
+  /**
    * Payments of a bank statement read from the attached file. The program finds the bank account
    * and the counterparties and copies each counterparty's newest payment with this payment's date,
    * amount, number and purpose; what is certain goes on one card, and the model is told only what
@@ -2776,7 +2914,7 @@ function describe(name: string, input: unknown): string {
     const batch = input as { title: string; invoices: unknown[] };
     return `${batch.invoices.length} · ${batch.title}`;
   }
-  if (name === "propose_didox_invoices") {
+  if (name === "propose_didox_invoices" || name === "propose_didox_sales") {
     const batch = input as { title: string; documents?: string[] };
     return `${batch.documents ? `${batch.documents.length} · ` : ""}${batch.title}`;
   }
@@ -2985,6 +3123,9 @@ interface DidoxOrigin {
   /** The supplier's name, for the card. */
   counterparty: string;
 }
+
+const DIDOX_SALES_NEXT =
+  "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_sales again with items / counterparties / contracts / vatRateMap (references and numbers only); sales already entered are not offered again.";
 
 const DIDOX_NEXT =
   "Settle these (pick from the candidates, create what is missing with propose_changes, or ask the accountant) and call propose_didox_invoices again with items / counterparties / contracts (references only); documents already entered are not offered again.";
