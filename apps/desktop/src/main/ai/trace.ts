@@ -54,6 +54,10 @@ export class TraceBuilder {
       this.steps.push({ tool: name.slice(0, 60), ok: result.ok });
       return;
     }
+    if (typeof input !== "object" || input === null) {
+      this.steps.push({ tool: "run_query", ok: result.ok });
+      return;
+    }
     const query = input as RunQueryInput;
     const data = result.ok ? (result.data as QueryResult) : null;
     this.steps.push({

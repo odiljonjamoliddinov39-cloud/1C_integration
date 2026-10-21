@@ -1,0 +1,31 @@
+# Simulation: thousands of fake cases
+
+The engine is tested not only by the cases someone thought of, but by generated ones. The suites in
+`apps/desktop/src/main/sim/` (and `apps/api/src/sim.test.ts`) build thousands of cases from a seeded random source
+(`sim/rng.ts`) and check what must always hold. They run with the normal tests, in about half a minute.
+
+| Suite                      | What is generated                                                                                                                                                  | What must hold                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `templates.sim`            | ~15 000 worded questions: any word order, endings, filler, months, dates, quoted accounts, extra conditions, two questions in one, noise, requests to do something | the right seeded template and period; a question with an extra condition, two asks or an action goes to the model                                                                                              |
+| `calc.sim`                 | ~25 000 calculations                                                                                                                                               | an allocation adds to the cent; a loan ends at zero; a depreciation writes off cost less residual; VAT and payroll go there and back; costing keeps value; the IRR zeroes the NPV; FX gains and losses net out |
+| `tax.sim`                  | ~20 000 payment purposes                                                                                                                                           | the tax, the period (any month form), the company's habit; two taxes or none are left to the model                                                                                                             |
+| `statement.sim`            | ~3 000 bank statements: Дебет/Кредит, signed amount, Uzbek headings, no headings; every number and date format                                                     | the payments that went in come out: date, direction, tiyin, INN, number, name, purpose                                                                                                                         |
+| `ledger.sim`               | ~2 500 companies with several accounts                                                                                                                             | outsiders' payments and fees are entered, own transfers once, nothing twice or lost                                                                                                                            |
+| `didox.sim`                | ~10 000 invoices and acts: 0/12/15 % VAT or none, noisy numbers                                                                                                    | exact lines and totals; a wrong figure is named; junk never throws                                                                                                                                             |
+| `seed.sim`                 | the knowledge base and the seeded queries                                                                                                                          | each entry is found by its own topics; every query is well formed and read-only                                                                                                                                |
+| `user.sim`                 | fake companies acting as users, driven by a scripted model that sends valid and broken tool calls, unknown tools, runaway reading and calls that never end         | every tool call is answered once (the API would refuse the chat otherwise); the caps hold; one terminal event per question; each company's rules stay its own and bounded                                      |
+| `apps/api/src/sim.test.ts` | fake accounts on every plan asking past their limit, with answer steps                                                                                             | a question is counted once, a step never; the limit stops with one code; accounts stay apart; no server error                                                                                                  |
+
+`SIM_CASES=10 pnpm --filter @platform/desktop exec vitest run src/main/sim` runs ten times as many cases;
+`SIM_SEED=7` another set. A failure prints the case, so it can be reproduced from the seed and the number.
+
+## What the first run found (all fixed)
+
+- ЕСП (the unified social payment) was never recognised: the pattern had a typo (`еср`).
+- "Налог на доходы физических лиц" written out was not recognised as НДФЛ.
+- A request to do something ("удали документы с пометкой удаления") was answered by the list template; actions now go to the model and its confirmation cards.
+- An IRR above 1000 % came back as "none"; the search now widens until it brackets.
+- A rounded cent below zero printed as `-0`.
+- A tool call with `null` input crashed the question, and the chat was left with an unanswered tool call that made the API refuse every later question; tool failures are now results, the trace is never fatal, and unanswered calls are closed before the next question.
+- A bank statement without headings took a five-digit document number for the bank code (MFO); the repeating column wins now.
+- Didox invoices at 15 % VAT (the rate from 2026) were flagged as an unusual rate.

@@ -69,7 +69,8 @@ export interface DidoxDocument {
 }
 
 /** VAT rates in use in Uzbekistan; others are shown, not refused. */
-const KNOWN_VAT_RATES = new Set([0, 12]);
+// 12% until the end of 2025, 15% from 2026: a document of either year is not a surprise.
+const KNOWN_VAT_RATES = new Set([0, 12, 15]);
 
 const str = (value: unknown): string =>
   typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
@@ -247,7 +248,7 @@ function check(doc: DidoxDocument) {
         `${l.qty} × ${money(l.price)} = ${money(expected)}, the document says ${money(l.amount)}`,
       );
     }
-    if (!KNOWN_VAT_RATES.has(l.vatRate)) issue(l.n, "VAT_RATE", `VAT rate ${l.vatRate}% is not 0 or 12`);
+    if (!KNOWN_VAT_RATES.has(l.vatRate)) issue(l.n, "VAT_RATE", `VAT rate ${l.vatRate}% is not 0, 12 or 15`);
     const vat = Math.round((l.amount * l.vatRate) / 100);
     if (Math.abs(vat - l.vat) > 1) {
       issue(

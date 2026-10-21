@@ -62,6 +62,12 @@ describe("the seeded questions are recognised, in the three languages", () => {
     expect(codeOf("почему выросла дебиторская задолженность")).toBeNull();
   });
 
+  it("does not take a request to do something for a question to read", () => {
+    expect(codeOf("документы с пометкой удаления")).toBe("seed_marked_documents");
+    expect(codeOf("удали документы с пометкой удаления")).toBeNull();
+    expect(codeOf("непроведенные документы за сентябрь, проведи")).toBeNull();
+  });
+
   it("asks for a counterparty's name for a counterparty's balance", () => {
     const match = matchTemplate("сальдо по контрагенту Navroz", views, today);
     expect(match?.template.code).toBe("seed_counterparty_balance");

@@ -331,10 +331,24 @@ export class AssistantService {
         });
       }
     }
-    const content: AiMessage["content"] =
+    let content: AiMessage["content"] =
       blocks.length > 0 ? [...blocks, { type: "text", text: question }] : question;
     // Pages and pictures of earlier questions were read; only their names stay.
     chat.messages = dropPages(chat.messages);
+    // A question that ended without answering the model's last tool calls (a crash, a closed app) would make the API
+    // refuse every later one: they are answered first, as not run.
+    const unanswered = unansweredCalls(chat.messages);
+    if (unanswered.length > 0) {
+      const notRun = {
+        ok: false,
+        code: "NOT_RUN",
+        message: "The previous question ended before this ran",
+      } as const;
+      content = [
+        ...unanswered.map((id) => toToolResult(id, notRun)),
+        ...(typeof content === "string" ? [{ type: "text", text: content }] : content),
+      ];
+    }
     if (JSON.stringify(chat.messages).length + JSON.stringify(content).length > MAX_CHAT_CHARS) {
       return this.fail(notify, "CHAT_TOO_LARGE", "This chat is too large; start a new chat");
     }
@@ -650,9 +664,7 @@ export class AssistantService {
       for (const use of toolUses) {
         const toolStarted = Date.now();
         const waitedBefore = this.cardWaitMs.get(chat.companyId) ?? 0;
-        const result = signal.aborted
-          ? ({ ok: false, code: "STOPPED", message: "Stopped by the user" } as const)
-          : await this.runTool(chat, use, emit, signal, run);
+        const result = await this.runToolSafely(chat, use, emit, signal, run);
         // Time in 1C: what the tool took, without the card waiting for the user.
         const toolMs = Math.max(
           0,
@@ -666,10 +678,14 @@ export class AssistantService {
         // A card the user declined: the rest of the question runs on the default model.
         if (isDeclined(result)) run.escalate = true;
         if (!signal.aborted) {
-          if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) {
-            run.trace.propose(use.name, use.input, result);
-          } else {
-            run.trace.read(use.name, use.input, result);
+          try {
+            if ((AI_PROPOSAL_TOOLS as readonly string[]).includes(use.name)) {
+              run.trace.propose(use.name, use.input, result);
+            } else {
+              run.trace.read(use.name, use.input, result);
+            }
+          } catch {
+            // The trace is for learning only: a call of a shape it does not know never breaks the question.
           }
         }
         results.push(toToolResult(use.id, result, shaped(use.name, result, run.policy)));
@@ -1006,6 +1022,31 @@ export class AssistantService {
     } catch (e) {
       // The answer still reaches the window; only reopening this chat later is lost.
       console.error("The chat was not saved:", e);
+    }
+  }
+
+  /**
+   * A tool never ends the question by failing: whatever it throws becomes its result, so the model is told and the
+   * conversation stays valid (every call has a result).
+   */
+  private async runToolSafely(
+    chat: StoredChat,
+    use: AiToolUse,
+    emit: Emit,
+    signal: AbortSignal,
+    run: Run,
+  ): Promise<ToolResult> {
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    try {
+      return await this.runTool(chat, use, emit, signal, run);
+    } catch (e) {
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      console.error(`The tool ${use.name} failed:`, e);
+      return {
+        ok: false,
+        code: "TOOL_FAILED",
+        message: `${use.name} failed inside the app (${e instanceof Error ? e.message : "unknown error"}); try another way or say what is missing`,
+      };
     }
   }
 
@@ -2619,6 +2660,16 @@ export class AssistantService {
     emit({ type: "error", code, message });
     return { ok: false, code, message };
   }
+}
+
+/** The ids of the tool calls in the last message when it is the model's and nobody answered them. */
+function unansweredCalls(messages: AiMessage[]): string[] {
+  const last = messages.at(-1);
+  if (last?.role !== "assistant" || !Array.isArray(last.content)) return [];
+  return last.content.flatMap((block) => {
+    const use = AiToolUse.safeParse(block);
+    return use.success ? [use.data.id] : [];
+  });
 }
 
 /**

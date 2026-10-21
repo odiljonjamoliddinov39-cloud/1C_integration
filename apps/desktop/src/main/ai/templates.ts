@@ -74,6 +74,65 @@ const FILLER = new Set([
   "к",
 ]);
 
+/**
+ * Verbs that ask for an action, not for a figure ("удали документы с пометкой удаления", "delete the duplicates"): a
+ * template only reads, so a question that asks to do something goes to the model and its confirmation cards.
+ * Whole words, so "удаления" in a phrase is not one of them.
+ */
+const ACTIONS = new Set([
+  ...[
+    "удали",
+    "удалить",
+    "проведи",
+    "провести",
+    "отправь",
+    "отправить",
+    "создай",
+    "создать",
+    "измени",
+    "изменить",
+  ],
+  ...[
+    "исправь",
+    "исправить",
+    "загрузи",
+    "загрузить",
+    "отмени",
+    "отменить",
+    "внеси",
+    "внести",
+    "запиши",
+    "записать",
+  ],
+  ...[
+    "оплати",
+    "оплатить",
+    "закрой",
+    "закрыть",
+    "перенеси",
+    "перенести",
+    "пересчитай",
+    "пометь",
+    "сними",
+    "заполни",
+  ],
+  ...[
+    "delete",
+    "remove",
+    "create",
+    "post",
+    "send",
+    "change",
+    "fix",
+    "update",
+    "close",
+    "pay",
+    "enter",
+    "write",
+  ],
+  ...["o'chir", "o'chirib", "o'chirish", "yarat", "yubor", "o'zgartir", "to'g'irla", "yoz", "kirit", "yop"],
+]);
+
 /** Legal forms that stand next to a counterparty's name. */
 const LEGAL_FORMS = new Set(["mchj", "ooo", "ооо", "мчж", "xk", "qk", "ao", "ак", "ип", "ok", "aj"]);
 
@@ -213,6 +272,7 @@ export function matchTemplate(
 ): TemplateMatch | null {
   const asked = words(question);
   if (asked.length === 0 || asked.length > 14) return null;
+  const actions = asked.filter((w) => ACTIONS.has(w));
   let best: { match: TemplateMatch; size: number } | null = null;
 
   for (const template of templates) {
@@ -259,6 +319,8 @@ export function matchTemplate(
       // One word is too little to tell questions apart, except in a phrase an admin wrote on purpose
       // ("выручка", "debitorka"): the question must still say that word and nothing else of meaning.
       if (phraseStems.length < 2 && !(template.source === "admin" && phraseStems.length === 1)) continue;
+      // An action the phrase itself does not name ("… and delete them") is not a question to read an answer to.
+      if (actions.some((a) => !words(phrase).includes(a))) continue;
       const restStems = rest.filter((w) => !FILLER.has(w)).map(stem);
       if (!phraseStems.every((s) => restStems.includes(s))) continue;
       let counterparty: TemplateMatch["counterparty"];

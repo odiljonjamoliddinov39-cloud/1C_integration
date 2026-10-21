@@ -15,12 +15,12 @@ const KINDS: { kind: TaxKind; purpose: RegExp; name: RegExp }[] = [
   {
     kind: "ndfl",
     purpose:
-      /(?<!\p{L})(ндфл|жшдс|jshds|подоходн\p{L}*|daromad\s+solig\p{L}*|даромад\s+солиғ\p{L}*)(?!\p{L})/iu,
+      /(?<!\p{L})(ндфл|жшдс|jshds|подоходн\p{L}*|доход\p{L}*\s+физическ\p{L}*|daromad\s+solig\p{L}*|даромад\s+солиғ\p{L}*)(?!\p{L})/iu,
     name: /ндфл|подоход|физическ|жшдс/iu,
   },
   {
     kind: "social",
-    purpose: /(?<!\p{L})(социальн\p{L}*|ижтимоий|ijtimoiy|единый\s+социальный|еср|esp)(?!\p{L})/iu,
+    purpose: /(?<!\p{L})(социальн\p{L}*|ижтимоий|ijtimoiy|единый\s+социальный|есп|esp)(?!\p{L})/iu,
     name: /социал|ижтимо|единый/iu,
   },
   {

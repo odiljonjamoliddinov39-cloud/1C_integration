@@ -213,9 +213,13 @@ function inferColumns(sheet: SheetTable): {
   const ownInn = inns.find(own);
   take("inn", [...inns].filter((c) => c !== ownInn).sort((a, b) => b.distinct - a.distinct)[0]);
   const isOwn = (c: { i: number }) => c.i === ownAccount?.i || c.i === ownInn?.i;
+  // A bank's code repeats (a few banks pay a company); a document number of five digits does not: the one that
+  // repeats most is the MFO.
   take(
     "mfo",
-    cols.find((c) => !used.has(c.i) && !isOwn(c) && c.coverage >= 0.8 && c.mfo >= 0.8),
+    cols
+      .filter((c) => !used.has(c.i) && !isOwn(c) && c.coverage >= 0.8 && c.mfo >= 0.8)
+      .sort((a, b) => a.distinct - b.distinct || a.i - b.i)[0],
   );
 
   // Amounts: not a date, account, INN or bank code. A pair has one of the two empty (or 0) on each row.

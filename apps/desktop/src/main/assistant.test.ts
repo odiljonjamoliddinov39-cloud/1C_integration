@@ -3485,3 +3485,57 @@ describe("assistant", () => {
     });
   });
 });
+
+describe("found by the simulations", () => {
+  const toolTurn = (id: string, name: string, input: unknown): AiEvent[] => [
+    {
+      type: "message",
+      stopReason: "tool_use",
+      content: [{ type: "tool_use", id, name, input }],
+    },
+  ];
+  const endTurn = (): AiEvent[] => [
+    { type: "text", text: "ok" },
+    { type: "message", stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+  ];
+
+  it("a tool call with no input at all is answered as an error, and the question goes on", async () => {
+    const { assistant, store, company, proxy } = setup([
+      () => toolTurn("tu_1", "run_query", null),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    expect(await assistant.send({ companyId: company.id, text: "q" })).toEqual({ ok: true, data: null });
+    const answered = proxy.requests[1]!.messages.at(-1)!.content as { is_error?: boolean }[];
+    expect(answered[0]?.is_error).toBe(true);
+  });
+
+  it("answers the model's unanswered tool calls before the next question, so the API accepts the chat", async () => {
+    const { assistant, store, company, proxy } = setup([
+      () => toolTurn("tu_1", "list_organizations", {}),
+      // The second step of the first question fails for good.
+      () => new Response(JSON.stringify({ code: "BAD", message: "no" }), { status: 400 }),
+      () => endTurn(),
+    ]);
+    store.setAiEnabled(company.id, true);
+    const first = await assistant.send({ companyId: company.id, text: "first" });
+    expect(first.ok).toBe(false);
+    const chatId = (assistant.chats(company.id)[0] ?? { id: "" }).id;
+    expect(await assistant.send({ companyId: company.id, chatId, text: "second" })).toEqual({
+      ok: true,
+      data: null,
+    });
+    // Every tool call in what the API gets has its result.
+    const messages = proxy.requests.at(-1)!.messages;
+    const calls = messages.flatMap((m) =>
+      Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => b["id"]) : [],
+    );
+    const results = messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((b) => b.type === "tool_result").map((b) => b["tool_use_id"])
+        : [],
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    expect(results.sort()).toEqual(calls.sort());
+  });
+});

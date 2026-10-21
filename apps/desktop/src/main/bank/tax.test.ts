@@ -81,3 +81,11 @@ describe("the company's habit", () => {
     expect(taxPeriodFor("НДФЛ", "2026-10-19", [])).toBeNull();
   });
 });
+
+describe("found by the simulations", () => {
+  it("reads ЕСП and the spelled-out income tax of individuals", () => {
+    expect(taxKindOf("Оплата ЕСП за сентябрь")).toBe("social");
+    expect(taxKindOf("Перечисление налог на доходы физических лиц")).toBe("ndfl");
+    expect(taxKindOf("ЕСП и налог на имущество")).toBeNull();
+  });
+});
