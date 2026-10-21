@@ -49,6 +49,7 @@ import {
   type DidoxInvoicesInput,
   type CurrencyRatesToolInput,
   type LedgerCheckInput,
+  type RevaluationCheckInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -94,6 +95,7 @@ import {
   type BankProblem,
   type BankResolved,
   CURRENCY_CODES,
+  rateOn,
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
@@ -125,6 +127,8 @@ import {
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { judgeBalances } from "./ledger-check.js";
+import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
+import { currencyFromText } from "./bank/policy.js";
 import { type CbuResult, daysBetween, fetchCbuRates, planRates } from "./currency/cbu.js";
 import {
   DOCUMENT_DOCTYPE,
@@ -1297,6 +1301,9 @@ export class AssistantService {
     if (use.name === "learn_accounting_policy") {
       return this.learnAccountingPolicy(chat);
     }
+    if (use.name === "revaluation_check") {
+      return this.revaluationCheck(chat, input.data as RevaluationCheckInput);
+    }
     if (use.name === "ledger_check") {
       return this.ledgerCheck(chat, input.data as LedgerCheckInput);
     }
@@ -1715,6 +1722,70 @@ export class AssistantService {
         ),
       force,
     );
+  }
+
+  /**
+   * What the month-end revaluation has to produce, month by month, read from 1C and the rates of the day (the rate
+   * register); see currency/revaluation.ts.
+   */
+  private async revaluationCheck(chat: StoredChat, input: RevaluationCheckInput): Promise<ToolResult> {
+    const dates = monthEnds(input.from, input.to);
+    if (dates.length === 0) return { ok: false, code: "NO_PERIOD", message: "from must not be after to" };
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const deps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const findings: Revaluation[] = [];
+    const noRate = new Set<string>();
+    for (const date of dates) {
+      const read = await run("run_query", {
+        query:
+          "ВЫБРАТЬ Х.Счет.Код КАК Счет, Х.Валюта.Код КАК Валюта, СУММА(Х.ВалютнаяСуммаОстатокДт) КАК ВДт, " +
+          "СУММА(Х.ВалютнаяСуммаОстатокКт) КАК ВКт, СУММА(Х.СуммаОстатокДт) КАК Дт, СУММА(Х.СуммаОстатокКт) КАК Кт " +
+          "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х " +
+          "ГДЕ Х.Валюта <> ЗНАЧЕНИЕ(Справочник.Валюты.ПустаяСсылка) СГРУППИРОВАТЬ ПО Х.Счет.Код, Х.Валюта.Код",
+        params: { Дата: `${date}T23:59:59` },
+        limit: 1000,
+      });
+      if (!read.ok) return read;
+      const balances: CurrencyBalance[] = ((read.data as { rows?: unknown[][] }).rows ?? []).map((c) => ({
+        account: String(c[0] ?? ""),
+        currency: currencyFromText(String(c[1] ?? "")),
+        currencyNet: (Number(c[2]) || 0) - (Number(c[3]) || 0),
+        soumNet: (Number(c[4]) || 0) - (Number(c[5]) || 0),
+      }));
+      const rates = new Map<string, number | null>();
+      for (const currency of new Set(balances.map((b) => b.currency)))
+        if (currency && currency !== "UZS") rates.set(currency, await rateOn(deps, cache, currency, date));
+      const month = revalue(date, balances, (currency) => rates.get(currency) ?? null);
+      findings.push(...month.found);
+      for (const c of month.noRate) noRate.add(c);
+    }
+    findings.sort((a, b) => Math.abs(b.adjustment) - Math.abs(a.adjustment));
+    const gain = findings.filter((f) => f.adjustment > 0).reduce((n, f) => n + f.adjustment, 0);
+    const loss = findings.filter((f) => f.adjustment < 0).reduce((n, f) => n - f.adjustment, 0);
+    return {
+      ok: true,
+      data: {
+        months: dates.length,
+        differences: findings.length,
+        ...(findings.length === 0 ? { status: "revalued: the balances in soums agree with the rates" } : {}),
+        totals: { gain: Math.round(gain * 100) / 100, loss: Math.round(loss * 100) / 100 },
+        ...(noRate.size > 0
+          ? { noRate: [...noRate], noRateNote: "load the rates first (propose_currency_rates)" }
+          : {}),
+        findings: findings.slice(0, 40),
+        next:
+          findings.length === 0
+            ? "Nothing to revalue."
+            : "These are the amounts 1C's own revaluation must produce (Закрытие месяца → Переоценка валютных средств, for each month in turn: it is a regulated operation, not a document the app can create). Tell the accountant to run it for the months listed, then call this tool again: the differences must be gone.",
+      },
+    };
   }
 
   /** The balances worth a look, read in one query and judged by the program (see ledger-check.ts). */

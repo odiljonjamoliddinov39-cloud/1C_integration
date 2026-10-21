@@ -247,3 +247,15 @@ exchange-difference accounts); the note on each leg says so.
   balances once and judges them (cash or bank in credit, transit not closing, liability in debit, receivable in credit,
   exchange differences 95xx/96xx); a question that enters documents is capped at 24 model steps (60 for other questions):
   the program does the work and the model steers, and what is left is continued with the next message.
+
+## Month-end revaluation of currency balances
+
+The revaluation of dollar and ruble balances at each month's end is a regulated operation of 1C («Закрытие месяца →
+Переоценка валютных средств»), not a document the app can create, and an exchange-difference document made by hand to
+close the balances would only hide a wrong rate. What the app does (`revaluation_check`, `currency/revaluation.ts`):
+
+- For each month's end in the period it reads the currency accounts and the currency settlement accounts (an advance in
+  dollars) in one query, takes the rate of that day from the rate register, and works out what each balance in soums
+  should be, against what 1C carries: the adjustment, the side (gain on 9540, loss on 9620) and the entry.
+- It says which months need the operation and the amounts it must give; the accountant runs 1C's revaluation for those
+  months, and the same call afterwards must find no differences. It needs the rates loaded first.

@@ -4478,3 +4478,57 @@ describe("checking the books after an import", () => {
     expect(told).not.toContain("5110");
   });
 });
+
+describe("currency revaluation", () => {
+  it("works out what the month-end revaluation must give, from the balances and the rates of the day", async () => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "v1",
+              name: "revaluation_check",
+              input: { from: "2024-11-05", to: "2024-12-20" },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    const dates: string[] = [];
+    t.base.queryAnswers.unshift(
+      {
+        match: /КурсыВалют/,
+        answer: (input) => ({
+          columns: [],
+          rows: input.params?.Код === "840" ? [[12_800, 1]] : [],
+          truncated: false,
+        }),
+      },
+      {
+        match: /Остатки\(/,
+        answer: (input) => {
+          dates.push(String(input.params?.Дата));
+          return {
+            columns: [],
+            rows: [
+              ["5210", "840", 100, 0, 1_270_000, 0],
+              ["6015", "840", 0, 100, 0, 1_270_000],
+            ],
+            truncated: false,
+          };
+        },
+      },
+    );
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Qayta baholash" });
+    expect(dates).toEqual(["2024-11-30T23:59:59", "2024-12-31T23:59:59"]);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("Дт 5210 / Кт 9540 (exchange gain) 10000");
+    expect(told).toContain("Дт 9620 (exchange loss) / Кт 6015 10000");
+    expect(told).toContain("Переоценка валютных средств");
+  });
+});

@@ -397,6 +397,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the transit accounts (57xx) that do not close together, a liability account in debit (paid with no accrual), a " +
     "receivable in credit, and the exchange differences (95xx/96xx). Report its findings in a few lines with what they " +
     "most likely mean; do not run balance queries yourself to find the same things.",
+  revaluation_check:
+    "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
+    "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +
+    "dollars) at the Central Bank's rate of that day against what 1C carries, with the gain or loss and the entry. 1C does the " +
+    "revaluation in «Закрытие месяца → Переоценка валютных средств», a regulated operation that is not a document, so you cannot " +
+    "create it: say which months need it, the amounts it must give, and after the accountant has run it call this tool again, " +
+    "the differences must be gone. Never make up exchange-difference documents by hand to close the balances. If it says " +
+    "noRate, load the rates first (propose_currency_rates).",
   learn_accounting_policy:
     "Learn how this company works from its own 1C, with no input: its bank accounts (main, blocked, foreign-currency) and what " +
     "each is used for, the kinds of operation its bank documents carry (and whether it has ever recorded a transfer between " +
