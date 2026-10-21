@@ -126,6 +126,18 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
+import { compactOlderTurns } from "./ai/history.js";
+import {
+  balancesText,
+  batchText,
+  calcText,
+  MODEL_OFF_CODES,
+  failureText,
+  offlineAnswer,
+  ratesText,
+  readEngineTask,
+  revaluationText,
+} from "./engine-tasks.js";
 import { judgeBalances } from "./ledger-check.js";
 import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
 import { currencyFromText } from "./bank/policy.js";
@@ -173,13 +185,13 @@ const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
 /** Tool results are cut to this many characters before they go to the model. */
-const MAX_RESULT_CHARS = 60_000;
+const MAX_RESULT_CHARS = 20_000;
 
 /** Times a bank run looks again at its unsettled rows after entering some (each new document is a template for the rest). */
 const PROGRESS_ROUNDS = 3;
 
-/** A batch with more documents than this is shown to the model as counts, failures and a sample. */
-const BATCH_SAMPLE_FROM = 30;
+/** A batch with more documents than this is shown to the model as counts, failures and a sample (it never needs the list: the app keeps what was created). */
+const BATCH_SAMPLE_FROM = 5;
 /** Sent with the results when a turn reached the output limit inside a tool call, which was not run. */
 const CUT_TOOL_NOTE =
   "Your last tool call reached the output limit and was cut off, so it was not run. Send it again in " +
@@ -427,6 +439,9 @@ export class AssistantService {
         // A short message that names a task but not its object is settled by the program, not by the model's search.
         const routed = await this.route(chat, question, attached.blocks.length > 0, emit, abort.signal);
         if (routed) return routed;
+        // The standard jobs (a statement, Didox, rates, balances, revaluation) are done by the program with no model.
+        const engineDone = await this.engineRoute(chat, question, emit, abort.signal);
+        if (engineDone) return engineDone;
         if (standalone && !skipFree) {
           const free = await this.engine.tryFree(companyId, company.name, connection, question, true);
           if (free?.route === "template" && free.action) {
@@ -450,7 +465,22 @@ export class AssistantService {
           bankRowReads: 0,
           reads: 0,
         };
-        const result = await this.converse(chat, company.name, emit, abort.signal, run);
+        let result: Result<null>;
+        try {
+          result = await this.converse(chat, company.name, emit, abort.signal, run);
+        } catch (e) {
+          // No model to answer (no budget, no quota, no key): the reason is shown, and the program answers from what it knows.
+          if (e instanceof ControlError && MODEL_OFF_CODES.has(e.code)) {
+            const failure = this.fail(emit, e.code, e.message);
+            this.reply(chat, offlineAnswer(question, langOf(question)), emit);
+            return failure;
+          }
+          throw e;
+        }
+        if (!result.ok && MODEL_OFF_CODES.has(result.code)) {
+          this.reply(chat, offlineAnswer(question, langOf(question)), emit);
+          return result;
+        }
         if (result.ok && standalone) this.rememberAnswer(chat, company.name, question);
         // Every finished question teaches the engine: what was done, how it ended, no data.
         void this.engine
@@ -505,6 +535,109 @@ export class AssistantService {
       }
     }
     return { sent };
+  }
+
+  /**
+   * A standard job done by the program with no model: the message names it (see engine-tasks.ts), the tool the model
+   * would have called is run here, and the answer is written from what it returned. Null: not such a job.
+   */
+  private async engineRoute(
+    chat: StoredChat,
+    question: string,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<Result<null> | null> {
+    const task = readEngineTask(question, {
+      hasBank: (chat.bank ?? []).length > 0,
+      today: new Date().toISOString(),
+    });
+    if (!task) return null;
+    const lang = langOf(question);
+    const title = (what: { ru: string; uz: string; en: string }, from?: string, to?: string) =>
+      `${what[lang]}${from && to ? ` ${from} – ${to}` : ""}`;
+    const done = (result: ToolResult, text: (data: unknown) => string) =>
+      this.reply(chat, result.ok ? text(result.data) : failureText(result.message, lang), emit);
+    switch (task.kind) {
+      case "bank": {
+        chat.entry = true;
+        const result = await this.propose(
+          chat,
+          "propose_bank_payments",
+          {
+            title: title(
+              { ru: "Банковская выписка", uz: "Bank ko'chirmasi", en: "Bank statement" },
+              task.from,
+              task.to,
+            ),
+            ...(task.from ? { from: task.from } : {}),
+            ...(task.to ? { to: task.to } : {}),
+          },
+          emit,
+          signal,
+        );
+        return done(result, (data) => batchText(data, lang));
+      }
+      case "didox_in":
+      case "didox_sales": {
+        chat.entry = true;
+        const sales = task.kind === "didox_sales";
+        const result = await this.propose(
+          chat,
+          sales ? "propose_didox_sales" : "propose_didox_invoices",
+          {
+            title: title(
+              sales
+                ? { ru: "Didox: реализации", uz: "Didox: sotuvlar", en: "Didox: sales" }
+                : { ru: "Didox: поступления", uz: "Didox: kirimlar", en: "Didox: receipts" },
+              task.from,
+              task.to,
+            ),
+            from: task.from,
+            to: task.to,
+          },
+          emit,
+          signal,
+        );
+        return done(result, (data) => batchText(data, lang));
+      }
+      case "rates": {
+        const result = await this.propose(
+          chat,
+          "propose_currency_rates",
+          {
+            title: title(
+              { ru: "Курсы валют", uz: "Valyuta kurslari", en: "Exchange rates" },
+              task.from,
+              task.to,
+            ),
+            ...(task.currencies ? { currencies: task.currencies } : {}),
+            ...(task.from ? { from: task.from } : {}),
+            ...(task.to ? { to: task.to } : {}),
+          },
+          emit,
+          signal,
+        );
+        return done(result, (data) => ratesText(data, lang));
+      }
+      case "calc": {
+        emit({ type: "tool", name: "accounting_calc", detail: task.input.op });
+        return this.reply(
+          chat,
+          calcText(task.input.op, accountingCalc(task.input as AccountingCalcInput), lang),
+          emit,
+        );
+      }
+      case "balances": {
+        emit({ type: "tool", name: "ledger_check", detail: task.date });
+        const result = await this.ledgerCheck(chat, { date: task.date });
+        return done(result, (data) => balancesText(data as Parameters<typeof balancesText>[0], lang));
+      }
+      case "revaluation": {
+        emit({ type: "tool", name: "revaluation_check", detail: `${task.from} – ${task.to}` });
+        const result = await this.revaluationCheck(chat, { from: task.from, to: task.to });
+        return done(result, (data) => revaluationText(data as Parameters<typeof revaluationText>[0], lang));
+      }
+    }
   }
 
   /**
@@ -793,7 +926,8 @@ export class AssistantService {
           task: run.task,
           ...(run.import ? { kind: "import" as const } : {}),
           ...(run.escalate ? { escalate: true } : {}),
-          messages: history,
+          // Earlier questions are reduced to the question and the answer: every step re-reads the whole chat.
+          messages: compactOlderTurns(history),
         },
         emit,
         signal,

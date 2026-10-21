@@ -55,6 +55,13 @@ export function ConnectCompanyDialog({
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
   });
+  // 1C is installed without its COM connector (or only as 32-bit): the app registers it, Windows asks to approve.
+  const registerCom = useMutation({
+    mutationFn: () => window.platform.companies.registerComConnector(),
+    onSuccess: (result) => {
+      if (result.ok) runTest.mutate();
+    },
+  });
   const save = useMutation({
     mutationFn: () => {
       const organization = test?.organizations.find((o) => o.ref === organizationRef);
@@ -82,6 +89,10 @@ export function ConnectCompanyDialog({
     save.data && !save.data.ok
       ? errorText(t, save.data.code, save.data.message)
       : (save.error?.message ?? runTest.error?.message ?? null);
+  const registerError =
+    registerCom.data && !registerCom.data.ok
+      ? errorText(t, registerCom.data.code, registerCom.data.message)
+      : (registerCom.error?.message ?? null);
 
   return (
     <div
@@ -186,6 +197,22 @@ export function ConnectCompanyDialog({
               >
                 {t("connect.install")}
               </Button>
+            </div>
+          )}
+          {test && !test.status.ok && test.status.code === "COM_NOT_REGISTERED" && (
+            <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
+              <div>{t("connect.registerComHint")}</div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={registerCom.isPending || runTest.isPending}
+                onClick={() => {
+                  if (window.confirm(t("connect.registerComConfirm"))) registerCom.mutate();
+                }}
+              >
+                {registerCom.isPending ? t("connect.registeringCom") : t("connect.registerCom")}
+              </Button>
+              {registerError && <ErrorText>{registerError}</ErrorText>}
             </div>
           )}
           {test?.status.ok && (

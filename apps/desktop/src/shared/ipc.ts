@@ -462,6 +462,11 @@ export interface PlatformBridge {
      * checks the base again; the result is a check like testConnection's.
      */
     installExtension(input: ConnectionInput): Promise<ConnectionTestResult>;
+    /**
+     * Registers 1C's COM connector (regsvr32 on comcntr.dll, Windows asks for administrator approval) when
+     * 1C is installed without it; the dialog checks the base again afterwards.
+     */
+    registerComConnector(): Promise<Result<{ version: string; dll: string }>>;
   };
   billing: {
     /** The plan, its limits and what is used (the last answer of the server; null before the first one). */

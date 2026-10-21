@@ -28,6 +28,11 @@ function setup() {
     ok: true,
     data: null,
   };
+  const comRegistration:
+    { ok: true; data: { version: string; dll: string } } | { ok: false; code: string; message: string } = {
+    ok: true,
+    data: { version: "8.3.24.1548", dll: "C:\\Program Files\\1cv8\\8.3.24.1548\\bin\\comcntr.dll" },
+  };
   const file = join(mkdtempSync(join(tmpdir(), "platform-")), "platform.json");
   const bases = new Map<string, FakePlatform>();
   const seen: ConnectionInput[] = [];
@@ -66,6 +71,7 @@ function setup() {
       installs.push(connection);
       return installResult;
     },
+    registerComConnector: async () => comRegistration,
   });
   return {
     handlers,
@@ -256,6 +262,7 @@ describe("without secure storage", () => {
       pickFolder: async () => null,
       saveFile: async () => true,
       installExtension: async () => ({ ok: true, data: null }),
+      registerComConnector: async () => ({ ok: false, code: "COM_REGISTER_DENIED", message: "no" }),
     });
     const org = (await handlers.testConnection(connection)).organizations[0]!;
     expect(await handlers.addCompany({ ...connection, organization: org })).toMatchObject({

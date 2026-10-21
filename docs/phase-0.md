@@ -20,6 +20,10 @@ written from Node**.
 2. **Create the extension** in the Configurator: [`onec/extension/README.md`](../onec/extension/README.md) §1.
 3. **Register the COM connector** (64-bit platform, as administrator):
    `regsvr32 "C:\Program Files\1cv8\<version>\bin\comcntr.dll"`.
+   The desktop app does this itself: when the connection fails with `COM_NOT_REGISTERED`, the connect dialog
+   shows «Fix automatically» (`main/com-register.ts`). It picks the newest 64-bit `comcntr.dll`, runs `regsvr32 /s`
+   through a Windows administrator prompt (UAC) and checks that `V83.COMConnector` is registered. With only a
+   32-bit 1C platform installed it says so instead: install the 64-bit platform of the same version.
 4. **Install:** Node 24 x64 (`winax` does not compile on Node 22), pnpm, and **Visual Studio Build Tools 2022** with "Desktop development with C++" (for `winax`; the node-gyp bundled with pnpm does not recognize Visual Studio 2026 yet). Then run `pnpm install` in the repo.
 5. **Run the checks:**
    ```powershell

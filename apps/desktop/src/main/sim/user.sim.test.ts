@@ -364,7 +364,8 @@ describe("simulation: fake accounts act as users", () => {
         bad.push(`#${i} ${terminals.length} terminal events (${terminals.map((e) => e.type)})`);
       const used = world.requests.length - before;
       if (used > MAX_TURNS) bad.push(`#${i} ${used} model steps, cap ${MAX_TURNS}`);
-      if (sess.plan.endless) {
+      // A sentence the program answers by itself never reaches the model; the cap is for questions that do.
+      if (sess.plan.endless && used > 0) {
         if (result.ok || result.code !== "AI_TOO_MANY_STEPS")
           bad.push(`#${i} endless model: ${JSON.stringify(result)}`);
       } else if (!result.ok) {

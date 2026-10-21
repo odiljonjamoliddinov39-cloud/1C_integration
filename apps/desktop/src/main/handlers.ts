@@ -45,6 +45,8 @@ export interface HandlerDeps {
   saveFile: (defaultName: string, content: string) => Promise<boolean>;
   /** Loads the app's PlatformAPI extension into a base (1C Designer, batch mode). */
   installExtension: (connection: ConnectionInput) => Promise<Result<unknown>>;
+  /** Registers 1C's COM connector for this app (regsvr32, administrator approval asked by Windows). */
+  registerComConnector: () => Promise<Result<{ version: string; dll: string }>>;
   /** E-IMZO and the network for the Didox test; the real ones unless a test hands in fakes. */
   didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
 }
@@ -66,6 +68,7 @@ export function createHandlers({
   pickFolder,
   saveFile,
   installExtension,
+  registerComConnector,
   didox,
 }: HandlerDeps) {
   return {
@@ -187,6 +190,10 @@ export function createHandlers({
       if (!installed.ok) return failed(installed.code, installed.message);
       return connector.check(input.data);
     },
+
+    /** Registers 1C's COM connector; Windows asks the user to approve it. */
+    registerComConnector: async (): Promise<Result<{ version: string; dll: string }>> =>
+      registerComConnector(),
 
     didoxKeys: async (): Promise<Result<DidoxKeyView[]>> => {
       try {

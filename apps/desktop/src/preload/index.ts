@@ -21,6 +21,7 @@ const bridge: PlatformBridge = {
     remove: (id) => ipcRenderer.invoke(CHANNELS.removeCompany, id),
     updateExtension: (id) => ipcRenderer.invoke(CHANNELS.updateExtension, id),
     installExtension: (input) => ipcRenderer.invoke(CHANNELS.installExtension, input),
+    registerComConnector: () => ipcRenderer.invoke(CHANNELS.registerCom),
   },
   billing: {
     get: () => ipcRenderer.invoke(CHANNELS.billingGet),
