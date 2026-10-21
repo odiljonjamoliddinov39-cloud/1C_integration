@@ -1320,7 +1320,7 @@ describe("assistant", () => {
         proposeThenAnswer("propose_changes", batch),
       );
       store.setAiEnabled(company.id, true);
-      const sending = assistant.send({ companyId: company.id, text: "Vypiskani 1C ga kirit" });
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani 1C ga ko'rib chiq" });
       await answerCards(events, assistant, true);
       expect(await sending).toEqual({ ok: true, data: null });
 
@@ -1389,7 +1389,7 @@ describe("assistant", () => {
       ]);
       base.required["Документ.ПоступлениеНаРасчетныйСчет"] = ["СуммаВзаиморасчетов"];
       store.setAiEnabled(company.id, true);
-      const sending = assistant.send({ companyId: company.id, text: "Vypiskani kirit" });
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani ko'rib chiq" });
       await answerCards(events, assistant, true);
       expect(await sending).toEqual({ ok: true, data: null });
 
@@ -1446,7 +1446,7 @@ describe("assistant", () => {
       };
       const { assistant, store, company, events, base } = setup(proposeThenAnswer("propose_changes", batch));
       store.setAiEnabled(company.id, true);
-      const sending = assistant.send({ companyId: company.id, text: "Vypiskani kirit" });
+      const sending = assistant.send({ companyId: company.id, text: "Vypiskani ko'rib chiq" });
       await answerCards(events, assistant, true);
       await sending;
       const card = events.find((e) => e.type === "confirm");
@@ -1667,7 +1667,7 @@ describe("assistant", () => {
 
       const sending = assistant.send({
         companyId: company.id,
-        text: "Didox fakturalarini kirit",
+        text: "Didox fakturalarini ko'rib chiq",
         files: [
           {
             name: "663.json",
@@ -1800,7 +1800,7 @@ describe("assistant", () => {
 
       const sending = assistant.send({
         companyId: company.id,
-        text: "Vypiskani kirit",
+        text: "Vypiskani ko'rib chiq",
         files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
       });
       await answerCards(events, assistant, true);
@@ -1935,7 +1935,7 @@ describe("assistant", () => {
       store.setAiEnabled(company.id, true);
       const sending = assistant.send({
         companyId: company.id,
-        text: "Didox sotuvlarini kirit",
+        text: "Didox sotuvlarini ko'rib chiq",
         files: [
           {
             name: "out-24.json",
@@ -2212,7 +2212,7 @@ describe("assistant", () => {
         );
       const sending = assistant.send({
         companyId: company.id,
-        text: "Vypiskalarni kirit",
+        text: "Vypiskalarni ko'rib chiq",
         files: [
           {
             name: "a.csv",
@@ -2348,7 +2348,7 @@ describe("assistant", () => {
 
       const sending = assistant.send({
         companyId: company.id,
-        text: "Vypiskalarni kirit",
+        text: "Vypiskalarni ko'rib chiq",
         files: [
           { name: "main.csv", data: new TextEncoder().encode(main) },
           { name: "transit.csv", data: new TextEncoder().encode(transit) },
@@ -2493,7 +2493,7 @@ describe("assistant", () => {
 
       const sending = assistant.send({
         companyId: company.id,
-        text: "Vypiskani kirit",
+        text: "Vypiskani ko'rib chiq",
         files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
       });
       const answered = new Set<string>();
@@ -4168,7 +4168,7 @@ describe("speed of entering documents", () => {
     await assistant.send({
       companyId: company.id,
       chatId,
-      text: "Дидокдаги 2024 йилги ҳисоб-фактураларни кирит",
+      text: "Дидокдаги 2024 йилги ҳисоб-фактураларга қара",
     });
     await assistant.send({ companyId: company.id, chatId, text: "ҳа, давом эт" });
     expect(proxy.requests.map((r) => r.kind)).toEqual(["import", "import"]);
@@ -4308,7 +4308,7 @@ describe("exchange rates", () => {
       }),
     });
     t.store.setAiEnabled(t.company.id, true);
-    const sending = t.assistant.send({ companyId: t.company.id, text: "USD kurslarini yukla" });
+    const sending = t.assistant.send({ companyId: t.company.id, text: "Valyuta bilan yordam ber" });
     const timer = setInterval(() => {
       const card = t.events.find((e) => e.type === "confirm");
       if (card?.type === "confirm") {
@@ -4391,7 +4391,7 @@ describe("exchange rates", () => {
     ].join("\n");
     const sending = t.assistant.send({
       companyId: t.company.id,
-      text: "Vypiskani kirit",
+      text: "Vypiskani ko'rib chiq",
       files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
     });
     const answered = new Set<string>();
@@ -4476,7 +4476,7 @@ describe("checking the books after an import", () => {
       },
     });
     t.store.setAiEnabled(t.company.id, true);
-    await t.assistant.send({ companyId: t.company.id, text: "Qoldiqlarni tekshir" });
+    await t.assistant.send({ companyId: t.company.id, text: "Hisoblarga qara" });
     expect(asked).toEqual(["2024-10-31T23:59:59"]);
     const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
     expect(told).toContain("57xx");
@@ -4530,11 +4530,143 @@ describe("currency revaluation", () => {
       },
     );
     t.store.setAiEnabled(t.company.id, true);
-    await t.assistant.send({ companyId: t.company.id, text: "Qayta baholash" });
+    await t.assistant.send({ companyId: t.company.id, text: "Valyutani hisobla" });
     expect(dates).toEqual(["2024-11-30T23:59:59", "2024-12-31T23:59:59"]);
     const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
     expect(told).toContain("Дт 5210 / Кт 9540 (exchange gain) 10000");
     expect(told).toContain("Дт 9620 (exchange loss) / Кт 6015 10000");
     expect(told).toContain("Переоценка валютных средств");
+  });
+});
+
+describe("the program works with no model", () => {
+  const cbu = (async (url: string) => {
+    const day = /(\d{4}-\d{2}-\d{2})/.exec(url)?.[1] ?? "";
+    return new Response(
+      JSON.stringify([
+        { Code: "840", Ccy: "USD", Nominal: "1", Rate: String(12_000 + Number(day.slice(8))), Date: day },
+      ]),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  const lastText = (t: ReturnType<typeof setup>, chats = true) => {
+    const chat = t.chats.load(t.company.id, t.chats.list(t.company.id)[0]!.id);
+    const last = chat?.messages.at(-1);
+    expect(chats).toBe(true);
+    return JSON.stringify(last);
+  };
+
+  const withCards = async (
+    t: ReturnType<typeof setup>,
+    text: string,
+    files?: { name: string; data: Uint8Array<ArrayBuffer> }[],
+  ) => {
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({ companyId: t.company.id, text, ...(files ? { files } : {}) });
+    const answered = new Set<string>();
+    const timer = setInterval(() => {
+      for (const e of t.events)
+        if (e.type === "confirm" && !answered.has(e.id)) {
+          answered.add(e.id);
+          t.assistant.decide(e.companyId, e.id, true);
+        }
+    }, 1);
+    await sending;
+    clearInterval(timer);
+  };
+
+  it("loads the exchange rates and says so, and the model is not asked", async () => {
+    const t = setup([], "active", undefined, undefined, undefined, false, { fetch: cbu });
+    t.base.queryAnswers.unshift({
+      match: /КурсыВалют/,
+      answer: () => ({ columns: [], rows: [], truncated: false }),
+    });
+    await withCards(t, "USD kurslarini 2024-01-01 2024-01-05 yukla");
+    expect(t.proxy.requests).toHaveLength(0);
+    expect(t.base.currencyRates.get("840")?.size).toBe(5);
+    expect(lastText(t)).toContain("Valyuta kurslari yozildi: 5");
+    expect(lastText(t)).toContain("modelsiz");
+  });
+
+  it("checks the balances and says what is wrong, and the model is not asked", async () => {
+    const t = setup([]);
+    t.base.queryAnswers.unshift({
+      match: /Остатки\(/,
+      answer: () => ({
+        columns: [],
+        rows: [
+          ["5710", "x", 2_742_873_478.26, 0],
+          ["5715", "y", 0, 2_748_794_908.74],
+        ],
+        truncated: false,
+      }),
+    });
+    await withCards(t, "Qoldiqlarni 31.12.2024 tekshir");
+    expect(t.proxy.requests).toHaveLength(0);
+    expect(lastText(t)).toContain("57xx");
+    expect(lastText(t)).toContain("5 921 430.48");
+  });
+
+  it("works out the revaluation and says which months need it, and the model is not asked", async () => {
+    const t = setup([]);
+    t.base.queryAnswers.unshift(
+      { match: /КурсыВалют/, answer: () => ({ columns: [], rows: [[12_800, 1]], truncated: false }) },
+      {
+        match: /Остатки\(/,
+        answer: () => ({ columns: [], rows: [["5210", "840", 100, 0, 1_270_000, 0]], truncated: false }),
+      },
+    );
+    await withCards(t, "Qayta baholashni tekshir 2024-12-01 2024-12-31");
+    expect(t.proxy.requests).toHaveLength(0);
+    expect(lastText(t)).toContain("Дт 5210 / Кт 9540");
+    expect(lastText(t)).toContain("Переоценка валютных средств");
+  });
+
+  it("enters a statement with no word from the model: nothing to enter in the period is said plainly", async () => {
+    const t = setup([]);
+    const statement = [
+      "Выписка по счёту 20208000100438330001",
+      "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+      "01.10.2026;1;Acme LLC;300555777;1000,00;;Payment",
+    ].join("\n");
+    await withCards(t, "Vypiskani 2020 yil kirit", [
+      { name: "vypiska.csv", data: new TextEncoder().encode(statement) },
+    ]);
+    expect(t.proxy.requests).toHaveLength(0);
+    expect(lastText(t)).toContain("modelsiz");
+  });
+
+  it("goes on working when the budget is gone: the same job, the same answer", async () => {
+    // The proxy would answer every call with the budget error; the job never reaches it.
+    const t = setup([
+      () => new Response(JSON.stringify({ code: "AI_BUDGET_EXCEEDED", message: "used" }), { status: 429 }),
+    ]);
+    t.base.queryAnswers.unshift({
+      match: /Остатки\(/,
+      answer: () => ({ columns: [], rows: [["5110", "a", 10, 0]], truncated: false }),
+    });
+    await withCards(t, "Qoldiqlarni tekshir");
+    expect(t.proxy.requests).toHaveLength(0);
+    expect(lastText(t)).toContain("e'tiroz yo'q");
+  });
+
+  it("answers a question from the knowledge base when the budget is gone, and says what it does by itself when it has no answer", async () => {
+    const budget = () =>
+      new Response(JSON.stringify({ code: "AI_BUDGET_EXCEEDED", message: "used" }), {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      });
+    const t = setup([budget, budget]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Покупка товаров: какие проводки?" });
+    const chatId = t.chats.list(t.company.id)[0]!.id;
+    const first = JSON.stringify(t.chats.load(t.company.id, chatId)!.messages.at(-1));
+    expect(first).toContain("базы знаний");
+    expect(first).toContain("Дт");
+    await t.assistant.send({ companyId: t.company.id, chatId, text: "qwertyuiop zxcvbnm" });
+    const second = JSON.stringify(t.chats.load(t.company.id, chatId)!.messages.at(-1));
+    expect(second).toContain("bilim bazasida");
+    expect(second).toContain("«ko'chirmani kirit»");
   });
 });
