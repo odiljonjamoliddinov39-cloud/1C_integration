@@ -183,6 +183,8 @@ describe("assistant", () => {
     expect(proxy.requests[0]).toEqual({
       company: company.name,
       tools: CHAT_TOOLS,
+      // What the chat holds, so that a short message is read against it (here: nothing yet).
+      policy: expect.stringContaining("State of this chat"),
       // A short read of a figure: the proxy may give it to the cheaper model, when the policy has one.
       task: "lookup",
       messages: [{ role: "user", content: "5110 qoldig'i qancha?" }],
@@ -404,7 +406,10 @@ describe("assistant", () => {
         ok: true,
         data: null,
       });
-      expect(t.proxy.requests[0]!.policy).toBeUndefined();
+      // Nothing learned about the company: only the state of the chat is sent.
+      expect(t.proxy.requests[0]!.policy).toMatch(
+        /^State of this chat[^\n]*nothing created here, nothing attached\.$/,
+      );
     });
   });
 
@@ -2554,6 +2559,134 @@ describe("assistant", () => {
       // Asked again, there is nothing left to post and no third card.
       expect(JSON.stringify(told)).toContain('\\"status\\":\\"done\\"');
       expect(JSON.stringify(proxy.requests.at(-1)?.messages.at(-1))).toContain("nothing_to_post");
+    });
+
+    it("a bare 'проведи' posts what the chat made, with no model step and no search", async () => {
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "c1",
+                name: "propose_changes",
+                input: {
+                  title: "2 ta to'lov",
+                  defaults: { action: "create", object: "Документ.СписаниеСРасчетногоСчета", post: false },
+                  changes: [
+                    { fields: { Номер: "A1", СуммаДокумента: 100 } },
+                    { fields: { Номер: "A2", СуммаДокумента: 200 } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "end_turn",
+            content: [{ type: "text", text: "Kiritildi." }],
+          },
+        ],
+      ]);
+      store.setAiEnabled(company.id, true);
+      const approve = () => {
+        const answered = new Set<string>();
+        return setInterval(() => {
+          for (const e of events)
+            if (e.type === "confirm" && !answered.has(e.id)) {
+              answered.add(e.id);
+              assistant.decide(e.companyId, e.id, true);
+            }
+        }, 1);
+      };
+      let timer = approve();
+      await assistant.send({ companyId: company.id, text: "Kirit" });
+      clearInterval(timer);
+      const steps = proxy.requests.length;
+      const reads = () => base.calls.filter((c) => c.fn === "RunQuery").length;
+      const before = reads();
+      timer = approve();
+      const second = await assistant.send({ companyId: company.id, text: "проведи" });
+      clearInterval(timer);
+
+      expect(second).toEqual({ ok: true, data: null });
+      // The model was not asked, and 1C was not searched: the chat knew what to post.
+      expect(proxy.requests).toHaveLength(steps);
+      expect(reads()).toBe(before);
+      const documents = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.СписаниеСРасчетногоСчета",
+      );
+      expect(documents).toHaveLength(2);
+      expect(documents.every((d) => d.posted)).toBe(true);
+      const texts = events.filter((e) => e.type === "text").map((e) => (e.type === "text" ? e.text : ""));
+      expect(texts.at(-1)).toContain("проведено 2");
+    });
+
+    it("a bare 'проведи' in a chat that made nothing offers numbered options from one read, and '2' does it", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const sales = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      const { assistant, store, company, events, proxy, base } = setup([]);
+      for (const id of sales)
+        base.objects.set(id, {
+          object: "Документ.РеализацияТоваровУслуг",
+          fields: { Номер: id.slice(0, 4), Дата: "2026-10-05T00:00:00" },
+          tables: {},
+          posted: false,
+          deletionMark: false,
+          version: 1,
+        });
+      const rows = (list: (string | number | { type: string; ref: string; name: string })[][]) => ({
+        columns: [],
+        rows: list,
+        truncated: false,
+      });
+      base.queryAnswers.unshift(
+        {
+          match: /КОЛИЧЕСТВО\(\*\) КАК Документов/,
+          answer: () =>
+            rows([
+              ["Реализация товаров и услуг", 3],
+              ["Поступление товаров и услуг", 12],
+            ]),
+        },
+        {
+          match: /ПЕРВЫЕ 301 Т\.Ссылка КАК Ссылка ИЗ Документ\.РеализацияТоваровУслуг/,
+          answer: () => rows(sales.map((id) => [ref("Документ.РеализацияТоваровУслуг", id, "продажа")])),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+
+      const first = await assistant.send({ companyId: company.id, text: "проведи" });
+      expect(first).toEqual({ ok: true, data: null });
+      const shown = events
+        .filter((e) => e.type === "text")
+        .map((e) => (e.type === "text" ? e.text : ""))
+        .join("");
+      expect(shown).toContain("1. Все непроведённые (15)");
+      expect(shown).toContain("2. Только «Поступление товаров и услуг» (12)");
+      expect(shown).toContain("3. Только «Реализация товаров и услуг» (3)");
+      expect(proxy.requests).toHaveLength(0);
+
+      const sending = assistant.send({ companyId: company.id, text: "реализации" });
+      await answerCards(events, assistant, true);
+      await sending;
+      expect(proxy.requests).toHaveLength(0);
+      expect(sales.every((id) => base.objects.get(id)?.posted === true)).toBe(true);
+    });
+
+    it("'проведи' with an object or a period is the model's, with the state of the chat", async () => {
+      const { assistant, store, company, proxy } = setup([
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "?" }] }],
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "проведи реализации за сентябрь" });
+      expect(proxy.requests).toHaveLength(1);
+      expect(proxy.requests[0]?.policy).toContain("State of this chat");
+      expect(proxy.requests[0]?.policy).toContain("nothing created here, nothing attached");
     });
 
     it("checks changes in 1C without a card when asked for a dry run", async () => {

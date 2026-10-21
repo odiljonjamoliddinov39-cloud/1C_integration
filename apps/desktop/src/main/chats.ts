@@ -13,6 +13,7 @@ import type { ChatEntry } from "../shared/transcript.js";
 import type { SecretBox } from "./store.js";
 import type { DidoxDocument } from "./didox/document.js";
 import type { BankStatement } from "./bank/statement.js";
+import type { PendingChoice } from "./router.js";
 import type { TableFile } from "./tables.js";
 
 /** Older chats beyond this many per company are deleted. */
@@ -39,6 +40,8 @@ export interface StoredChat extends ChatSummary {
   didoxDrafts?: { key: string; id: string }[];
   /** Documents this chat created in 1C and left unposted: what "post them" means. */
   created?: CreatedDocument[];
+  /** The options the app offered for a short message, waiting for the answer ("2", "all", a kind of document). */
+  pending?: PendingChoice;
 }
 
 export interface CreatedDocument {

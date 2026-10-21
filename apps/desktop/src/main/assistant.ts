@@ -25,6 +25,7 @@ import {
   AiToolUse,
   type ChangeBatchInput,
   type CheckChangesInput,
+  SEED_TEMPLATES,
   type InvoicesIssuedInput,
   type InvoicesReceivedInput,
   expandBatch,
@@ -94,6 +95,15 @@ import {
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
+import {
+  type PostOption,
+  langOf,
+  optionsText,
+  postOptions,
+  readChoice,
+  readPostCommand,
+  say,
+} from "./router.js";
 import { type SalesCache, resolveSales } from "./didox/sales.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
@@ -122,7 +132,7 @@ import {
 import { documentJson } from "./didox/fetch.js";
 import { readReconciliationAct } from "./didox/reconciliation.js";
 import { EImzoClient, EImzoError, EImzoSigner } from "./didox/eimzo.js";
-import { type Problem, type ResolverCache, lookup, resolveDocuments } from "./didox/resolve.js";
+import { type Problem, type ResolverCache, lookup, refOf, resolveDocuments } from "./didox/resolve.js";
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
@@ -382,6 +392,9 @@ export class AssistantService {
     return this.task(companyId, chat, emit, async () => {
       const connection = this.deps.store.connection(companyId);
       try {
+        // A short message that names a task but not its object is settled by the program, not by the model's search.
+        const routed = await this.route(chat, question, attached.blocks.length > 0, emit, abort.signal);
+        if (routed) return routed;
         if (standalone && !skipFree) {
           const free = await this.engine.tryFree(companyId, company.name, connection, question, true);
           if (free?.route === "template" && free.action) {
@@ -458,6 +471,128 @@ export class AssistantService {
       }
     }
     return { sent };
+  }
+
+  /**
+   * The task of a short message, before the model: "post them" posts what this chat made, or offers what is unposted
+   * (one read) as numbered options; the answer to those options is taken here too. Null: the model takes the message.
+   */
+  private async route(
+    chat: StoredChat,
+    question: string,
+    hasFiles: boolean,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<Result<null> | null> {
+    const pending = chat.pending;
+    chat.pending = undefined;
+    if (hasFiles) return null;
+    const lang = langOf(question);
+    // Options offered long ago are stale.
+    if (pending && Date.now() - Date.parse(pending.at) < 6 * 3_600_000) {
+      const n = readChoice(question, pending.options);
+      if (n !== null) {
+        const option = pending.options[n - 1];
+        if (!option) return this.reply(chat, say(lang).askWhich, emit);
+        return this.postChosen(chat, option, lang, emit, signal);
+      }
+    }
+    if (!readPostCommand(question)) return null;
+    const made = chat.created ?? [];
+    if (made.length > 0) {
+      const result = await this.proposePostCreated(
+        chat,
+        { title: say(lang).title(made.length) },
+        emit,
+        signal,
+      );
+      return this.reply(chat, this.postedText(result, lang), emit);
+    }
+    // Nothing made here: what is unposted in 1C, by kind, over the last two months — one read, then the options.
+    const today = new Date().toISOString().slice(0, 10);
+    const previous = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
+    previous.setUTCMonth(previous.getUTCMonth() - 1);
+    const from = previous.toISOString().slice(0, 10);
+    const survey = SEED_TEMPLATES.find((t) => t.code === "seed_unposted_documents");
+    if (!survey) return null;
+    const read = await this.deps.connector.tool(this.deps.store.connection(chat.companyId), "run_query", {
+      query: survey.query,
+      params: { Начало: from, Конец: today },
+      limit: 50,
+    });
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    if (!read.ok) return this.reply(chat, say(lang).cannot, emit);
+    const rows = ((read.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) =>
+      typeof cells[0] === "string" && typeof cells[1] === "number"
+        ? [[cells[0], cells[1]] as [string, number]]
+        : [],
+    );
+    const options = postOptions(rows, from, today);
+    if (options.length === 0) return this.reply(chat, say(lang).none(from, today), emit);
+    chat.pending = { intent: "post", options, at: new Date().toISOString() };
+    return this.reply(chat, optionsText(lang, options), emit);
+  }
+
+  /** The unposted documents the accountant chose: found by the program and put on one card to post. */
+  private async postChosen(
+    chat: StoredChat,
+    option: PostOption,
+    lang: ReturnType<typeof langOf>,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<Result<null>> {
+    const connection = this.deps.store.connection(chat.companyId);
+    const LIMIT = 300;
+    const changes: { action: "update"; object: string; ref: string; post: true }[] = [];
+    let more = 0;
+    for (const object of option.objects) {
+      const read = await this.deps.connector.tool(connection, "run_query", {
+        query: `ВЫБРАТЬ ПЕРВЫЕ ${LIMIT + 1} Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ НЕ Т.Проведен И НЕ Т.ПометкаУдаления И Т.Дата МЕЖДУ &с И &по УПОРЯДОЧИТЬ ПО Т.Дата`,
+        params: { с: option.from, по: `${option.to}T23:59:59` },
+        limit: LIMIT + 1,
+        refs: true,
+      });
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      if (!read.ok) return this.reply(chat, say(lang).cannot, emit);
+      for (const cells of (read.data as { rows?: unknown[][] }).rows ?? []) {
+        const ref = refOf(cells[0]);
+        if (!ref) continue;
+        if (changes.length >= LIMIT) more += 1;
+        else changes.push({ action: "update", object, ref, post: true });
+      }
+    }
+    if (changes.length === 0) return this.reply(chat, say(lang).none(option.from, option.to), emit);
+    emit({ type: "text", text: `${say(lang).pending(changes.length)}\n\n` });
+    const result = await this.proposeBatch(
+      chat,
+      { title: say(lang).title(changes.length), changes },
+      emit,
+      signal,
+    );
+    const text = this.postedText(result, lang) + (more > 0 ? ` ${say(lang).more(more)}` : "");
+    return this.reply(chat, text, emit);
+  }
+
+  /** What a card of posting came to, in a line. */
+  private postedText(result: ToolResult, lang: ReturnType<typeof langOf>): string {
+    if (!result.ok) return result.message;
+    const data = result.data as {
+      status?: string;
+      applied?: { object?: { posted?: boolean } }[];
+      failed?: unknown[];
+    };
+    if (data.status !== "done") return result.ok ? JSON.stringify(data.status ?? "") : "";
+    const posted = (data.applied ?? []).filter((a) => a.object?.posted).length;
+    return say(lang).done(posted, (data.failed?.length ?? 0) + ((data.applied?.length ?? 0) - posted));
+  }
+
+  /** An answer of the program's own, kept in the chat like the model's. */
+  private reply(chat: StoredChat, text: string, emit: Emit): Result<null> {
+    emit({ type: "text", text });
+    chat.messages.push({ role: "assistant", content: [{ type: "text", text }] });
+    emit({ type: "done" });
+    this.save(chat);
+    return { ok: true, data: null };
   }
 
   /** An answer from a template or the cache: shown, kept in the chat, no model involved. */
@@ -615,7 +750,7 @@ export class AssistantService {
     for (let turn = 0; turn < maxTurns; turn++) {
       const stepStarted = Date.now();
       // Read again each step: a rule the model has just saved is in force for the rest of this question.
-      const policy = this.practiceOf(chat.companyId, learned);
+      const policy = this.practiceOf(chat.companyId, learned, this.chatState(chat));
       const answer = await this.turnWithRetries(
         {
           company: companyName,
@@ -1490,7 +1625,28 @@ export class AssistantService {
   }
 
   /** What the model is told about this company: the accountant's standing rules first, then what was learned from 1C. */
-  private practiceOf(companyId: string, learned: string): string {
+  /** What this chat holds, in a few lines: the model reads a short message ("post them", "2") against it. */
+  private chatState(chat: StoredChat): string {
+    const lines: string[] = [];
+    const made = chat.created ?? [];
+    if (made.length > 0) {
+      const kinds = new Map<string, number>();
+      for (const d of made)
+        kinds.set(d.object.replace("Документ.", ""), (kinds.get(d.object.replace("Документ.", "")) ?? 0) + 1);
+      lines.push(
+        `created in this chat and still unposted: ${made.length} (${[...kinds].map(([k, n]) => `${k} ${n}`).join(", ")}) — "post them" means these: propose_post_created`,
+      );
+    }
+    if (chat.didox?.length) lines.push(`Didox documents read in this chat: ${chat.didox.length}`);
+    if (chat.bank?.length)
+      lines.push(`bank statements attached: ${chat.bank.map((b) => b.fileName).join(", ")}`);
+    if (chat.tables?.length) lines.push(`files attached: ${chat.tables.map((t) => t.name).join(", ")}`);
+    return `State of this chat (read short messages against it; do not search 1C or Didox for what it already says): ${
+      lines.length > 0 ? lines.join("; ") : "nothing created here, nothing attached."
+    }`;
+  }
+
+  private practiceOf(companyId: string, learned: string, state = ""): string {
     const kept = this.deps.store.rules(companyId);
     // The newest rules that fit; they are the accountant's decisions, so they are never the part that is cut.
     const lines: string[] = [];
@@ -1504,7 +1660,7 @@ export class AssistantService {
     const rules = lines.length
       ? `Standing rules the accountant gave for this company (follow them, do not ask again, and do not contradict them):\n${lines.join("\n")}`
       : "";
-    return [rules, learned].filter(Boolean).join("\n\n").slice(0, 12_000);
+    return [state, rules, learned].filter(Boolean).join("\n\n").slice(0, 12_000);
   }
 
   private policyOf(companyId: string, force = false) {

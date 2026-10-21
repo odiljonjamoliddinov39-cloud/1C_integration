@@ -84,6 +84,25 @@ The work is split in tiers, the cheapest that can do it first:
 
 The engine also learns new templates from finished questions (existing); the seed gives it a start on day one.
 
+## Knowing the task before searching (`router.ts`)
+
+A short message names a task but often not its object. A bare "проведи" / "proveden" / "o'tkaz" / "post them" used to
+go to the model as it was, and the model searched all of 1C and Didox for what might need posting. Now the program
+settles it first, with no model step:
+
+1. **This chat made documents and left them unposted** (`chat.created`): the posting card is made at once.
+2. **It made none**: one read (the seeded "unposted documents" query over the last two months) and the answer is a
+   numbered list: _1. all unposted (15) · 2. only «Поступление…» (12) · 3. only «Реализация…» (3) · 4. another period or
+   kind — say which_. The answer "2", "all", "да", "hammasi" or a word of the kind picks it (`readChoice`); the program
+   then finds those documents and puts them on one card. Options expire after six hours; any other message drops them.
+3. **Any other message** goes to the model with a "State of this chat" line (documents created and unposted, Didox
+   documents and files in the chat), and the prompt rule _know the task before you read anything_: a message that names
+   a task but not its object is answered by ONE question with 2–4 numbered options, never by a search of 1C and Didox;
+   a question about 1C documents does not start with Didox, nor the reverse.
+
+A message that names an object, a period, a counterparty or a number ("проведи реализации за сентябрь") is a real
+request and goes to the model as before.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.
