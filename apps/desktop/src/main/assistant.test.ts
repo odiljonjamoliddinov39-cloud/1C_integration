@@ -3325,12 +3325,16 @@ describe("assistant", () => {
       const opened = assistant.openChat(company.id, chatId);
       expect(opened.ok && opened.data.entries[1]).toMatchObject({ outcome: { status: "declined" } });
       await assistant.send({ companyId: company.id, chatId, text: "Keyinroq" });
-      const sent = proxy.requests[0]!.messages;
-      expect(sent[2]).toMatchObject({
+      // The chat keeps the repair: the call that no card answered has a result.
+      const stored = chats.load(company.id, chatId)!.messages;
+      expect(stored[2]).toMatchObject({
         role: "user",
         content: [{ type: "tool_result", tool_use_id: "tu_9", is_error: true }],
       });
-      expect(sent[3]).toEqual({ role: "user", content: "Keyinroq" });
+      expect(stored[3]).toEqual({ role: "user", content: "Keyinroq" });
+      // What the model is sent of an earlier question is the question and the answer, no tool calls.
+      expect(JSON.stringify(proxy.requests[0]!.messages)).not.toContain("tu_9");
+      expect(proxy.requests[0]!.messages.at(-1)).toEqual({ role: "user", content: "Keyinroq" });
     });
   });
   describe("cost engine", () => {
@@ -4119,7 +4123,7 @@ describe("found by the simulations", () => {
   });
 
   it("answers the model's unanswered tool calls before the next question, so the API accepts the chat", async () => {
-    const { assistant, store, company, proxy } = setup([
+    const { assistant, store, company, proxy, chats } = setup([
       () => toolTurn("tu_1", "list_organizations", {}),
       // The second step of the first question fails for good.
       () => new Response(JSON.stringify({ code: "BAD", message: "no" }), { status: 400 }),
@@ -4133,8 +4137,9 @@ describe("found by the simulations", () => {
       ok: true,
       data: null,
     });
-    // Every tool call in what the API gets has its result.
-    const messages = proxy.requests.at(-1)!.messages;
+    // Every tool call in the chat, and in what the API gets, has its result (the API gets none of the old ones).
+    const stored = chats.load(company.id, chatId)!.messages;
+    const messages = [...stored, ...proxy.requests.at(-1)!.messages];
     const calls = messages.flatMap((m) =>
       Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => b["id"]) : [],
     );
@@ -4145,6 +4150,7 @@ describe("found by the simulations", () => {
     );
     expect(calls.length).toBeGreaterThan(0);
     expect(results.sort()).toEqual(calls.sort());
+    expect(JSON.stringify(proxy.requests.at(-1)!.messages)).not.toContain("tu_1");
   });
 });
 

@@ -126,7 +126,7 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
-import { trimOlderResults } from "./ai/history.js";
+import { compactOlderTurns } from "./ai/history.js";
 import { judgeBalances } from "./ledger-check.js";
 import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
 import { currencyFromText } from "./bank/policy.js";
@@ -179,8 +179,8 @@ const MAX_RESULT_CHARS = 20_000;
 /** Times a bank run looks again at its unsettled rows after entering some (each new document is a template for the rest). */
 const PROGRESS_ROUNDS = 3;
 
-/** A batch with more documents than this is shown to the model as counts, failures and a sample. */
-const BATCH_SAMPLE_FROM = 30;
+/** A batch with more documents than this is shown to the model as counts, failures and a sample (it never needs the list: the app keeps what was created). */
+const BATCH_SAMPLE_FROM = 5;
 /** Sent with the results when a turn reached the output limit inside a tool call, which was not run. */
 const CUT_TOOL_NOTE =
   "Your last tool call reached the output limit and was cut off, so it was not run. Send it again in " +
@@ -794,8 +794,8 @@ export class AssistantService {
           task: run.task,
           ...(run.import ? { kind: "import" as const } : {}),
           ...(run.escalate ? { escalate: true } : {}),
-          // Results of earlier questions are cut to their start: every step re-reads the whole chat.
-          messages: trimOlderResults(history),
+          // Earlier questions are reduced to the question and the answer: every step re-reads the whole chat.
+          messages: compactOlderTurns(history),
         },
         emit,
         signal,
