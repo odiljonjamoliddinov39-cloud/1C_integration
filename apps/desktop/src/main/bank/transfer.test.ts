@@ -264,8 +264,7 @@ describe("money moved between the company's own accounts", () => {
   });
 
   it("refuses a document with no place for the other account", async () => {
-    const bare = earlier("Документ.СписаниеСРасчетногоСчета");
-    const { СчетПолучатель: _drop, ...fields } = bare.fields;
+    const bare = earlier("Документ.СписаниеСРасчетногоСчета", { СчетПолучатель: undefined });
     const out = await run(
       [move({ in: null })],
       {
@@ -274,7 +273,7 @@ describe("money moved between the company's own accounts", () => {
             object: "Документ.СписаниеСРасчетногоСчета",
             ref: OUT_DOC,
             kind: "own",
-            snapshot: { ...bare, fields },
+            snapshot: bare,
           },
         ],
       },
