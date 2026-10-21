@@ -47,6 +47,7 @@ import {
   type CompanyRulesInput,
   type FetchDidoxInput,
   type DidoxInvoicesInput,
+  type CurrencyRatesToolInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
   type InvoiceReceivedDraft,
@@ -91,6 +92,7 @@ import {
   type BankCandidate,
   type BankProblem,
   type BankResolved,
+  CURRENCY_CODES,
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
@@ -121,6 +123,7 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
+import { type CbuResult, daysBetween, fetchCbuRates, planRates } from "./currency/cbu.js";
 import {
   DOCUMENT_DOCTYPE,
   RECONCILIATION_DOCTYPE,
@@ -239,6 +242,8 @@ export interface AssistantDeps {
   billing?: Pick<BillingState, "isReadOnly" | "countImport" | "countAudit">;
   /** E-IMZO and the network for Didox; the real ones unless a test hands in fakes. */
   didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
+  /** The network for the Central Bank's exchange rates; the real one unless a test hands in a fake. */
+  rates?: { fetch?: typeof fetch };
   /** Prints an HTML page to a PDF (Electron); absent in tests that do not make letters. */
   renderPdf?: RenderPdf;
 }
@@ -302,6 +307,8 @@ export class AssistantService {
   private readonly resolverCache = new Map<string, ResolverCache>();
   private readonly salesCache = new Map<string, SalesCache>();
   /** What Didox returned for a period a minute ago: a re-read of a whole year is minutes, and nothing changed since. */
+  /** The Central Bank's rates read a minute ago for a currency and a period (asked twice: to plan, to show). */
+  private readonly cbuReads = new Map<string, { at: number; read: CbuResult }>();
   private readonly didoxReads = new Map<
     string,
     { at: number; read: Awaited<ReturnType<typeof fetchDidoxDocuments>> }
@@ -1367,18 +1374,14 @@ export class AssistantService {
     if (
       tool === "propose_changes" ||
       tool === "propose_invoices_issued" ||
-      tool === "propose_invoices_received"
+      tool === "propose_invoices_received" ||
+      tool === "propose_currency_rates"
     ) {
       emit({ type: "tool", name: tool, detail: describe(tool, input) });
-      const prepared = await this.prepareBatch(
-        chat.companyId,
-        chat.id,
-        tool,
-        input,
-        connection,
-        signal,
-        origins,
-      );
+      const prepared =
+        tool === "propose_currency_rates"
+          ? await this.prepareRates(chat, input as CurrencyRatesToolInput, connection, signal)
+          : await this.prepareBatch(chat.companyId, chat.id, tool, input, connection, signal, origins);
       if (!("entries" in prepared)) return prepared;
       const { title, entries } = prepared;
       proposal = { kind: "batch", title, items: entries.map((entry) => entry.item) };
@@ -1535,6 +1538,7 @@ export class AssistantService {
           refusedBefore: proposal.items.flatMap((item, i) =>
             item.error ? [{ n: i + 1, error: item.error.code, message: item.error.message }] : [],
           ),
+          ...(tool === "propose_currency_rates" ? { next: RATES_NEXT } : {}),
         },
       };
     }
@@ -2632,6 +2636,235 @@ export class AssistantService {
    * amount, number and purpose; what is certain goes on one card, and the model is told only what
    * it must settle.
    */
+  /**
+   * The exchange rates the foreign-currency payments of a bank run need: one card for what 1C lacks (nothing when it
+   * has them all). Returns why rates are still missing, or null.
+   */
+  private async loadMissingRates(
+    chat: StoredChat,
+    tasks: { statement: BankStatement; rows: number[]; currency: string }[],
+    input: BankPaymentsInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    const spans = new Map<string, { from: string; to: string }>();
+    for (const task of tasks) {
+      if (!task.currency || task.currency === "UZS") continue;
+      const rows = new Set(task.rows);
+      const dates = task.statement.payments
+        .filter((p) => rows.has(p.row))
+        .map((p) => p.date.slice(0, 10))
+        .sort();
+      const [from] = dates;
+      const to = dates.at(-1);
+      if (!from || !to) continue;
+      const known = spans.get(task.currency);
+      spans.set(task.currency, {
+        from: known && known.from < from ? known.from : from,
+        to: known && known.to > to ? known.to : to,
+      });
+    }
+    let why: string | null = null;
+    for (const [currency, span] of spans) {
+      // The rate in force on the first day is the last one before it: a week back covers a weekend and holidays.
+      const from = shiftDay(span.from, -7);
+      for (let start = from; start <= span.to; start = shiftDay(start, MAX_RATE_DAYS)) {
+        const end = shiftDay(start, MAX_RATE_DAYS - 1);
+        const result = await this.propose(
+          chat,
+          "propose_currency_rates",
+          {
+            title: `${input.title}: ${currency}`,
+            currencies: [currency],
+            from: start,
+            to: end < span.to ? end : span.to,
+          },
+          emit,
+          signal,
+        );
+        if (signal.aborted) return null;
+        if (!result.ok) why = `${currency}: ${result.message}`;
+        else if ((result.data as { status?: string } | null)?.status === "declined_by_user")
+          why = `${currency}: the accountant did not load the rates`;
+      }
+    }
+    return why;
+  }
+
+  /** The bank's rates for a currency and a period, asked once in a minute. */
+  private async readRates(
+    currency: string,
+    from: string,
+    to: string,
+    signal: AbortSignal,
+  ): Promise<CbuResult> {
+    const key = `${currency}|${from}|${to}`;
+    const kept = this.cbuReads.get(key);
+    if (kept && Date.now() - kept.at < 60_000) return kept.read;
+    const fetchImpl = this.deps.rates?.fetch;
+    const read = await fetchCbuRates(currency, from, to, {
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      signal,
+    });
+    if (!signal.aborted && read.failed === 0) {
+      this.cbuReads.set(key, { at: Date.now(), read });
+      if (this.cbuReads.size > 20) this.cbuReads.delete(this.cbuReads.keys().next().value as string);
+    }
+    return read;
+  }
+
+  /**
+   * One entry per currency for the card of exchange rates: the Central Bank's rates for the period, less the days 1C
+   * has a rate for. With no currency and no period given, the foreign-currency accounts of the attached statements
+   * say both.
+   */
+  private async prepareRates(
+    chat: StoredChat,
+    input: CurrencyRatesToolInput,
+    connection: ReturnType<LocalStore["connection"]>,
+    signal: AbortSignal,
+  ): Promise<{ title: string; entries: BatchEntry[] } | ToolResult> {
+    const needs = foreignNeeds(chat.bank ?? [], this.deps.store.company(chat.companyId).inn);
+    const currencies = input.currencies ?? [...needs.keys()];
+    if (currencies.length === 0) {
+      return {
+        ok: false,
+        code: "NO_CURRENCY",
+        message:
+          "No foreign-currency account in the attached statements: send currencies (USD, RUB, EUR) and from/to.",
+      };
+    }
+    const entries: BatchEntry[] = [];
+    for (const currency of currencies) {
+      const need = needs.get(currency);
+      const from = input.from ?? (need ? shiftDay(need.from, -7) : undefined);
+      const to = input.to ?? need?.to;
+      if (!from || !to || from > to) {
+        return {
+          ok: false,
+          code: "NO_PERIOD",
+          message: `Send from and to (YYYY-MM-DD) for the rates of ${currency}.`,
+        };
+      }
+      if (daysBetween(from, to).length > MAX_RATE_DAYS) {
+        return {
+          ok: false,
+          code: "PERIOD_TOO_LONG",
+          message: `At most ${MAX_RATE_DAYS} days of rates in one card: split ${from} – ${to} into parts.`,
+        };
+      }
+      const object = "РегистрСведений.КурсыВалют";
+      let read: CbuResult;
+      try {
+        read = await this.readRates(currency, from, to, signal);
+      } catch (e) {
+        return { ok: false, code: "RATES_FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+      if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+      if (read.rates.length === 0) {
+        entries.push({
+          item: {
+            action: "create",
+            object,
+            preview: null,
+            error: {
+              code: "RATES_UNAVAILABLE",
+              message:
+                read.failed > 0
+                  ? `The Central Bank's site (cbu.uz) did not answer for ${currency}: check the internet connection and ask again`
+                  : `The Central Bank has no ${currency} rate for ${from} – ${to}`,
+            },
+          },
+          apply: null,
+        });
+        continue;
+      }
+      const codes = CURRENCY_CODES[currency] ?? [currency];
+      const existing = new Map<string, number>();
+      const asked = await this.deps.connector.tool(connection, "run_query", {
+        query:
+          "ВЫБРАТЬ Т.Период КАК Период, Т.Курс КАК Курс, Т.Кратность КАК Кратность ИЗ РегистрСведений.КурсыВалют КАК Т " +
+          `ГДЕ Т.Валюта.Код В (${codes.map((c) => `"${c}"`).join(", ")}) И Т.Период >= &с И Т.Период <= &по`,
+        params: { с: `${from}T00:00:00`, по: `${to}T23:59:59` },
+        limit: 1000,
+      });
+      if (asked.ok) {
+        for (const cells of (asked.data as { rows?: unknown[][] }).rows ?? []) {
+          const day = String(cells[0] ?? "").slice(0, 10);
+          const rate = Number(cells[1]);
+          const multiplicity = Number(cells[2] ?? 1) || 1;
+          if (day && Number.isFinite(rate)) existing.set(day, rate / multiplicity);
+        }
+      }
+      const plan = planRates(read.rates, existing);
+      const first = plan.toWrite[0];
+      const last = plan.toWrite.at(-1);
+      const fmt = (d: { date: string; rate: number; multiplicity: number }) =>
+        `${d.date.split("-").reverse().join(".")}: ${d.rate}${d.multiplicity > 1 ? ` / ${d.multiplicity}` : ""}`;
+      entries.push({
+        item: {
+          action: "create",
+          object,
+          preview:
+            plan.toWrite.length === 0
+              ? null
+              : draftPreview(object, `${currency} · ${from} – ${to}`, [
+                  ["Валюта", currency],
+                  ["Источник", "Центральный банк Узбекистана (cbu.uz)"],
+                  ["Курсов к записи", plan.toWrite.length],
+                  ["Первый", first ? fmt(first) : null],
+                  ["Последний", last ? fmt(last) : null],
+                  ["Уже в 1С, совпадают", plan.same || null],
+                  ["В 1С иначе (не меняются)", plan.differ || null],
+                  ["Дней без ответа банка", read.failed || null],
+                ]),
+          error:
+            plan.toWrite.length === 0
+              ? { code: "ALREADY_EXISTS", message: `${currency}: 1C has the rates for ${from} – ${to}` }
+              : null,
+        },
+        apply:
+          plan.toWrite.length === 0
+            ? null
+            : async () => {
+                let written = 0;
+                let kept = 0;
+                for (let at = 0; at < plan.toWrite.length; at += 400) {
+                  const done = await this.deps.connector.tool(connection, "setCurrencyRates", {
+                    codes,
+                    rates: plan.toWrite.slice(at, at + 400),
+                  });
+                  if (!done.ok) return { ok: false, code: done.code, message: done.message };
+                  const result = done.data as { written: number; skipped: number; different: unknown[] };
+                  written += result.written;
+                  kept += result.skipped + result.different.length;
+                }
+                return {
+                  ok: true,
+                  state: {
+                    object,
+                    ref: null,
+                    presentation: `${currency}: ${written} rates written${kept > 0 ? `, ${kept} already there` : ""}`,
+                    posted: false,
+                    deletionMark: false,
+                    version: "",
+                  },
+                };
+              },
+      });
+    }
+    if (entries.every((entry) => !entry.apply)) {
+      return entries.every((entry) => entry.item.error?.code === "ALREADY_EXISTS")
+        ? { ok: true, data: { status: "already_exists", count: entries.length } }
+        : {
+            ok: false,
+            code: "ALL_REFUSED",
+            message: entries.map((e) => `${e.item.error?.code}: ${e.item.error?.message}`).join("; "),
+          };
+    }
+    return { title: input.title, entries };
+  }
+
   private async proposeBank(
     chat: StoredChat,
     input: BankPaymentsInput,
@@ -2691,6 +2924,10 @@ export class AssistantService {
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
     const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
+
+    // Payments in a currency need that currency's rates in 1C: loaded first, on a card of their own, when 1C lacks them.
+    const ratesNote = pass === 0 ? await this.loadMissingRates(chat, tasks, input, emit, signal) : null;
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
 
     const connection = this.deps.store.connection(chat.companyId);
     const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
@@ -2862,6 +3099,7 @@ export class AssistantService {
     const attention = {
       ledger,
       ...notEntered,
+      ...(ratesNote ? { ratesNotLoaded: ratesNote } : {}),
       ...(toldGaps
         ? {
             alreadyShownToAccountant:
@@ -3212,7 +3450,7 @@ function describe(name: string, input: unknown): string {
     const draft = input as { number: string; title: string };
     return `${draft.number} · ${draft.title}`;
   }
-  if (name === "propose_post_created") {
+  if (name === "propose_post_created" || name === "propose_currency_rates") {
     const batch = input as { title: string };
     return batch.title;
   }
@@ -3592,4 +3830,41 @@ function lastUserText(chat: StoredChat): string {
     if (text.trim()) return text;
   }
   return "";
+}
+
+/** What follows once the rates are in 1C: the documents entered before them took no rate. */
+const RATES_NEXT =
+  "The rates are in 1C. A document in this currency that was posted before them took no rate: find those of the period " +
+  "(run_query on the bank documents of the foreign accounts) and post them again with ONE propose_changes card " +
+  "(update, post: true), then check the balances of the currency accounts. Do not ask the accountant to load rates.";
+
+/** Most days of rates one card holds (the Central Bank is asked a day at a time). */
+const MAX_RATE_DAYS = 550;
+
+const shiftDay = (date: string, days: number) =>
+  new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/** The currencies of the attached statements' accounts that are not soums, and the dates their payments cover. */
+function foreignNeeds(
+  statements: BankStatement[],
+  ownInn: string,
+): Map<string, { from: string; to: string }> {
+  const needs = new Map<string, { from: string; to: string }>();
+  if (statements.length === 0) return needs;
+  const plan = planLedger(statements, { ownInn });
+  for (const account of plan.accounts) {
+    const currency = account.currency;
+    if (!currency || currency === "UZS") continue;
+    const statement = statements.find((s) => s.fileName === account.file);
+    const dates = (statement?.payments ?? []).map((p) => p.date.slice(0, 10)).sort();
+    const [from] = dates;
+    const to = dates.at(-1);
+    if (!from || !to) continue;
+    const known = needs.get(currency);
+    needs.set(currency, {
+      from: known && known.from < from ? known.from : from,
+      to: known && known.to > to ? known.to : to,
+    });
+  }
+  return needs;
 }

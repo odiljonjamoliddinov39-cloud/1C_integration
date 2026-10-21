@@ -8,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import {
   type ApplyChangeInput,
   type ChangeInput,
+  type CurrencyRatesInput,
+  type CurrencyRatesResult,
   type DeleteMarkedInput,
   type DeleteMarkedPreview,
   type DeleteMarkedResult,
@@ -71,6 +73,10 @@ export class FakePlatform implements PlatformTransport {
   /** Change-prohibition date (YYYY-MM-DD); documents on or before it are refused. */
   closedUntil: string | null = null;
   documents: FakeDocument[] = [];
+  /** Exchange rates written by SetCurrencyRates: currency code → day → rate. */
+  currencyRates = new Map<string, Map<string, { rate: number; multiplicity: number }>>();
+  /** Currencies the catalog has (codes); SetCurrencyRates for another one answers NOT_FOUND. */
+  currencyCodes: string[] = ["840", "643", "978"];
   /**
    * Demo answers to RunQuery, picked by what the query reads (first match wins). A real 1C runs
    * the query itself; this only lets the assistant be tried without 1C.
@@ -228,6 +234,8 @@ export class FakePlatform implements PlatformTransport {
         }
         return this.state(apply());
       }
+      case "SetCurrencyRates":
+        return this.setCurrencyRates(parse(arg) as CurrencyRatesInput);
       case "PreviewDeleteMarked":
         return this.previewDeleteMarked(parse(arg) as DeleteMarkedInput);
       case "DeleteMarked":
@@ -249,6 +257,25 @@ export class FakePlatform implements PlatformTransport {
         return { ref: doc.ref, number: doc.number, date: doc.date, posted: false, duplicate: false };
       }
     }
+  }
+
+  private setCurrencyRates(input: CurrencyRatesInput): CurrencyRatesResult {
+    const code = input.codes.find((c) => this.currencyCodes.includes(c));
+    if (!code) throw new Failure("NOT_FOUND", `The currency catalog has no ${input.codes.join("/")}`);
+    const have = this.currencyRates.get(code) ?? new Map();
+    this.currencyRates.set(code, have);
+    let written = 0;
+    let skipped = 0;
+    const different: CurrencyRatesResult["different"] = [];
+    for (const r of input.rates) {
+      const known = have.get(r.date);
+      if (!known) {
+        have.set(r.date, { rate: r.rate, multiplicity: r.multiplicity ?? 1 });
+        written += 1;
+      } else if (known.rate === r.rate) skipped += 1;
+      else different.push({ date: r.date, have: known.rate, given: r.rate });
+    }
+    return { currency: code, written, skipped, different };
   }
 
   /** The marked objects, by type, apart from the audit log. */

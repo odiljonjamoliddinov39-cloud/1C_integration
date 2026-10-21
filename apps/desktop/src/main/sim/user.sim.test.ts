@@ -287,6 +287,12 @@ function makeWorld(companies: number) {
     retryDelaysMs: [1, 1, 1],
     maxTurns: MAX_TURNS,
     learnPolicy: false,
+    // Never the real Central Bank.
+    rates: {
+      fetch: (async () => {
+        throw new Error("offline in tests");
+      }) as unknown as typeof fetch,
+    },
   });
   return { assistant, store, ids, current, requests, events };
 }

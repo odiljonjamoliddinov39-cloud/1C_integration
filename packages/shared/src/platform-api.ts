@@ -20,6 +20,7 @@ export const PLATFORM_FUNCTIONS = [
   "ApplyChange",
   "PreviewDeleteMarked",
   "DeleteMarked",
+  "SetCurrencyRates",
 ] as const;
 export type PlatformFunction = (typeof PLATFORM_FUNCTIONS)[number];
 
@@ -77,7 +78,7 @@ const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date as YYYY-MM-DD");
  * (GetObject, PreviewChange, ApplyChange, PreviewDeleteMarked, DeleteMarked). An older one still
  * answers questions, but cannot change 1C.
  */
-export const EXTENSION_VERSION = "0.7.7";
+export const EXTENSION_VERSION = "0.8.0";
 
 /** "0.3.0" < "0.4.0" < "0.10.0"; anything unreadable counts as older. */
 export function isOlderExtension(version: string, than = EXTENSION_VERSION): boolean {
@@ -407,3 +408,37 @@ export const DeleteMarkedResult = z.object({
   reasons: z.array(z.string()),
 });
 export type DeleteMarkedResult = z.infer<typeof DeleteMarkedResult>;
+
+// --- SetCurrencyRates ---------------------------------------------------------------------------
+
+/**
+ * Exchange rates written to 1C's rate register (РегистрСведений.КурсыВалют), which is neither a document nor a
+ * directory, so no change can reach it. `codes` are the codes the currency may have in 1C's catalog ("840", "USD").
+ * A day that has a rate already is left as it is (the accountant's own); the answer lists those that differ.
+ */
+export const CurrencyRatesInput = z.object({
+  codes: z.array(z.string().trim().min(1).max(10)).min(1).max(4),
+  rates: z
+    .array(
+      z.object({
+        date: IsoDate,
+        /** Soums per `multiplicity` units of the currency. */
+        rate: z.number().positive().max(1e9),
+        multiplicity: z.number().int().min(1).max(1e6).default(1),
+      }),
+    )
+    .min(1)
+    .max(1000),
+});
+export type CurrencyRatesInput = z.infer<typeof CurrencyRatesInput>;
+
+export const CurrencyRatesResult = z.object({
+  /** The currency as 1C's catalog names it. */
+  currency: z.string(),
+  written: z.number().int(),
+  /** Days that had the same rate already. */
+  skipped: z.number().int(),
+  /** Days that had another rate: left as they were. */
+  different: z.array(z.object({ date: z.string(), have: z.number(), given: z.number() })).max(50),
+});
+export type CurrencyRatesResult = z.infer<typeof CurrencyRatesResult>;

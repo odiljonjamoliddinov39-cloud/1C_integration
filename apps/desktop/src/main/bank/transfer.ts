@@ -15,10 +15,14 @@ import { CONVERSION_KIND, TRANSFER_KIND } from "./policy.js";
 import {
   type BankCache,
   type BankDeps,
+  type CopyContext,
   OBJECT,
   type Template,
+  conversionFor,
   copyTemplate,
+  rateOn,
   refTo,
+  sameCurrency,
   snapshot,
 } from "./resolve.js";
 import type { BankPayment, BankStatement } from "./statement.js";
@@ -60,14 +64,31 @@ const OTHER_ACCOUNT = [
   "СчетОрганизации",
 ];
 
-/** Posted documents of the transfer kind (or the conversion kind), newest first. */
+/**
+ * The operations the documents are copied from. A move between two accounts of one currency is a transfer pair (or a
+ * conversion pair, by the operation's name). A move between a soum and a currency account cannot be a transfer pair:
+ * 1C refuses «Перевод на другой счёт» when the receiving account is in another currency. The company books it as
+ * «Прочее списание» (to the transit account) on the paying side and «Перевод с другого счёта» on the receiving one.
+ */
+type TemplateKind = "own" | "conversion" | "writeOff" | "transferIn";
+
+const OTHER_WRITE_OFF = /проч\p{L}*\s+списан|boshqa\s+chiqim/iu;
+
+const KIND_TEST: Record<TemplateKind, (name: string) => boolean> = {
+  own: (n) => TRANSFER_KIND.test(n) && !CONVERSION_KIND.test(n),
+  conversion: (n) => TRANSFER_KIND.test(n) && CONVERSION_KIND.test(n),
+  writeOff: (n) => OTHER_WRITE_OFF.test(n),
+  transferIn: (n) => TRANSFER_KIND.test(n),
+};
+
+/** Documents of an operation kind, the posted ones and then the newest. */
 async function transferList(
   deps: BankDeps,
   cache: BankCache,
   object: string,
-  conversion: boolean,
+  kindName: TemplateKind,
 ): Promise<string[]> {
-  const key = `${object}|transfer:${conversion ? "conversion" : "own"}`;
+  const key = `${object}|transfer:${kindName}`;
   const cached = cache.lists.get(key);
   if (cached) return cached.map((c) => c.ref);
   const kinds = await deps.query({
@@ -81,7 +102,7 @@ async function transferList(
       const cell = cells[0] as { type?: unknown; ref?: unknown } | undefined;
       const name = textOf(cell);
       if (!cell || typeof cell.type !== "string" || typeof cell.ref !== "string") continue;
-      if (!TRANSFER_KIND.test(name) || CONVERSION_KIND.test(name) !== conversion) continue;
+      if (!KIND_TEST[kindName](name)) continue;
       found.push({ value: `${cell.type}.${cell.ref}`, last: String(cells[1] ?? "") });
     }
   }
@@ -117,28 +138,35 @@ function otherAccountKey(template: Template): string | null {
 
 const refText = (value: unknown): string => refOf(value) ?? "";
 
-/** The earlier document to copy: the same pair of accounts if the company has moved money so before, else the newest. */
+/**
+ * The earlier document to copy: the same pair of accounts if the company has moved money so before, else the newest;
+ * with a currency, one in that currency comes before one that would have to be converted.
+ */
 async function pickTemplate(
   deps: BankDeps,
   cache: BankCache,
   object: string,
-  conversion: boolean,
+  kindName: TemplateKind,
   own: string,
   other: string,
+  currency = "",
 ): Promise<Template | null> {
-  const refs = await transferList(deps, cache, object, conversion);
+  const refs = await transferList(deps, cache, object, kindName);
   let newest: Template | null = null;
   let sameAccount: Template | null = null;
+  let inCurrency: Template | null = null;
   for (const ref of refs.slice(0, 8)) {
     const template = await snapshot(deps, cache, object, ref);
     if (!template) continue;
     newest ??= template;
+    const fits = currency === "" || sameCurrency(template, currency);
+    if (fits) inCurrency ??= template;
     if (refText(template.fields["БанковскийСчет"]) !== own) continue;
     const key = otherAccountKey(template);
-    if (key && refText(template.fields[key]) === other) return template;
-    sameAccount ??= template;
+    if (fits && key && refText(template.fields[key]) === other) return template;
+    if (fits) sameAccount ??= template;
   }
-  return sameAccount ?? newest;
+  return sameAccount ?? inCurrency ?? newest;
 }
 
 interface Leg {
@@ -229,17 +257,11 @@ export async function resolveTransfers(
       fail(leg, "the row is not in the statement");
       continue;
     }
-    if (
-      currencyOfAccount(leg.own) !== "" &&
+    const ownCurrency = currencyOfAccount(leg.own);
+    const cross =
+      ownCurrency !== "" &&
       currencyOfAccount(leg.other) !== "" &&
-      currencyOfAccount(leg.own) !== currencyOfAccount(leg.other)
-    ) {
-      fail(
-        leg,
-        `a conversion between ${currencyOfAccount(leg.own) || "?"} and ${currencyOfAccount(leg.other) || "?"} accounts: its two legs have different amounts and a rate, which the statements do not pair (enter it with the accountant)`,
-      );
-      continue;
-    }
+      ownCurrency !== currencyOfAccount(leg.other);
     const ownRef = accountRef.get(leg.own) || null;
     const otherRef = accountRef.get(leg.other) || null;
     if (!ownRef) {
@@ -260,37 +282,76 @@ export async function resolveTransfers(
       continue;
     }
     const object = OBJECT[leg.side];
+    const kindName: TemplateKind = cross
+      ? leg.side === "out"
+        ? "writeOff"
+        : "transferIn"
+      : leg.transfer.kind === "conversion"
+        ? "conversion"
+        : "own";
     const template = await pickTemplate(
       deps,
       cache,
       object,
-      leg.transfer.kind === "conversion",
+      kindName,
       ownRef,
       otherRef,
+      cross ? ownCurrency : "",
     );
     if (!template) {
       fail(
         leg,
-        `1C has no posted ${object.replace("Документ.", "")} of the operation «transfer to/from another account of the company»${leg.transfer.kind === "conversion" ? " (conversion)" : ""} to copy: the accountant says how the company books it`,
+        cross
+          ? `1C has no ${object.replace("Документ.", "")} of the operation «${leg.side === "out" ? "other write-off (Прочее списание)" : "transfer from another account (Перевод с другого счёта)"}» to copy for a conversion between ${ownCurrency} and ${currencyOfAccount(leg.other)} accounts (1C refuses a transfer between accounts of two currencies): enter the first one, the rest are copied from it`
+          : `1C has no posted ${object.replace("Документ.", "")} of the operation «transfer to/from another account of the company»${leg.transfer.kind === "conversion" ? " (conversion)" : ""} to copy: the accountant says how the company books it`,
       );
       continue;
     }
     const otherKey = otherAccountKey(template);
-    if (!otherKey) {
+    if (!otherKey && kindName !== "writeOff") {
       fail(leg, `the document to copy (${template.ref}) has no attribute for the other account`);
       continue;
     }
-    const made = copyTemplate(template, payment, { ownAccount: ownRef });
+    const context: CopyContext = { ownAccount: ownRef };
+    if (cross && ownCurrency !== "UZS") {
+      context.foreign = {
+        currency: ownCurrency,
+        rate: await rateOn(deps, cache, ownCurrency, day(payment.date)),
+      };
+      if (!sameCurrency(template, ownCurrency)) {
+        const convert = await conversionFor(deps, cache, ownCurrency, null);
+        if (!convert) {
+          fail(
+            leg,
+            `1C has no currency ${ownCurrency} in its catalog: the document in ${ownCurrency} cannot be made`,
+          );
+          continue;
+        }
+        context.foreign.convert = convert;
+      }
+    } else if (cross && !sameCurrency(template, "UZS")) {
+      fail(
+        leg,
+        "the earlier document to copy is in a currency, the account is in soums: enter this one with the accountant",
+      );
+      continue;
+    }
+    const made = copyTemplate(template, payment, context);
     if (!made.ok) {
       fail(leg, made.message);
       continue;
     }
-    made.change.fields = {
-      ...made.change.fields,
-      [otherKey]: refTo(template.fields[otherKey], otherRef, "Справочник.БанковскиеСчета"),
-    };
+    if (otherKey) {
+      made.change.fields = {
+        ...made.change.fields,
+        [otherKey]: refTo(template.fields[otherKey], otherRef, "Справочник.БанковскиеСчета"),
+      };
+    }
+    for (const n of made.notes ?? []) if (!result.notes.includes(n)) result.notes.push(n);
     const from = `${template.fields["Номер"] ?? template.ref} of ${day(String(template.fields["Дата"] ?? ""))}`;
-    const note = `${leg.transfer.kind === "conversion" ? "conversion" : "transfer between own accounts"} copied from the company's ${from}; check the accounts and the operation`;
+    const note = cross
+      ? `conversion between ${ownCurrency} and ${currencyOfAccount(leg.other)} accounts: each leg is its own document in its own currency (${leg.side === "out" ? "«Прочее списание»" : "«Перевод с другого счёта»"}), copied from the company's ${from}; the difference between the bank's rate and the Central Bank's is left in 1C: check it`
+      : `${leg.transfer.kind === "conversion" ? "conversion" : "transfer between own accounts"} copied from the company's ${from}; check the accounts and the operation`;
     if (!result.notes.includes(note)) result.notes.push(note);
     result.ready.push({
       transfer: leg.transfer,

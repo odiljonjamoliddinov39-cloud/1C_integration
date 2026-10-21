@@ -15,6 +15,7 @@ import {
   type AiReadTool,
   ApplyChangeInput,
   ChangeInput,
+  CurrencyRatesInput,
   DeleteMarkedInput,
   InvoiceIssuedInput,
   InvoiceReceivedInput,
@@ -63,7 +64,8 @@ export type OneCOperation =
   | "previewChange"
   | "applyChange"
   | "previewDeleteMarked"
-  | "deleteMarked";
+  | "deleteMarked"
+  | "setCurrencyRates";
 
 /** A job for the worker of one infobase. */
 export type OneCJob = { kind: "check" } | { kind: "tool"; name: OneCOperation; input: unknown };
@@ -93,6 +95,8 @@ export async function runTool(
         return { ok: true, data: await client.previewDeleteMarked(DeleteMarkedInput.parse(input)) };
       case "deleteMarked":
         return { ok: true, data: await client.deleteMarked(DeleteMarkedInput.parse(input)) };
+      case "setCurrencyRates":
+        return { ok: true, data: await client.setCurrencyRates(CurrencyRatesInput.parse(input)) };
       case "previewInvoiceIssued":
         return { ok: true, data: await client.previewInvoiceIssued(InvoiceIssuedInput.parse(input)) };
       case "createInvoiceIssued":

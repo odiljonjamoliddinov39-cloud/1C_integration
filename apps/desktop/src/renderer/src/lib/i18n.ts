@@ -180,6 +180,7 @@ const en = {
       propose_didox_document: "Preparing the document for Didox (E-IMZO may ask for the key's password):",
       propose_didox_draft: "Preparing an invoice for Didox (E-IMZO may ask for the key's password):",
       propose_bank_payments: "Preparing the bank statement payments:",
+      propose_currency_rates: "Loading exchange rates:",
       propose_post_created: "Preparing to post the documents:",
       propose_delete_marked: "Checking what is marked for deletion:",
     },
@@ -645,6 +646,7 @@ const ru: Dict = {
       propose_didox_delete_draft: "Ищу черновик в Didox:",
       propose_didox_document: "Готовлю документ для Didox (E-IMZO может спросить пароль ключа):",
       propose_didox_draft: "Готовлю счёт-фактуру для Didox (E-IMZO может спросить пароль ключа):",
+      propose_currency_rates: "Загружаю курсы валют:",
       propose_bank_payments: "Готовлю платежи из банковской выписки:",
       propose_post_created: "Готовлю проведение документов:",
       propose_delete_marked: "Проверяю, что помечено на удаление:",
@@ -1114,6 +1116,7 @@ const uz: Dict = {
       propose_didox_draft:
         "Didox uchun hisob-faktura tayyorlayapman (E-IMZO kalit parolini soʻrashi mumkin):",
       propose_bank_payments: "Bank ko'chirmasidagi to'lovlarni tayyorlayapman:",
+      propose_currency_rates: "Valyuta kurslarini yuklayapman:",
       propose_post_created: "Hujjatlarni o'tkazishga tayyorlayapman:",
       propose_delete_marked: "Oʻchirishga belgilanganlarni tekshiryapman:",
     },

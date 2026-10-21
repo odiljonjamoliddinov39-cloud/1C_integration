@@ -230,7 +230,7 @@ const rateOfRow = (row: Record<string, unknown>) => {
 };
 
 /** The numeric and the letter code a currency has in 1C's catalog (it keeps one or the other). */
-const CURRENCY_CODES: Record<string, string[]> = {
+export const CURRENCY_CODES: Record<string, string[]> = {
   USD: ["840", "USD"],
   EUR: ["978", "EUR"],
   RUB: ["643", "RUB"],
@@ -238,7 +238,7 @@ const CURRENCY_CODES: Record<string, string[]> = {
 };
 
 /** Soums per unit of a currency on a day, from 1C's exchange rates; null when 1C has none for it. */
-async function rateOn(
+export async function rateOn(
   deps: BankDeps,
   cache: BankCache,
   currency: string,
@@ -282,7 +282,7 @@ function templateCurrency(template: Template): string | null {
 }
 
 /** Can this earlier document be copied for a payment on an account in this currency? */
-function sameCurrency(template: Template, currency: string): boolean {
+export function sameCurrency(template: Template, currency: string): boolean {
   const have = templateCurrency(template);
   if (currency === "UZS" || currency === "") return have === null || have === "UZS";
   return have === currency || (have === "foreign" && currency !== "UZS");
@@ -1148,7 +1148,7 @@ async function currencyRef(deps: BankDeps, cache: BankCache, currency: string): 
  * What a payment in a currency needs when the counterparty's only earlier payment is in soums: the currency item and
  * how its contract is settled. Null when 1C cannot say (no such currency item, a contract in a third currency).
  */
-async function conversionFor(
+export async function conversionFor(
   deps: BankDeps,
   cache: BankCache,
   currency: string,
