@@ -110,7 +110,7 @@ export interface Template {
   tables: Record<string, Record<string, unknown>[]>;
 }
 
-const OBJECT = {
+export const OBJECT = {
   in: "Документ.ПоступлениеНаРасчетныйСчет",
   out: "Документ.СписаниеСРасчетногоСчета",
 } as const;
@@ -208,7 +208,7 @@ function writable(value: unknown): unknown {
 }
 
 /** A reference to put in a field: with the type the earlier document had there, else the usual one. */
-function refTo(existing: unknown, ref: string, fallbackType: string): { type: string; ref: string } {
+export function refTo(existing: unknown, ref: string, fallbackType: string): { type: string; ref: string } {
   const type =
     existing && typeof existing === "object" && typeof (existing as { type?: unknown }).type === "string"
       ? (existing as { type: string }).type
@@ -917,7 +917,7 @@ async function taxPayment(
   return { ok: true, change: made.change, note };
 }
 
-async function snapshot(
+export async function snapshot(
   deps: BankDeps,
   cache: BankCache,
   object: string,

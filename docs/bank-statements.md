@@ -148,8 +148,13 @@ currency). `bank/ledger.ts` reads them together, in whole tiyin, with no AI, bef
   it passes decides what the payments to it are: the bank's fees (names/purposes "комиссия", "тариф", "SWIFT" …) are
   entered as fee documents with no counterparty; a currency conversion is a transfer, not a payment.
 - **Transfers between own accounts**: matched with their other leg (same day and amount, the other way, the other
-  account) and reported, not entered; the accountant decides how they are booked. A payment to the company's own INN
-  from an account that is not attached is told the same way (or is a fee, when its purpose reads as one).
+  account) and **entered by the program** (`bank/transfer.ts`) as a pair of documents, one on each account's side: the
+  company's own newest posted document of the operation «Перевод на другой счёт организации» / «Перевод с другого
+  счёта» (or the conversion operation) is copied, preferring one between the same two accounts, and only its date,
+  amount, number, purpose and the two accounts change. A leg whose statement is not attached is not entered (it is, with
+  its statement); a leg already in 1C (the same account, day and amount) is left out; when 1C has no such document or
+  the account, the reason comes back and nothing is guessed. A payment to the company's own INN from an account that
+  is not attached is a transfer too (or a fee, when its purpose reads as one).
 - **Currency**: digits 6–8 of the account (`000` UZS, `643` RUB, `840` USD, `978` EUR); a foreign-currency account is
   reported, not entered.
 - **One run**: with no `file`, every attached statement is handled in one run and one card; answers to what could not

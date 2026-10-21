@@ -302,7 +302,7 @@ describe("reflectOnImport", () => {
     expect(lines).toEqual([expect.stringContaining("has no bank account in 1C")]);
   });
 
-  it("says how 1C records own transfers and conversions, and that the program does not enter them yet", async () => {
+  it("says how 1C records own transfers and conversions, and that the program enters them from the last such document", async () => {
     const policy = await learnPolicy(fake(), "201607534");
     const lines = reflectOnImport(
       policy,
@@ -314,7 +314,7 @@ describe("reflectOnImport", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("own accounts (1) and conversions (2)");
     expect(lines[0]).toContain("«Перевод на другой счет организации»");
-    expect(lines[0]).toContain("does not enter those documents yet");
+    expect(lines[0]).toContain("enters them as a pair of documents");
   });
 
   it("says that nothing is known when 1C never recorded such money", async () => {

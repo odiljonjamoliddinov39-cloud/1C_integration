@@ -91,8 +91,13 @@ export interface Policy {
   gaps: string[];
 }
 
-const TRANSFER_KIND =
-  /перевод\s+на\s+другой|между\s+(собственными\s+)?сч[её]т|конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен/i;
+/** A kind of operation that is a move of money between the company's own accounts, or a conversion. */
+export const TRANSFER_KIND =
+  /перевод\s+на\s+другой|перевод\s+с\s+другого|между\s+(собственными\s+)?сч[её]т|конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен|boshqa\s+(hisob|xisob)|konvertats|valyuta\s+(sotib|sotish)/i;
+
+/** Of those, the ones that exchange one currency for another. */
+export const CONVERSION_KIND =
+  /конверт|покупк\w*\s+валют|продаж\w*\s+валют|обмен|konvertats|valyuta\s+(sotib|sotish)/i;
 
 /** Registers and catalogs where configurations keep the accounting policy, tried in this order. */
 const POLICY_OBJECTS = [
@@ -572,9 +577,9 @@ export function reflectOnImport(policy: Policy, plan: LedgerPlan): string[] {
   if (own + conversions > 0) {
     if (recorded.length > 0) {
       lines.push(
-        `Transfers between the company's own accounts (${own}) and conversions (${conversions}) are not entered as payments: 1C records such money as ` +
+        `Transfers between the company's own accounts (${own}) and conversions (${conversions}) are not payments to a counterparty: 1C records such money as ` +
           recorded.map((k) => `«${k.kind}»`).join(", ") +
-          ". The program does not enter those documents yet: they are listed for the accountant.",
+          ". propose_bank_payments enters them as a pair of documents copied from the company's last such document.",
       );
     } else {
       lines.push(

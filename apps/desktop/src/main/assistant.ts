@@ -92,6 +92,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
@@ -2340,15 +2341,6 @@ export class AssistantService {
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
     const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
-    const notEntered = { ...notEnteredOf(plan, chosen), ...(reflections.length > 0 ? { reflections } : {}) };
-    if (tasks.length === 0) {
-      return {
-        ok: true,
-        data: { status: done.size > 0 ? "all_entered" : "nothing_to_enter", ledger, ...notEntered },
-      };
-    }
-    const label = (s: BankStatement) => s.account || s.fileName;
-    const several = tasks.length > 1;
 
     const connection = this.deps.store.connection(chat.companyId);
     const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
@@ -2359,6 +2351,32 @@ export class AssistantService {
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
     const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    // Money moved between the company's own accounts: a pair of documents copied from the company's own earlier ones.
+    const moved = await resolveTransfers(
+      plan.transfers,
+      statements,
+      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done },
+      bankDeps,
+    );
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    const notEntered = {
+      ...notEnteredOf(plan, chosen, moved),
+      ...(reflections.length > 0 ? { reflections } : {}),
+    };
+    if (tasks.length === 0 && moved.ready.length === 0) {
+      return {
+        ok: true,
+        data: {
+          status: done.size > 0 ? "all_entered" : "nothing_to_enter",
+          ledger,
+          ...notEntered,
+          ...(moved.alreadyIn1c.length > 0 ? { transfersAlreadyIn1c: moved.alreadyIn1c.length } : {}),
+        },
+      };
+    }
+    const label = (s: BankStatement) => s.account || s.fileName;
+    const several = tasks.length > 1;
+
     const fresh = new Set<string>();
     const madeNow: string[] = [];
     // What the model answered for a statement: its own file's, or any when it is the only one.
@@ -2497,13 +2515,29 @@ export class AssistantService {
       ...(alreadyIn1c.length > 0
         ? { alreadyIn1c: { count: alreadyIn1c.length, rows: alreadyIn1c.slice(0, 50) } }
         : {}),
+      ...(moved.ready.length > 0
+        ? {
+            transfersEntered: {
+              documents: moved.ready.length,
+              notes: moved.notes,
+              about:
+                "Each move between the company's own accounts is a document on each account's side, copied from the company's own earlier one: mention it to the accountant.",
+            },
+          }
+        : {}),
+      ...(moved.alreadyIn1c.length > 0 ? { transfersAlreadyIn1c: moved.alreadyIn1c.length } : {}),
     };
-    if (ready.length === 0) {
+    if (ready.length === 0 && moved.ready.length === 0) {
       return { ok: true, data: { status: "needs_attention", ...attention, next: BANK_NEXT } };
     }
+    // The payments, then the two legs of each move between the company's own accounts, on one card.
+    const items = [
+      ...ready.map((r) => ({ file: r.file, row: r.payment.row, change: r.change })),
+      ...moved.ready.map((r) => ({ file: r.file, row: r.row, change: r.change })),
+    ];
     const proposal = {
       title: input.title,
-      changes: ready.map(({ change }) => change),
+      changes: items.map(({ change }) => change),
     };
     const result = await this.proposeBatch(chat, proposal, emit, signal);
     if (!result.ok) return result;
@@ -2511,13 +2545,13 @@ export class AssistantService {
     if (data?.status === "done") {
       const entered = new Set(chat.bankDone ?? []);
       for (const { n } of data.applied ?? []) {
-        const item = ready[n - 1];
-        if (item) entered.add(doneKey(item.file, item.payment.row));
+        const item = items[n - 1];
+        if (item) entered.add(doneKey(item.file, item.row));
       }
       chat.bankDone = [...entered];
       this.save(chat);
     }
-    const hasAttention = problems.length > 0;
+    const hasAttention = problems.length > 0 || moved.problems.length > 0;
     return {
       ok: true,
       data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
@@ -2961,10 +2995,17 @@ const BANK_ROW_READS = 4;
 const BANK_NEXT =
   "Settle these (find the counterparty in 1C by name, create what is missing with propose_changes, or ask the accountant) and call propose_bank_payments again with counterparties / templates / ownAccount (references and sheet rows only); payments already entered are not offered again.";
 
-/** What the program did not enter, and why: the transfers between the company's own accounts, other currencies, the period. */
-function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
+/** What the program did not enter, and why: the transfers it could not make, other currencies, the period. */
+function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[], moved: TransfersResolved) {
   const files = new Set(chosen.map((s) => s.fileName));
-  const transfers = plan.transfers.filter((t) => [t.out, t.in].some((leg) => leg && files.has(leg.file)));
+  const handled = new Set(moved.ready.map((r) => r.transfer));
+  const settledLegs = new Set([...moved.ready, ...moved.alreadyIn1c].map((l) => `${l.file}#${l.row}`));
+  const transfers = plan.transfers.filter(
+    (t) =>
+      [t.out, t.in].some((leg) => leg && files.has(leg.file)) &&
+      !handled.has(t) &&
+      ![t.out, t.in].some((leg) => leg && settledLegs.has(`${leg.file}#${leg.row}`)),
+  );
   const foreign = plan.accounts.filter(
     (a) => a.role === "foreign_currency" && files.has(a.file) && a.inPeriod > 0,
   );
@@ -2985,7 +3026,8 @@ function notEnteredOf(plan: LedgerPlan, chosen: BankStatement[]) {
               to: t.toAccount,
               purpose: t.purpose.replace(/\s+/g, " ").slice(0, 80),
             })),
-            note: "Not entered as payments: money moved between the company's own accounts. Tell the accountant; they decide how these are booked.",
+            why: [...new Set(moved.problems.map((p) => p.message))].slice(0, 5),
+            note: "Not entered: the program could not make these documents (see why). Tell the accountant; they decide how these are booked.",
           },
         }
       : {}),

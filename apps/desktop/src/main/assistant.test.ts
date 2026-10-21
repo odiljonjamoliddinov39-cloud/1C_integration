@@ -1772,6 +1772,159 @@ describe("assistant", () => {
       });
     });
 
+    it("enters a move between the company's own accounts as a pair of documents copied from the company's last one", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const [A, B] = ["20208000100438330001", "20208000200438330002"];
+      const [refA, refB] = [crypto.randomUUID(), crypto.randomUUID()];
+      const [outDoc, inDoc] = [crypto.randomUUID(), crypto.randomUUID()];
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "t1", name: "propose_bank_payments", input: { title: "Moves" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const earlier = (object: string, kind: string, shown: string) => ({
+        object,
+        fields: {
+          Номер: "0000-000003",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          ВидОперации: ref("Перечисление.ВидыОпераций", kind, shown),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СчетПолучатель: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый-2"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+        },
+        tables: {},
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      base.objects.set(
+        outDoc,
+        earlier(
+          "Документ.СписаниеСРасчетногоСчета",
+          "ПереводНаДругойСчетОрганизации",
+          "Перевод на другой счет организации",
+        ),
+      );
+      base.objects.set(
+        inDoc,
+        earlier(
+          "Документ.ПоступлениеНаРасчетныйСчет",
+          "ПереводСДругогоСчетаОрганизации",
+          "Перевод с другого счета организации",
+        ),
+      );
+      const ownInn = base.organizations[0]!.inn;
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => ({
+            columns: [],
+            rows: [
+              [A, ref("Справочник.БанковскиеСчета", refA, "р/с 1"), ownInn],
+              [B, ref("Справочник.БанковскиеСчета", refB, "р/с 2"), ownInn],
+            ],
+            truncated: false,
+          }),
+        },
+        {
+          match: /СГРУППИРОВАТЬ ПО Т\.ВидОперации/,
+          answer: (input) => {
+            const out = String(input.query).includes("СписаниеСРасчетногоСчета");
+            return {
+              columns: [],
+              rows: [
+                [
+                  ref(
+                    out ? "Перечисление.ВидыОпераций" : "Перечисление.ВидыОпераций",
+                    out ? "ПереводНаДругойСчетОрганизации" : "ПереводСДругогоСчетаОрганизации",
+                    out ? "Перевод на другой счет организации" : "Перевод с другого счета организации",
+                  ),
+                  "2026-08-01T00:00:00",
+                ],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Т\.ВидОперации = ЗНАЧЕНИЕ\(/,
+          answer: (input) => {
+            const out = String(input.query).includes("СписаниеСРасчетногоСчета");
+            return {
+              columns: [],
+              rows: [
+                [
+                  ref(
+                    out ? "Документ.СписаниеСРасчетногоСчета" : "Документ.ПоступлениеНаРасчетныйСчет",
+                    out ? outDoc : inDoc,
+                    "док",
+                  ),
+                ],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Т\.БанковскийСчет КАК Счет, Т\.Дата/,
+          answer: () => ({ columns: [], rows: [], truncated: false }),
+        },
+      );
+      store.setAiEnabled(company.id, true);
+      const csv = (account: string, row: string) =>
+        new TextEncoder().encode(
+          [
+            `Выписка по счёту ${account}`,
+            "Дата;№ док;Наименование корреспондента;ИНН;№ счёта;Дебет;Кредит;Назначение платежа",
+            row,
+          ].join("\n"),
+        );
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskalarni kirit",
+        files: [
+          {
+            name: "a.csv",
+            data: csv(A, `10.09.2026;77;CRYSTAL;${ownInn};${B};250000,00;;Перевод между своими счетами`),
+          },
+          {
+            name: "b.csv",
+            data: csv(B, `10.09.2026;78;CRYSTAL;${ownInn};${A};;250000,00;Перевод между своими счетами`),
+          },
+        ],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.fields.НазначениеПлатежа === "Перевод между своими счетами",
+      );
+      expect(made.map((o) => o.object).sort()).toEqual([
+        "Документ.ПоступлениеНаРасчетныйСчет",
+        "Документ.СписаниеСРасчетногоСчета",
+      ]);
+      const debit = made.find((o) => o.object === "Документ.СписаниеСРасчетногоСчета");
+      expect(debit?.fields).toMatchObject({
+        СуммаДокумента: 250000,
+        БанковскийСчет: { ref: refA },
+        СчетПолучатель: { ref: refB },
+      });
+      expect(made.every((o) => !o.posted)).toBe(true);
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
+      const told = JSON.stringify(proxy.requests[1]?.messages.at(-1));
+      expect(told).toContain("transfersEntered");
+      expect(told).not.toContain("transfersBetweenOwnAccounts");
+    });
+
     it("enters the period asked for from every attached statement in one run, and leaves out an account money only passes through", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const ownAccount = crypto.randomUUID();

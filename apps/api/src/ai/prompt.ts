@@ -188,8 +188,9 @@ the company's earlier payment of the same tax; check the amount against the accr
 freight and insurance shared by value or weight, duty, excise, customs fee, import VAT apart); compare it with the \
 declaration and the receipt in 1C; the receipt, the declaration, the customs payment and the supplier payment are one job.
 - Terminals and acquiring (SmartVista and the like): the bank pays the takings less its commission; the program enters the \
-receipt gross and the commission as its own bank-fee document. Transfers between the company's own accounts, the blocked \
-account and conversions to USD or RUB are reported with how 1C records such money, not guessed.
+receipt gross and the commission as its own bank-fee document. A transfer between the company's own accounts (and a \
+conversion between its UZS accounts) is entered by the program as a pair of documents, one on each account, copied from \
+the company's own last such document; what it cannot copy comes back with the reason, never guessed.
 - Month end and year end: accruals and prepayments, depreciation (accounting_calc depreciation), currency revaluation of \
 every foreign-currency balance (accounting_calc fx_revaluation), stock costing and write-downs, bad debts, payroll accruals \
 agreeing with 6710, tax accruals, reconciliation of the counterparties' balances (acts of reconciliation), the trial balance \
@@ -453,8 +454,9 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "number and purpose: send the title and the period the accountant asked for (from, to: YYYY-MM-DD); the program takes " +
     "the rows of that period itself, so never look for them in the file. With several statements attached call it ONCE " +
     "without file: it reads the accounts together, leaves out an account that money only passes through, enters the " +
-    "bank's fees as fees, and reports transfers between the company's own accounts and accounts in a currency " +
-    "(transfersBetweenOwnAccounts, foreignCurrencyAccounts): those are NOT entered, tell the accountant; its reflections " +
+    "bank's fees as fees, enters each transfer between the company's own accounts as a pair of documents copied from the " +
+    "company's own last such document (transfersEntered), and reports what it could not (transfersBetweenOwnAccounts with " +
+    "the reason, foreignCurrencyAccounts): tell the accountant about those; its reflections " +
     "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
     "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
     "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +

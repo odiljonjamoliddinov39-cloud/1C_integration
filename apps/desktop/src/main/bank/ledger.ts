@@ -307,7 +307,7 @@ export function describeLedger(plan: LedgerPlan, options: LedgerOptions = {}): s
         (unpaired > 0
           ? `, ${unpaired} with no other leg in the attached statements`
           : ", each matched with its other leg") +
-        ". They are not entered as payments; the accountant decides how they are booked.",
+        ". They are not payments to a counterparty: propose_bank_payments enters each as a pair of documents (one on each account) copied from the company's own earlier transfers, and says what it could not.",
     );
   }
   const off = plan.checks.filter((c) => c.paid !== c.took);
