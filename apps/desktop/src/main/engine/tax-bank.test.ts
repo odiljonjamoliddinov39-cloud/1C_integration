@@ -15,7 +15,12 @@ describe("profit tax to accrue", () => {
   it("takes the rate of the date from the table and accrues what is not accrued yet", () => {
     const r = accrueProfitTax(1_000_000, 100_000, "2026-09-30", DEFAULT_PROFILE);
     expect(r).toMatchObject({ rate: 15, due: 150_000, accrued: 100_000, toAccrue: 50_000, approved: false });
-    expect("error" in r ? null : r.entry).toEqual({ debit: "9810", credit: "6410", amount: 50_000 });
+    expect("error" in r ? null : r.entry).toMatchObject({
+      debit: "9810",
+      credit: "6410",
+      amount: 50_000,
+      needsApproval: false,
+    });
   });
 
   it("owes nothing on a loss, and says when too much was accrued", () => {

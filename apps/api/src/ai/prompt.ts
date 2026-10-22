@@ -407,6 +407,18 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "result_explain (what moved the result, against the period before), aging_receivables / aging_payables (by age), tax_accrual " +
     "(profit tax to accrue, VAT by month, turnover tax; rates come from the app's tax tables and may be unconfirmed: say so), " +
     "tax_calendar, tax_registers (1C invoices against Didox's), bank_reconcile (attached statement's closing balance against 1C).",
+  stock_movement:
+    "Move stock between warehouses (kind transfer: from_warehouse, to_warehouse) or write it off (kind write_off: from_warehouse, " +
+    "reason, which the accountant names), lines [{item, qty}], date. The app checks each line against the balance (nothing goes " +
+    "below zero), finds the warehouse and items by name, builds the document from the base's own fields and shows one card; a " +
+    "refusal names the line. stock_cost (financial_report with item and method average|fifo|lifo) checks the cost 1C booked for " +
+    "an item's issues against the method; the method is the accountant's decision, never yours. stock_semi is the balance of " +
+    "production (accounts 20xx/21xx).",
+  posting_rules:
+    "The accounts the program uses for an operation (purchase_goods, sale_products, sale_goods, sale_services, sale_vat, " +
+    "payment_from_buyer, payment_to_supplier, bank_fee, profit_tax_accrual): action list shows the table and what each resolves " +
+    "to; action set {operation, debit, credit, document?} records the accountant's decision for this company. Set only what the " +
+    "accountant decided; an account the chart lacks is refused.",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +

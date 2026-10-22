@@ -50,6 +50,8 @@ import {
   type CurrencyRatesToolInput,
   type LedgerCheckInput,
   type FinancialReportInput,
+  type StockMovementInput,
+  type PostingRulesInput,
   type RevaluationCheckInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
@@ -141,6 +143,10 @@ import {
 } from "./engine-tasks.js";
 import { anyReportText, estimateNote } from "./engine/report-text.js";
 import { DEFAULT_PROFILE, vatOn } from "./engine/tax-tables.js";
+import { GENERAL_RULES, choosePosting, companyRule, missingIn } from "./engine/posting-rules.js";
+import { STOCK_QUERY } from "./engine/reports.js";
+import { type Described, buildMovement, movementObject, planMovement } from "./engine/stock-moves.js";
+import type { StockRow } from "./engine/financial.js";
 import { REPORT_ROW_LIMIT, type ReportContext, financialReport } from "./engine/reports.js";
 import { newOperation } from "./engine/journal.js";
 import { judgeBalances } from "./ledger-check.js";
@@ -1516,6 +1522,12 @@ export class AssistantService {
     if (use.name === "ledger_check") {
       return this.ledgerCheck(chat, input.data as LedgerCheckInput);
     }
+    if (use.name === "posting_rules") {
+      return this.postingRules(chat, input.data as PostingRulesInput);
+    }
+    if (use.name === "stock_movement") {
+      return this.stockMovement(chat, input.data as StockMovementInput, emit, signal);
+    }
     if (use.name === "financial_report") {
       return this.financialReport(chat, input.data as FinancialReportInput, signal);
     }
@@ -2000,6 +2012,69 @@ export class AssistantService {
     };
   }
 
+  /** The account codes of the company's chart in 1C; undefined when 1C did not answer (then nothing is checked). */
+  private async chartCodes(chat: StoredChat): Promise<Set<string> | undefined> {
+    const read = await this.deps.connector.tool(this.deps.store.connection(chat.companyId), "run_query", {
+      query: "ВЫБРАТЬ Т.Код КАК Код ИЗ ПланСчетов.Хозрасчетный КАК Т",
+      limit: REPORT_ROW_LIMIT,
+    });
+    if (!read.ok) return undefined;
+    const codes = ((read.data as { rows?: unknown[][] }).rows ?? [])
+      .map((r) => String(r[0] ?? ""))
+      .filter(Boolean);
+    return codes.length > 0 ? new Set(codes) : undefined;
+  }
+
+  /** The table of account rules, and the accountant's decision for this company (see engine/posting-rules.ts). */
+  private async postingRules(chat: StoredChat, input: PostingRulesInput): Promise<ToolResult> {
+    const own = this.deps.store.postingRules(chat.companyId);
+    const chart = await this.chartCodes(chat);
+    const ctx = { companyRules: own, chart };
+    if (input.action === "list") {
+      return {
+        ok: true,
+        data: {
+          resolved: GENERAL_RULES.map((r) => ({
+            operation: r.operation,
+            ...choosePosting({ type: r.operation }, ctx),
+          })),
+          companyRules: own,
+          chartChecked: chart !== undefined,
+        },
+      };
+    }
+    const { operation, debit, credit } = input;
+    if (!operation || !debit || !credit)
+      return { ok: false, code: "VALIDATION", message: "set needs operation, debit and credit" };
+    const missing = missingIn(chart, [debit, credit]);
+    if (missing.length > 0)
+      return {
+        ok: false,
+        code: "ACCOUNT_NOT_IN_CHART",
+        message: `The company's chart of accounts has no ${missing.join(", ")}: choose accounts it has.`,
+      };
+    const facts = { type: operation, ...(input.currency ? { currency: input.currency } : {}) };
+    const before = choosePosting(facts, ctx);
+    const general = GENERAL_RULES.find((r) => r.operation === operation);
+    const rule = companyRule(
+      facts,
+      { document: input.document ?? before.document ?? general?.document ?? "", debit, credit },
+      `c-${operation}${input.currency ? `-${input.currency}` : ""}`,
+    );
+    this.deps.store.addPostingRule(chat.companyId, rule);
+    // What the program would have used, and what the accountant chose instead, is what a small model learns from.
+    if (before.debit !== debit || before.credit !== credit)
+      this.deps.store.addCorrection(chat.companyId, {
+        operationId: `rule:${operation}`,
+        step: "posting_rules.set",
+        before: `${before.debit ?? "?"}/${before.credit ?? "?"} (${before.source})`,
+        after: `${debit}/${credit}`,
+        user: (await this.deps.session.view())?.email ?? "accountant",
+        createdAt: new Date().toISOString(),
+      });
+    return { ok: true, data: { saved: rule, replaced: `${before.debit ?? "?"}/${before.credit ?? "?"}` } };
+  }
+
   /** The financial statements from the ledger, worked out by the program (see engine/financial.ts). */
   private async financialReport(
     chat: StoredChat,
@@ -2007,7 +2082,14 @@ export class AssistantService {
     signal: AbortSignal = new AbortController().signal,
   ): Promise<ToolResult> {
     const connection = this.deps.store.connection(chat.companyId);
+    // The cost method is the accountant's decision: once named it is the company's setting.
+    if (input.method) this.deps.store.setStockCostMethod(chat.companyId, input.method);
     const context: ReportContext = {
+      posting: {
+        companyRules: this.deps.store.postingRules(chat.companyId),
+        chart: await this.chartCodes(chat),
+      },
+      costMethod: this.deps.store.stockCostMethod(chat.companyId),
       profile: this.deps.store.taxProfile(chat.companyId),
       // Each attached statement that prints its closing balance, at its last day.
       statements: (chat.bank ?? []).map((s) => ({
@@ -2066,6 +2148,111 @@ export class AssistantService {
       new Date().toISOString(),
       context,
     );
+  }
+
+  /**
+   * A transfer or a write-off of stock: every line is checked against the balance, the warehouses and items are found
+   * by name, the document is built from the base's own description of it and shown on one card (see engine/stock-moves.ts).
+   */
+  private async stockMovement(
+    chat: StoredChat,
+    input: StockMovementInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (query: string, params: Record<string, unknown>) =>
+      this.deps.connector.tool(connection, "run_query", { query, params, limit: REPORT_ROW_LIMIT });
+    const date = input.date ?? new Date().toISOString().slice(0, 10);
+    const refuse = (message: string): ToolResult => ({ ok: false, code: "STOCK_MOVEMENT_REFUSED", message });
+    // Every position, not the report's biggest ones: the plan checks each line against its own balance.
+    const whole = await run(STOCK_QUERY, { Дата: `${date}T23:59:59`, Маска1: "1%", Маска2: "2%" });
+    if (!whole.ok) return whole;
+    const rows: StockRow[] = ((whole.data as { rows?: unknown[][] }).rows ?? []).map((c) => ({
+      item: String(c[0] ?? ""),
+      warehouse: String(c[1] ?? ""),
+      qty: Number(c[2]) || 0,
+      amount: Number(c[3]) || 0,
+    }));
+    const truncated = Boolean((whole.data as { truncated?: boolean }).truncated);
+    const plan = planMovement(
+      input.kind,
+      input.lines,
+      rows,
+      { from: input.from_warehouse, ...(input.to_warehouse ? { to: input.to_warehouse } : {}) },
+      input.reason,
+    );
+    if (!plan.ok)
+      return refuse(
+        `${plan.problems.join(" ")}${truncated ? " (The stock list is longer than one read: an item may be missing from it; name it exactly.)" : ""}`,
+      );
+    // The refs of the organization, the warehouses and the items, found by name; none may be missing or doubtful.
+    const find = async (object: string, name: string) => {
+      const got = await run(
+        `ВЫБРАТЬ Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ Т.Наименование = &Имя И НЕ Т.ПометкаУдаления`,
+        { Имя: name },
+      );
+      if (!got.ok) return got;
+      const refs = ((got.data as { rows?: unknown[][] }).rows ?? []).map((r) => r[0]);
+      const ref = refs.length === 1 ? (refs[0] as { ref?: string; type?: string } | string) : null;
+      if (!ref)
+        return refuse(`${name}: ${refs.length === 0 ? "not found" : "found more than once"} in ${object}.`);
+      return {
+        ok: true as const,
+        data:
+          typeof ref === "string" ? { type: object, ref } : { type: ref.type ?? object, ref: ref.ref ?? "" },
+      };
+    };
+    const from = await find("Справочник.Склады", input.from_warehouse);
+    if (!from.ok) return from;
+    const to = input.to_warehouse ? await find("Справочник.Склады", input.to_warehouse) : null;
+    if (to && !to.ok) return to;
+    const lines: { item: { type: string; ref: string }; qty: number }[] = [];
+    for (const l of plan.lines) {
+      const item = await find("Справочник.Номенклатура", l.item);
+      if (!item.ok) return item;
+      lines.push({ item: item.data as { type: string; ref: string }, qty: l.qty });
+    }
+    const described = await this.deps.connector.tool(connection, "describe_objects", {
+      objects: [movementObject(input.kind)],
+    });
+    if (!described.ok) return described;
+    const built = buildMovement(
+      input.kind,
+      (described.data as Described[])[0] ?? { attributes: [], tabularSections: [] },
+      {
+        date,
+        organization: {
+          type: "Справочник.Организации",
+          ref: this.deps.store.organizationRef(chat.companyId),
+        },
+        from: from.data as { type: string; ref: string },
+        ...(to?.ok ? { to: to.data as { type: string; ref: string } } : {}),
+        ...(input.reason ? { comment: input.reason } : {}),
+        lines,
+      },
+    );
+    if (!built.ok) return refuse(built.message);
+    chat.entry = true;
+    emit({ type: "tool", name: "stock_movement", detail: `${input.kind} ${plan.lines.length}` });
+    const result = await this.proposeBatch(
+      chat,
+      {
+        title: `${input.kind === "transfer" ? "Transfer" : "Write-off"} ${input.from_warehouse}${input.to_warehouse ? ` → ${input.to_warehouse}` : ""}, ${plan.lines.length} lines`,
+        changes: [
+          {
+            action: "create",
+            object: built.movement.object,
+            fields: built.movement.fields,
+            tables: built.movement.tables,
+            post: false,
+          },
+        ],
+      },
+      emit,
+      signal,
+    );
+    return result.ok ? { ok: true, data: { ...(result.data as object), plan: plan.lines } } : result;
   }
 
   /** The balances worth a look, read in one query and judged by the program (see ledger-check.ts). */
@@ -2770,6 +2957,9 @@ export class AssistantService {
         );
     }
     const held = this.deps.store.bookkeeping(companyId);
+    // What the accountant decided for goods received in the table of account rules is the default for the lines.
+    const decided = this.deps.store.postingRules(companyId).find((r) => r.operation === "purchase_goods");
+    if (decided && !held.accounts?.goods) held.accounts = { ...held.accounts, goods: decided.debit };
     return {
       ...(held.vatRateMap?.length
         ? { vatRateMap: Object.fromEntries(held.vatRateMap.map((m) => [m.from, m.to])) }

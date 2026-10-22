@@ -18,6 +18,7 @@ export type ReportKind =
   | "aging_receivables"
   | "aging_payables"
   | "stock"
+  | "stock_semi"
   | "tax_accrual"
   | "tax_calendar"
   | "tax_registers"
@@ -170,6 +171,8 @@ function readReport(t: string, hasBank: boolean): ReportKind | null {
     )
   )
     return "bank_reconcile";
+  if (/(yarim\s*tayyor|ярим\s*тайёр|полуфабрикат|незавершенн|semi-?finished|work in progress)/u.test(t))
+    return "stock_semi";
   if (
     /(ombor|склад|warehouse|tovar\p{L}*\s*(qoldiq|ostatk)|товар\p{L}*\s*(остат|қолдиқ)|stock|запас|zaxira)/u.test(
       t,

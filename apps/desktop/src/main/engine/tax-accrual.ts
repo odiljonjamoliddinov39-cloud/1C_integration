@@ -5,6 +5,7 @@
  * written here; what the tables lack is asked for, not guessed. The entries it names are a proposal for the accountant:
  * nothing is posted by this module.
  */
+import { type Context, choosePosting } from "./posting-rules.js";
 import { type TaxProfile, type TaxRate, rateWithBenefits } from "./tax-tables.js";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -23,7 +24,15 @@ export interface ProfitTaxAccrual {
   accrued: number;
   /** What is still to accrue; negative: accrued too much. */
   toAccrue: number;
-  entry: { debit: string; credit: string; amount: number } | null;
+  entry: {
+    debit: string;
+    credit: string;
+    amount: number;
+    /** Where the accounts come from (a rule of the table, the company's own rule) and whether the chart lacks one. */
+    source: string;
+    needsApproval: boolean;
+    missingAccounts: string[];
+  } | null;
   note: string;
 }
 
@@ -32,7 +41,7 @@ export function accrueProfitTax(
   accrued: number,
   date: string,
   profile: TaxProfile,
-  tables: { rates?: TaxRate[] } = {},
+  tables: { rates?: TaxRate[]; posting?: Context } = {},
 ): ProfitTaxAccrual | { error: string } {
   const found = rateWithBenefits("profit", date, profile, {}, tables);
   if (!found)
@@ -40,6 +49,7 @@ export function accrueProfitTax(
   // A loss owes no tax; it is not carried here (the carry-forward rules are the adviser's).
   const due = round2(Math.max(0, profitBeforeTax) * (found.rate / 100));
   const toAccrue = round2(due - accrued);
+  const decision = choosePosting({ type: "profit_tax_accrual", date }, tables.posting);
   return {
     profitBeforeTax: round2(profitBeforeTax),
     rate: found.rate,
@@ -49,7 +59,17 @@ export function accrueProfitTax(
     due,
     accrued: round2(accrued),
     toAccrue,
-    entry: toAccrue > 0.004 ? { debit: "9810", credit: "6410", amount: toAccrue } : null,
+    entry:
+      toAccrue > 0.004 && decision.debit && decision.credit
+        ? {
+            debit: decision.debit,
+            credit: decision.credit,
+            amount: toAccrue,
+            source: decision.reason,
+            needsApproval: decision.needsApproval,
+            missingAccounts: decision.missingAccounts,
+          }
+        : null,
     note:
       profitBeforeTax <= 0
         ? "no profit in the period: no profit tax; any carried loss is for the tax adviser"

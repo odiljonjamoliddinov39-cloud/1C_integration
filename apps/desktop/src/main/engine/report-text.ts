@@ -6,6 +6,7 @@ import type { Lang } from "../router.js";
 import type { AgingReport } from "./aging.js";
 import type { ReconcileRow } from "./bank-reconcile.js";
 import type { Explanation } from "./explain.js";
+import type { CostCheck } from "./stock-cost.js";
 import type { DueDate, ProfitTaxAccrual, RegisterComparison, VatPosition } from "./tax-accrual.js";
 
 import type { BalanceReport, DebtsReport, Line, ResultReport, StockReport } from "./financial.js";
@@ -274,7 +275,9 @@ const X = {
     profitTax: "Налог на прибыль",
     profitLine: (p: ProfitTaxAccrual) =>
       `  прибыль до налога ${money(p.profitBeforeTax)} × ${p.rate}% = ${money(p.due)}; начислено ${money(p.accrued)}; к начислению ${money(p.toAccrue)}`,
-    entry: (d: string, c: string, a: number) => `  проводка (предложение): Дт ${d} Кт ${c} ${money(a)}`,
+    entry: (d: string, c: string, a: number, note: string) =>
+      `  проводка (предложение): Дт ${d} Кт ${c} ${money(a)}${note}`,
+    chartMissing: (a: string) => ` — в плане счетов базы нет ${a}: подтвердите счёт`,
     turnoverTax: "Налог с оборота",
     vat: "НДС (по оборотам счетов 6410 и 4410)",
     vatMonth: (m: string, o: number, i: number, p: number) =>
@@ -322,7 +325,9 @@ const X = {
     profitTax: "Foyda solig'i",
     profitLine: (p: ProfitTaxAccrual) =>
       `  soliqqa qadar foyda ${money(p.profitBeforeTax)} × ${p.rate}% = ${money(p.due)}; hisoblangan ${money(p.accrued)}; hisoblanishi kerak ${money(p.toAccrue)}`,
-    entry: (d: string, c: string, a: number) => `  provodka (taklif): Dt ${d} Kt ${c} ${money(a)}`,
+    entry: (d: string, c: string, a: number, note: string) =>
+      `  provodka (taklif): Dt ${d} Kt ${c} ${money(a)}${note}`,
+    chartMissing: (a: string) => ` — bazaning schetlar rejasida ${a} yo'q: schetni tasdiqlang`,
     turnoverTax: "Aylanma soliq",
     vat: "QQS (6410 va 4410 schetlar aylanmasi bo'yicha)",
     vatMonth: (m: string, o: number, i: number, p: number) =>
@@ -371,7 +376,9 @@ const X = {
     profitTax: "Profit tax",
     profitLine: (p: ProfitTaxAccrual) =>
       `  profit before tax ${money(p.profitBeforeTax)} × ${p.rate}% = ${money(p.due)}; accrued ${money(p.accrued)}; to accrue ${money(p.toAccrue)}`,
-    entry: (d: string, c: string, a: number) => `  entry (proposal): Dt ${d} Kt ${c} ${money(a)}`,
+    entry: (d: string, c: string, a: number, note: string) =>
+      `  entry (proposal): Dt ${d} Kt ${c} ${money(a)}${note}`,
+    chartMissing: (a: string) => ` — the base's chart has no ${a}: confirm the account`,
     turnoverTax: "Turnover tax",
     vat: "VAT (from the turnovers of accounts 6410 and 4410)",
     vatMonth: (m: string, o: number, i: number, p: number) =>
@@ -469,7 +476,16 @@ export function taxAccrualText(
     else {
       out.push(w.profitLine(d.profit));
       if (d.profit.entry)
-        out.push(w.entry(d.profit.entry.debit, d.profit.entry.credit, d.profit.entry.amount));
+        out.push(
+          w.entry(
+            d.profit.entry.debit,
+            d.profit.entry.credit,
+            d.profit.entry.amount,
+            d.profit.entry.missingAccounts.length
+              ? w.chartMissing(d.profit.entry.missingAccounts.join(", "))
+              : "",
+          ),
+        );
       estimate ||= !d.profit.approved;
     }
   }
@@ -541,6 +557,71 @@ export function reconcileText(d: { rows: ReconcileRow[] }, lang: Lang): string {
   return out.join("\n");
 }
 
+const COST = {
+  ru: {
+    title: (item: string, method: string, date: string) =>
+      `Себестоимость списаний «${item}» на ${date}, метод ${method}`,
+    line: (e: number, b: number, d: number) =>
+      `  по методу ${money(e)}, проведено в 1С ${money(b)}, разница ${money(d)}`,
+    status: {
+      match: "Совпадает.",
+      difference: "Расхождение: проверьте партии и порядок списания.",
+      no_issues: "Списаний не было.",
+      short: "Списано больше, чем поступило: отрицательный остаток.",
+    },
+    closing: (q: number, v: number) => `  остаток по методу: ${money(q)} на ${money(v)}`,
+    semiOff: "Производства нет: функции полуфабрикатов выключены.",
+    semi: "Незавершённое производство и полуфабрикаты (счета 20xx/21xx):",
+  },
+  uz: {
+    title: (item: string, method: string, date: string) =>
+      `«${item}» chiqimlari tannarxi ${date} holatiga, usul ${method}`,
+    line: (e: number, b: number, d: number) =>
+      `  usul bo'yicha ${money(e)}, 1C da yozilgan ${money(b)}, farq ${money(d)}`,
+    status: {
+      match: "Mos.",
+      difference: "Farq bor: partiyalar va chiqim tartibini tekshiring.",
+      no_issues: "Chiqim bo'lmagan.",
+      short: "Kirimdan ko'p chiqim: manfiy qoldiq.",
+    },
+    closing: (q: number, v: number) => `  usul bo'yicha qoldiq: ${money(q)}, qiymati ${money(v)}`,
+    semiOff: "Ishlab chiqarish yo'q: yarim tayyor mahsulot funksiyalari o'chirilgan.",
+    semi: "Ishlab chiqarishdagi qoldiq va yarim tayyor mahsulot (20xx/21xx schetlar):",
+  },
+  en: {
+    title: (item: string, method: string, date: string) =>
+      `Cost of the issues of «${item}» at ${date}, method ${method}`,
+    line: (e: number, b: number, d: number) =>
+      `  by the method ${money(e)}, booked in 1C ${money(b)}, difference ${money(d)}`,
+    status: {
+      match: "Agrees.",
+      difference: "Differs: check the lots and the order of issue.",
+      no_issues: "Nothing was issued.",
+      short: "More was issued than came in: negative stock.",
+    },
+    closing: (q: number, v: number) => `  stock by the method: ${money(q)} worth ${money(v)}`,
+    semiOff: "No production: the semi-finished functions are off.",
+    semi: "Work in progress and semi-finished goods (accounts 20xx/21xx):",
+  },
+} as const;
+
+export function costText(d: CostCheck & { date: string }, lang: Lang): string {
+  const w = COST[lang];
+  return [
+    w.title(d.item, d.method.toUpperCase(), d.date),
+    w.line(d.expected, d.booked, d.difference),
+    `  ${w.status[d.status]}`,
+    w.closing(d.closing.qty, d.closing.value),
+    W[lang].sources,
+  ].join("\n");
+}
+
+export function semiText(d: StockReport & { producer: boolean }, lang: Lang): string {
+  const w = COST[lang];
+  if (!d.producer) return `${w.semiOff}\n${W[lang].sources}`;
+  return `${w.semi}\n${stockText(d, lang)}`;
+}
+
 /** Any report in words, by the `report` field it carries. */
 export function anyReportText(data: unknown, lang: Lang): string {
   const d = data as { report: string } & Record<string, unknown>;
@@ -551,6 +632,10 @@ export function anyReportText(data: unknown, lang: Lang): string {
       return balanceText(data as BalanceReport, lang);
     case "stock":
       return stockText(data as StockReport, lang);
+    case "stock_cost":
+      return costText(data as Parameters<typeof costText>[0], lang);
+    case "stock_semi":
+      return semiText(data as Parameters<typeof semiText>[0], lang);
     case "result_explain":
       return explainText(data as Parameters<typeof explainText>[0], lang);
     case "aging_receivables":

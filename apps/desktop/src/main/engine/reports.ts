@@ -17,6 +17,8 @@ import {
   upcomingDeadlines,
   vatPosition,
 } from "./tax-accrual.js";
+import { type Context } from "./posting-rules.js";
+import { type CostMethod, checkCost } from "./stock-cost.js";
 import { DEFAULT_PROFILE, type TaxProfile } from "./tax-tables.js";
 import {
   type AccountRow,
@@ -175,7 +177,21 @@ export async function readInvoiceRegister(
   };
 }
 
+/** The movements of one item on the stock accounts, by day: quantity and cost in and out. */
+export const ITEM_MOVES_QUERY =
+  "ВЫБРАТЬ НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ) КАК День, СУММА(Х.КоличествоДт) КАК КолДт, СУММА(Х.Сумма) КАК СумДт, 0 КАК КолКт, 0 КАК СумКт " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период <= &Кон И Х.Активность И ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) = &Товар " +
+  "И (Х.СчетДт.Код ПОДОБНО &М1 ИЛИ Х.СчетДт.Код ПОДОБНО &М2 ИЛИ Х.СчетДт.Код ПОДОБНО &М3) СГРУППИРОВАТЬ ПО НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ) " +
+  "ОБЪЕДИНИТЬ ВСЕ " +
+  "ВЫБРАТЬ НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ), 0, 0, СУММА(Х.КоличествоКт), СУММА(Х.Сумма) " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период <= &Кон И Х.Активность И ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1) = &Товар " +
+  "И (Х.СчетКт.Код ПОДОБНО &М1 ИЛИ Х.СчетКт.Код ПОДОБНО &М2 ИЛИ Х.СчетКт.Код ПОДОБНО &М3) СГРУППИРОВАТЬ ПО НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ)";
+
 export interface ReportContext {
+  /** The company's own posting rules and its chart of accounts (the entry of a tax accrual comes from them). */
+  posting?: Context;
+  /** The company's stock cost method (stock_cost); absent: the accountant must name it. */
+  costMethod?: CostMethod | null;
   /** The documents Didox holds for the period, by direction (tax.registers); read by the assistant. */
   didox?: { incoming: RegisterDoc[]; outgoing: RegisterDoc[] };
   describe?: Describe;
@@ -289,7 +305,9 @@ export async function financialReport(
       const profit =
         profile.regime === "turnover"
           ? null
-          : accrueProfitTax(result.profitBeforeTax, result.tax.amount, to, profile);
+          : accrueProfitTax(result.profitBeforeTax, result.tax.amount, to, profile, {
+              posting: context.posting,
+            });
       const turnover = profile.regime === "turnover" ? turnoverTax(result.revenue.amount, to, profile) : null;
       const vat = profile.vatPayer
         ? await run(VAT_QUERY, {
@@ -377,6 +395,53 @@ export async function financialReport(
           rows.push({ account: String(c[0] ?? ""), soum: num(c[1]), currency: num(c[2]) });
       }
       return { ok: true, data: { report: "bank_reconcile", ...reconcileBank(statements, rows) } };
+    }
+    case "stock_cost": {
+      const method = input.method ?? context.costMethod;
+      if (!method)
+        return {
+          ok: false,
+          code: "COST_METHOD_MISSING",
+          message:
+            "The cost method of this company (average, FIFO or LIFO) is not set. It is the accountant's decision: ask which one the accounting policy uses, then call again with method.",
+        };
+      if (!input.item)
+        return { ok: false, code: "ITEM_MISSING", message: "Name the item whose issues are to be checked." };
+      const date = input.date ?? input.to ?? now;
+      const read = await run(ITEM_MOVES_QUERY, {
+        Кон: `${date}T23:59:59`,
+        Товар: input.item,
+        М1: "10%",
+        М2: "28%",
+        М3: "29%",
+      });
+      if (!read.ok) return read;
+      const moves = rowsOf(read.data).flatMap((c) => {
+        const day = dayOf(c[0]);
+        return day
+          ? [{ date: day, qtyIn: num(c[1]), sumIn: num(c[2]), qtyOut: num(c[3]), sumOut: num(c[4]) }]
+          : [];
+      });
+      if (moves.length === 0)
+        return {
+          ok: false,
+          code: "ITEM_NOT_FOUND",
+          message: `No entries on the stock accounts for «${input.item}»: check the exact name.`,
+        };
+      return { ok: true, data: { report: "stock_cost", date, ...checkCost(input.item, moves, method) } };
+    }
+    case "stock_semi": {
+      const date = input.date ?? input.to ?? now;
+      const read = await run(STOCK_QUERY, { Дата: `${date}T23:59:59`, Маска1: "20%", Маска2: "21%" });
+      if (!read.ok) return read;
+      const rows: StockRow[] = rowsOf(read.data).map((c) => ({
+        item: String(c[0] ?? ""),
+        warehouse: String(c[1] ?? ""),
+        qty: num(c[2]),
+        amount: num(c[3]),
+      }));
+      const report = buildStock(rows, date);
+      return { ok: true, data: { report: "stock_semi", producer: report.positions > 0, ...report } };
     }
     case "stock": {
       const date = input.date ?? input.to ?? now;

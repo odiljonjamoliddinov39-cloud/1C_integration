@@ -4842,3 +4842,181 @@ describe("the program works with no model", () => {
     });
   });
 });
+
+describe("moving stock", () => {
+  const warehouse = (type: string, name: string) => ({ type, ref: `ref-${name}`, name });
+  const prepare = (lines: { item: string; qty: number }[], extra: Record<string, unknown> = {}) => {
+    const t = setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "m1",
+              name: "stock_movement",
+              input: { kind: "transfer", from_warehouse: "Main", to_warehouse: "Branch", lines, ...extra },
+            },
+          ],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+    t.base.metadata = [
+      {
+        fullName: "Документ.ПеремещениеТоваров",
+        synonym: "Перемещение товаров",
+        attributes: [
+          { name: "Организация", synonym: "", types: [] },
+          { name: "СкладОтправитель", synonym: "", types: [] },
+          { name: "СкладПолучатель", synonym: "", types: [] },
+        ],
+        tabularSections: [
+          {
+            name: "Товары",
+            synonym: "",
+            attributes: [
+              { name: "Номенклатура", synonym: "", types: [] },
+              { name: "Количество", synonym: "", types: [] },
+            ],
+          },
+        ],
+      },
+    ];
+    t.base.queryAnswers.unshift(
+      {
+        match: /Справочник\.Склады КАК Т ГДЕ/,
+        answer: (input) => ({
+          columns: [],
+          rows: [[warehouse("Справочник.Склады", String(input.params?.Имя))]],
+          truncated: false,
+        }),
+      },
+      {
+        match: /Справочник\.Номенклатура КАК Т ГДЕ/,
+        answer: (input) => ({
+          columns: [],
+          rows: [[warehouse("Справочник.Номенклатура", String(input.params?.Имя))]],
+          truncated: false,
+        }),
+      },
+      {
+        match: /КоличествоОстаток/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            ["Oil", "Main", 5, 500],
+            ["Rice", "Main", 10, 1000],
+          ],
+          truncated: false,
+        }),
+      },
+    );
+    t.store.setAiEnabled(t.company.id, true);
+    return t;
+  };
+
+  it("checks the balance, builds the transfer from the base's own fields and shows one card", async () => {
+    const t = prepare([{ item: "Oil", qty: 2 }]);
+    const sending = t.assistant.send({ companyId: t.company.id, text: "Oilni Main dan Branch ga ko'chir" });
+    const answered = new Set<string>();
+    const timer = setInterval(() => {
+      for (const e of t.events)
+        if (e.type === "confirm" && !answered.has(e.id)) {
+          answered.add(e.id);
+          t.assistant.decide(e.companyId, e.id, true);
+        }
+    }, 1);
+    await sending;
+    clearInterval(timer);
+    const card = t.events.find((e) => e.type === "confirm");
+    expect(JSON.stringify(card)).toContain("ПеремещениеТоваров");
+    const made = [...t.base.objects.values()].find((o) => o.object === "Документ.ПеремещениеТоваров");
+    expect(made).toBeDefined();
+    expect(JSON.stringify(made)).toContain("СкладОтправитель");
+  });
+
+  it("refuses a line that would take the stock below zero, and no card is shown", async () => {
+    const t = prepare([{ item: "Oil", qty: 9 }]);
+    await t.assistant.send({ companyId: t.company.id, text: "Oilni ko'chir" });
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("below zero");
+    expect(told).toContain("9 asked, 5 in");
+  });
+});
+
+describe("the table of account rules", () => {
+  const call = (input: Record<string, unknown>) =>
+    setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "p1", name: "posting_rules", input }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+  const chart = (t: ReturnType<typeof setup>, codes: string[]) =>
+    t.base.queryAnswers.unshift({
+      match: /ПланСчетов\.Хозрасчетный КАК Т$/,
+      answer: () => ({ columns: [], rows: codes.map((c) => [c]), truncated: false }),
+    });
+
+  it("keeps the accountant's decision for the company, refuses an account the chart lacks, and journals the correction", async () => {
+    const t = call({ action: "set", operation: "bank_fee", debit: "9430", credit: "5110" });
+    chart(t, ["9420", "9430", "5110"]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "bank xizmati 9430 ga" });
+    expect(t.store.postingRules(t.company.id)).toMatchObject([
+      { id: "c-bank_fee", scope: "company", debit: "9430", credit: "5110" },
+    ]);
+    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("9420/5110");
+
+    const bad = call({ action: "set", operation: "bank_fee", debit: "9999", credit: "5110" });
+    chart(bad, ["9420", "5110"]);
+    bad.store.setAiEnabled(bad.company.id, true);
+    await bad.assistant.send({ companyId: bad.company.id, text: "x" });
+    expect(bad.store.postingRules(bad.company.id)).toEqual([]);
+    expect(JSON.stringify(bad.proxy.requests[1]?.messages.at(-1))).toContain("ACCOUNT_NOT_IN_CHART");
+  });
+
+  it("lists what each operation resolves to, the company's own rule first", async () => {
+    const t = call({ action: "list" });
+    chart(t, ["9420", "5110", "6410", "9810"]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "schet qoidalari" });
+    const told = JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+    expect(told).toContain("profit_tax_accrual");
+    expect(told).toContain("chartChecked");
+  });
+
+  it("the profit tax entry comes from the table, with the chart checked", async () => {
+    const t = setup([]);
+    t.base.queryAnswers.unshift(
+      {
+        match: /МЕЖДУ &Нач И &Кон И Х\.Активность СГРУППИРОВАТЬ ПО Х\.СчетДт\.Код, Х\.СчетДт\.Наименование/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            ["9010", "Sales", 0, 1_000_000],
+            ["9110", "Cost", 600_000, 0],
+          ],
+          truncated: false,
+        }),
+      },
+      {
+        match: /ПланСчетов\.Хозрасчетный КАК Т$/,
+        answer: () => ({ columns: [], rows: [["5110"], ["9810"]], truncated: false }),
+      },
+    );
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "2026 yil soliqlarni hisobla" });
+    const chats = t.chats.list(t.company.id);
+    const text = JSON.stringify(t.chats.load(t.company.id, chats[0]!.id)!.messages.at(-1));
+    expect(text).toContain("provodka (taklif): Dt 9810 Kt 6410 60 000");
+    expect(text).toContain("6410 yo'q");
+  });
+});

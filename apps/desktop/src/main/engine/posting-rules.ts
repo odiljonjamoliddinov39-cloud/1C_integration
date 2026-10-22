@@ -9,15 +9,9 @@
  * Account codes are checked against the company's chart in 1C: an account the chart lacks is never used silently.
  */
 
-export type OperationType =
-  | "purchase_goods"
-  | "sale_products"
-  | "sale_goods"
-  | "sale_services"
-  | "sale_vat"
-  | "payment_from_buyer"
-  | "payment_to_supplier"
-  | "bank_fee";
+import type { PostingOperation } from "@platform/shared";
+
+export type OperationType = PostingOperation;
 
 export interface RuleConditions {
   counterpartyType?: string;
@@ -104,6 +98,16 @@ export const GENERAL_RULES: PostingRule[] = [
     document: "Списание с расчетного счета",
     debit: "6010",
     credit: "5110",
+    priority: 0,
+  },
+  // The profit tax of the period is accrued to the budget account (NSBU): the accountant posts it.
+  {
+    id: "g-profit-tax",
+    scope: "general",
+    operation: "profit_tax_accrual",
+    document: "Операция",
+    debit: "9810",
+    credit: "6410",
     priority: 0,
   },
   // The fee goes to the period's expense account the company's accounting policy names; 9420 is the usual one.
