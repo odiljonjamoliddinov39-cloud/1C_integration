@@ -71,8 +71,9 @@ export function ageDebts(
         if (opens - used > 0.004) open.push({ date: e.date, amount: round2(opens - used) });
       }
       let rest = settles;
-      while (rest > 0.004 && open.length > 0) {
-        const first = open[0]!;
+      while (rest > 0.004) {
+        const first = open[0];
+        if (!first) break;
         const take = Math.min(first.amount, rest);
         first.amount = round2(first.amount - take);
         rest = round2(rest - take);
@@ -95,7 +96,8 @@ export function ageDebts(
   parties.sort((a, b) => b.total - a.total);
   advances.sort((a, b) => b.amount - a.amount);
   const buckets: [number, number, number, number] = [0, 0, 0, 0];
-  for (const p of parties) for (let i = 0; i < 4; i++) buckets[i] = round2(buckets[i]! + p.buckets[i]!);
+  for (const p of parties)
+    for (let i = 0; i < 4; i++) buckets[i] = round2((buckets[i] ?? 0) + (p.buckets[i] ?? 0));
   const total = round2(buckets.reduce((a, b) => a + b, 0));
   return {
     kind,
