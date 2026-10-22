@@ -21,6 +21,8 @@ import {
   ConnectionInput,
   type ConnectionTestResult,
   RegisterAccountInput,
+  ReportRunInput,
+  type ReportView,
   type Result,
   type Session,
   SignInInput,
@@ -258,6 +260,18 @@ export function createHandlers({
       const file = assistant.auditCsv(ids.data.companyId, ids.data.chatId);
       if (!file.ok) return file;
       return { ok: true, data: { saved: await saveFile(file.data.name, file.data.csv) } };
+    },
+
+    /** A report worked out from the company's 1C, with no model: the figures and the same in words. */
+    reportsRun: async (raw: unknown): Promise<Result<ReportView>> => {
+      const input = ReportRunInput.safeParse(raw);
+      return input.success ? assistant.report(input.data) : invalid(input.error);
+    },
+
+    reportsExport: async (name: unknown, content: unknown): Promise<Result<{ saved: boolean }>> => {
+      if (typeof name !== "string" || typeof content !== "string" || !/^[\w .-]{1,80}\.csv$/.test(name))
+        return { ok: false, code: "VALIDATION", message: "A CSV file name and its content are needed" };
+      return { ok: true, data: { saved: await saveFile(name, content) } };
     },
 
     assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),

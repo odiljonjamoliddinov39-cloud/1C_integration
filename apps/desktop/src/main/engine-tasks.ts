@@ -9,17 +9,38 @@ import { searchKnowledge } from "@platform/shared";
 
 import type { Lang } from "./router.js";
 
+export type ReportKind =
+  | "result"
+  | "result_explain"
+  | "balance"
+  | "receivables"
+  | "payables"
+  | "aging_receivables"
+  | "aging_payables"
+  | "stock"
+  | "stock_semi"
+  | "tax_accrual"
+  | "tax_calendar"
+  | "tax_registers"
+  | "bank_reconcile";
+
 export type EngineTask =
   | { kind: "bank"; from?: string; to?: string }
   | { kind: "didox_in"; from: string; to: string }
   | { kind: "didox_sales"; from: string; to: string }
   | { kind: "rates"; from?: string; to?: string; currencies?: string[] }
   | { kind: "balances"; date: string }
+  | {
+      kind: "report";
+      report: ReportKind;
+      from: string;
+      to: string;
+    }
   | { kind: "revaluation"; from: string; to: string }
   | {
       kind: "calc";
       input:
-        | { op: "vat"; amount: number; rate: number; mode: "exclusive" | "inclusive" }
+        | { op: "vat"; amount: number; rate?: number; mode: "exclusive" | "inclusive" }
         | { op: "payroll"; gross?: number; net?: number };
     };
 
@@ -54,6 +75,15 @@ export function periodIn(text: string): { from: string; to: string } | null {
   return null;
 }
 
+/** One date a message names ("2024-12-31", "31.12.2024"), or null. */
+export function singleDate(text: string): string | null {
+  const t = norm(text);
+  const dmy = /(\d{1,2})[./](\d{1,2})[./](\d{4})/.exec(t);
+  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  const found = iso ? iso[0] : dmy ? `${dmy[3]}-${pad(dmy[2] ?? "")}-${pad(dmy[1] ?? "")}` : null;
+  return found && !Number.isNaN(Date.parse(found)) ? found : null;
+}
+
 /** The amount a message names: "1 000 000", "1,250,000.50", "12 млн"; null when there is none. */
 export function amountIn(text: string): number | null {
   const t = norm(text).replace(/\d{1,2}\s*%/g, " ");
@@ -82,6 +112,79 @@ export function amountIn(text: string): number | null {
   return best !== null && best >= 1 ? best : null;
 }
 
+const CHECK = /(tekshir|текшир|провер|check|audit)/u;
+const DIDOX_WORD = /(didox|дидокс|дидок|didoks)/u;
+
+/** The statement a message asks for: the financial result, the balance, the debts, the stock, the taxes. */
+function readReport(t: string, hasBank: boolean): ReportKind | null {
+  const EXPLAIN =
+    /(tushuntir|тушунтир|объясн|explain|nima uchun|nega\b|nimaga|sabab|нима учун|нега|почему|why|omillar|омиллар|факторы|drivers)/u;
+  const RESULT =
+    /(moliyaviy\s*natija|молиявий\s*натижа|финансов\p{L}*\s*результат|foyda|фойда|zarar|зарар|прибыл|убыт|p&l|profit|income statement|financial result|2-shakl|2-форма|2-форм)/u;
+  if (RESULT.test(t)) return EXPLAIN.test(t) ? "result_explain" : "result";
+  const AGING =
+    /(muddat\p{L}*\s*o'tgan|муддати\s*ўтган|просроч|срок\p{L}*\s*давност|aging|overdue|kechik|кечик|eskirgan|старени)/u;
+  const DEBITOR = /(debitor|дебитор|receivable)/u;
+  const KREDITOR = /(kreditor|кредитор|payable)/u;
+  if (
+    AGING.test(t) ||
+    ((DEBITOR.test(t) || KREDITOR.test(t)) && /(muddat|муддат|срок|возраст|yosh|ёш)/u.test(t))
+  )
+    return KREDITOR.test(t) && !DEBITOR.test(t) ? "aging_payables" : "aging_receivables";
+  if (DEBITOR.test(t)) return "receivables";
+  if (KREDITOR.test(t)) return "payables";
+  const TAX = /(soliq|солиқ|налог|tax)/u;
+  if (
+    /(kalendar|календар|deadline|muddatlar|муддатлар|сроки сдач|сроки уплат|qachon\s*(topshir|to'la)|когда\s*(сдава|плати))/u.test(
+      t,
+    ) &&
+    (TAX.test(t) || /(hisobot|ҳисобот|отчет|report)/u.test(t))
+  )
+    return "tax_calendar";
+  if (
+    /(xaridlar|харидлар|sotuvlar|сотувлар).*(kitob|китоб)|книг\p{L}*\s*(покупок|продаж)|purchase.*sales.*(book|ledger)|реестр/u.test(
+      t,
+    ) ||
+    (DIDOX_WORD.test(t) &&
+      /(solishtir|солиштир|taqqosla|таққосла|сверк|сверь|reconcil|compare|mos kel|мос кел)/u.test(t))
+  )
+    return "tax_registers";
+  if (
+    TAX.test(t) &&
+    /(hisobla|ҳисобла|hisob-kitob|начисл|рассчита|accru|calculate|qancha|қанча|сколько|how much|nechta|to'lash kerak|к уплате|tayyorla)/u.test(
+      t,
+    ) &&
+    !CHECK.test(t) &&
+    // A year in the message ("2026 yil") is a period, not a sum.
+    amountIn(
+      t
+        .replace(/(?<!\d)20\d{2}\s*(йил|yil|год|г\.|-yil)/gu, " ")
+        .replace(/(?:за|for|in)\s+20\d{2}(?!\d)/gu, " "),
+    ) === null
+  )
+    return "tax_accrual";
+  if (
+    hasBank &&
+    /(ko'chirma|кўчирма|кучирма|выписк|statement|bank|банк)/u.test(t) &&
+    /(solishtir|солиштир|taqqosla|таққосла|сверь|сверк|reconcil|compare|mos|мос|qoldig'i.*1[сc]|остаток.*1[сc])/u.test(
+      t,
+    )
+  )
+    return "bank_reconcile";
+  if (/(yarim\s*tayyor|ярим\s*тайёр|полуфабрикат|незавершенн|semi-?finished|work in progress)/u.test(t))
+    return "stock_semi";
+  if (
+    /(ombor|склад|warehouse|tovar\p{L}*\s*(qoldiq|ostatk)|товар\p{L}*\s*(остат|қолдиқ)|stock|запас|zaxira)/u.test(
+      t,
+    ) &&
+    /(qoldiq|қолдиқ|остат|balance|ko'rsat|кўрсат|покаж|show|nechta|сколько|қанча|qancha)/u.test(t)
+  )
+    return "stock";
+  // The balance sheet, not the check of the balances (that is "balances" below).
+  if (/(balans|баланс|balance sheet|1-shakl|1-форма|1-форм)/u.test(t) && !CHECK.test(t)) return "balance";
+  return null;
+}
+
 export function readEngineTask(text: string, ctx: { hasBank: boolean; today: string }): EngineTask | null {
   const t = norm(text);
   if (t.trim().length > 400) return null;
@@ -99,6 +202,20 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
     ];
     return { kind: "rates", ...(period ?? {}), ...(currencies.length > 0 ? { currencies } : {}) };
   }
+  const report = readReport(t, ctx.hasBank);
+  if (report === "tax_calendar") {
+    // Deadlines ahead: from the date named (or today) for the period named (or 45 days).
+    const today = todayOf(ctx.today);
+    const ahead = new Date(Date.parse(today) + 45 * 86_400_000).toISOString().slice(0, 10);
+    return { kind: "report", report, from: period?.from ?? singleDate(t) ?? today, to: period?.to ?? ahead };
+  }
+  if (report)
+    return {
+      kind: "report",
+      report,
+      from: (period ?? { from: `${year}-01-01` }).from,
+      to: period?.to ?? singleDate(t) ?? todayOf(ctx.today),
+    };
   if (
     /(qoldiq|қолдиқ|остатк|оборотн|saldo|balance|баланс)\p{L}*/u.test(t) &&
     /(tekshir|текшир|провер|check|ko'r|кўр|покаж|show)/u.test(t)
@@ -113,12 +230,18 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
   const amount = amountIn(t);
   if (amount !== null) {
     if (/(qqs|ндс|vat|қҚс|ққс)/u.test(t)) {
-      const rate = Number(/(\d{1,2}(?:[.,]\d)?)\s*%/.exec(t)?.[1]?.replace(",", ".") ?? 12);
+      // A rate named in the message is used; otherwise the company's tax table gives the rate of the day.
+      const typed = /(\d{1,2}(?:[.,]\d)?)\s*%/.exec(t)?.[1]?.replace(",", ".");
       const inclusive =
         /(ichida|ичида|включ|с ндс|ндс билан|qqs bilan|ққс билан|including|incl|inclusive)/u.test(t);
       return {
         kind: "calc",
-        input: { op: "vat", amount, rate, mode: inclusive ? "inclusive" : "exclusive" },
+        input: {
+          op: "vat",
+          amount,
+          ...(typed ? { rate: Number(typed) } : {}),
+          mode: inclusive ? "inclusive" : "exclusive",
+        },
       };
     }
     if (/(oylik|ойлик|зарплат|salary|jshds|жшдс|ндфл|ndfl|inps|инпс|иншп|payroll)/u.test(t)) {

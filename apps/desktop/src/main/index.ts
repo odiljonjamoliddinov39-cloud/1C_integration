@@ -223,6 +223,10 @@ void app.whenReady().then(async () => {
   ipcMain.handle(CHANNELS.updateExtension, (_e, id: unknown) => handlers.updateExtension(id));
   ipcMain.handle(CHANNELS.registerCom, () => handlers.registerComConnector());
   ipcMain.handle(CHANNELS.installExtension, (_e, input: unknown) => handlers.installExtensionInto(input));
+  ipcMain.handle(CHANNELS.reportsRun, (_e, input: unknown) => handlers.reportsRun(input));
+  ipcMain.handle(CHANNELS.reportsExport, (_e, name: unknown, content: unknown) =>
+    handlers.reportsExport(name, content),
+  );
   ipcMain.handle(CHANNELS.billingGet, () => handlers.billing());
   ipcMain.handle(CHANNELS.billingRefresh, () => handlers.billingRefresh());
   ipcMain.handle(CHANNELS.didoxKeys, () => handlers.didoxKeys());

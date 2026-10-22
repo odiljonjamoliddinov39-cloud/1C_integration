@@ -23,6 +23,10 @@ const bridge: PlatformBridge = {
     installExtension: (input) => ipcRenderer.invoke(CHANNELS.installExtension, input),
     registerComConnector: () => ipcRenderer.invoke(CHANNELS.registerCom),
   },
+  reports: {
+    run: (input) => ipcRenderer.invoke(CHANNELS.reportsRun, input),
+    exportCsv: (defaultName, content) => ipcRenderer.invoke(CHANNELS.reportsExport, defaultName, content),
+  },
   billing: {
     get: () => ipcRenderer.invoke(CHANNELS.billingGet),
     refresh: () => ipcRenderer.invoke(CHANNELS.billingRefresh),

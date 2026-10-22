@@ -4,6 +4,9 @@
  * 1C passwords are never stored in plain text: they go through SecretBox (Electron safeStorage,
  * i.e. Windows DPAPI).
  */
+import { MAX_CORRECTIONS, MAX_OPERATIONS, type Correction, type Operation } from "./engine/journal.js";
+import type { PostingRule } from "./engine/posting-rules.js";
+import type { TaxProfile } from "./engine/tax-tables.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -47,6 +50,17 @@ interface StoredCompany {
   rules?: string[];
   /** The accountant's decisions the program applies by itself when it writes documents from Didox. */
   bookkeeping?: Bookkeeping;
+  /** The engine's own data for this company (see engine/): tax profile, posting rules, journal of operations. */
+  engine?: EngineData;
+}
+
+export interface EngineData {
+  taxProfile?: TaxProfile;
+  postingRules?: PostingRule[];
+  operations?: Operation[];
+  corrections?: Correction[];
+  /** The cost method of the company's stock (the accountant's decision; the program never chooses it). */
+  stockCostMethod?: "average" | "fifo" | "lifo";
 }
 
 /** How lines are written: a VAT rate under another the base has, and the ledger accounts. */
@@ -178,6 +192,68 @@ export class LocalStore {
     c.aiEnabled = enabled;
     this.save();
     return view(c);
+  }
+
+  taxProfile(id: string): TaxProfile | null {
+    const p = this.find(id).engine?.taxProfile;
+    return p ? structuredClone(p) : null;
+  }
+
+  /** Keeps the company's tax profile (filled once, changed with a date). */
+  setTaxProfile(id: string, profile: TaxProfile): void {
+    const c = this.find(id);
+    c.engine = { ...c.engine, taxProfile: structuredClone(profile) };
+    this.save();
+  }
+
+  organizationRef(id: string): string {
+    return this.find(id).organizationRef;
+  }
+
+  stockCostMethod(id: string): "average" | "fifo" | "lifo" | null {
+    return this.find(id).engine?.stockCostMethod ?? null;
+  }
+
+  setStockCostMethod(id: string, method: "average" | "fifo" | "lifo"): void {
+    const c = this.find(id);
+    c.engine = { ...c.engine, stockCostMethod: method };
+    this.save();
+  }
+
+  postingRules(id: string): PostingRule[] {
+    return structuredClone(this.find(id).engine?.postingRules ?? []);
+  }
+
+  /** Keeps a rule the accountant decided; the same id replaces the earlier one. */
+  addPostingRule(id: string, rule: PostingRule): PostingRule[] {
+    const c = this.find(id);
+    const held = (c.engine?.postingRules ?? []).filter((r) => r.id !== rule.id);
+    c.engine = { ...c.engine, postingRules: [...held, structuredClone(rule)].slice(-MAX_RULES) };
+    this.save();
+    return structuredClone(c.engine.postingRules ?? []);
+  }
+
+  /** The newest operations first. */
+  operations(id: string, limit = 20): Operation[] {
+    return structuredClone([...(this.find(id).engine?.operations ?? [])].reverse().slice(0, limit));
+  }
+
+  addOperation(id: string, op: Operation): void {
+    const c = this.find(id);
+    c.engine = {
+      ...c.engine,
+      operations: [...(c.engine?.operations ?? []), structuredClone(op)].slice(-MAX_OPERATIONS),
+    };
+    this.save();
+  }
+
+  addCorrection(id: string, correction: Correction): void {
+    const c = this.find(id);
+    c.engine = {
+      ...c.engine,
+      corrections: [...(c.engine?.corrections ?? []), structuredClone(correction)].slice(-MAX_CORRECTIONS),
+    };
+    this.save();
   }
 
   bookkeeping(id: string): Bookkeeping {

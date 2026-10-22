@@ -15,6 +15,8 @@ export const CHANNELS = {
   updateExtension: "companies:update-extension",
   installExtension: "companies:install-extension",
   registerCom: "companies:register-com",
+  reportsRun: "reports:run",
+  reportsExport: "reports:export",
   billingGet: "billing:get",
   billingRefresh: "billing:refresh",
   didoxKeys: "didox:keys",

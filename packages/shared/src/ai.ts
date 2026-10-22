@@ -620,6 +620,107 @@ export const LedgerCheckInput = z.object({
 export type LedgerCheckInput = z.infer<typeof LedgerCheckInput>;
 
 /**
+ * The financial statements, worked out by the app from the ledger with no model: the financial result of a period
+ * (2-shakl), the balance at a date (1-shakl) with its checks, the receivables or payables by counterparty, and the
+ * stock by item and warehouse. Every line says which accounts it is made of.
+ */
+export const FinancialReportInput = z.object({
+  report: z.enum([
+    "result",
+    "result_explain",
+    "balance",
+    "receivables",
+    "payables",
+    "aging_receivables",
+    "aging_payables",
+    "stock",
+    "stock_semi",
+    "stock_cost",
+    "tax_accrual",
+    "tax_calendar",
+    "tax_registers",
+    "bank_reconcile",
+  ]),
+  /** result: the period (default: this year to today). */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** stock_cost: the item whose issues are checked, and the company's cost method (kept for the company). */
+  item: z.string().trim().min(1).max(200).optional(),
+  method: z.enum(["average", "fifo", "lifo"]).optional(),
+  /** balance, receivables, payables, stock: the day (default today). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type FinancialReportInput = z.infer<typeof FinancialReportInput>;
+
+/**
+ * Moving stock between warehouses or writing it off: the app checks every line against the balance (nothing may take
+ * the stock below zero), builds the document from the base's own description of it and shows it on a card. Nothing is
+ * written without the accountant's confirmation.
+ */
+export const StockMovementInput = z.object({
+  kind: z.enum(["transfer", "write_off"]),
+  /** The day of the document (default today). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  from_warehouse: z.string().trim().min(1).max(200),
+  /** A transfer: the warehouse it goes to. */
+  to_warehouse: z.string().trim().min(1).max(200).optional(),
+  /** A write-off: why (damage, shortage, own use); the accountant names it. */
+  reason: z.string().trim().min(1).max(300).optional(),
+  lines: z
+    .array(z.object({ item: z.string().trim().min(1).max(200), qty: z.number().positive() }))
+    .min(1)
+    .max(200),
+});
+export type StockMovementInput = z.infer<typeof StockMovementInput>;
+
+export const POSTING_OPERATIONS = [
+  "purchase_goods",
+  "sale_products",
+  "sale_goods",
+  "sale_services",
+  "sale_vat",
+  "payment_from_buyer",
+  "payment_to_supplier",
+  "bank_fee",
+  "profit_tax_accrual",
+] as const;
+export type PostingOperation = (typeof POSTING_OPERATIONS)[number];
+
+/**
+ * The accounts the program uses for an operation: `list` shows the table (general rules and the company's own) and what
+ * each operation resolves to; `set` records the accountant's decision for this company (it wins over the general rule
+ * from then on). An account the company's chart in 1C lacks is refused.
+ */
+export const PostingRulesInput = z.object({
+  action: z.enum(["list", "set"]),
+  operation: z.enum(POSTING_OPERATIONS).optional(),
+  debit: z
+    .string()
+    .regex(/^\d{3,10}$/)
+    .optional(),
+  credit: z
+    .string()
+    .regex(/^\d{3,10}$/)
+    .optional(),
+  /** The 1C document that carries the entry; the general rule's one when absent. */
+  document: z.string().trim().min(1).max(100).optional(),
+  currency: z.string().trim().min(1).max(10).optional(),
+});
+export type PostingRulesInput = z.infer<typeof PostingRulesInput>;
+
+/**
  * What the month-end revaluation of currency balances has to produce, worked out by the app: for each month's end in
  * the period, the currency accounts and currency settlement accounts at the Central Bank's rate of that day against
  * what 1C carries. 1C's own «Закрытие месяца → Переоценка валютных средств» does the revaluation; this says what it
@@ -710,6 +811,9 @@ export const AI_TOOLS = {
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
   ledger_check: LedgerCheckInput,
+  financial_report: FinancialReportInput,
+  stock_movement: StockMovementInput,
+  posting_rules: PostingRulesInput,
   revaluation_check: RevaluationCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
@@ -760,6 +864,9 @@ export const AI_LOCAL_TOOLS = [
   "fetch_didox_documents",
   "learn_accounting_policy",
   "ledger_check",
+  "financial_report",
+  "stock_movement",
+  "posting_rules",
   "revaluation_check",
   "accounting_calc",
   "company_rules",
