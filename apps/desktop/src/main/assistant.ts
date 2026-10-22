@@ -81,6 +81,7 @@ import type {
   Proposal,
   ProposalOutcome,
   ElapsedParts,
+  ReportView,
   Result,
   UiLanguage,
 } from "../shared/ipc.js";
@@ -105,6 +106,7 @@ import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
   type PostOption,
+  type Lang,
   langOf,
   optionsText,
   postOptions,
@@ -2009,6 +2011,37 @@ export class AssistantService {
             ? "Nothing to revalue."
             : "These are the amounts 1C's own revaluation must produce (Закрытие месяца → Переоценка валютных средств, for each month in turn: it is a regulated operation, not a document the app can create). Tell the accountant to run it for the months listed, then call this tool again: the differences must be gone.",
       },
+    };
+  }
+
+  /**
+   * A report for the Reports screen: the same worker as the chat's, with no model and no chat. The figures come back
+   * by the report's own shape, and the same in words in the language of the screen.
+   */
+  async report(input: {
+    companyId: string;
+    lang: Lang;
+    report: FinancialReportInput["report"];
+    from?: string | undefined;
+    to?: string | undefined;
+    date?: string | undefined;
+    item?: string | undefined;
+    method?: FinancialReportInput["method"] | undefined;
+  }): Promise<Result<ReportView>> {
+    const { companyId, lang, ...ask } = input;
+    try {
+      this.deps.store.company(companyId);
+    } catch {
+      return { ok: false, code: "NOT_FOUND", message: "This company is not connected" };
+    }
+    const request = Object.fromEntries(
+      Object.entries(ask).filter(([, v]) => v !== undefined),
+    ) as FinancialReportInput;
+    const result = await this.financialReport({ companyId, bank: [] } as unknown as StoredChat, request);
+    if (!result.ok) return { ok: false, code: result.code, message: result.message };
+    return {
+      ok: true,
+      data: { report: request.report, data: result.data, text: anyReportText(result.data, lang) },
     };
   }
 

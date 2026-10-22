@@ -13,9 +13,10 @@ import { useBilling } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 import { AssistantScreen } from "@/screens/Assistant";
 import { CompaniesScreen } from "@/screens/Companies";
+import { ReportsScreen } from "@/screens/Reports";
 import { SignInScreen } from "@/screens/SignIn";
 
-const SCREENS = ["companies", "assistant"] as const;
+const SCREENS = ["companies", "assistant", "reports"] as const;
 type Screen = (typeof SCREENS)[number];
 
 const icons: Record<Screen, ReactNode> = {
@@ -33,6 +34,21 @@ const icons: Record<Screen, ReactNode> = {
     >
       <rect x="3" y="7" width="18" height="13" rx="3" />
       <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" />
+    </svg>
+  ),
+  reports: (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
     </svg>
   ),
   assistant: (
@@ -153,6 +169,8 @@ export function App() {
               <SignInScreen />
             ) : screen === "assistant" ? (
               <AssistantScreen initialCompanyId={assistantFor} />
+            ) : screen === "reports" ? (
+              <ReportsScreen />
             ) : (
               <CompaniesScreen
                 onOpenAssistant={(companyId) => {

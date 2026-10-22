@@ -16,6 +16,7 @@ import type {
   PingResult,
   SaleSummary,
 } from "@platform/shared";
+import { FinancialReportInput } from "@platform/shared";
 import { z } from "zod";
 
 import type { ChatEntry } from "./transcript.js";
@@ -195,6 +196,20 @@ export const AssistantInput = z
 export type AssistantInput = z.input<typeof AssistantInput>;
 
 export const UiLanguage = z.enum(["en", "ru", "uz"]);
+
+/** One report asked for on the Reports screen: which company, which report, the period or day, in which language. */
+export const ReportRunInput = FinancialReportInput.extend({
+  companyId: z.string().min(1),
+  lang: z.enum(["en", "ru", "uz"]),
+});
+export type ReportRunInput = z.input<typeof ReportRunInput>;
+
+/** A report as the screen shows it: its figures (by the report's own shape) and the same in words. */
+export interface ReportView {
+  report: string;
+  data: unknown;
+  text: string;
+}
 export type UiLanguage = z.infer<typeof UiLanguage>;
 
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date as YYYY-MM-DD");
@@ -503,6 +518,12 @@ export interface PlatformBridge {
     /** The user's answer to a "confirm" event: create the document in 1C, or not. */
     decide(companyId: string, proposalId: string, approve: boolean): Promise<void>;
     onEvent(listener: (event: AssistantEvent) => void): () => void;
+  };
+  reports: {
+    /** Works out a report from the company's 1C with no model: the figures and the same in words. */
+    run(input: ReportRunInput): Promise<Result<ReportView>>;
+    /** Saves a table as a CSV file that Excel opens; false when the user cancelled. */
+    exportCsv(defaultName: string, content: string): Promise<Result<{ saved: boolean }>>;
   };
   update: {
     state(): Promise<UpdateState>;

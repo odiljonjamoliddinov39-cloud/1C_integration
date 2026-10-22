@@ -75,6 +75,7 @@ function setup() {
   });
   return {
     handlers,
+    bases,
     file,
     seen,
     store,
@@ -270,5 +271,50 @@ describe("without secure storage", () => {
       code: "SECURE_STORAGE",
     });
     expect(await handlers.listCompanies()).toEqual([]);
+  });
+
+  it("works out a report for the Reports screen from the company's 1C, with no model", async () => {
+    const { handlers, bases } = setup();
+    const test = await handlers.testConnection(connection);
+    const base = [...bases.values()][0]!;
+    base.queryAnswers.unshift({
+      match: /МЕЖДУ &Нач И &Кон И Х\.Активность СГРУППИРОВАТЬ ПО Х\.СчетДт\.Код, Х\.СчетДт\.Наименование/,
+      answer: () => ({
+        columns: [],
+        rows: [
+          ["9010", "Sales", 0, 1_000],
+          ["9110", "Cost", 400, 0],
+        ],
+        truncated: false,
+      }),
+    });
+    const org = test.organizations[0]!;
+    const added = await handlers.addCompany({ ...connection, organization: org });
+    if (!added.ok) throw new Error("not added");
+    const out = await handlers.reportsRun({
+      companyId: added.data.id,
+      report: "result",
+      from: "2026-01-01",
+      to: "2026-03-31",
+      lang: "en",
+    });
+    expect(out).toMatchObject({ ok: true, data: { report: "result" } });
+    const view = out.ok ? out.data : null;
+    expect((view?.data as { netProfit: number }).netProfit).toBe(600);
+    expect(view?.text).toContain("Financial result 2026-01-01 – 2026-03-31");
+  });
+
+  it("refuses a report of a company that is not connected and a bad request", async () => {
+    const { handlers } = setup();
+    expect(await handlers.reportsRun({ companyId: "nope", report: "result", lang: "en" })).toMatchObject({
+      ok: false,
+      code: "NOT_FOUND",
+    });
+    expect(await handlers.reportsRun({ companyId: "x", report: "nonsense", lang: "en" })).toMatchObject({
+      ok: false,
+      code: "VALIDATION",
+    });
+    expect(await handlers.reportsExport("../evil.csv", "a")).toMatchObject({ ok: false, code: "VALIDATION" });
+    expect(await handlers.reportsExport("result.csv", "a;b")).toEqual({ ok: true, data: { saved: true } });
   });
 });
