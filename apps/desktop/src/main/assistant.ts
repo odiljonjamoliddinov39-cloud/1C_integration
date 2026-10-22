@@ -139,9 +139,9 @@ import {
   readEngineTask,
   revaluationText,
 } from "./engine-tasks.js";
-import { balanceText, debtsText, estimateNote, resultText, stockText } from "./engine/report-text.js";
+import { anyReportText, estimateNote } from "./engine/report-text.js";
 import { DEFAULT_PROFILE, vatOn } from "./engine/tax-tables.js";
-import { REPORT_ROW_LIMIT, financialReport } from "./engine/reports.js";
+import { REPORT_ROW_LIMIT, type ReportContext, financialReport } from "./engine/reports.js";
 import { newOperation } from "./engine/journal.js";
 import { judgeBalances } from "./ledger-check.js";
 import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
@@ -691,16 +691,21 @@ export class AssistantService {
       }
       case "report": {
         emit({ type: "tool", name: "financial_report", detail: task.report });
-        const result = await this.financialReport(chat, {
-          report: task.report,
-          ...(task.report === "result" ? { from: task.from, to: task.to } : { date: task.to }),
-        });
-        return done(result, (data) => {
-          if (task.report === "result") return resultText(data as Parameters<typeof resultText>[0], lang);
-          if (task.report === "balance") return balanceText(data as Parameters<typeof balanceText>[0], lang);
-          if (task.report === "stock") return stockText(data as Parameters<typeof stockText>[0], lang);
-          return debtsText(data as Parameters<typeof debtsText>[0], lang);
-        });
+        const periodic =
+          task.report === "result" ||
+          task.report === "result_explain" ||
+          task.report === "tax_accrual" ||
+          task.report === "tax_registers" ||
+          task.report === "tax_calendar";
+        const result = await this.financialReport(
+          chat,
+          {
+            report: task.report,
+            ...(periodic ? { from: task.from, to: task.to } : { date: task.to }),
+          },
+          signal,
+        );
+        return done(result, (data) => anyReportText(data, lang));
       }
       case "revaluation": {
         emit({ type: "tool", name: "revaluation_check", detail: `${task.from} – ${task.to}` });
@@ -1512,7 +1517,7 @@ export class AssistantService {
       return this.ledgerCheck(chat, input.data as LedgerCheckInput);
     }
     if (use.name === "financial_report") {
-      return this.financialReport(chat, input.data as FinancialReportInput);
+      return this.financialReport(chat, input.data as FinancialReportInput, signal);
     }
     if (use.name === "accounting_knowledge") {
       return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
@@ -1996,13 +2001,70 @@ export class AssistantService {
   }
 
   /** The financial statements from the ledger, worked out by the program (see engine/financial.ts). */
-  private async financialReport(chat: StoredChat, input: FinancialReportInput): Promise<ToolResult> {
+  private async financialReport(
+    chat: StoredChat,
+    input: FinancialReportInput,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<ToolResult> {
     const connection = this.deps.store.connection(chat.companyId);
+    const context: ReportContext = {
+      profile: this.deps.store.taxProfile(chat.companyId),
+      // Each attached statement that prints its closing balance, at its last day.
+      statements: (chat.bank ?? []).map((s) => ({
+        fileName: s.fileName,
+        account: s.account,
+        date: s.payments.reduce((last, p) => (p.date > last ? p.date : last), ""),
+        closing: s.balances ? s.balances.closing / 100 : null,
+      })),
+      describe: (objects) => this.deps.connector.tool(connection, "describe_objects", { objects }),
+    };
+    if (input.report === "tax_registers") {
+      const client = this.didoxClient(chat.companyId);
+      if (!client)
+        return {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message:
+            "Didox is not connected for this company: open Companies, press the Didox test button, run the test and Save.",
+        };
+      const today = new Date().toISOString().slice(0, 10);
+      const from = input.from ?? `${today.slice(0, 4)}-01-01`;
+      const to = input.to ?? today;
+      try {
+        const read = await this.readDidox(
+          chat.companyId,
+          client,
+          { from, to, direction: "both", limit: 500 },
+          signal,
+        );
+        const own = this.deps.store.company(chat.companyId).inn;
+        const doc = (d: (typeof read.documents)[number], party: { tin: string }) => ({
+          number: d.number,
+          date: d.date,
+          inn: party.tin,
+          amount: d.totals.total / 100,
+        });
+        const inPeriod = (d: { date: string }) => d.date >= from && d.date <= to;
+        context.didox = {
+          incoming: read.documents
+            .filter((d) => d.buyer.tin === own && inPeriod(d))
+            .map((d) => doc(d, d.seller)),
+          outgoing: read.documents
+            .filter((d) => d.seller.tin === own && inPeriod(d))
+            .map((d) => doc(d, d.buyer)),
+        };
+      } catch (e) {
+        if (e instanceof DidoxError || e instanceof EImzoError)
+          return { ok: false, code: e.code, message: e.message };
+        return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    }
     return financialReport(
       (query, params) =>
         this.deps.connector.tool(connection, "run_query", { query, params, limit: REPORT_ROW_LIMIT }),
       input,
       new Date().toISOString(),
+      context,
     );
   }
 

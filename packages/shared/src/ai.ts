@@ -625,7 +625,20 @@ export type LedgerCheckInput = z.infer<typeof LedgerCheckInput>;
  * stock by item and warehouse. Every line says which accounts it is made of.
  */
 export const FinancialReportInput = z.object({
-  report: z.enum(["result", "balance", "receivables", "payables", "stock"]),
+  report: z.enum([
+    "result",
+    "result_explain",
+    "balance",
+    "receivables",
+    "payables",
+    "aging_receivables",
+    "aging_payables",
+    "stock",
+    "tax_accrual",
+    "tax_calendar",
+    "tax_registers",
+    "bank_reconcile",
+  ]),
   /** result: the period (default: this year to today). */
   from: z
     .string()

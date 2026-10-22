@@ -6,6 +6,18 @@
  */
 import type { FinancialReportInput } from "@platform/shared";
 
+import { ageDebts, type DebtEntry } from "./aging.js";
+import { type StatementBalance, type BookBalance, reconcileBank } from "./bank-reconcile.js";
+import { type ExplainRow, explainResult, previousPeriod } from "./explain.js";
+import {
+  type RegisterDoc,
+  accrueProfitTax,
+  compareRegisters,
+  turnoverTax,
+  upcomingDeadlines,
+  vatPosition,
+} from "./tax-accrual.js";
+import { DEFAULT_PROFILE, type TaxProfile } from "./tax-tables.js";
 import {
   type AccountRow,
   type PartyRow,
@@ -53,10 +65,61 @@ export const STOCK_QUERY =
   "ГДЕ Х.Счет.Код ПОДОБНО &Маска1 ИЛИ Х.Счет.Код ПОДОБНО &Маска2 " +
   "СГРУППИРОВАТЬ ПО ПРЕДСТАВЛЕНИЕ(Х.Субконто1), ПРЕДСТАВЛЕНИЕ(Х.Субконто2) УПОРЯДОЧИТЬ ПО Сумма УБЫВ";
 
+/** Entries by who (the first analytic) and account, for what moved the result: accounts 9xxx only. */
+export const EXPLAIN_QUERY =
+  "ВЫБРАТЬ Х.СчетДт.Код КАК Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) КАК Кто, СУММА(Х.Сумма) КАК Дт, 0 КАК Кт " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетДт.Код ПОДОБНО &Маска " +
+  "СГРУППИРОВАТЬ ПО Х.СчетДт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) " +
+  "ОБЪЕДИНИТЬ ВСЕ " +
+  "ВЫБРАТЬ Х.СчетКт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1), 0, СУММА(Х.Сумма) " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетКт.Код ПОДОБНО &Маска " +
+  "СГРУППИРОВАТЬ ПО Х.СчетКт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1)";
+
+/** The settlement accounts' entries by counterparty and day, both sides (aging). */
+export const DEBT_ENTRIES_QUERY =
+  "ВЫБРАТЬ ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) КАК Кто, НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ) КАК День, СУММА(Х.Сумма) КАК Дт, 0 КАК Кт " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетДт.Код ПОДОБНО &Маска " +
+  "СГРУППИРОВАТЬ ПО ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1), НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ) " +
+  "ОБЪЕДИНИТЬ ВСЕ " +
+  "ВЫБРАТЬ ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1), НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ), 0, СУММА(Х.Сумма) " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетКт.Код ПОДОБНО &Маска " +
+  "СГРУППИРОВАТЬ ПО ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1), НАЧАЛОПЕРИОДА(Х.Период, ДЕНЬ)";
+
+/** VAT charged on sales (credit 6410 against receivables) and VAT to offset (debit 4410), by month. */
+export const VAT_QUERY =
+  "ВЫБРАТЬ НАЧАЛОПЕРИОДА(Х.Период, МЕСЯЦ) КАК Месяц, 1 КАК Вид, СУММА(Х.Сумма) КАК Сумма " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность " +
+  "И Х.СчетКт.Код ПОДОБНО &Выход И Х.СчетДт.Код ПОДОБНО &Дебиторы СГРУППИРОВАТЬ ПО НАЧАЛОПЕРИОДА(Х.Период, МЕСЯЦ) " +
+  "ОБЪЕДИНИТЬ ВСЕ " +
+  "ВЫБРАТЬ НАЧАЛОПЕРИОДА(Х.Период, МЕСЯЦ), 2, СУММА(Х.Сумма) " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность " +
+  "И Х.СчетДт.Код ПОДОБНО &Вход СГРУППИРОВАТЬ ПО НАЧАЛОПЕРИОДА(Х.Период, МЕСЯЦ)";
+
+/** The balance of the bank accounts in 1C, by the account number, in soums and in the account's currency. */
+export const BANK_BOOKS_QUERY =
+  "ВЫБРАТЬ Х.Субконто1.НомерСчета КАК Счет, СУММА(Х.СуммаОстатокДт - Х.СуммаОстатокКт) КАК Сум, " +
+  "СУММА(Х.ВалютнаяСуммаОстатокДт - Х.ВалютнаяСуммаОстатокКт) КАК Вал " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х ГДЕ Х.Счет.Код ПОДОБНО &Маска " +
+  "СГРУППИРОВАТЬ ПО Х.Субконто1.НомерСчета";
+
+const dayOf = (v: unknown): string => {
+  const text = String(v ?? "");
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const t = Date.parse(text);
+  return Number.isNaN(t) ? "" : new Date(t).toISOString().slice(0, 10);
+};
+
 const accountRows = (data: unknown): AccountRow[] =>
   rowsOf(data).flatMap((c) =>
     String(c[0] ?? "")
       ? [{ code: String(c[0]), name: String(c[1] ?? ""), debit: num(c[2]), credit: num(c[3]) }]
+      : [],
+  );
+
+const explainRows = (data: unknown): ExplainRow[] =>
+  rowsOf(data).flatMap((c) =>
+    String(c[0] ?? "")
+      ? [{ account: String(c[0]), who: String(c[1] ?? ""), debit: num(c[2]), credit: num(c[3]) }]
       : [],
   );
 
@@ -70,10 +133,65 @@ async function readTurnovers(run: RunQuery, from: string, to: string) {
   return read.ok ? { ok: true as const, rows: accountRows(read.data) } : read;
 }
 
+export type Describe = (objects: string[]) => Promise<QueryResult>;
+
+/**
+ * The invoices of a kind in 1C for a period, with the counterparty's INN, as a VAT register. The base's own names of
+ * the incoming number, its date and the amount are found from the object's description, not assumed.
+ */
+export async function readInvoiceRegister(
+  run: RunQuery,
+  describe: Describe,
+  object: "Документ.СчетФактураПолученный" | "Документ.СчетФактураВыданный",
+  from: string,
+  to: string,
+): Promise<
+  { ok: true; docs: RegisterDoc[]; amounts: boolean } | { ok: false; code: string; message: string }
+> {
+  const described = await describe([object]);
+  if (!described.ok) return described;
+  const attrs = ((described.data as { attributes?: { name: string }[] }[])[0]?.attributes ?? []).map(
+    (a) => a.name,
+  );
+  const pick = (...res: RegExp[]) => res.map((re) => attrs.find((n) => re.test(n))).find(Boolean);
+  const number = pick(/^(НомерВходящ|ВходящийНомер|НомерВходящего)/i) ?? "Номер";
+  const date = pick(/^(ДатаВходящ|ВходящаяДата|ДатаВходящего)/i) ?? "Дата";
+  const amount = pick(/^СуммаДокумента$/i, /^Сумма$/i, /^СуммаВсего$/i);
+  const read = await run(
+    `ВЫБРАТЬ Д.${number} КАК Номер, Д.${date} КАК Дата, Д.Контрагент.ИНН КАК ИНН${amount ? `, Д.${amount} КАК Сумма` : ""} ` +
+      `ИЗ ${object} КАК Д ГДЕ Д.Дата МЕЖДУ &Нач И &Кон И НЕ Д.ПометкаУдаления`,
+    { Нач: `${from}T00:00:00`, Кон: `${to}T23:59:59` },
+  );
+  if (!read.ok) return read;
+  return {
+    ok: true,
+    amounts: Boolean(amount),
+    docs: rowsOf(read.data).map((c) => ({
+      number: String(c[0] ?? ""),
+      date: dayOf(c[1]),
+      inn: String(c[2] ?? ""),
+      amount: amount ? num(c[3]) : 0,
+    })),
+  };
+}
+
+export interface ReportContext {
+  /** The documents Didox holds for the period, by direction (tax.registers); read by the assistant. */
+  didox?: { incoming: RegisterDoc[]; outgoing: RegisterDoc[] };
+  describe?: Describe;
+  profile?: TaxProfile | null;
+  /** The bank statements attached to the chat (bank.reconcile). */
+  statements?: StatementBalance[];
+}
+
+const addDays = (date: string, n: number) =>
+  new Date(Date.parse(date) + n * 86_400_000).toISOString().slice(0, 10);
+
 export async function financialReport(
   run: RunQuery,
   input: FinancialReportInput,
   today: string,
+  context: ReportContext = {},
 ): Promise<QueryResult> {
   const now = today.slice(0, 10);
   const year = now.slice(0, 4);
@@ -110,6 +228,155 @@ export async function financialReport(
         credit: num(c[2]),
       }));
       return { ok: true, data: { report: input.report, ...buildDebts(input.report, rows, date) } };
+    }
+    case "result_explain": {
+      const from = input.from ?? `${year}-01-01`;
+      const to = input.to ?? now;
+      const before = previousPeriod(from, to);
+      const read = async (a: string, b: string) => {
+        const got = await run(EXPLAIN_QUERY, { Нач: `${a}T00:00:00`, Кон: `${b}T23:59:59`, Маска: "9%" });
+        return got.ok ? { ok: true as const, rows: explainRows(got.data) } : got;
+      };
+      const [now1, before1] = [await read(from, to), await read(before.from, before.to)];
+      if (!now1.ok) return now1;
+      return {
+        ok: true,
+        data: {
+          report: "result_explain",
+          from,
+          to,
+          before,
+          groups: explainResult(now1.rows, before1.ok ? before1.rows : undefined),
+        },
+      };
+    }
+    case "aging_receivables":
+    case "aging_payables": {
+      const date = input.date ?? input.to ?? now;
+      const kind = input.report === "aging_receivables" ? "receivables" : "payables";
+      const mask = kind === "receivables" ? "4%" : "6%";
+      const start = addDays(date, -365);
+      const entries = await run(DEBT_ENTRIES_QUERY, {
+        Нач: `${start}T00:00:00`,
+        Кон: `${date}T23:59:59`,
+        Маска: mask,
+      });
+      if (!entries.ok) return entries;
+      const opening = await run(PARTIES_QUERY, { Дата: `${addDays(start, -1)}T23:59:59`, Маска: mask });
+      const list: DebtEntry[] = rowsOf(entries.data).flatMap((c) => {
+        const day = dayOf(c[1]);
+        return day ? [{ party: String(c[0] ?? ""), date: day, debit: num(c[2]), credit: num(c[3]) }] : [];
+      });
+      // What stood at the start of the window is one item as old as the window.
+      if (opening.ok)
+        for (const c of rowsOf(opening.data))
+          list.push({
+            party: String(c[0] ?? ""),
+            date: addDays(start, -1),
+            debit: num(c[1]),
+            credit: num(c[2]),
+          });
+      const truncated = Boolean((entries.data as { truncated?: boolean }).truncated);
+      return { ok: true, data: { report: input.report, truncated, ...ageDebts(kind, list, date) } };
+    }
+    case "tax_accrual": {
+      const to = input.to ?? input.date ?? now;
+      const from = input.from ?? `${to.slice(0, 4)}-01-01`;
+      const profile = context.profile ?? DEFAULT_PROFILE;
+      const turnovers = await readTurnovers(run, from, to);
+      if (!turnovers.ok) return turnovers;
+      const result = buildResult(turnovers.rows, { from, to }, now);
+      const profit =
+        profile.regime === "turnover"
+          ? null
+          : accrueProfitTax(result.profitBeforeTax, result.tax.amount, to, profile);
+      const turnover = profile.regime === "turnover" ? turnoverTax(result.revenue.amount, to, profile) : null;
+      const vat = profile.vatPayer
+        ? await run(VAT_QUERY, {
+            Нач: `${from}T00:00:00`,
+            Кон: `${to}T23:59:59`,
+            Выход: "6410%",
+            Дебиторы: "40%",
+            Вход: "4410%",
+          })
+        : null;
+      if (vat && !vat.ok) return vat;
+      const months = vat?.ok
+        ? rowsOf(vat.data).map((c) => ({
+            month: dayOf(c[0]).slice(0, 7),
+            output: Number(c[1]) === 1 ? num(c[2]) : 0,
+            input: Number(c[1]) === 2 ? num(c[2]) : 0,
+          }))
+        : null;
+      return {
+        ok: true,
+        data: {
+          report: "tax_accrual",
+          from,
+          to,
+          regime: profile.regime,
+          profitBeforeTax: result.profitBeforeTax,
+          revenue: result.revenue.amount,
+          profit,
+          turnover,
+          vat: months ? vatPosition(months) : null,
+        },
+      };
+    }
+    case "tax_registers": {
+      const from = input.from ?? `${year}-01-01`;
+      const to = input.to ?? now;
+      if (!context.didox || !context.describe)
+        return {
+          ok: false,
+          code: "NO_DIDOX_CONNECTION",
+          message: "Didox is not connected for this company.",
+        };
+      const out: Record<string, unknown> = {};
+      for (const [key, object, theirs] of [
+        ["incoming", "Документ.СчетФактураПолученный", context.didox.incoming],
+        ["outgoing", "Документ.СчетФактураВыданный", context.didox.outgoing],
+      ] as const) {
+        const mine = await readInvoiceRegister(run, context.describe, object, from, to);
+        if (!mine.ok) return mine;
+        out[key] = {
+          in1c: mine.docs.length,
+          inDidox: theirs.length,
+          amountsCompared: mine.amounts,
+          ...compareRegisters(mine.docs, theirs, mine.amounts ? 1 : Number.POSITIVE_INFINITY),
+        };
+      }
+      return { ok: true, data: { report: "tax_registers", from, to, ...out } };
+    }
+    case "tax_calendar": {
+      const from = input.from ?? now;
+      const to = input.to ?? addDays(from, 45);
+      return {
+        ok: true,
+        data: {
+          report: "tax_calendar",
+          from,
+          to,
+          due: upcomingDeadlines(context.profile ?? DEFAULT_PROFILE, from, to),
+        },
+      };
+    }
+    case "bank_reconcile": {
+      const statements = context.statements ?? [];
+      if (statements.length === 0)
+        return {
+          ok: false,
+          code: "NO_STATEMENT",
+          message: "Attach the bank statement (Excel) to compare its closing balance with 1C.",
+        };
+      const rows: BookBalance[] = [];
+      for (const date of new Set(statements.map((s) => s.date))) {
+        const read = await run(BANK_BOOKS_QUERY, { Дата: `${date}T23:59:59`, Маска: "5%" });
+        if (!read.ok) return read;
+        for (const c of rowsOf(read.data))
+          rows.push({ account: String(c[0] ?? ""), soum: num(c[1]), currency: num(c[2]) });
+      }
+      return { ok: true, data: { report: "bank_reconcile", ...reconcileBank(statements, rows) } };
     }
     case "stock": {
       const date = input.date ?? input.to ?? now;

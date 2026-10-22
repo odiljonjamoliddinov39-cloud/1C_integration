@@ -9,6 +9,20 @@ import { searchKnowledge } from "@platform/shared";
 
 import type { Lang } from "./router.js";
 
+export type ReportKind =
+  | "result"
+  | "result_explain"
+  | "balance"
+  | "receivables"
+  | "payables"
+  | "aging_receivables"
+  | "aging_payables"
+  | "stock"
+  | "tax_accrual"
+  | "tax_calendar"
+  | "tax_registers"
+  | "bank_reconcile";
+
 export type EngineTask =
   | { kind: "bank"; from?: string; to?: string }
   | { kind: "didox_in"; from: string; to: string }
@@ -17,7 +31,7 @@ export type EngineTask =
   | { kind: "balances"; date: string }
   | {
       kind: "report";
-      report: "result" | "balance" | "receivables" | "payables" | "stock";
+      report: ReportKind;
       from: string;
       to: string;
     }
@@ -98,17 +112,64 @@ export function amountIn(text: string): number | null {
 }
 
 const CHECK = /(tekshir|текшир|провер|check|audit)/u;
+const DIDOX_WORD = /(didox|дидокс|дидок|didoks)/u;
 
-/** The statement a message asks for: the financial result, the balance, the debts, the stock. */
-function readReport(t: string): "result" | "balance" | "receivables" | "payables" | "stock" | null {
+/** The statement a message asks for: the financial result, the balance, the debts, the stock, the taxes. */
+function readReport(t: string, hasBank: boolean): ReportKind | null {
+  const EXPLAIN =
+    /(tushuntir|тушунтир|объясн|explain|nima uchun|nega\b|nimaga|sabab|нима учун|нега|почему|why|omillar|омиллар|факторы|drivers)/u;
+  const RESULT =
+    /(moliyaviy\s*natija|молиявий\s*натижа|финансов\p{L}*\s*результат|foyda|фойда|zarar|зарар|прибыл|убыт|p&l|profit|income statement|financial result|2-shakl|2-форма|2-форм)/u;
+  if (RESULT.test(t)) return EXPLAIN.test(t) ? "result_explain" : "result";
+  const AGING =
+    /(muddat\p{L}*\s*o'tgan|муддати\s*ўтган|просроч|срок\p{L}*\s*давност|aging|overdue|kechik|кечик|eskirgan|старени)/u;
+  const DEBITOR = /(debitor|дебитор|receivable)/u;
+  const KREDITOR = /(kreditor|кредитор|payable)/u;
   if (
-    /(moliyaviy\s*natija|молиявий\s*натижа|финансов\p{L}*\s*результат|foyda|фойда|zarar|зарар|прибыл|убыт|p&l|profit|income statement|financial result|2-shakl|2-форма|2-форм)/u.test(
+    AGING.test(t) ||
+    ((DEBITOR.test(t) || KREDITOR.test(t)) && /(muddat|муддат|срок|возраст|yosh|ёш)/u.test(t))
+  )
+    return KREDITOR.test(t) && !DEBITOR.test(t) ? "aging_payables" : "aging_receivables";
+  if (DEBITOR.test(t)) return "receivables";
+  if (KREDITOR.test(t)) return "payables";
+  const TAX = /(soliq|солиқ|налог|tax)/u;
+  if (
+    /(kalendar|календар|deadline|muddatlar|муддатлар|сроки сдач|сроки уплат|qachon\s*(topshir|to'la)|когда\s*(сдава|плати))/u.test(
+      t,
+    ) &&
+    (TAX.test(t) || /(hisobot|ҳисобот|отчет|report)/u.test(t))
+  )
+    return "tax_calendar";
+  if (
+    /(xaridlar|харидлар|sotuvlar|сотувлар).*(kitob|китоб)|книг\p{L}*\s*(покупок|продаж)|purchase.*sales.*(book|ledger)|реестр/u.test(
+      t,
+    ) ||
+    (DIDOX_WORD.test(t) &&
+      /(solishtir|солиштир|taqqosla|таққосла|сверк|сверь|reconcil|compare|mos kel|мос кел)/u.test(t))
+  )
+    return "tax_registers";
+  if (
+    TAX.test(t) &&
+    /(hisobla|ҳисобла|hisob-kitob|начисл|рассчита|accru|calculate|qancha|қанча|сколько|how much|nechta|to'lash kerak|к уплате|tayyorla)/u.test(
+      t,
+    ) &&
+    !CHECK.test(t) &&
+    // A year in the message ("2026 yil") is a period, not a sum.
+    amountIn(
+      t
+        .replace(/(?<!\d)20\d{2}\s*(йил|yil|год|г\.|-yil)/gu, " ")
+        .replace(/(?:за|for|in)\s+20\d{2}(?!\d)/gu, " "),
+    ) === null
+  )
+    return "tax_accrual";
+  if (
+    hasBank &&
+    /(ko'chirma|кўчирма|кучирма|выписк|statement|bank|банк)/u.test(t) &&
+    /(solishtir|солиштир|taqqosla|таққосла|сверь|сверк|reconcil|compare|mos|мос|qoldig'i.*1[сc]|остаток.*1[сc])/u.test(
       t,
     )
   )
-    return "result";
-  if (/(debitor|дебитор|receivable)/u.test(t)) return "receivables";
-  if (/(kreditor|кредитор|payable)/u.test(t)) return "payables";
+    return "bank_reconcile";
   if (
     /(ombor|склад|warehouse|tovar\p{L}*\s*(qoldiq|ostatk)|товар\p{L}*\s*(остат|қолдиқ)|stock|запас|zaxira)/u.test(
       t,
@@ -138,7 +199,13 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
     ];
     return { kind: "rates", ...(period ?? {}), ...(currencies.length > 0 ? { currencies } : {}) };
   }
-  const report = readReport(t);
+  const report = readReport(t, ctx.hasBank);
+  if (report === "tax_calendar") {
+    // Deadlines ahead: from the date named (or today) for the period named (or 45 days).
+    const today = todayOf(ctx.today);
+    const ahead = new Date(Date.parse(today) + 45 * 86_400_000).toISOString().slice(0, 10);
+    return { kind: "report", report, from: period?.from ?? singleDate(t) ?? today, to: period?.to ?? ahead };
+  }
   if (report)
     return {
       kind: "report",

@@ -403,7 +403,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "income and expenses, tax, net profit; each line with the accounts it is made of), balance (1-shakl at date, with the check " +
     "assets = liabilities + equity and the unusual balances), receivables or payables (by counterparty, advances apart), stock " +
     "(by item and warehouse; negative, costless and quantity-less positions). Report the figures as given and what the findings " +
-    "most likely mean; never recompute them. A period not over is provisional; a closed year shows its profit on 99xx.",
+    "most likely mean; never recompute them. A period not over is provisional; a closed year shows its profit on 99xx. Also " +
+    "result_explain (what moved the result, against the period before), aging_receivables / aging_payables (by age), tax_accrual " +
+    "(profit tax to accrue, VAT by month, turnover tax; rates come from the app's tax tables and may be unconfirmed: say so), " +
+    "tax_calendar, tax_registers (1C invoices against Didox's), bank_reconcile (attached statement's closing balance against 1C).",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +

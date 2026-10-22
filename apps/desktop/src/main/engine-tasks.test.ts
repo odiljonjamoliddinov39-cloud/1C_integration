@@ -182,4 +182,41 @@ describe("the jobs the program does by itself", () => {
     expect(readEngineTask("QQS nima?", noBank)).toBeNull();
     expect(calcText("vat", { vat: 120_000, total: 1_120_000 }, "uz")).toContain("vat: 120 000");
   });
+
+  it("knows the other reports: what moved the result, aging, taxes, the calendar, the registers, the bank", () => {
+    const kind = (text: string, ctx = noBank) => {
+      const t = readEngineTask(text, ctx);
+      return t && t.kind === "report" ? t.report : (t?.kind ?? null);
+    };
+    expect(kind("2025 yil foyda nega kamaydi")).toBe("result_explain");
+    expect(kind("объясни финансовый результат за 2025 год")).toBe("result_explain");
+    expect(kind("2025 yil foydasi")).toBe("result");
+    expect(kind("muddati o'tgan debitorlik qarzlari")).toBe("aging_receivables");
+    expect(kind("просроченная кредиторка по срокам")).toBe("aging_payables");
+    expect(kind("debitorlik qarzlari")).toBe("receivables");
+    expect(kind("soliqlarni hisobla 2026 yil")).toBe("tax_accrual");
+    expect(kind("сколько налога начислить за 2026 год")).toBe("tax_accrual");
+    expect(kind("soliq kalendari")).toBe("tax_calendar");
+    expect(kind("когда сдавать налоговую отчётность")).toBe("tax_calendar");
+    expect(kind("Didox bilan 1C ni solishtir 2026 yil")).toBe("tax_registers");
+    expect(kind("книга покупок и продаж")).toBe("tax_registers");
+    expect(kind("ko'chirma qoldig'ini 1C bilan solishtir", ctx)).toBe("bank_reconcile");
+    // Without a statement attached the bank wording is not a reconciliation.
+    expect(kind("ko'chirma qoldig'ini 1C bilan solishtir")).not.toBe("bank_reconcile");
+    // A sum of VAT is still the calculator's.
+    expect(kind("1 000 000 so'm dan QQS hisobla")).toBe("calc");
+  });
+
+  it("the calendar looks ahead from today unless a period is named", () => {
+    expect(readEngineTask("soliq kalendari", noBank)).toEqual({
+      kind: "report",
+      report: "tax_calendar",
+      from: "2026-10-21",
+      to: "2026-12-05",
+    });
+    expect(readEngineTask("soliq kalendari 01.01.2027 31.01.2027", noBank)).toMatchObject({
+      from: "2027-01-01",
+      to: "2027-01-31",
+    });
+  });
 });
