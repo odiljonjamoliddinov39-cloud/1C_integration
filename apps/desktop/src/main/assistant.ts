@@ -49,6 +49,7 @@ import {
   type DidoxInvoicesInput,
   type CurrencyRatesToolInput,
   type LedgerCheckInput,
+  type FinancialReportInput,
   type RevaluationCheckInput,
   type DidoxSalesInput,
   type InvoiceIssuedPreview,
@@ -138,6 +139,10 @@ import {
   readEngineTask,
   revaluationText,
 } from "./engine-tasks.js";
+import { balanceText, debtsText, estimateNote, resultText, stockText } from "./engine/report-text.js";
+import { DEFAULT_PROFILE, vatOn } from "./engine/tax-tables.js";
+import { REPORT_ROW_LIMIT, financialReport } from "./engine/reports.js";
+import { newOperation } from "./engine/journal.js";
 import { judgeBalances } from "./ledger-check.js";
 import { type CurrencyBalance, type Revaluation, monthEnds, revalue } from "./currency/revaluation.js";
 import { currencyFromText } from "./bank/policy.js";
@@ -237,6 +242,18 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     });
   });
 }
+
+/** The tool each job the program does by itself stands for (its name in the journal). */
+const ENGINE_TOOL = {
+  bank: "propose_bank_payments",
+  didox_in: "propose_didox_invoices",
+  didox_sales: "propose_didox_sales",
+  rates: "propose_currency_rates",
+  report: "financial_report",
+  balances: "ledger_check",
+  revaluation: "revaluation_check",
+  calc: "accounting_calc",
+} as const;
 
 export interface AssistantDeps {
   store: LocalStore;
@@ -555,8 +572,41 @@ export class AssistantService {
     const lang = langOf(question);
     const title = (what: { ru: string; uz: string; en: string }, from?: string, to?: string) =>
       `${what[lang]}${from && to ? ` ${from} – ${to}` : ""}`;
-    const done = (result: ToolResult, text: (data: unknown) => string) =>
-      this.reply(chat, result.ok ? text(result.data) : failureText(result.message, lang), emit);
+    // Every job the program does is written to the company's journal: what was asked, the step, how it ended.
+    const started = Date.now();
+    const journal = (fn: string, status: "done" | "failed" | "awaiting_approval", error?: string) => {
+      try {
+        this.deps.store.addOperation(
+          chat.companyId,
+          newOperation(
+            question,
+            [
+              {
+                function: fn,
+                decision: "rule",
+                durationMs: Date.now() - started,
+                ...(error ? { error: error.slice(0, 300) } : {}),
+              },
+            ],
+            status,
+          ),
+        );
+      } catch {
+        // The journal never stops a job.
+      }
+    };
+    const done = (result: ToolResult, text: (data: unknown) => string) => {
+      const fn = ENGINE_TOOL[task.kind];
+      if (!result.ok) journal(fn, "failed", result.message);
+      else
+        journal(
+          fn,
+          (result.data as { status?: string } | null)?.status === "declined_by_user"
+            ? "awaiting_approval"
+            : "done",
+        );
+      return this.reply(chat, result.ok ? text(result.data) : failureText(result.message, lang), emit);
+    };
     switch (task.kind) {
       case "bank": {
         chat.entry = true;
@@ -621,16 +671,36 @@ export class AssistantService {
       }
       case "calc": {
         emit({ type: "tool", name: "accounting_calc", detail: task.input.op });
-        return this.reply(
-          chat,
-          calcText(task.input.op, accountingCalc(task.input as AccountingCalcInput), lang),
-          emit,
-        );
+        journal(ENGINE_TOOL.calc, "done");
+        const input = task.input;
+        if (input.op === "vat" && input.rate === undefined) {
+          // No rate named: the company's tax table gives the rate of today, and says where it comes from.
+          const profile = this.deps.store.taxProfile(chat.companyId) ?? DEFAULT_PROFILE;
+          const vat = vatOn(input.amount, input.mode, new Date().toISOString(), profile);
+          if ("error" in vat) return this.reply(chat, failureText(vat.error, lang), emit);
+          const { approved, ...figures } = vat;
+          const text = calcText("vat", figures, lang);
+          return this.reply(chat, approved ? text : `${text}\n${estimateNote(lang)}`, emit);
+        }
+        return this.reply(chat, calcText(input.op, accountingCalc(input as AccountingCalcInput), lang), emit);
       }
       case "balances": {
         emit({ type: "tool", name: "ledger_check", detail: task.date });
         const result = await this.ledgerCheck(chat, { date: task.date });
         return done(result, (data) => balancesText(data as Parameters<typeof balancesText>[0], lang));
+      }
+      case "report": {
+        emit({ type: "tool", name: "financial_report", detail: task.report });
+        const result = await this.financialReport(chat, {
+          report: task.report,
+          ...(task.report === "result" ? { from: task.from, to: task.to } : { date: task.to }),
+        });
+        return done(result, (data) => {
+          if (task.report === "result") return resultText(data as Parameters<typeof resultText>[0], lang);
+          if (task.report === "balance") return balanceText(data as Parameters<typeof balanceText>[0], lang);
+          if (task.report === "stock") return stockText(data as Parameters<typeof stockText>[0], lang);
+          return debtsText(data as Parameters<typeof debtsText>[0], lang);
+        });
       }
       case "revaluation": {
         emit({ type: "tool", name: "revaluation_check", detail: `${task.from} – ${task.to}` });
@@ -1441,6 +1511,9 @@ export class AssistantService {
     if (use.name === "ledger_check") {
       return this.ledgerCheck(chat, input.data as LedgerCheckInput);
     }
+    if (use.name === "financial_report") {
+      return this.financialReport(chat, input.data as FinancialReportInput);
+    }
     if (use.name === "accounting_knowledge") {
       return this.accountingKnowledge(chat, input.data as AccountingKnowledgeInput);
     }
@@ -1920,6 +1993,17 @@ export class AssistantService {
             : "These are the amounts 1C's own revaluation must produce (Закрытие месяца → Переоценка валютных средств, for each month in turn: it is a regulated operation, not a document the app can create). Tell the accountant to run it for the months listed, then call this tool again: the differences must be gone.",
       },
     };
+  }
+
+  /** The financial statements from the ledger, worked out by the program (see engine/financial.ts). */
+  private async financialReport(chat: StoredChat, input: FinancialReportInput): Promise<ToolResult> {
+    const connection = this.deps.store.connection(chat.companyId);
+    return financialReport(
+      (query, params) =>
+        this.deps.connector.tool(connection, "run_query", { query, params, limit: REPORT_ROW_LIMIT }),
+      input,
+      new Date().toISOString(),
+    );
   }
 
   /** The balances worth a look, read in one query and judged by the program (see ledger-check.ts). */

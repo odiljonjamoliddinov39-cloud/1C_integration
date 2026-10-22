@@ -397,6 +397,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the transit accounts (57xx) that do not close together, a liability account in debit (paid with no accrual), a " +
     "receivable in credit, and the exchange differences (95xx/96xx). Report its findings in a few lines with what they " +
     "most likely mean; do not run balance queries yourself to find the same things.",
+  financial_report:
+    "The financial statements, worked out by the app from the ledger with ONE call (no queries of your own): report: result " +
+    "(financial result 2-shakl for from..to, default this year: revenue, cost of sales, gross profit, period expenses, financial " +
+    "income and expenses, tax, net profit; each line with the accounts it is made of), balance (1-shakl at date, with the check " +
+    "assets = liabilities + equity and the unusual balances), receivables or payables (by counterparty, advances apart), stock " +
+    "(by item and warehouse; negative, costless and quantity-less positions). Report the figures as given and what the findings " +
+    "most likely mean; never recompute them. A period not over is provisional; a closed year shows its profit on 99xx.",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +

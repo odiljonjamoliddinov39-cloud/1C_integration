@@ -4682,4 +4682,163 @@ describe("the program works with no model", () => {
     );
     expect(t.proxy.requests).toHaveLength(0);
   });
+
+  describe("the financial statements", () => {
+    const ledger = (t: ReturnType<typeof setup>) => {
+      const asked: { query: string; params: unknown }[] = [];
+      t.base.queryAnswers.unshift(
+        {
+          match: /МЕЖДУ &Нач/,
+          answer: (input) => {
+            asked.push({ query: input.query, params: input.params });
+            return {
+              columns: [],
+              rows: [
+                ["9010", "Sales of products", 0, 1_000_000],
+                ["9110", "Cost of products", 400_000, 0],
+                ["9420", "Administrative expenses", 100_000, 0],
+                ["9810", "Profit tax", 60_000, 0],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Х\.Счет\.Код КАК Код/,
+          answer: (input) => {
+            asked.push({ query: input.query, params: input.params });
+            return {
+              columns: [],
+              rows: [
+                ["5110", "Bank", 640_000, 0],
+                ["8300", "Charter capital", 0, 200_000],
+                ["9010", "Sales of products", 0, 1_000_000],
+                ["9110", "Cost of products", 400_000, 0],
+                ["9420", "Administrative expenses", 100_000, 0],
+                ["9810", "Profit tax", 60_000, 0],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /Субконто1\) КАК Субъект/,
+          answer: (input) => {
+            asked.push({ query: input.query, params: input.params });
+            return {
+              columns: [],
+              rows: [
+                ["Alpha LLC", 900_000, 0],
+                ["Beta LLC", 100_000, 400_000],
+              ],
+              truncated: false,
+            };
+          },
+        },
+        {
+          match: /КоличествоОстаток/,
+          answer: () => ({
+            columns: [],
+            rows: [
+              ["Rice", "Main", 10, 100_000],
+              ["Oil", "Main", -2, -20_000],
+            ],
+            truncated: false,
+          }),
+        },
+      );
+      return asked;
+    };
+
+    it("gives the financial result of a year with no model, each line with its accounts", async () => {
+      const t = setup([]);
+      const asked = ledger(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "2024 yil moliyaviy natijasini ko'rsat" });
+      expect(t.proxy.requests).toHaveLength(0);
+      expect(asked[0]?.params).toEqual({ Нач: "2024-01-01T00:00:00", Кон: "2024-12-31T23:59:59" });
+      expect(asked).toHaveLength(1);
+      const text = lastText(t);
+      expect(text).toContain("Moliyaviy natija 2024-01-01 – 2024-12-31");
+      expect(text).toContain("Tushum: 1 000 000");
+      expect(text).toContain("← 9010 1 000 000");
+      expect(text).toContain("Yalpi foyda: 600 000");
+      expect(text).toContain("Sof foyda (zarar): 440 000");
+      expect(text).toContain("modelsiz");
+    });
+
+    it("gives the balance, which closes, and checks the profit against the result", async () => {
+      const t = setup([]);
+      ledger(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "2024-12-31 holatiga balans ko'rsat" });
+      expect(t.proxy.requests).toHaveLength(0);
+      const text = lastText(t);
+      expect(text).toContain("2024-12-31 dagi balans");
+      expect(text).toContain("JAMI AKTIV: 640 000");
+      expect(text).toContain("JAMI PASSIV: 640 000");
+      expect(text).toContain("Balans tengligi bajarildi");
+    });
+
+    it("lists the debtors, and the advances apart", async () => {
+      const t = setup([]);
+      ledger(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "debitorlik qarzlarini ko'rsat" });
+      const text = lastText(t);
+      expect(text).toContain("1 kontragent");
+      expect(text).toContain("Alpha LLC: 900 000");
+      expect(text).toContain("Olingan avanslar");
+      expect(text).toContain("Beta LLC: 300 000");
+      expect(t.proxy.requests).toHaveLength(0);
+    });
+
+    it("shows the stock and the negative balance", async () => {
+      const t = setup([]);
+      ledger(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "ombor tovar qoldig'ini ko'rsat" });
+      const text = lastText(t);
+      expect(text).toContain("Rice (Main): 10");
+      expect(text).toContain("Manfiy qoldiqlar");
+      expect(text).toContain("Oil");
+    });
+
+    it("answers in the accountant's language, and says why when 1C refuses the read", async () => {
+      const t = setup([]);
+      t.base.queryAnswers.unshift({
+        match: /МЕЖДУ &Нач/,
+        answer: () => {
+          throw new Error("Поле не найдено Сумма");
+        },
+      });
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "финансовый результат за 2024 год" });
+      expect(lastText(t)).toContain("Поле не найдено Сумма");
+      expect(t.proxy.requests).toHaveLength(0);
+    });
+
+    it("writes every job it does to the company's journal", async () => {
+      const t = setup([]);
+      ledger(t);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "2024 yil moliyaviy natijasini ko'rsat" });
+      const ops = t.store.operations(t.company.id);
+      expect(ops).toHaveLength(1);
+      expect(ops[0]).toMatchObject({
+        status: "done",
+        steps: [{ function: "financial_report", decision: "rule" }],
+      });
+    });
+
+    it("takes the VAT rate of the day from the tax table, and says it is not yet confirmed", async () => {
+      const t = setup([]);
+      t.store.setAiEnabled(t.company.id, true);
+      await t.assistant.send({ companyId: t.company.id, text: "1 000 000 so'm dan QQS hisobla" });
+      const text = lastText(t);
+      expect(text).toContain("rate: 12");
+      expect(text).toContain("vat: 120 000");
+      expect(text).toContain("tasdiqlamagan");
+    });
+  });
 });

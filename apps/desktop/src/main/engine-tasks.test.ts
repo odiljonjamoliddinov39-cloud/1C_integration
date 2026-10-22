@@ -165,7 +165,7 @@ describe("the jobs the program does by itself", () => {
   it("knows a VAT and a pay-roll sum to work out", () => {
     expect(readEngineTask("1 000 000 so'm dan QQS hisobla", noBank)).toEqual({
       kind: "calc",
-      input: { op: "vat", amount: 1_000_000, rate: 12, mode: "exclusive" },
+      input: { op: "vat", amount: 1_000_000, mode: "exclusive" },
     });
     expect(readEngineTask("1 120 000 so'm QQS ichida, 12% QQS qancha", noBank)).toEqual({
       kind: "calc",

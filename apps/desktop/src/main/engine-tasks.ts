@@ -15,11 +15,17 @@ export type EngineTask =
   | { kind: "didox_sales"; from: string; to: string }
   | { kind: "rates"; from?: string; to?: string; currencies?: string[] }
   | { kind: "balances"; date: string }
+  | {
+      kind: "report";
+      report: "result" | "balance" | "receivables" | "payables" | "stock";
+      from: string;
+      to: string;
+    }
   | { kind: "revaluation"; from: string; to: string }
   | {
       kind: "calc";
       input:
-        | { op: "vat"; amount: number; rate: number; mode: "exclusive" | "inclusive" }
+        | { op: "vat"; amount: number; rate?: number; mode: "exclusive" | "inclusive" }
         | { op: "payroll"; gross?: number; net?: number };
     };
 
@@ -54,6 +60,15 @@ export function periodIn(text: string): { from: string; to: string } | null {
   return null;
 }
 
+/** One date a message names ("2024-12-31", "31.12.2024"), or null. */
+export function singleDate(text: string): string | null {
+  const t = norm(text);
+  const dmy = /(\d{1,2})[./](\d{1,2})[./](\d{4})/.exec(t);
+  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  const found = iso ? iso[0] : dmy ? `${dmy[3]}-${pad(dmy[2] ?? "")}-${pad(dmy[1] ?? "")}` : null;
+  return found && !Number.isNaN(Date.parse(found)) ? found : null;
+}
+
 /** The amount a message names: "1 000 000", "1,250,000.50", "12 млн"; null when there is none. */
 export function amountIn(text: string): number | null {
   const t = norm(text).replace(/\d{1,2}\s*%/g, " ");
@@ -82,6 +97,30 @@ export function amountIn(text: string): number | null {
   return best !== null && best >= 1 ? best : null;
 }
 
+const CHECK = /(tekshir|текшир|провер|check|audit)/u;
+
+/** The statement a message asks for: the financial result, the balance, the debts, the stock. */
+function readReport(t: string): "result" | "balance" | "receivables" | "payables" | "stock" | null {
+  if (
+    /(moliyaviy\s*natija|молиявий\s*натижа|финансов\p{L}*\s*результат|foyda|фойда|zarar|зарар|прибыл|убыт|p&l|profit|income statement|financial result|2-shakl|2-форма|2-форм)/u.test(
+      t,
+    )
+  )
+    return "result";
+  if (/(debitor|дебитор|receivable)/u.test(t)) return "receivables";
+  if (/(kreditor|кредитор|payable)/u.test(t)) return "payables";
+  if (
+    /(ombor|склад|warehouse|tovar\p{L}*\s*(qoldiq|ostatk)|товар\p{L}*\s*(остат|қолдиқ)|stock|запас|zaxira)/u.test(
+      t,
+    ) &&
+    /(qoldiq|қолдиқ|остат|balance|ko'rsat|кўрсат|покаж|show|nechta|сколько|қанча|qancha)/u.test(t)
+  )
+    return "stock";
+  // The balance sheet, not the check of the balances (that is "balances" below).
+  if (/(balans|баланс|balance sheet|1-shakl|1-форма|1-форм)/u.test(t) && !CHECK.test(t)) return "balance";
+  return null;
+}
+
 export function readEngineTask(text: string, ctx: { hasBank: boolean; today: string }): EngineTask | null {
   const t = norm(text);
   if (t.trim().length > 400) return null;
@@ -99,6 +138,14 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
     ];
     return { kind: "rates", ...(period ?? {}), ...(currencies.length > 0 ? { currencies } : {}) };
   }
+  const report = readReport(t);
+  if (report)
+    return {
+      kind: "report",
+      report,
+      from: (period ?? { from: `${year}-01-01` }).from,
+      to: period?.to ?? singleDate(t) ?? todayOf(ctx.today),
+    };
   if (
     /(qoldiq|қолдиқ|остатк|оборотн|saldo|balance|баланс)\p{L}*/u.test(t) &&
     /(tekshir|текшир|провер|check|ko'r|кўр|покаж|show)/u.test(t)
@@ -113,12 +160,18 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
   const amount = amountIn(t);
   if (amount !== null) {
     if (/(qqs|ндс|vat|қҚс|ққс)/u.test(t)) {
-      const rate = Number(/(\d{1,2}(?:[.,]\d)?)\s*%/.exec(t)?.[1]?.replace(",", ".") ?? 12);
+      // A rate named in the message is used; otherwise the company's tax table gives the rate of the day.
+      const typed = /(\d{1,2}(?:[.,]\d)?)\s*%/.exec(t)?.[1]?.replace(",", ".");
       const inclusive =
         /(ichida|ичида|включ|с ндс|ндс билан|qqs bilan|ққс билан|including|incl|inclusive)/u.test(t);
       return {
         kind: "calc",
-        input: { op: "vat", amount, rate, mode: inclusive ? "inclusive" : "exclusive" },
+        input: {
+          op: "vat",
+          amount,
+          ...(typed ? { rate: Number(typed) } : {}),
+          mode: inclusive ? "inclusive" : "exclusive",
+        },
       };
     }
     if (/(oylik|ойлик|зарплат|salary|jshds|жшдс|ндфл|ndfl|inps|инпс|иншп|payroll)/u.test(t)) {

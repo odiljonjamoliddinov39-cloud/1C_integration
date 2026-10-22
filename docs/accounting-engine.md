@@ -143,6 +143,38 @@ Cost of the model steps that remain: a step is sent the earlier questions as que
 (`history.ts`); tool calls, results and thinking of earlier questions are dropped from what is sent
 (the stored chat is untouched), so a step costs the same on the hundredth question as on the second.
 
+## The engine plan (PDF «Buxgalteriya dvigateli — To'liq qurish rejasi») and what is built
+
+| Plan                      | Module                                                           | In the code                                                                         | State                                                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1 Foundations            | PlatformAPI, counterparty/INN, rates, dry-run                    | `PlatformAPI`, `bank/`, `currency/`, confirmation cards                             | existed                                                                                                                                                                                     |
+| P2 Decision centre        | `posting_rules`, five-step account choice, `operations` journal  | `engine/posting-rules.ts`, `engine/journal.ts`, `LocalStore` (`engine` per company) | rules + ladder + journal built; the journal is written for every job the program does; the document builders still copy the company's own documents, the rule table is not yet their source |
+| P3 Tax                    | `tax_rates`, `tax_benefits`, profile, `tax.vat`                  | `engine/tax-tables.ts`                                                              | VAT, profit, income, social, INPS rates by date; benefits table empty (the adviser fills it); a company profile type; every seeded row `approved: false` and the answers say so             |
+| P4 Receipts / sales       | Didox, ESF, documents                                            | `didox/`, `propose_didox_*`                                                         | existed                                                                                                                                                                                     |
+| P5 Stock                  | `stock.balance`, `stock.check`                                   | `engine/financial.ts` `buildStock`, `engine/reports.ts`                             | balance by item and warehouse, negative / costless / quantity-less positions; `stock.receive/issue/produce/transfer/writeOff/cost` are not built (1C posts them from documents)             |
+| P6 Bank                   | `bank.import/classify/currency/internal/terminal/buildDocuments` | `bank/`                                                                             | existed; `bank.reconcile` (bank balance against 1C) not built                                                                                                                               |
+| P7 Financial result       | `result.*`                                                       | `engine/financial.ts` `buildResult`                                                 | revenue → net profit with the accounts of each line, provisional flag, closed-year note; `result.explain` by counterparty/product not built                                                 |
+| P8 Balance                | `balance.*`                                                      | `buildBalance`, `buildDebts`                                                        | 1-shakl lines, assets = liabilities + equity check, profit against the result, unusual balances; receivables/payables by counterparty with the advances apart; aging not built              |
+| P9 Decision centre in use |                                                                  | `engineRoute` in `assistant.ts`                                                     | the jobs above are answered with no model                                                                                                                                                   |
+| P10 Screens               |                                                                  | —                                                                                   | not built: reports are asked in the chat                                                                                                                                                    |
+
+Reports are asked in the chat in plain words, and the model is not called: «2024 yil moliyaviy natijasi», «2024-12-31 holatiga
+balans», «debitorlik», «kreditorlik», «ombor qoldig'i» (also in Russian and English). The model's tool is `financial_report`.
+
+How the reports read 1C (`engine/reports.ts`): the balances from `РегистрБухгалтерии.Хозрасчетный.Остатки`, the turnovers from
+the register's entries (`СчетДт`, `СчетКт`, `Сумма`, `Период`, `Активность`), debts and stock by the first analytics of the
+balance rows. Accounts of three digits or fewer are off-balance and are left out; the accounts are read by their group
+(first two digits) of the NSBU chart. **These queries are not yet verified on a real base**: a field a configuration names
+differently comes back as 1C's own message in the answer, not as an empty report.
+
+### Trying it on a real base (the laptop)
+
+1. «2024 yil moliyaviy natijasini ko'rsat»: compare revenue, cost and net profit with 1C's «Финансовые результаты».
+2. «2024-12-31 holatiga balans ko'rsat»: assets and liabilities against 1C's balance; the line "Balans tengligi" must say it closes.
+3. «debitorlik qarzlarini ko'rsat», «kreditorlik qarzlarini ko'rsat»: against the account cards 40xx / 60xx.
+4. «ombor tovar qoldig'ini ko'rsat»: against the stock turnover-balance statement.
+5. «1 000 000 so'm dan QQS hisobla»: 12%, with the note that the table is not yet confirmed.
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.

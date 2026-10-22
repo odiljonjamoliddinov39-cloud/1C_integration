@@ -620,6 +620,30 @@ export const LedgerCheckInput = z.object({
 export type LedgerCheckInput = z.infer<typeof LedgerCheckInput>;
 
 /**
+ * The financial statements, worked out by the app from the ledger with no model: the financial result of a period
+ * (2-shakl), the balance at a date (1-shakl) with its checks, the receivables or payables by counterparty, and the
+ * stock by item and warehouse. Every line says which accounts it is made of.
+ */
+export const FinancialReportInput = z.object({
+  report: z.enum(["result", "balance", "receivables", "payables", "stock"]),
+  /** result: the period (default: this year to today). */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** balance, receivables, payables, stock: the day (default today). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type FinancialReportInput = z.infer<typeof FinancialReportInput>;
+
+/**
  * What the month-end revaluation of currency balances has to produce, worked out by the app: for each month's end in
  * the period, the currency accounts and currency settlement accounts at the Central Bank's rate of that day against
  * what 1C carries. 1C's own «Закрытие месяца → Переоценка валютных средств» does the revaluation; this says what it
@@ -710,6 +734,7 @@ export const AI_TOOLS = {
   fetch_didox_documents: FetchDidoxInput,
   learn_accounting_policy: z.object({}),
   ledger_check: LedgerCheckInput,
+  financial_report: FinancialReportInput,
   revaluation_check: RevaluationCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
@@ -760,6 +785,7 @@ export const AI_LOCAL_TOOLS = [
   "fetch_didox_documents",
   "learn_accounting_policy",
   "ledger_check",
+  "financial_report",
   "revaluation_check",
   "accounting_calc",
   "company_rules",
