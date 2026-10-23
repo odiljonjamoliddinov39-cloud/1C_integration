@@ -652,7 +652,7 @@ export const FinancialReportInput = z.object({
     .optional(),
   /** stock_cost: the item whose issues are checked, and the company's cost method (kept for the company). */
   item: z.string().trim().min(1).max(200).optional(),
-  method: z.enum(["average", "fifo", "lifo"]).optional(),
+  method: z.enum(["average", "fifo"]).optional(),
   /** balance, receivables, payables, stock: the day (default today). */
   date: z
     .string()

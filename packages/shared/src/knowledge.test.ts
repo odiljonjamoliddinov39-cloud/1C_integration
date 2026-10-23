@@ -70,4 +70,16 @@ describe("the knowledge base", () => {
     expect(ids).toContain("concept_close_effect");
     expect(searchKnowledge("торговая наценка 2980").map((e) => e.id)).toContain("concept_retail_markup");
   });
+
+  it("knows where 1C takes each operation, the standard reports and the accountant's calendar", () => {
+    expect(searchKnowledge("какой документ в 1с для списания товаров").map((e) => e.id)).toContain(
+      "proc_1c_documents",
+    );
+    expect(searchKnowledge("карточка счета и оборотно-сальдовая ведомость что показывает")[0]?.id).toBe(
+      "concept_1c_standard_reports",
+    );
+    expect(searchKnowledge("календарь бухгалтера регламентированная отчетность").map((e) => e.id)).toContain(
+      "concept_accountant_calendar",
+    );
+  });
 });

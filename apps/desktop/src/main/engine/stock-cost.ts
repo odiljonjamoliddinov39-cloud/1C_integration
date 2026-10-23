@@ -5,7 +5,8 @@
  */
 import { accountingCalc } from "../calc.js";
 
-export type CostMethod = "average" | "fifo" | "lifo";
+/** The two methods the company may choose (NSBU: average cost, or FIFO with batches kept on the stock accounts). */
+export type CostMethod = "average" | "fifo";
 
 export interface Movement {
   /** YYYY-MM-DD. */

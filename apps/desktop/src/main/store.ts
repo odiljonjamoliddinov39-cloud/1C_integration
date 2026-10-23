@@ -60,7 +60,7 @@ export interface EngineData {
   operations?: Operation[];
   corrections?: Correction[];
   /** The cost method of the company's stock (the accountant's decision; the program never chooses it). */
-  stockCostMethod?: "average" | "fifo" | "lifo";
+  stockCostMethod?: "average" | "fifo";
 }
 
 /** How lines are written: a VAT rate under another the base has, and the ledger accounts. */
@@ -210,11 +210,11 @@ export class LocalStore {
     return this.find(id).organizationRef;
   }
 
-  stockCostMethod(id: string): "average" | "fifo" | "lifo" | null {
+  stockCostMethod(id: string): "average" | "fifo" | null {
     return this.find(id).engine?.stockCostMethod ?? null;
   }
 
-  setStockCostMethod(id: string, method: "average" | "fifo" | "lifo"): void {
+  setStockCostMethod(id: string, method: "average" | "fifo"): void {
     const c = this.find(id);
     c.engine = { ...c.engine, stockCostMethod: method };
     this.save();
