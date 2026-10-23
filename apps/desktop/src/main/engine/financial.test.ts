@@ -42,11 +42,20 @@ describe("the financial result", () => {
     expect(r.findings[0]).toContain("provisional");
   });
 
-  it("says so when the year has been closed to the final result", () => {
-    const r = buildResult([row("9910", 0, 535_000)], { from: "2025-01-01", to: "2025-12-31" }, "2026-10-22");
-    expect(r.netProfit).toBe(0);
-    expect(r.closing.amount).toBe(535_000);
-    expect(r.findings.join(" ")).toContain("closed");
+  it("counts 93 (other operating income) by its credit side and ignores the final result accounts", () => {
+    const r = buildResult(
+      [
+        row("9010", 0, 1000),
+        row("9310", 0, 80, "Other operating income"),
+        row("9420", 100, 0),
+        row("9910", 0, 5000),
+      ],
+      { from: "2025-01-01", to: "2025-12-31" },
+      "2026-10-22",
+    );
+    expect(r.otherOperating.amount).toBe(80);
+    expect(r.operatingProfit).toBe(980);
+    expect(r.netProfit).toBe(980); // 9910 is not part of any line
   });
 
   it("adds the rows of one account (by currency or organization)", () => {

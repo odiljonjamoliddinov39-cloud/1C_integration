@@ -7,7 +7,9 @@
  * The NSBU (BHMS) chart of 21 accounts is read by its groups (the first two digits): 01–09 long-term assets, 10–39
  * stock, production and deferred costs, 40–49 receivables, 50–59 money, 60–69 current liabilities, 70–79 long-term
  * liabilities, 80–89 equity, 90 sales, 91 cost of sales, 92/93 other operating income and expenses, 94 period
- * expenses, 95 financial income, 96 financial expenses, 97 emergency items, 98 taxes, 99 the final result. Accounts of
+ * expenses, 95 financial income, 96 financial expenses, 97 emergency items, 98 taxes, 99 the final result (9910).
+ * The month closing moves 90, 91 and 93–98 to 9910 every month: the result is therefore worked out from entries that do
+ * not touch 99xx (see reports.ts), and the balance carries the profit of the open year from 9xxx as a whole. Accounts of
  * three digits or fewer are off-balance and are left out.
  */
 import { type LedgerFinding, judgeBalances } from "../ledger-check.js";
@@ -83,8 +85,6 @@ export interface ResultReport {
   profitBeforeTax: number;
   tax: Line;
   netProfit: number;
-  /** The accounts of the final result (99xx) in the period: when the year is closed the profit is here, not above. */
-  closing: Line;
   findings: string[];
 }
 
@@ -97,18 +97,13 @@ export function buildResult(
   const revenue = lineOf("revenue", rows, (g) => g === 90, -1);
   const costOfSales = lineOf("costOfSales", rows, (g) => g === 91, 1);
   const periodExpenses = lineOf("periodExpenses", rows, (g) => g === 94, 1);
-  const operatingIncome = lineOf("otherOperatingIncome", rows, (g) => g === 92, -1);
-  const operatingCost = lineOf("otherOperatingExpenses", rows, (g) => g === 93, 1);
-  const otherOperating: Line = {
-    key: "otherOperating",
-    amount: round2(operatingIncome.amount - operatingCost.amount),
-    sources: [...operatingIncome.sources, ...operatingCost.sources.map((s) => ({ ...s, amount: -s.amount }))],
-  };
+  // 92 and 93 are other operating income and expenses (9300 is «Прочие доходы от основной деятельности»): each account
+  // counts by its own side, credit less debit.
+  const otherOperating = lineOf("otherOperating", rows, (g) => g === 92 || g === 93, -1);
   const financialIncome = lineOf("financialIncome", rows, (g) => g === 95, -1);
   const financialExpenses = lineOf("financialExpenses", rows, (g) => g === 96, 1);
   const emergency = lineOf("emergency", rows, (g) => g === 97, -1);
   const tax = lineOf("tax", rows, (g) => g === 98, 1);
-  const closing = lineOf("closing", rows, (g) => g === 99, -1);
 
   const grossProfit = round2(revenue.amount - costOfSales.amount);
   const operatingProfit = round2(grossProfit - periodExpenses.amount + otherOperating.amount);
@@ -123,15 +118,6 @@ export function buildResult(
   const findings: string[] = [];
   const provisional = period.to >= today.slice(0, 10);
   if (provisional) findings.push("The period is not over: the figures are provisional.");
-  const operating = [revenue, costOfSales, periodExpenses].every((l) => Math.abs(l.amount) < 0.005);
-  if (operating && Math.abs(closing.amount) >= 0.005)
-    findings.push(
-      "The year (or month) is closed: the result was moved to the final result accounts (99xx). Ask for a period before the closing, or read the 99xx line.",
-    );
-  if (!operating && Math.abs(closing.amount) >= 0.005 && Math.abs(closing.amount - netProfit) >= 0.01)
-    findings.push(
-      `The final result accounts (99xx) hold ${closing.amount} while the lines above give ${netProfit}: part of the period has been closed.`,
-    );
   if (revenue.amount < 0) findings.push("Revenue is negative: returns or discounts exceed the sales.");
   if (costOfSales.amount === 0 && revenue.amount > 0)
     findings.push("There is revenue but no cost of sales: the cost may not have been calculated yet.");
@@ -152,7 +138,6 @@ export function buildResult(
     profitBeforeTax,
     tax,
     netProfit,
-    closing,
     findings,
   };
 }

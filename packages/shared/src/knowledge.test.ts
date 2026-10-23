@@ -58,4 +58,16 @@ describe("the knowledge base", () => {
     expect(searchKnowledge("какая погода завтра")).toEqual([]);
     expect(searchKnowledge("")).toEqual([]);
   });
+
+  it("knows how 1C closes the month, and why a closed month's 9xxx accounts look empty", () => {
+    expect(searchKnowledge("как закрыть месяц в 1С регламентные операции")[0]?.id).toBe("proc_close_1c");
+    expect(searchKnowledge("oyni yopish 1c regulated operations").map((e) => e.id)).toContain(
+      "proc_close_1c",
+    );
+    const ids = searchKnowledge("после закрытия месяца обороты 90 счета нулевые закрытый месяц").map(
+      (e) => e.id,
+    );
+    expect(ids).toContain("concept_close_effect");
+    expect(searchKnowledge("торговая наценка 2980").map((e) => e.id)).toContain("concept_retail_markup");
+  });
 });

@@ -278,7 +278,7 @@ describe("without secure storage", () => {
     const test = await handlers.testConnection(connection);
     const base = [...bases.values()][0]!;
     base.queryAnswers.unshift({
-      match: /МЕЖДУ &Нач И &Кон И Х\.Активность СГРУППИРОВАТЬ ПО Х\.СчетДт\.Код, Х\.СчетДт\.Наименование/,
+      match: /Х.СчетДт.Код КАК Код, Х.СчетДт.Наименование КАК Имя/,
       answer: () => ({
         columns: [],
         rows: [
