@@ -12,8 +12,10 @@
 import type { ChangeInput, RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
+import type { Context } from "../engine/posting-rules.js";
 import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
 import { currencyFromText } from "./policy.js";
+import { type ScaffoldCache, scaffoldTemplate } from "./scaffold.js";
 import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
@@ -97,6 +99,8 @@ export interface BankCache {
   rates?: Map<string, number | null>;
   /** The currency items of 1C's catalog: "USD" → its ref, null when the catalog has none. */
   currencyRefs?: Map<string, string | null>;
+  /** What a document made from 1C's own description needs (see scaffold.ts), read once. */
+  scaffold?: ScaffoldCache;
 }
 
 export interface TaxHistory {
@@ -113,6 +117,8 @@ export interface Template {
   ref: string;
   fields: Record<string, unknown>;
   tables: Record<string, Record<string, unknown>[]>;
+  /** Made from 1C's description of the document (no earlier one to copy): its empty placeholders are dropped. */
+  synthetic?: true;
 }
 
 export const OBJECT = {
@@ -537,6 +543,17 @@ export function copyTemplate(
   };
 }
 
+/** A document made from 1C's description carries empty placeholders for what the copy did not fill: they are not sent. */
+function dropEmpty(change: ChangeInput): void {
+  const kept = <T extends Record<string, unknown>>(record: T): T =>
+    Object.fromEntries(Object.entries(record).filter(([, value]) => value !== null)) as T;
+  if (change.fields) change.fields = kept(change.fields);
+  if (change.tables)
+    change.tables = Object.fromEntries(
+      Object.entries(change.tables).map(([name, rows]) => [name, rows.map(kept)]),
+    );
+}
+
 const day = (date: string) => date.slice(0, 10);
 
 /** Only exact matches are "already in 1C": the same day, counterparty and amount. */
@@ -565,6 +582,9 @@ export async function resolvePayments(
     splitCommission?: boolean;
     /** The currency of the statement's account in letters ("" or "UZS": soums). */
     currency?: string;
+    /** The company's organization in 1C, and its posting rules and chart: for a document made with no earlier one to copy. */
+    organization?: string;
+    posting?: Context;
   },
   deps: BankDeps,
 ): Promise<BankResolved> {
@@ -843,21 +863,53 @@ export async function resolvePayments(
     }
     const who = whoOf(payment);
     const fresh = Boolean(counterparty && who && options.fresh?.has(who.key));
-    const template = asked
+    let template = asked
       ? await snapshot(deps, cache, object, asked.ref)
       : fresh
         ? await kindTemplate(deps, cache, object, payment, currency)
         : await findTemplate(deps, cache, object, payment, who, currency);
+    // No earlier document of the kind in the base (a new base, or its documents were deleted): the document is made from
+    // 1C's own description of it, for a plain payment with a counterparty that has a contract.
+    let scaffoldedContract: string | null = null;
+    let whyNot = "";
+    if (!template && !asked && !fresh) {
+      if (foreignAccount)
+        whyNot = ` (an account in ${currency}: the first payment in a foreign currency is posted by hand, then the program copies it)`;
+      else {
+        const named = mentions.get(payment.row);
+        const known =
+          named && who
+            ? (contractsOf.get(who.key) ?? []).filter(
+                (c) => normalNumber(c.number) === normalNumber(named.number) && c.date === named.date,
+              )
+            : [];
+        const made = await scaffoldTemplate(deps, cache, {
+          object,
+          payment,
+          who,
+          organization: options.organization ?? null,
+          ...(options.posting ? { posting: options.posting } : {}),
+          contract: known.length === 1 ? (known[0]?.ref ?? null) : null,
+        });
+        if (made.ok) {
+          template = made.template;
+          scaffoldedContract = made.contract;
+          addNote([payment.row], made.notes[made.notes.length - 1] ?? "");
+          for (const note of made.notes.slice(0, -1)) addNote([payment.row], note);
+        } else
+          whyNot = `: ${made.message.replace(/^no earlier [^,]*, and one cannot be made from 1C's own description: /, "")}`;
+      }
+    }
     if (!template) {
       addProblem(
         payment,
         "NO_TEMPLATE",
-        `no earlier posted ${object.replace("Документ.", "")} of this kind to copy: answer with templates (a posted document of the same kind) or enter it with propose_changes`,
+        `no earlier posted ${object.replace("Документ.", "")} of this kind to copy${whyNot || ": answer with templates (a posted document of the same kind) or enter it with propose_changes"}`,
       );
       continue;
     }
 
-    let contract: string | null = null;
+    let contract: string | null = scaffoldedContract;
     const mention = mentions.get(payment.row);
     if (fresh && counterparty) {
       const list = contractsOf.get(who?.key ?? "") ?? [];
@@ -988,6 +1040,7 @@ export async function resolvePayments(
       addProblem(payment, "BAD_TEMPLATE", made.message);
       continue;
     }
+    if (template.synthetic) dropEmpty(made.change);
     ready.push({ payment, change: made.change });
     for (const note of made.notes ?? []) addNote([payment.row], note);
   }

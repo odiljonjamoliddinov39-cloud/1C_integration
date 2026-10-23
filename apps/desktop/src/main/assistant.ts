@@ -3621,6 +3621,13 @@ export class AssistantService {
             createMissing: true,
             fresh,
             currency: task.currency,
+            // A document with no earlier one to copy is made from 1C's own description: the organization, the company's
+            // account rules and its chart are what it needs.
+            organization: this.deps.store.organizationRef(chat.companyId),
+            posting: {
+              companyRules: this.deps.store.postingRules(chat.companyId),
+              chart: await this.chartCodes(chat),
+            },
             ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
             overrides: {
               ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),

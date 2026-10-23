@@ -695,6 +695,8 @@ export const POSTING_OPERATIONS = [
   "payment_to_supplier",
   "bank_fee",
   "profit_tax_accrual",
+  "advance_from_buyer",
+  "advance_to_supplier",
 ] as const;
 export type PostingOperation = (typeof POSTING_OPERATIONS)[number];
 
