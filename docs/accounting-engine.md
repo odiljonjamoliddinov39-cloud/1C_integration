@@ -183,6 +183,22 @@ fields it does have.
 7. «muddati o'tgan debitorlik»: the ages against the account cards 40xx.
 8. The Reports screen (left menu): the same reports as tables, and «Save as CSV».
 
+## What the 1C manual (380 pages, Uzbek) taught the engine
+
+The manual describes the Uzbek 1C:Бухгалтерия 8 configuration («VENKON: Ҳўжалик ҳисоби бухгалтерияси»). What was taken from it:
+
+- **The month closing moves the P&L accounts every month.** «Закрытие месяца» runs 13 regulated operations in four groups: the document-sequence control; depreciation of fixed assets and amortization of intangibles; currency revaluation (9540 gain, 9620 loss); the correction of the cost of items; the write-off of deferred expenses; the retail markup (2980); the closing of 20, 23, 25 and the cost of output; **the closing of 90, 91, 93, 94, 95, 96, 97, 98 to 9910 every month**; the set-off of advances (taxes, counterparties, accountable persons); and, at the year's end, the balance reformation (9910 to retained earnings).
+  **Consequence for the reports** (`engine/reports.ts`): the turnovers of 90–98 of a closed month include the closing entries and net to nothing, so the financial result is read from the entries that do **not** touch 99xx. The figures are the same before and after the closing. The balance carries the profit of the open year from the 9xxx accounts as a whole (it sits on 9910 after the closing).
+- **93 is other operating income** (9300 «Прочие доходы от основной деятельности»), not an expense: 92 and 93 count by their own side (credit less debit).
+- **2980 «Торговая наценка»** is a credit balance against the goods of a retail point: left out of the stock reports (it is not negative stock).
+- **Cost methods**: the average cost or FIFO, each organization on its own in its accounting policy. LIFO is not among them (removed from the Reports screen and from `stock_cost`).
+- **Document names** (checked for `stock_movement`): «Перемещение товаров», «Списание товаров» (its operations: Товары, продукция, Оборудование, Возврат с ответ. хранения), «Оприходование товаров», «Инвентаризация товаров на складе» (a surplus or a shortage is entered as «Оприходование» or «Списание» from it).
+- **No rates in the manual**: tax rates are registers filled by the user, which agrees with keeping them in tables, never in code.
+- **The accountant's calendar** («Календарь бухгалтера») is built into the configuration from its own data; reading it from the base instead of the seed in `tax-accrual.ts` is possible once its object name is known on a real base.
+- Knowledge-base entries added: how 1C closes the month, why a closed month's 9xxx look empty, retail markup, cash documents (5015, 5025), where each operation is entered (documents and menus), the standard reports and what each shows, the accountant's calendar and the regulated reports.
+
+**One caution.** The bank documents of the manual's configuration are «Платежное поручение исходящее / входящее» and «Платежный ордер на списание / на поступление денежных средств»; the bank engine works with «Поступление на расчетный счет» and «Списание с расчетного счета», which is what the base used in the real runs has. If a base uses the other names, the bank engine has to be given them: say which configuration the company's base is (Справка → О программе).
+
 ## Not done
 
 - Tax payments for quarterly or yearly taxes keep the template's period unless the purpose names one.

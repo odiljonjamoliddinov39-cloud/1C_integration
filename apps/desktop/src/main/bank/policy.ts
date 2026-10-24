@@ -10,6 +10,7 @@ import type { RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, refOf, textOf } from "../didox/resolve.js";
 import { type LedgerPlan, currencyOfAccount } from "./ledger.js";
+import { ownAccountAttribute } from "./roles.js";
 
 export type Direction = "out" | "in";
 
@@ -208,12 +209,14 @@ async function readAccounts(
 async function readUses(deps: ResolverDeps, accounts: OneCAccount[], gaps: string[]): Promise<Kind[]> {
   const byRef = new Map(accounts.map((a) => [a.ref, a]));
   const kinds = new Map<string, Kind>();
+  const roles: { roles?: Map<string, string> } = {};
   for (const direction of ["out", "in"] as const) {
+    const accountKey = await ownAccountAttribute(deps, roles, OBJECT[direction]);
     const query: RunQueryInput = {
       query:
-        `ВЫБРАТЬ Т.БанковскийСчет КАК Счет, Т.ВидОперации КАК Вид, КОЛИЧЕСТВО(*) КАК Количество, ` +
+        `ВЫБРАТЬ Т.${accountKey} КАК Счет, Т.ВидОперации КАК Вид, КОЛИЧЕСТВО(*) КАК Количество, ` +
         `МИНИМУМ(Т.Дата) КАК Первый, МАКСИМУМ(Т.Дата) КАК Последний ИЗ ${OBJECT[direction]} КАК Т ` +
-        `ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления СГРУППИРОВАТЬ ПО Т.БанковскийСчет, Т.ВидОперации`,
+        `ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления СГРУППИРОВАТЬ ПО Т.${accountKey}, Т.ВидОперации`,
       limit: 1000,
       refs: true,
     };

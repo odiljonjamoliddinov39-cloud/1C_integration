@@ -411,7 +411,7 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "Move stock between warehouses (kind transfer: from_warehouse, to_warehouse) or write it off (kind write_off: from_warehouse, " +
     "reason, which the accountant names), lines [{item, qty}], date. The app checks each line against the balance (nothing goes " +
     "below zero), finds the warehouse and items by name, builds the document from the base's own fields and shows one card; a " +
-    "refusal names the line. stock_cost (financial_report with item and method average|fifo|lifo) checks the cost 1C booked for " +
+    "refusal names the line. stock_cost (financial_report with item and method average|fifo: the two the company may choose) checks the cost 1C booked for " +
     "an item's issues against the method; the method is the accountant's decision, never yours. stock_semi is the balance of " +
     "production (accounts 20xx/21xx).",
   posting_rules:

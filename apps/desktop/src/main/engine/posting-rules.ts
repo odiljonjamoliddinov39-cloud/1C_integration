@@ -110,6 +110,26 @@ export const GENERAL_RULES: PostingRule[] = [
     credit: "6410",
     priority: 0,
   },
+  // An advance is money paid or received before the invoice: the settlement accounts of advances (NSBU: 4310 advances
+  // paid to suppliers, 6310 advances received from buyers).
+  {
+    id: "g-advance-from-buyer",
+    scope: "general",
+    operation: "advance_from_buyer",
+    document: "Поступление на расчетный счет",
+    debit: "5110",
+    credit: "6310",
+    priority: 0,
+  },
+  {
+    id: "g-advance-to-supplier",
+    scope: "general",
+    operation: "advance_to_supplier",
+    document: "Списание с расчетного счета",
+    debit: "4310",
+    credit: "5110",
+    priority: 0,
+  },
   // The fee goes to the period's expense account the company's accounting policy names; 9420 is the usual one.
   {
     id: "g-bank-fee",

@@ -288,4 +288,84 @@ describe("the accounts of one company read together", () => {
     expect(lone.transfers).toHaveLength(1);
     expect(lone.transfers[0]?.kind).toBe("unattached_own");
   });
+
+  describe("a purchase and a sale of currency", () => {
+    const BUY = "Без комиссии Конвертация валютных средств 4165.0 'Доллар США' по курсу 12484.0 МФО - 01082";
+    const SELL = "Конвертация валютных средств 6080.0 'Доллар США'  по курсу 12596 МФО - 01082";
+    // the block account pays the soums, the dollar account takes the dollars in; the sale the other way round
+    const statements = () => [
+      read(SPECIAL, [
+        [
+          "25.01.2024",
+          "51392581",
+          "840-Продажа иностр валюты",
+          "207117389",
+          "17101000900001082944",
+          "51995860",
+          "",
+          BUY,
+        ],
+      ]),
+      read(USD, [
+        [
+          "25.01.2024",
+          "51392582",
+          "840-Продажа иностр валюты",
+          "207117389",
+          "17101840400001082944",
+          "",
+          "4165",
+          BUY,
+        ],
+        [
+          "03.04.2024",
+          "52640892",
+          "840-Покупка иностранной валюты",
+          "207117389",
+          "17101840700001082851",
+          "6080",
+          "",
+          SELL,
+        ],
+        ["20.05.2024", "7", "SUPPLIER LLC", "300000009", "20208000700000000999", "", "10", "Оплата"],
+      ]),
+      read(MAIN, [
+        [
+          "03.04.2024",
+          "52640893",
+          "840-Покупка иностранной валюты",
+          "207117389",
+          "17101000700001082851",
+          "",
+          "76583680",
+          SELL,
+        ],
+      ]),
+    ];
+
+    it("each is one transfer of two legs paired by the bank's own words, and its rows are not payments", () => {
+      const plan = planLedger(statements(), { ownInn: COMPANY });
+      const conversions = plan.transfers.filter((t) => t.fx);
+      expect(
+        conversions.map((t) => [t.kind, t.fx?.direction, t.fx?.currency, t.fx?.amount, t.fx?.rate]),
+      ).toEqual([
+        ["conversion", "buy", "USD", 4165, 12484],
+        ["conversion", "sell", "USD", 6080, 12596],
+      ]);
+      const [buy, sell] = conversions;
+      expect(buy).toMatchObject({ fromAccount: SPECIAL, toAccount: USD, amount: 5_199_586_000 });
+      expect(sell).toMatchObject({ fromAccount: USD, toAccount: MAIN, amount: 608_000 });
+      // the only row left to enter is the dollar account's payment to a supplier
+      const usdRows = plan.rows.get(`№ счёта ${USD}.xlsx`) ?? [];
+      expect(usdRows).toHaveLength(1);
+      expect(plan.rows.get(`№ счёта ${MAIN}.xlsx`) ?? []).toEqual([]);
+    });
+
+    it("a leg whose other leg is not attached stays an ordinary row, for the accountant", () => {
+      const plan = planLedger(statements().slice(1, 2), { ownInn: COMPANY });
+      expect(plan.transfers.filter((t) => t.fx)).toEqual([]);
+      // the purchase's dollar leg and the sale's, and the supplier's payment: all three are still to enter
+      expect(plan.rows.get(`№ счёта ${USD}.xlsx`)).toHaveLength(3);
+    });
+  });
 });

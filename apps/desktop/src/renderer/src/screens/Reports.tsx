@@ -56,7 +56,7 @@ export function ReportsScreen() {
   const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(today());
   const [item, setItem] = useState("");
-  const [method, setMethod] = useState<"average" | "fifo" | "lifo">("fifo");
+  const [method, setMethod] = useState<"average" | "fifo">("fifo");
   const [saved, setSaved] = useState(false);
 
   const selected = companyId || companies.data?.[0]?.id || "";
@@ -163,7 +163,6 @@ export function ReportsScreen() {
                 >
                   <option value="average">{t("reports.methods.average")}</option>
                   <option value="fifo">FIFO</option>
-                  <option value="lifo">LIFO</option>
                 </select>
               </div>
             )}

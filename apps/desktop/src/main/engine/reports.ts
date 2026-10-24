@@ -47,11 +47,20 @@ export const BALANCES_QUERY =
 export const TURNOVERS_QUERY =
   "ВЫБРАТЬ Х.СчетДт.Код КАК Код, Х.СчетДт.Наименование КАК Имя, СУММА(Х.Сумма) КАК Дт, 0 КАК Кт " +
   "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность " +
+  "И НЕ Х.СчетДт.Код ПОДОБНО &Итог И НЕ Х.СчетКт.Код ПОДОБНО &Итог " +
   "СГРУППИРОВАТЬ ПО Х.СчетДт.Код, Х.СчетДт.Наименование " +
   "ОБЪЕДИНИТЬ ВСЕ " +
   "ВЫБРАТЬ Х.СчетКт.Код, Х.СчетКт.Наименование, 0, СУММА(Х.Сумма) " +
   "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность " +
+  "И НЕ Х.СчетДт.Код ПОДОБНО &Итог И НЕ Х.СчетКт.Код ПОДОБНО &Итог " +
   "СГРУППИРОВАТЬ ПО Х.СчетКт.Код, Х.СчетКт.Наименование";
+
+/**
+ * The month closing moves the 90, 91, 93–98 accounts to 9910 every month (and 9910 to retained earnings at the year's
+ * end), so their turnovers hold the closing entries too and would net to nothing. The result is worked out from the
+ * entries that do not touch the final result accounts (99xx): the figures are the same before and after the closing.
+ */
+export const FINAL_RESULT_MASK = "99%";
 
 /** Balances of the settlement accounts by their first analytic (the counterparty). */
 export const PARTIES_QUERY =
@@ -64,17 +73,17 @@ export const STOCK_QUERY =
   "ВЫБРАТЬ ПРЕДСТАВЛЕНИЕ(Х.Субконто1) КАК Номенклатура, ПРЕДСТАВЛЕНИЕ(Х.Субконто2) КАК Склад, " +
   "СУММА(Х.КоличествоОстатокДт - Х.КоличествоОстатокКт) КАК Кол, СУММА(Х.СуммаОстатокДт - Х.СуммаОстатокКт) КАК Сумма " +
   "ИЗ РегистрБухгалтерии.Хозрасчетный.Остатки(&Дата, , , ) КАК Х " +
-  "ГДЕ Х.Счет.Код ПОДОБНО &Маска1 ИЛИ Х.Счет.Код ПОДОБНО &Маска2 " +
+  'ГДЕ (Х.Счет.Код ПОДОБНО &Маска1 ИЛИ Х.Счет.Код ПОДОБНО &Маска2) И НЕ Х.Счет.Код ПОДОБНО "298%" ' +
   "СГРУППИРОВАТЬ ПО ПРЕДСТАВЛЕНИЕ(Х.Субконто1), ПРЕДСТАВЛЕНИЕ(Х.Субконто2) УПОРЯДОЧИТЬ ПО Сумма УБЫВ";
 
 /** Entries by who (the first analytic) and account, for what moved the result: accounts 9xxx only. */
 export const EXPLAIN_QUERY =
   "ВЫБРАТЬ Х.СчетДт.Код КАК Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) КАК Кто, СУММА(Х.Сумма) КАК Дт, 0 КАК Кт " +
-  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетДт.Код ПОДОБНО &Маска " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетДт.Код ПОДОБНО &Маска И НЕ Х.СчетКт.Код ПОДОБНО &Итог " +
   "СГРУППИРОВАТЬ ПО Х.СчетДт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоДт1) " +
   "ОБЪЕДИНИТЬ ВСЕ " +
   "ВЫБРАТЬ Х.СчетКт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1), 0, СУММА(Х.Сумма) " +
-  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетКт.Код ПОДОБНО &Маска " +
+  "ИЗ РегистрБухгалтерии.Хозрасчетный КАК Х ГДЕ Х.Период МЕЖДУ &Нач И &Кон И Х.Активность И Х.СчетКт.Код ПОДОБНО &Маска И НЕ Х.СчетДт.Код ПОДОБНО &Итог " +
   "СГРУППИРОВАТЬ ПО Х.СчетКт.Код, ПРЕДСТАВЛЕНИЕ(Х.СубконтоКт1)";
 
 /** The settlement accounts' entries by counterparty and day, both sides (aging). */
@@ -131,7 +140,11 @@ export async function readBalances(run: RunQuery, date: string) {
 }
 
 async function readTurnovers(run: RunQuery, from: string, to: string) {
-  const read = await run(TURNOVERS_QUERY, { Нач: `${from}T00:00:00`, Кон: `${to}T23:59:59` });
+  const read = await run(TURNOVERS_QUERY, {
+    Нач: `${from}T00:00:00`,
+    Кон: `${to}T23:59:59`,
+    Итог: FINAL_RESULT_MASK,
+  });
   return read.ok ? { ok: true as const, rows: accountRows(read.data) } : read;
 }
 
@@ -250,7 +263,12 @@ export async function financialReport(
       const to = input.to ?? now;
       const before = previousPeriod(from, to);
       const read = async (a: string, b: string) => {
-        const got = await run(EXPLAIN_QUERY, { Нач: `${a}T00:00:00`, Кон: `${b}T23:59:59`, Маска: "9%" });
+        const got = await run(EXPLAIN_QUERY, {
+          Нач: `${a}T00:00:00`,
+          Кон: `${b}T23:59:59`,
+          Маска: "9%",
+          Итог: FINAL_RESULT_MASK,
+        });
         return got.ok ? { ok: true as const, rows: explainRows(got.data) } : got;
       };
       const [now1, before1] = [await read(from, to), await read(before.from, before.to)];

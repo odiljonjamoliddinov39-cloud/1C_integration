@@ -109,6 +109,9 @@ function deps(
     existing?: [string, string, number][];
     /** Posted tax payments: ref, date, period, name of the tax, purpose. */
     tax?: [string, string, string, string, string][];
+    /** Answers before the rest (a base's own description of a document, its enumerations, its chart). */
+    extra?: (input: RunQueryInput) => unknown[][] | undefined;
+    describe?: (objects: string[]) => unknown[];
   } = {},
 ) {
   const seen: RunQueryInput[] = [];
@@ -126,6 +129,8 @@ function deps(
       seen.push(input);
       const q = input.query;
       const rows = (list: unknown[][]) => ({ ok: true as const, data: { rows: list } });
+      const special = opts.extra?.(input);
+      if (special) return rows(special);
       if (q.includes("Справочник.БанковскиеСчета") && q.includes("Т.НомерСчета В")) {
         return rows((opts.ownAccounts ?? [OWN]).map((id) => [ref("Справочник.БанковскиеСчета", id, "р/с")]));
       }
@@ -190,8 +195,8 @@ function deps(
         (opts.existing ?? []).map(([date, id, sum]) => [ref("Справочник.Контрагенты", id, "x"), date, sum]),
       );
     },
-    async describe() {
-      return { ok: true, data: [] };
+    async describe(objects) {
+      return { ok: true, data: opts.describe?.(objects) ?? [] };
     },
     async getObject(objectName, id) {
       const found = docs.find((x) => x.ref === id && x.object === objectName);
@@ -1011,5 +1016,309 @@ describe("bank payments for 1C", () => {
       d,
     );
     expect(resolved.ready.map((r) => r.payment.row)).toEqual([5]);
+  });
+});
+
+describe("a payment with no earlier document of its kind in the base", () => {
+  const BUYER_CONTRACT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const SUPPLIER_CONTRACT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const ACCOUNT_4010 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const ACCOUNT_6010 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const SOUM = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const USD = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const ENUM = (name: string, value: string, shown: string) => ref(`Перечисление.${name}`, value, shown);
+
+  const description = (object: string) =>
+    object === "Справочник.ДоговорыКонтрагентов"
+      ? {
+          fullName: object,
+          attributes: [
+            { name: "Владелец", synonym: "", types: ["Справочник.Контрагенты"] },
+            { name: "Номер", synonym: "", types: [] },
+            { name: "Дата", synonym: "", types: [] },
+            { name: "ВидДоговора", synonym: "", types: ["Перечисление.ВидыДоговоровКонтрагентов"] },
+            { name: "ВалютаВзаиморасчетов", synonym: "", types: ["Справочник.Валюты"] },
+            { name: "Организация", synonym: "", types: ["Справочник.Организации"] },
+          ],
+          tabularSections: [],
+        }
+      : documentDescription(object);
+
+  const documentDescription = (object: string) => ({
+    fullName: object,
+    attributes: [
+      "Организация",
+      "ВидОперации",
+      "БанковскийСчет",
+      "Контрагент",
+      "ДоговорКонтрагента",
+      "СуммаДокумента",
+      "НазначениеПлатежа",
+      "НомерВходящегоДокумента",
+      "ДатаВходящегоДокумента",
+      "ВалютаДокумента",
+      "КурсДокумента",
+      "КратностьДокумента",
+    ].map((name) => ({
+      name,
+      synonym: "",
+      types:
+        name === "ВидОперации"
+          ? [
+              `Перечисление.ВидыОпераций${object.includes("Поступление") ? "Поступление" : "Списание"}ДенежныхСредств`,
+            ]
+          : [],
+    })),
+    tabularSections: [
+      {
+        name: "РасшифровкаПлатежа",
+        synonym: "",
+        attributes: [
+          "ДоговорКонтрагента",
+          "СуммаПлатежа",
+          "КурсВзаиморасчетов",
+          "КратностьВзаиморасчетов",
+          "СуммаВзаиморасчетов",
+          "СтавкаНДС",
+          "СуммаНДС",
+          "СчетРасчетов",
+          "СчетАвансов",
+        ].map((name) => ({
+          name,
+          synonym: "",
+          types: name === "СтавкаНДС" ? ["Перечисление.СтавкиНДС"] : [],
+        })),
+      },
+    ],
+  });
+
+  // What 1C answers to the program's questions about the descriptions, enumerations, chart and rates.
+  const answers =
+    (contractCurrency = "860") =>
+    (input: RunQueryInput): unknown[][] | undefined => {
+      const q = input.query;
+      if (q.includes("Справочник.ДоговорыКонтрагентов"))
+        return [
+          [
+            "201607534",
+            ref("Справочник.ДоговорыКонтрагентов", BUYER_CONTRACT, "№17"),
+            "17",
+            "2026-01-08T00:00:00",
+            ENUM("ВидыДоговоровКонтрагентов", "СПокупателем", "С покупателем"),
+            contractCurrency,
+          ],
+          [
+            "201607534",
+            ref("Справочник.ДоговорыКонтрагентов", SUPPLIER_CONTRACT, "№5"),
+            "5",
+            "2025-05-01T00:00:00",
+            ENUM("ВидыДоговоровКонтрагентов", "СПоставщиком", "С поставщиком"),
+            contractCurrency,
+          ],
+        ];
+      if (q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств"))
+        return [
+          [ENUM("ВидыОперацийПоступлениеДенежныхСредств", "ОплатаПокупателя", "Оплата покупателя")],
+          [ENUM("ВидыОперацийПоступлениеДенежныхСредств", "ВозвратОтПоставщика", "Возврат от поставщика")],
+        ];
+      if (q.includes("Перечисление.ВидыОперацийСписаниеДенежныхСредств"))
+        return [
+          [ENUM("ВидыОперацийСписаниеДенежныхСредств", "ОплатаПоставщику", "Оплата поставщику")],
+          [ENUM("ВидыОперацийСписаниеДенежныхСредств", "ВозвратПокупателю", "Возврат покупателю")],
+        ];
+      if (q.includes("Перечисление.СтавкиНДС"))
+        return [[ENUM("СтавкиНДС", "НДС12", "12%")], [ENUM("СтавкиНДС", "БезНДС", "Без НДС")]];
+      if (q.includes("ПланСчетов.Хозрасчетный"))
+        return [
+          ["4010", ref("ПланСчетов.Хозрасчетный", ACCOUNT_4010, "4010")],
+          ["6010", ref("ПланСчетов.Хозрасчетный", ACCOUNT_6010, "6010")],
+        ];
+      if (q.includes("Перечисление.ВидыДоговоровКонтрагентов"))
+        return [
+          [ENUM("ВидыДоговоровКонтрагентов", "СПокупателем", "С покупателем")],
+          [ENUM("ВидыДоговоровКонтрагентов", "СПоставщиком", "С поставщиком")],
+        ];
+      if (q.includes("КурсыВалют")) return [[12_500, 1]];
+      if (q.includes("Справочник.Валюты"))
+        return [
+          [
+            ref(
+              "Справочник.Валюты",
+              input.params?.Код === "840" ? USD : SOUM,
+              input.params?.Код === "840" ? "USD" : "сўм",
+            ),
+          ],
+        ];
+      return undefined;
+    };
+
+  const base = (contractCurrency = "860") =>
+    deps({
+      docs: [],
+      contracts: [],
+      describe: (objects) => objects.map(description),
+      extra: answers(contractCurrency),
+    });
+
+  it("makes a buyer's payment from 1C's own description of the document, and says how", async () => {
+    const { d } = base();
+    const out = await resolvePayments(
+      statement([payment({ purpose: "Оплата за товар по договору №17 от 08.01.2026, в т.ч. НДС 12%" })]),
+      {
+        organization: "66666666-6666-4666-8666-666666666666",
+        posting: { chart: new Set(["4010", "6010", "6310", "4310"]) },
+      },
+      d,
+    );
+    expect(out.problems).toEqual([]);
+    const [only] = out.ready;
+    expect(only?.change).toMatchObject({
+      action: "create",
+      object: "Документ.ПоступлениеНаРасчетныйСчет",
+      fields: {
+        ВидОперации: "ОплатаПокупателя",
+        Контрагент: { type: "Справочник.Контрагенты", ref: NAVRUZ },
+        БанковскийСчет: { type: "Справочник.БанковскиеСчета", ref: OWN },
+        СуммаДокумента: 1_500_000,
+        Организация: { type: "Справочник.Организации", ref: "66666666-6666-4666-8666-666666666666" },
+        ВалютаДокумента: { type: "Справочник.Валюты", ref: SOUM },
+      },
+      post: false,
+    });
+    const row = only?.change.tables?.РасшифровкаПлатежа?.[0];
+    expect(row).toMatchObject({
+      ДоговорКонтрагента: { type: "Справочник.ДоговорыКонтрагентов", ref: BUYER_CONTRACT },
+      СуммаПлатежа: 1_500_000,
+      СуммаВзаиморасчетов: 1_500_000,
+      СтавкаНДС: "НДС12",
+      СуммаНДС: 160_714.29,
+      СчетРасчетов: { type: "ПланСчетов.Хозрасчетный", ref: ACCOUNT_4010 },
+    });
+    // The advance account is not in the fake chart's answer: that column is left out, and the note says so.
+    expect(row).not.toHaveProperty("СчетАвансов");
+    // Nothing empty is sent.
+    expect(JSON.stringify(only?.change)).not.toContain("null");
+    expect(out.notes.map((n) => n.message).join(" ")).toContain("made from 1C's own description");
+    expect(out.notes.map((n) => n.message).join(" ")).toContain(
+      "advance account 6310 is not in the company's chart",
+    );
+  });
+
+  it("a payment to a supplier is «Оплата поставщику» on 6010, and the refund of a buyer's money is «Возврат покупателю»", async () => {
+    const { d } = base();
+    // The buyer-only side: the supplier contract is the counterparty's, so an outgoing payment goes under it.
+    const out = await resolvePayments(
+      statement([
+        payment({
+          direction: "out",
+          purpose: "Оплата за услуги по договору №5 от 01.05.2025",
+          amount: 20_000_000,
+        }),
+      ]),
+      {},
+      d,
+    );
+    const [only] = out.ready;
+    expect(only?.change.object).toBe("Документ.СписаниеСРасчетногоСчета");
+    expect(only?.change.fields).toMatchObject({ ВидОперации: "ОплатаПоставщику", СуммаДокумента: 200_000 });
+    expect(only?.change.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      ДоговорКонтрагента: { type: "Справочник.ДоговорыКонтрагентов", ref: SUPPLIER_CONTRACT },
+      СчетРасчетов: { type: "ПланСчетов.Хозрасчетный", ref: ACCOUNT_6010 },
+    });
+    // No VAT stated: «Без НДС», and the note says it.
+    expect(only?.change.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({ СтавкаНДС: "БезНДС", СуммаНДС: 0 });
+    expect(out.notes.map((n) => n.message).join(" ")).toContain("does not state VAT");
+  });
+
+  it("leaves a salary, a loan or a bank fee to the accountant, and says why", async () => {
+    const { d } = base();
+    const out = await resolvePayments(
+      statement([payment({ direction: "out", purpose: "Заработная плата за август 2026" })]),
+      {},
+      d,
+    );
+    expect(out.ready).toEqual([]);
+    expect(out.problems[0]).toMatchObject({ code: "NO_TEMPLATE" });
+    expect(out.problems[0]?.message).toContain("not a plain payment");
+  });
+
+  it("makes a payment on a dollar account in dollars: the currency item, the day's rate, settled by the contract's currency", async () => {
+    // A contract in soums: the dollars are settled in soums at the day's rate.
+    const soums = await resolvePayments(
+      statement([payment({ purpose: "Оплата по договору №17 от 08.01.2026", amount: 120_000 })]),
+      { currency: "USD", organization: "66666666-6666-4666-8666-666666666666" },
+      base().d,
+    );
+    expect(soums.problems).toEqual([]);
+    const change = soums.ready[0]?.change;
+    expect(change?.fields).toMatchObject({
+      ВалютаДокумента: { type: "Справочник.Валюты", ref: USD },
+      СуммаДокумента: 1200,
+      КурсДокумента: 12_500,
+    });
+    expect(change?.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СуммаПлатежа: 1200,
+      КурсВзаиморасчетов: 1,
+      СуммаВзаиморасчетов: 15_000_000,
+    });
+  });
+
+  it("a contract in dollars is settled in dollars, with the dollar's rate in the row", async () => {
+    const out = await resolvePayments(
+      statement([payment({ purpose: "Оплата по договору №17 от 08.01.2026", amount: 120_000 })]),
+      { currency: "USD" },
+      base("840").d,
+    );
+    expect(out.problems).toEqual([]);
+    expect(out.ready[0]?.change.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СуммаПлатежа: 1200,
+      КурсВзаиморасчетов: 12_500,
+      СуммаВзаиморасчетов: 1200,
+    });
+  });
+
+  it("makes the contract the purpose names when 1C has none, on a card, and the payment waits for it", async () => {
+    const none = deps({
+      docs: [],
+      contracts: [],
+      describe: (o) => o.map(description),
+      extra: (input) => (input.query.includes("Справочник.ДоговорыКонтрагентов") ? [] : answers()(input)),
+    });
+    const out = await resolvePayments(
+      statement([payment({ direction: "out", purpose: "Оплата по договору №77 от 01.02.2026" })]),
+      { organization: "66666666-6666-4666-8666-666666666666" },
+      none.d,
+    );
+    expect(out.ready).toEqual([]);
+    expect(out.contractsToCreate).toHaveLength(1);
+    expect(out.contractsToCreate[0]?.change).toMatchObject({
+      object: "Справочник.ДоговорыКонтрагентов",
+      fields: {
+        Владелец: { type: "Справочник.Контрагенты", ref: NAVRUZ },
+        Номер: "77",
+        Дата: "2026-02-01",
+        Наименование: "№77 от 01.02.2026",
+        ВидДоговора: "СПоставщиком",
+        ВалютаВзаиморасчетов: { type: "Справочник.Валюты", ref: SOUM },
+      },
+    });
+  });
+
+  it("does not make a payment for a counterparty with no contract and none named", async () => {
+    const none = deps({
+      docs: [],
+      contracts: [],
+      describe: (o) => o.map(description),
+      extra: (input) => (input.query.includes("ДоговорыКонтрагентов") ? [] : undefined),
+    });
+    const out = await resolvePayments(statement([payment()]), {}, none.d);
+    expect(out.ready).toEqual([]);
+    expect(out.problems[0]?.message).toContain("no contract in 1C");
+  });
+
+  it("never touches the base's bank accounts: nothing but a read of them is asked", async () => {
+    const { d, seen } = base();
+    await resolvePayments(statement([payment({ purpose: "Оплата по договору №17 от 08.01.2026" })]), {}, d);
+    expect(seen.filter((s) => /СОЗДАТЬ|создать/i.test(s.query))).toEqual([]);
   });
 });

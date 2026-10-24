@@ -4756,7 +4756,13 @@ describe("the program works with no model", () => {
       t.store.setAiEnabled(t.company.id, true);
       await t.assistant.send({ companyId: t.company.id, text: "2024 yil moliyaviy natijasini ko'rsat" });
       expect(t.proxy.requests).toHaveLength(0);
-      expect(asked[0]?.params).toEqual({ Нач: "2024-01-01T00:00:00", Кон: "2024-12-31T23:59:59" });
+      expect(asked[0]?.params).toEqual({
+        Нач: "2024-01-01T00:00:00",
+        Кон: "2024-12-31T23:59:59",
+        Итог: "99%",
+      });
+      // The closing entries (touching 99xx) are left out of the read, so a closed month shows its figures.
+      expect(asked[0]?.query).toContain("НЕ Х.СчетДт.Код ПОДОБНО &Итог");
       expect(asked).toHaveLength(1);
       const text = lastText(t);
       expect(text).toContain("Moliyaviy natija 2024-01-01 – 2024-12-31");
@@ -4997,7 +5003,7 @@ describe("the table of account rules", () => {
     const t = setup([]);
     t.base.queryAnswers.unshift(
       {
-        match: /МЕЖДУ &Нач И &Кон И Х\.Активность СГРУППИРОВАТЬ ПО Х\.СчетДт\.Код, Х\.СчетДт\.Наименование/,
+        match: /Х.СчетДт.Код КАК Код, Х.СчетДт.Наименование КАК Имя/,
         answer: () => ({
           columns: [],
           rows: [

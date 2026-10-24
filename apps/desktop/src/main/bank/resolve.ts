@@ -12,8 +12,15 @@
 import type { ChangeInput, RunQueryInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
+import type { Context } from "../engine/posting-rules.js";
 import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
+import { buildBankDocument } from "./build.js";
+import { completePayment } from "./complete.js";
+import { contractFromDescription } from "./contract.js";
 import { currencyFromText } from "./policy.js";
+import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
+import { foreignContract } from "./swift.js";
+import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
 import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
@@ -97,6 +104,12 @@ export interface BankCache {
   rates?: Map<string, number | null>;
   /** The currency items of 1C's catalog: "USD" → its ref, null when the catalog has none. */
   currencyRefs?: Map<string, string | null>;
+  /** What a document made from 1C's own description needs (see scaffold.ts), read once. */
+  scaffold?: ScaffoldCache;
+  /** Which attribute of a document holds the company's own bank account, by object (see roles.ts). */
+  roles?: Map<string, string>;
+  /** The currency each contract is settled in (letters), by the contract's reference; null when 1C could not say. */
+  contractCurrencies?: Map<string, string | null>;
 }
 
 export interface TaxHistory {
@@ -113,6 +126,8 @@ export interface Template {
   ref: string;
   fields: Record<string, unknown>;
   tables: Record<string, Record<string, unknown>[]>;
+  /** Made from 1C's description of the document (no earlier one to copy): its empty placeholders are dropped. */
+  synthetic?: true;
 }
 
 export const OBJECT = {
@@ -124,6 +139,9 @@ export const OBJECT = {
 const NEUTRAL_NUMBER = "б/н";
 
 const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** The name the program gives a bank fee's counterparty (the bank's own line): no counterparty is looked up for it. */
+export const BANK_FEE_NAME = "Bank fee";
 
 /** What the bank writes in a payment for its own fees: not a counterparty to look up or create by name. */
 const BANK_FEE = /комисси|commission|komissiya/i;
@@ -171,8 +189,7 @@ const FIELD_NAMES = {
   purpose: ["НазначениеПлатежа", "Назначение"],
   number: ["НомерВходящегоДокумента", "НомерПлатежногоДокумента", "НомерВходящего", "НомерДокументаБанка"],
   incomingDate: ["ДатаВходящегоДокумента", "ДатаПлатежногоДокумента", "ДатаВходящего"],
-  bankAccount: ["БанковскийСчет"],
-  counterpartyAccount: ["СчетКонтрагента"],
+  counterpartyAccount: THEIR_ACCOUNT_NAMES,
   counterparty: ["Контрагент"],
   contract: ["ДоговорКонтрагента"],
   date: ["Дата", "Date"],
@@ -312,7 +329,8 @@ export function contractMention(purpose: string): { number: string; date: string
     /(?:догов\p{L}*|дог\.?|dog\p{L}*|шартном\p{L}*|shartnom\p{L}*)(?:\s*номер\p{L}*)?\s*(?:№|N\b|no\b)?\.?\s*([\p{L}\d][\p{L}\d\-/.]*?)\s*(?:от|dan|ot)?\s*(\d{2})\.(\d{2})\.(\d{4})/iu.exec(
       purpose,
     );
-  if (!found) return null;
+  // A SWIFT text names it in English ("PER CONTRACT GR-TI-01 D.D. 30.01.2024").
+  if (!found) return foreignContract(purpose);
   return { number: found[1] ?? "", date: `${found[4]}-${found[3]}-${found[2]}` };
 }
 
@@ -344,6 +362,12 @@ export interface CopyContext {
   counterpartyAccount?: string | null;
   /** Fields set last, when the earlier document has them (the tax period of a tax payment). */
   set?: Record<string, unknown>;
+  /**
+   * The currency the contract is settled in (letters; the soum is "UZS") and its rate on the payment's day (soums per
+   * unit, 1 for the soum). When given, the breakdown row is settled by 1C's own rule instead of being copied:
+   * settlement amount = payment × the document's rate ÷ the contract's rate, and the row carries the contract's rate.
+   */
+  settle?: { currency: string; rate: number | null };
   /** The payment is in a foreign currency: its rate (soums per unit) on the payment's day, when 1C has it. */
   foreign?: {
     currency: string;
@@ -413,7 +437,7 @@ export function copyTemplate(
   if (numberKey && payment.number) fields[numberKey] = payment.number;
   const incomingKey = first(FIELD_NAMES.incomingDate, template.fields);
   if (incomingKey) fields[incomingKey] = payment.date;
-  const accountKey = first(FIELD_NAMES.bankAccount, template.fields);
+  const accountKey = ownAccountKey(template.fields);
   if (accountKey && ctx.ownAccount)
     fields[accountKey] = refTo(template.fields[accountKey], ctx.ownAccount, "Справочник.БанковскиеСчета");
   if (counterpartyKey && ctx.counterparty)
@@ -463,13 +487,14 @@ export function copyTemplate(
     }
     const row = rows[0] ?? {};
     const rate = rateOfRow(row);
-    if (rate !== 1 && !ctx.foreign) {
+    const smart = ctx.settle !== undefined;
+    if (rate !== 1 && !ctx.foreign && !smart) {
       return {
         ok: false,
         message: `the earlier payment is in a foreign currency (rate ${rate}): enter it by hand`,
       };
     }
-    if (rate === 1 && ctx.foreign && !ctx.foreign.convert) {
+    if (rate === 1 && ctx.foreign && !ctx.foreign.convert && !smart) {
       return {
         ok: false,
         message: `the earlier payment is in soums, the account is in ${ctx.foreign.currency}: its payment to copy must be in ${ctx.foreign.currency}`,
@@ -484,10 +509,34 @@ export function copyTemplate(
     const inSoums = ctx.foreign && settlement > 0 && Math.abs(settlement - rowTotal) > rowTotal * 0.01;
     const newRate = ctx.foreign?.rate ?? null;
     const multiplicity = parsePositive(row["КратностьВзаиморасчетов"] ?? row["Кратность"] ?? 1) || 1;
-    const convert = ctx.foreign?.convert;
+    const convert = smart ? undefined : ctx.foreign?.convert;
     const scaled: Record<string, unknown> = {};
+    // The contract's currency against the document's: 1C's own rule for the settlement amount and the row's rate.
+    let settledNote: string | null = null;
+    let settled: { rate: number; amount: number } | null = null;
+    if (ctx.settle) {
+      const docRate = ctx.foreign ? ctx.foreign.rate : 1;
+      const contractRate = ctx.settle.currency === "UZS" ? 1 : ctx.settle.rate;
+      if (docRate === null || contractRate === null || !(contractRate > 0)) {
+        const lacking = docRate === null ? (ctx.foreign?.currency ?? "") : ctx.settle.currency;
+        return {
+          ok: false,
+          message: `the exchange rate of ${lacking} on ${payment.date} was not found in 1C: the settlement of the contract cannot be worked out without it`,
+        };
+      }
+      settled = { rate: contractRate, amount: round2((amount * docRate) / contractRate) };
+      if (ctx.settle.currency !== (ctx.foreign?.currency ?? "UZS")) {
+        settledNote = `the contract is settled in ${ctx.settle.currency}, the payment is in ${ctx.foreign?.currency ?? "UZS"}: the settlement amount ${settled.amount} ${ctx.settle.currency} is worked out at the rate ${contractRate} of ${payment.date}; check it`;
+      }
+    }
     for (const [column, value] of Object.entries(row)) {
-      if (convert && column === "СуммаВзаиморасчетов" && typeof value === "number") {
+      if (settled && column === "СуммаВзаиморасчетов") {
+        scaled[column] = settled.amount;
+      } else if (settled && (column === "КурсВзаиморасчетов" || column === "Курс")) {
+        scaled[column] = settled.rate;
+      } else if (settled && (column === "КратностьВзаиморасчетов" || column === "Кратность")) {
+        scaled[column] = 1;
+      } else if (convert && column === "СуммаВзаиморасчетов" && typeof value === "number") {
         scaled[column] =
           convert.settledIn === "soums" ? round2((amount * (newRate ?? 1)) / multiplicity) : amount;
       } else if (convert && (column === "КурсВзаиморасчетов" || column === "Курс")) {
@@ -505,11 +554,12 @@ export function copyTemplate(
         scaled[column] = newRate;
       } else scaled[column] = writable(value);
     }
+    if (settledNote) notes.push(settledNote);
     if (convert) {
       notes.push(
         `${ctx.foreign?.currency} payment made from the counterparty's payment in soums (no earlier one in ${ctx.foreign?.currency}): the currency, the rate ${newRate} of ${payment.date} and the settlement (${convert.settledIn === "soums" ? "in soums at the rate" : `in ${ctx.foreign?.currency}`}) are the program's; check them on the first document`,
       );
-    } else if (ctx.foreign) {
+    } else if (ctx.foreign && !smart) {
       notes.push(
         newRate === null
           ? `the exchange rate of ${ctx.foreign.currency} on ${payment.date} was not found in 1C: the earlier payment's rate (${rate}) is kept; check it`
@@ -535,6 +585,17 @@ export function copyTemplate(
     },
     ...(notes.length > 0 ? { notes } : {}),
   };
+}
+
+/** A document made from 1C's description carries empty placeholders for what the copy did not fill: they are not sent. */
+function dropEmpty(change: ChangeInput): void {
+  const kept = <T extends Record<string, unknown>>(record: T): T =>
+    Object.fromEntries(Object.entries(record).filter(([, value]) => value !== null)) as T;
+  if (change.fields) change.fields = kept(change.fields);
+  if (change.tables)
+    change.tables = Object.fromEntries(
+      Object.entries(change.tables).map(([name, rows]) => [name, rows.map(kept)]),
+    );
 }
 
 const day = (date: string) => date.slice(0, 10);
@@ -565,11 +626,16 @@ export async function resolvePayments(
     splitCommission?: boolean;
     /** The currency of the statement's account in letters ("" or "UZS": soums). */
     currency?: string;
+    /** The company's organization in 1C, and its posting rules and chart: for a document made with no earlier one to copy. */
+    organization?: string;
+    posting?: Context;
   },
   deps: BankDeps,
 ): Promise<BankResolved> {
   const overrides = options.overrides ?? {};
-  const cache = options.cache ?? { lists: new Map(), snapshots: new Map() };
+  const cache: BankCache = options.cache ?? { lists: new Map(), snapshots: new Map() };
+  // Contracts made a moment ago (a card between two passes) are not in what a pass before read.
+  cache.scaffold?.contracts.clear();
   const currency = options.currency ?? "";
   const foreignAccount = currency !== "" && currency !== "UZS";
   const problems: BankProblem[] = [];
@@ -843,21 +909,128 @@ export async function resolvePayments(
     }
     const who = whoOf(payment);
     const fresh = Boolean(counterparty && who && options.fresh?.has(who.key));
-    const template = asked
+    let template = asked
       ? await snapshot(deps, cache, object, asked.ref)
       : fresh
         ? await kindTemplate(deps, cache, object, payment, currency)
         : await findTemplate(deps, cache, object, payment, who, currency);
+    // The contract the purpose names is not 1C's for this counterparty: when there is nothing to copy it from (or the payment
+    // is abroad, where each contract is its own), it is made from 1C's description of the directory, on a card, and the
+    // payment waits for the next pass.
+    const wanted = mentions.get(payment.row);
+    if (!asked && counterparty && who && wanted && !neutral.has(payment.row)) {
+      const have = (contractsOf.get(who.key) ?? []).filter(
+        (c) => normalNumber(c.number) === normalNumber(wanted.number) && c.date === wanted.date,
+      );
+      if (have.length === 0 && (!template || foreignAccount)) {
+        const key = `${who.key}|${normalNumber(wanted.number)}|${wanted.date}`;
+        const known = pendingContracts.get(key);
+        if (known) known.rows.push(payment.row);
+        else {
+          const item = foreignAccount
+            ? await currencyRef(deps, cache, currency)
+            : ((cache.scaffold ??= newScaffoldCache()).soum ??= await soumRef(deps));
+          const made = await contractFromDescription(deps, cache, {
+            owner: counterparty,
+            mention: wanted,
+            direction: payment.direction,
+            currency: foreignAccount ? currency : "UZS",
+            currencyRef: item,
+            organization: options.organization ?? null,
+          });
+          if (!made.ok) {
+            addProblem(
+              payment,
+              "NO_TEMPLATE",
+              `the contract ${wanted.number} of ${wanted.date.split("-").reverse().join(".")} that the purpose names is not in 1C, and it cannot be made: ${made.message}`,
+            );
+            continue;
+          }
+          pendingContracts.set(key, {
+            rows: [payment.row],
+            label: `№${wanted.number} ${wanted.date.split("-").reverse().join(".")} · ${payment.counterparty}`,
+            change: made.change,
+          });
+          addNote([payment.row], made.note);
+        }
+        continue;
+      }
+    }
+    // No earlier document of the kind in the base (a new base, or its documents were deleted): the document is made from
+    // 1C's own description of it, for a plain payment with a counterparty that has a contract.
+    let scaffoldedContract: string | null = null;
+    let whyNot = "";
+    // The bank's fee (the statement's own line to a transit account, cleared of the company's name): no counterparty, no
+    // contract, and no earlier fee to copy: the document is made from 1C's own description.
+    if (
+      !template &&
+      !asked &&
+      !who &&
+      payment.direction === "out" &&
+      payment.counterparty === BANK_FEE_NAME
+    ) {
+      if (!ownAccount) {
+        addProblem(
+          payment,
+          "NO_TEMPLATE",
+          `no earlier fee document to copy, and the company's bank account ${statement.account || ""} is not in 1C: the fee cannot be made`,
+        );
+        continue;
+      }
+      const built = await buildBankDocument(deps, cache, {
+        kind: "fee",
+        payment,
+        organization: options.organization ?? null,
+        ownAccount,
+        currency: foreignAccount ? currency : "UZS",
+        currencyRef: foreignAccount ? await currencyRef(deps, cache, currency) : null,
+        rate: foreignAccount ? await rateOn(deps, cache, currency, day(payment.date)) : null,
+        ...(options.posting ? { posting: options.posting } : {}),
+      });
+      if (built.ok) {
+        ready.push({ payment, change: built.change });
+        for (const note of built.notes) addNote([payment.row], note);
+      } else addProblem(payment, "NO_TEMPLATE", built.message);
+      continue;
+    }
+    let scaffoldedCurrency: string | null = null;
+    if (!template && !asked) {
+      const named = mentions.get(payment.row);
+      const known =
+        named && who
+          ? (contractsOf.get(who.key) ?? []).filter(
+              (c) => normalNumber(c.number) === normalNumber(named.number) && c.date === named.date,
+            )
+          : [];
+      const made = await scaffoldTemplate(deps, cache, {
+        object,
+        payment,
+        who,
+        organization: options.organization ?? null,
+        ...(options.posting ? { posting: options.posting } : {}),
+        contract: known.length === 1 ? (known[0]?.ref ?? null) : null,
+        currency: foreignAccount ? currency : "UZS",
+        currencyRef: foreignAccount ? await currencyRef(deps, cache, currency) : null,
+      });
+      if (made.ok) {
+        template = made.template;
+        scaffoldedContract = made.contract;
+        scaffoldedCurrency = made.contractCurrency;
+        addNote([payment.row], made.notes[made.notes.length - 1] ?? "");
+        for (const note of made.notes.slice(0, -1)) addNote([payment.row], note);
+      } else
+        whyNot = `: ${made.message.replace(/^no earlier [^,]*, and one cannot be made from 1C's own description: /, "")}`;
+    }
     if (!template) {
       addProblem(
         payment,
         "NO_TEMPLATE",
-        `no earlier posted ${object.replace("Документ.", "")} of this kind to copy: answer with templates (a posted document of the same kind) or enter it with propose_changes`,
+        `no earlier posted ${object.replace("Документ.", "")} of this kind to copy${whyNot || ": answer with templates (a posted document of the same kind) or enter it with propose_changes"}`,
       );
       continue;
     }
 
-    let contract: string | null = null;
+    let contract: string | null = scaffoldedContract;
     const mention = mentions.get(payment.row);
     if (fresh && counterparty) {
       const list = contractsOf.get(who?.key ?? "") ?? [];
@@ -945,6 +1118,16 @@ export async function resolvePayments(
         ? { foreign: { currency, rate: await rateOn(deps, cache, currency, day(payment.date)) } }
         : {}),
     };
+    // The contract's currency against the payment's: the settlement amount and the row's rate are worked out, not copied.
+    const contractRef = contract ?? refIn(template.fields["ДоговорКонтрагента"]);
+    const settleIn =
+      scaffoldedCurrency ?? (contractRef ? await contractCurrency(deps, cache, contractRef) : null);
+    if (settleIn) {
+      context.settle = {
+        currency: settleIn,
+        rate: settleIn === "UZS" ? 1 : await rateOn(deps, cache, settleIn, day(payment.date)),
+      };
+    }
     // The only earlier payment is in soums: the program makes the payment in the currency from it.
     if (foreignAccount && context.foreign && !sameCurrency(template, currency)) {
       const convert = await conversionFor(
@@ -988,6 +1171,14 @@ export async function resolvePayments(
       addProblem(payment, "BAD_TEMPLATE", made.message);
       continue;
     }
+    if (template.synthetic) dropEmpty(made.change);
+    // The way the debt is repaid and the account of advances: without them 1C refuses to post the payment.
+    for (const note of await completePayment(deps, cache, made.change, {
+      ...(options.posting ? { posting: options.posting } : {}),
+      contractCurrency: settleIn,
+      date: day(payment.date),
+    }))
+      addNote([payment.row], note);
     ready.push({ payment, change: made.change });
     for (const note of made.notes ?? []) addNote([payment.row], note);
   }
@@ -1137,7 +1328,11 @@ async function loadList(
 }
 
 /** The currency item of 1C's catalog for a currency in letters (it keeps the numeric or the letter code). */
-async function currencyRef(deps: BankDeps, cache: BankCache, currency: string): Promise<string | null> {
+export async function currencyRef(
+  deps: BankDeps,
+  cache: BankCache,
+  currency: string,
+): Promise<string | null> {
   cache.currencyRefs ??= new Map();
   if (cache.currencyRefs.has(currency)) return cache.currencyRefs.get(currency) ?? null;
   let found: string | null = null;
@@ -1153,6 +1348,23 @@ async function currencyRef(deps: BankDeps, cache: BankCache, currency: string): 
     if (found) break;
   }
   cache.currencyRefs.set(currency, found);
+  return found;
+}
+
+/** The currency a contract is settled in, in letters (read once): "UZS" for the soum; null when 1C cannot say. */
+export async function contractCurrency(
+  deps: BankDeps,
+  cache: BankCache,
+  contract: string,
+): Promise<string | null> {
+  cache.contractCurrencies ??= new Map();
+  if (cache.contractCurrencies.has(contract)) return cache.contractCurrencies.get(contract) ?? null;
+  const read = await deps.getObject("Справочник.ДоговорыКонтрагентов", contract);
+  const fields = read.ok ? (read.data as { fields?: Record<string, unknown> }).fields : undefined;
+  const named = fields ? textOf(fields["ВалютаВзаиморасчетов"]) : "";
+  const code = named ? currencyFromText(named) : "";
+  const found = code === "" ? null : code;
+  cache.contractCurrencies.set(contract, found);
   return found;
 }
 

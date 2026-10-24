@@ -29,7 +29,6 @@ const W = {
     profitBeforeTax: "Прибыль до налогообложения",
     tax: "Налог на прибыль и прочие налоги",
     netProfit: "Чистая прибыль (убыток)",
-    closing: "Счета итогового результата (99xx)",
     balance: (date: string) => `Баланс на ${date}`,
     longTermAssets: "Долгосрочные активы",
     stock: "Запасы и затраты",
@@ -76,7 +75,6 @@ const W = {
     profitBeforeTax: "Soliqqa qadar foyda",
     tax: "Foyda solig'i va boshqa soliqlar",
     netProfit: "Sof foyda (zarar)",
-    closing: "Yakuniy natija schetlari (99xx)",
     balance: (date: string) => `${date} dagi balans`,
     longTermAssets: "Uzoq muddatli aktivlar",
     stock: "Zaxiralar va xarajatlar",
@@ -124,7 +122,6 @@ const W = {
     profitBeforeTax: "Profit before tax",
     tax: "Profit tax and other taxes",
     netProfit: "Net profit (loss)",
-    closing: "Final result accounts (99xx)",
     balance: (date: string) => `Balance at ${date}`,
     longTermAssets: "Long-term assets",
     stock: "Inventories and costs",
@@ -187,7 +184,6 @@ export function resultText(r: ResultReport, lang: Lang): string {
   out.push(...line(w.profitBeforeTax, r.profitBeforeTax, true));
   out.push(...line(w.tax, r.tax));
   out.push(...line(w.netProfit, r.netProfit, true));
-  if (r.closing.amount !== 0) out.push(...line(w.closing, r.closing));
   if (r.findings.length > 0) out.push(w.checks, ...r.findings.map((f) => `  – ${f}`));
   out.push(w.sources);
   return out.join("\n");

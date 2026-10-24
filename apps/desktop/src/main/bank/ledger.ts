@@ -15,6 +15,7 @@
  *  - everything else is a payment to hand to the resolver, inside the period asked for.
  */
 import { parseAcquiring } from "./acquiring.js";
+import { findConversions, legKey } from "./conversion.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 /** ISO 4217 numeric currency codes as banks write them in an account number; "000" is the national currency. */
@@ -82,6 +83,15 @@ export interface Transfer {
   /** The row on the paying statement and on the receiving one (null: that statement is not attached). */
   out: { file: string; row: number } | null;
   in: { file: string; row: number } | null;
+  /** A purchase or a sale of currency, paired by the bank's own text (see conversion.ts). */
+  fx?: {
+    id: string;
+    direction: "buy" | "sell";
+    currency: string;
+    /** Units of the currency, and the bank's rate (soums per unit). */
+    amount: number;
+    rate: number;
+  };
 }
 
 /** What an account paid into a pass-through account against what that account says it took in, whole period. */
@@ -178,7 +188,27 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
   };
   // A leg already matched with its other leg.
   const used = new Set<string>();
-  const key = (file: string, row: number) => `${file}#${row}`;
+  const key = legKey;
+
+  // Purchases and sales of currency: the bank writes both legs with the same words, so they are paired by them. Each is one
+  // transfer of two linked legs, and its rows are neither payments nor transfers between own accounts.
+  const conversions = findConversions(statements);
+  for (const c of conversions.conversions) {
+    if (!inRange(c.soum.payment, options) || !inRange(c.foreign.payment, options)) continue;
+    const paying = c.direction === "buy" ? c.soum : c.foreign;
+    const taking = c.direction === "buy" ? c.foreign : c.soum;
+    plan.transfers.push({
+      kind: "conversion",
+      date: c.date,
+      amount: paying.payment.amount,
+      fromAccount: paying.account,
+      toAccount: taking.account,
+      purpose: c.soum.payment.purpose,
+      out: { file: paying.file, row: paying.row },
+      in: { file: taking.file, row: taking.row },
+      fx: { id: c.id, direction: c.direction, currency: c.currency, amount: c.amount, rate: c.rate },
+    });
+  }
 
   for (const s of statements) {
     const currency = currencyOfAccount(s.account);
@@ -221,6 +251,7 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     const rows: number[] = [];
     const fees = new Set<number>();
     for (const p of inPeriod) {
+      if (conversions.consumed.has(key(s.fileName, p.row))) continue;
       const toOwn = p.account !== "" && p.account !== s.account && own.has(p.account);
       // The terminals' takings arrive from the bank's own accounts under the company's INN, but they are receipts
       // to enter (gross, with the commission), not a move between the company's accounts.

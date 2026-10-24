@@ -652,7 +652,7 @@ export const FinancialReportInput = z.object({
     .optional(),
   /** stock_cost: the item whose issues are checked, and the company's cost method (kept for the company). */
   item: z.string().trim().min(1).max(200).optional(),
-  method: z.enum(["average", "fifo", "lifo"]).optional(),
+  method: z.enum(["average", "fifo"]).optional(),
   /** balance, receivables, payables, stock: the day (default today). */
   date: z
     .string()
@@ -695,6 +695,8 @@ export const POSTING_OPERATIONS = [
   "payment_to_supplier",
   "bank_fee",
   "profit_tax_accrual",
+  "advance_from_buyer",
+  "advance_to_supplier",
 ] as const;
 export type PostingOperation = (typeof POSTING_OPERATIONS)[number];
 
