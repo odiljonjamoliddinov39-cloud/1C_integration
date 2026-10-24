@@ -172,7 +172,7 @@ export interface CheckoutRequest {
   quantity?: number;
   cycle?: "month" | "year";
   promoCode?: string;
-  provider: "payme" | "bank";
+  provider: "payme" | "click" | "bank";
 }
 export const checkout = (input: CheckoutRequest) =>
   authorized("POST", "/v1/billing/checkout", CheckoutResponse, input);
@@ -183,13 +183,16 @@ export const quote = (input: CheckoutRequest) =>
     z.object({ subtotalSum: z.number(), discountSum: z.number(), vatSum: z.number(), totalSum: z.number() }),
     input,
   );
-export const changePlan = (input: { plan: string; cycle?: "month" | "year"; provider: "payme" | "bank" }) =>
-  authorized("POST", "/v1/billing/change-plan", ChangePlanResponse, input);
-export const invoiceCheckout = (id: string, provider: "payme" | "bank") =>
+export const changePlan = (input: {
+  plan: string;
+  cycle?: "month" | "year";
+  provider: "payme" | "click" | "bank";
+}) => authorized("POST", "/v1/billing/change-plan", ChangePlanResponse, input);
+export const invoiceCheckout = (id: string, provider: "payme" | "click" | "bank") =>
   authorized(
     "POST",
     `/v1/billing/invoices/${id}/checkout`,
-    z.object({ checkoutUrl: z.string().nullable() }),
+    z.object({ checkoutUrl: z.string().nullable(), click: CheckoutResponse.shape.click }),
     { provider },
   );
 

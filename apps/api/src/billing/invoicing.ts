@@ -30,6 +30,7 @@ import {
 import { HttpError } from "../lib/errors.js";
 import { type Billing, type PlanRow, type Resolved, stateOf } from "./entitlements.js";
 import { addDays, daysBetween, periodEndOf, roundUpThousand } from "./period.js";
+import { clickCheckout, clickEnabled } from "./click.js";
 import { paymeCheckoutUrl } from "./payme.js";
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -76,7 +77,11 @@ export class Invoicing {
 
   /** Payment systems that work now. */
   providers(): string[] {
-    return [...(this.config.PAYME_MERCHANT_ID && this.config.PAYME_KEY ? ["payme"] : []), "bank"];
+    return [
+      ...(this.config.PAYME_MERCHANT_ID && this.config.PAYME_KEY ? ["payme"] : []),
+      ...(clickEnabled(this.config) ? ["click"] : []),
+      "bank",
+    ];
   }
 
   async event(
@@ -287,17 +292,29 @@ export class Invoicing {
     if (provider === "payme" && this.config.PAYME_MERCHANT_ID) {
       return paymeCheckoutUrl(this.config, invoice);
     }
+    if (provider === "click" && clickEnabled(this.config)) return clickCheckout(this.config, invoice).url;
     return null;
+  }
+
+  /** The checkout answer of an invoice: the link, and for Click the values of its window over the page. */
+  checkoutOf(invoice: typeof invoices.$inferSelect, provider: string): CheckoutResponse {
+    return {
+      invoice: invoiceView(invoice),
+      checkoutUrl: this.checkoutUrl(invoice, provider),
+      ...(provider === "click" && clickEnabled(this.config)
+        ? { click: clickCheckout(this.config, invoice).values }
+        : {}),
+    };
   }
 
   /** POST /v1/billing/checkout: an invoice for the plan or add-on, and where to pay it. */
   async checkout(accountId: string, input: CheckoutInput): Promise<CheckoutResponse> {
-    if (input.provider === "payme" && !this.providers().includes("payme")) {
+    if (input.provider !== "bank" && !this.providers().includes(input.provider)) {
       throw refuse(409, "PROVIDER_UNAVAILABLE", "Card payment is not available yet: pay by bank transfer");
     }
     const quote = await this.quote(accountId, input);
     const invoice = await this.createInvoice(accountId, quote, input.provider);
-    return { invoice: invoiceView(invoice), checkoutUrl: this.checkoutUrl(invoice, input.provider) };
+    return this.checkoutOf(invoice, input.provider);
   }
 
   async listInvoices(accountId: string): Promise<InvoiceView[]> {
@@ -509,13 +526,13 @@ export class Invoicing {
       this.billing.invalidate(accountId);
       return { effect: "none", checkout: null, effectiveAt: now.toISOString() };
     }
-    if (provider === "payme" && !this.providers().includes("payme")) {
+    if (provider !== "bank" && !this.providers().includes(provider)) {
       throw refuse(409, "PROVIDER_UNAVAILABLE", "Card payment is not available yet: pay by bank transfer");
     }
     const invoice = await this.createInvoice(accountId, quote, provider, undefined, now);
     return {
       effect: "invoice",
-      checkout: { invoice: invoiceView(invoice), checkoutUrl: this.checkoutUrl(invoice, provider) },
+      checkout: this.checkoutOf(invoice, provider),
       effectiveAt: null,
     };
   }

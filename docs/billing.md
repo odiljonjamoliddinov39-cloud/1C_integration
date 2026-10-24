@@ -125,9 +125,40 @@ the package code, the unit are set with `PAYME_FISCAL_CODE`, `PAYME_FISCAL_PACKA
 and the package are given), the checkout link (`m`, `ac.*`, `a`, `c` and the test host `checkout.test.paycom.uz`), and Payme's
 sandbox test scenarios, which must all pass before `PAYME_TEST=false`.
 
+## Click: checked against the SHOP API pages
+
+Click calls `POST /v1/billing/click/prepare` and `/complete` (form-urlencoded in, JSON out, always 200 with `error` /
+`error_note`); `merchant_trans_id` is our invoice number. The signature is MD5 over the request's own values and the service's
+secret key (Prepare without `merchant_prepare_id`, Complete with it); the error table is Click's (−1 signature, −2 amount, −3
+action, −4 already paid, −5 no order, −6 no transaction, −7 could not update, −8 bad request, −9 cancelled). A repeated Prepare
+returns the same payment (`merchant_prepare_id` = invoice number × 1000 + the attempt); a Complete applies the plan once; a status
+below 0 from Click cancels the prepared payment; an invoice paid another way meanwhile answers −4 and is logged
+(`duplicate_payment`) for a refund by hand (Click's `payment/reversal` is not called by the program).
+
+On the page the customer pays **without leaving it**: the cabinet opens Click's own window (`checkout.js`,
+`createPaymentRequest`), or the link `https://my.click.uz/services/pay?...` when the window cannot be opened. The card is typed in
+Click's window or in the Click and Payme apps; nothing of it reaches the page or the server.
+
+Set `CLICK_SERVICE_ID`, `CLICK_MERCHANT_ID`, `CLICK_SECRET_KEY` (and `CLICK_MERCHANT_USER_ID` if Click gave one) in the server's
+`.env` (the deploy file passes them on; the keys are never in the repository) and give Click the two URLs
+`https://<api>/v1/billing/click/prepare` and `/complete`. Click's fiscalization calls (`submit_items`, `submit_qrcode`) are not
+made yet.
+
+## Paynet: what the developer guide says (not built)
+
+Paynet is a different model: **Paynet always calls us** (UWS, JSON-RPC 2.0 on one endpoint: GetInformation, PerformTransaction,
+CheckTransaction, CancelTransaction, GetStatement, optional ChangePassword), and the customer pays in the Paynet app or at a
+terminal by entering the account (our invoice number) under our `serviceId`; the guide has no web checkout link or card window.
+So a Paynet button on the cabinet cannot open a payment window: it can only tell the customer the service and the invoice number to
+pay in Paynet. Needs: HTTP Basic Auth (a wrong login is HTTP 401, not an error object), Paynet's two IP ranges (a firewall rule),
+TLS 1.3, answers within 500 ms, error codes of its own table (201 duplicate, 202/203/77/306 for cancellation, 302 unknown account,
+413 amount, state 3 for an unknown transaction in CheckTransaction), the `timestamp` of CheckTransaction in
+`EEE MMM dd HH:mm:ss z yyyy`, amounts in tiyin, dates `YYYY-MM-dd HH:mm:ss` (GMT+5), daily reconciliation by GetStatement, a "technical
+interaction" form with the service list, and the connection over TAS-IX. The field-level OpenAPI file ("OpenAPI (UWS) in
+English.yaml") is not in the guide: it is needed before this is written.
+
 ## Not built yet
 
-- Click (phase 2): `POST /billing/click/prepare` and `/complete`.
 - Payme auto-renewal with card tokens (Subscribe API, phase 2). Renewal invoices are made and shown in
   the cabinet; the customer pays them.
 - Sending the reminders: they are recorded as `reminder_*` billing events (visible in the dashboard)

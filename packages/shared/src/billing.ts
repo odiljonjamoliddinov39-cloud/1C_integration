@@ -166,6 +166,19 @@ export const CheckoutResponse = z.object({
   invoice: InvoiceView,
   /** Where to send the customer to pay; null for a bank transfer (the invoice is the instruction). */
   checkoutUrl: z.string().nullable(),
+  /**
+   * Click: the values of its in-page payment window (checkout.js), so that the cabinet can open it over the page instead of
+   * leaving it. The card is typed in Click's window; nothing of it reaches the cabinet or the server.
+   */
+  click: z
+    .object({
+      serviceId: z.string(),
+      merchantId: z.string(),
+      merchantUserId: z.string().optional(),
+      amount: z.string(),
+      transactionParam: z.string(),
+    })
+    .optional(),
 });
 export type CheckoutResponse = z.infer<typeof CheckoutResponse>;
 

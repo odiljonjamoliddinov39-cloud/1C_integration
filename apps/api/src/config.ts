@@ -35,6 +35,23 @@ const Env = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+  /** Click SHOP API (docs/billing.md): off until the service, the merchant and the secret key are all set. */
+  CLICK_SERVICE_ID: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  CLICK_MERCHANT_ID: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  CLICK_MERCHANT_USER_ID: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  CLICK_SECRET_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
   /**
    * Fiscal receipt data for Payme ("detail" in CheckPerformTransaction), needed when the merchant has fiscalization switched
    * on in Payme's cabinet: the IKPU code and the package code of the service, and the unit of measurement. Off until the

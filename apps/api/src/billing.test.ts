@@ -5,6 +5,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
+import { createHash } from "node:crypto";
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -82,6 +84,10 @@ describe.skipIf(!available)("tariffs", () => {
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",
       PAYME_TEST: "true",
+      CLICK_SERVICE_ID: "31",
+      CLICK_MERCHANT_ID: "46",
+      CLICK_MERCHANT_USER_ID: "4",
+      CLICK_SECRET_KEY: "click-secret",
       SITE_URL: "https://site.example",
       ADMIN_EMAIL: "boss@platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
@@ -565,6 +571,162 @@ describe.skipIf(!available)("tariffs", () => {
     ).toMatchObject({
       code: -32602,
       data: "type",
+    });
+  });
+
+  describe("Click", () => {
+    const md5 = (s: string) => createHash("md5").update(s).digest("hex");
+    /** A request from Click, signed as its SHOP API says, and sent form-urlencoded. */
+    const click = async (
+      action: "prepare" | "complete",
+      fields: Record<string, string | number>,
+      key = "click-secret",
+    ) => {
+      const f: Record<string, string | number> = {
+        click_trans_id: 7001,
+        service_id: 31,
+        click_paydoc_id: 9001,
+        action: action === "prepare" ? 0 : 1,
+        error: 0,
+        error_note: "Success",
+        sign_time: "2026-10-24 12:00:00",
+        ...fields,
+      };
+      const sign = md5(
+        `${f.click_trans_id}${f.service_id}${key}${f.merchant_trans_id}${action === "complete" ? (f.merchant_prepare_id ?? "") : ""}${f.amount}${f.action}${f.sign_time}`,
+      );
+      const res = await app.inject({
+        method: "POST",
+        url: `/v1/billing/click/${action}`,
+        payload: new URLSearchParams(
+          Object.entries({ sign_string: sign, ...f }).map(([k2, v]): [string, string] => [k2, String(v)]),
+        ).toString(),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as Record<string, unknown>;
+    };
+    const order = async () => {
+      const { token, accountId } = await register();
+      const made = await checkout(token, { plan: "start", cycle: "month", provider: "click" });
+      return {
+        token,
+        accountId,
+        made,
+        merchant_trans_id: String(Number(made.invoice.number.slice(4))),
+        amount: made.invoice.totalSum,
+      };
+    };
+
+    it("gives the link and the values of Click's window over the page, with the amount as N.NN", async () => {
+      const { made, merchant_trans_id } = await order();
+      const link = new URL(made.checkoutUrl!);
+      expect(link.host).toBe("my.click.uz");
+      expect(Object.fromEntries(link.searchParams)).toMatchObject({
+        service_id: "31",
+        merchant_id: "46",
+        merchant_user_id: "4",
+        amount: "660800.00",
+        transaction_param: merchant_trans_id,
+        return_url: "https://site.example/cabinet",
+      });
+      expect((made as unknown as { click: unknown }).click).toEqual({
+        serviceId: "31",
+        merchantId: "46",
+        merchantUserId: "4",
+        amount: "660800.00",
+        transactionParam: merchant_trans_id,
+      });
+    });
+
+    it("prepares, completes once, and is idempotent: the plan is applied once and a repeat is «already paid»", async () => {
+      const { accountId, merchant_trans_id, amount } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      expect(prepared).toMatchObject({ error: 0, click_trans_id: 7001, merchant_trans_id });
+      const prepareId = prepared.merchant_prepare_id as number;
+      expect(prepareId).toBe(Number(merchant_trans_id) * 1000 + 1);
+      // The same Prepare again returns the same payment.
+      expect(await click("prepare", { merchant_trans_id, amount })).toMatchObject({
+        error: 0,
+        merchant_prepare_id: prepareId,
+      });
+      expect(await db.db.select().from(payments)).toHaveLength(1);
+
+      // Complete with another prepare id is «transaction does not exist».
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId + 5, amount }),
+      ).toMatchObject({ error: -6 });
+      const done = await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount });
+      expect(done).toMatchObject({ error: 0, merchant_confirm_id: prepareId });
+      const before = await subscription(accountId);
+      expect(before).toMatchObject({ status: "active" });
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount }),
+      ).toMatchObject({
+        error: -4,
+      });
+      expect((await subscription(accountId)).endsAt).toEqual(before.endsAt);
+      // A new Prepare for the paid invoice is refused too.
+      expect(await click("prepare", { click_trans_id: 7002, merchant_trans_id, amount })).toMatchObject({
+        error: -4,
+      });
+    });
+
+    it("answers Click's error table: signature, amount, action, order, service, a negative status", async () => {
+      const { merchant_trans_id, amount } = await order();
+      expect(await click("prepare", { merchant_trans_id, amount }, "wrong-key")).toMatchObject({ error: -1 });
+      expect(await click("prepare", { merchant_trans_id, amount: amount + 1 })).toMatchObject({ error: -2 });
+      // action 1 sent to Prepare (signed as Prepare): «action not found»
+      expect(await click("prepare", { merchant_trans_id, amount, action: 1 })).toMatchObject({ error: -3 });
+      expect(await click("prepare", { merchant_trans_id: "999999", amount })).toMatchObject({ error: -5 });
+      expect(await click("prepare", { merchant_trans_id: "abc", amount })).toMatchObject({ error: -5 });
+      expect(await click("prepare", { merchant_trans_id, amount, service_id: 32 })).toMatchObject({
+        error: -8,
+      });
+      expect(await click("prepare", { merchant_trans_id, amount, error: -5 })).toMatchObject({ error: -9 });
+      expect(await db.db.select().from(payments)).toHaveLength(0);
+    });
+
+    it("cancels a prepared payment when Click reports its own error, and then refuses to complete it", async () => {
+      const { merchant_trans_id, amount, accountId } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      const prepareId = prepared.merchant_prepare_id as number;
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount, error: -5017 }),
+      ).toMatchObject({ error: -9 });
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount }),
+      ).toMatchObject({
+        error: -9,
+      });
+      expect(await subscription(accountId)).not.toMatchObject({ status: "active" });
+      // A new attempt (another Click transaction) is a new payment, numbered next, and can be paid.
+      const again = await click("prepare", { click_trans_id: 7003, merchant_trans_id, amount });
+      expect(again.merchant_prepare_id).toBe(prepareId + 1);
+      expect(
+        await click("complete", {
+          click_trans_id: 7003,
+          merchant_trans_id,
+          merchant_prepare_id: prepareId + 1,
+          amount,
+        }),
+      ).toMatchObject({ error: 0 });
+    });
+
+    it("an invoice paid another way meanwhile is «already paid» for Click, and the twice-paid is logged for a refund", async () => {
+      const { merchant_trans_id, amount, accountId, made } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      // The customer pays the same invoice through Payme before Click completes.
+      await pay(made.invoice);
+      expect(
+        await click("complete", {
+          merchant_trans_id,
+          merchant_prepare_id: prepared.merchant_prepare_id as number,
+          amount,
+        }),
+      ).toMatchObject({ error: -4 });
+      const events = await db.sql`SELECT type FROM billing_events WHERE account_id = ${accountId}`;
+      expect(events.map((e) => e.type)).toContain("duplicate_payment");
     });
   });
 

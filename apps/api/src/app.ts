@@ -56,6 +56,7 @@ import { Billing } from "./billing/entitlements.js";
 import { AdminBilling } from "./billing/admin.js";
 import { Invoicing } from "./billing/invoicing.js";
 import { Lifecycle, startBillingJobs } from "./billing/lifecycle.js";
+import { ClickMerchant } from "./billing/click.js";
 import { PaymeMerchant } from "./billing/payme.js";
 import { registerBillingRoutes, registerSubscriptionRoutes } from "./billing/routes.js";
 import { BillingService } from "./billing/service.js";
@@ -89,6 +90,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const invoicing = new Invoicing(db, config, entitlements);
   const billing = new BillingService(db, config, entitlements, invoicing.providers());
   const payme = new PaymeMerchant(db, config, invoicing);
+  const click = new ClickMerchant(db, config, invoicing);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
   const adminBilling = new AdminBilling(db, entitlements, invoicing);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
@@ -158,7 +160,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
-  const billingDeps = { db, billing, invoicing, payme, auth };
+  const billingDeps = { db, billing, invoicing, payme, click, auth };
   registerBillingRoutes(app, billingDeps);
   registerSubscriptionRoutes(app, billingDeps);
 

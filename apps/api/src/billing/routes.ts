@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { Db } from "../db/client.js";
 import { users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
+import type { ClickMerchant } from "./click.js";
 import type { Invoicing } from "./invoicing.js";
 import { PAYME_NOT_POST, PAYME_PARSE_ERROR, PAYME_SYSTEM_ERROR, type PaymeMerchant } from "./payme.js";
 import type { BillingService } from "./service.js";
@@ -24,6 +25,7 @@ export interface RouteDeps {
   billing: BillingService;
   invoicing: Invoicing;
   payme: PaymeMerchant;
+  click: ClickMerchant;
   auth: (req: FastifyRequest) => Promise<{ userId: string; accountId: string }>;
 }
 
@@ -77,7 +79,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: RouteDeps): vo
 
 /** Customer billing: the subscription, trial, checkout, plan changes and invoices (owner only). */
 export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps): void {
-  const { invoicing, payme, db } = deps;
+  const { invoicing, payme, click, db } = deps;
   const parse = <T extends z.ZodType>(schema: T, value: unknown): z.infer<T> => schema.parse(value);
   const owner = (req: FastifyRequest) => ownerAuth(deps, req);
 
@@ -116,7 +118,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
     if (row.status === "paid" || row.status === "cancelled") {
       throw new HttpError(409, "INVOICE_NOT_PAYABLE", "This invoice cannot be paid");
     }
-    if (provider === "payme" && !invoicing.providers().includes("payme")) {
+    if (provider !== "bank" && !invoicing.providers().includes(provider)) {
       throw new HttpError(
         409,
         "PROVIDER_UNAVAILABLE",
@@ -124,8 +126,8 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
       );
     }
     return {
+      ...invoicing.checkoutOf(row, provider),
       invoice: (await invoicing.listInvoices(accountId)).find((i) => i.id === id),
-      checkoutUrl: invoicing.checkoutUrl(row, provider),
     };
   });
   // The invoice as a printable page (the browser saves it as PDF): requisites for a bank transfer.
@@ -168,4 +170,36 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
       return answer;
     },
   );
+
+  // Click calls these two (SHOP API: form-urlencoded in, JSON out, always 200 with error / error_note). They live in their own
+  // scope so that the form parser is only theirs.
+  app.register(async (scope) => {
+    scope.addContentTypeParser(
+      "application/x-www-form-urlencoded",
+      { parseAs: "string" },
+      (_req, body, done) => done(null, Object.fromEntries(new URLSearchParams(String(body)))),
+    );
+    const answer = (action: "prepare" | "complete") => async (req: FastifyRequest) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const result = action === "prepare" ? await click.prepare(body) : await click.complete(body);
+      // One line per call, for the test runs and the first real payments: no secret, no card data (Click sends none).
+      req.log.info(
+        { click: { action, transaction: body.click_trans_id ?? null, error: result.error ?? null } },
+        "click call",
+      );
+      return result;
+    };
+    const errors = {
+      errorHandler(
+        error: unknown,
+        req: FastifyRequest,
+        reply: { code(n: number): { send(b: unknown): unknown } },
+      ) {
+        req.log.error({ err: error }, "click: internal error");
+        return reply.code(200).send({ error: -8, error_note: "Error in request from click" });
+      },
+    };
+    scope.post("/v1/billing/click/prepare", errors, answer("prepare"));
+    scope.post("/v1/billing/click/complete", errors, answer("complete"));
+  });
 }

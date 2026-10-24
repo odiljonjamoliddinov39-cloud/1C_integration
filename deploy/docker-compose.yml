@@ -34,6 +34,18 @@ services:
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
       AI_EFFORT: ${AI_EFFORT:-high}
+      # Card payments (docs/billing.md): each provider is off until its keys are in the server's .env. The keys are
+      # never in the repository; "PAYME_TEST=true" is the provider's sandbox, "false" the real one.
+      PAYME_MERCHANT_ID: ${PAYME_MERCHANT_ID:-}
+      PAYME_KEY: ${PAYME_KEY:-}
+      PAYME_TEST: ${PAYME_TEST:-true}
+      PAYME_FISCAL_CODE: ${PAYME_FISCAL_CODE:-}
+      PAYME_FISCAL_PACKAGE: ${PAYME_FISCAL_PACKAGE:-}
+      CLICK_SERVICE_ID: ${CLICK_SERVICE_ID:-}
+      CLICK_MERCHANT_ID: ${CLICK_MERCHANT_ID:-}
+      CLICK_MERCHANT_USER_ID: ${CLICK_MERCHANT_USER_ID:-}
+      CLICK_SECRET_KEY: ${CLICK_SECRET_KEY:-}
+      BANK_REQUISITES: ${BANK_REQUISITES:-}
       # The admin dashboard's first owner (https://<site>/admin/); set from repository secrets.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

@@ -7,6 +7,7 @@ import type {
 } from "@platform/shared";
 import { useCallback, useEffect, useState } from "react";
 
+import { type ClickWindowValues, openClickWindow } from "../lib/click-checkout";
 import {
   ApiError,
   cancelPlan,
@@ -27,7 +28,9 @@ import { formatDate } from "../lib/dates";
 import type { Locale } from "../lib/i18n";
 
 type Cycle = "month" | "year";
-type Provider = "payme" | "bank";
+type Provider = "payme" | "click" | "bank";
+/** The providers that take a card (the customer types it on the provider's own page or window). */
+const CARD_PROVIDERS = ["payme", "click"] as const;
 
 const dateOf = (iso: string, locale: Locale) => formatDate(new Date(iso), locale);
 
@@ -109,7 +112,24 @@ export function BillingSection({ locale }: { locale: Locale }) {
   ];
 
   /** After an invoice exists: card goes to the provider, a bank transfer opens the printable invoice. */
-  async function pay(result: { invoice: InvoiceView; checkoutUrl: string | null }): Promise<string> {
+  async function pay(result: {
+    invoice: InvoiceView;
+    checkoutUrl: string | null;
+    click?: ClickWindowValues | undefined;
+  }): Promise<string> {
+    // Click opens its window over the page; when it closes the subscription is loaded again, a few times, because Click
+    // confirms the payment to our server a moment after the customer is done.
+    if (result.click) {
+      try {
+        const status = await openClickWindow(result.click);
+        for (const wait of [1500, 4000, 9000]) setTimeout(reload, wait);
+        if (status === 2) return t.paidMessage.replace("{number}", result.invoice.number);
+        if (status < 0) return t.notPaid.replace("{number}", result.invoice.number);
+        return t.created.replace("{number}", result.invoice.number);
+      } catch {
+        // The window could not be opened (no connection to Click, a blocker): the link does the same on Click's page.
+      }
+    }
     if (result.checkoutUrl) {
       window.location.assign(result.checkoutUrl);
       return t.created.replace("{number}", result.invoice.number);
@@ -251,7 +271,7 @@ export function BillingSection({ locale }: { locale: Locale }) {
                           await checkout({
                             addon: a.code,
                             quantity: 1,
-                            provider: plans.providers.includes("payme") ? "payme" : "bank",
+                            provider: CARD_PROVIDERS.find((p) => plans.providers.includes(p)) ?? "bank",
                           }),
                         ),
                       )
@@ -287,21 +307,21 @@ export function BillingSection({ locale }: { locale: Locale }) {
                   {t.print}
                 </button>
                 {(inv.status === "pending" || inv.status === "expired") &&
-                  plans.providers.includes("payme") && (
+                  CARD_PROVIDERS.filter((p) => plans.providers.includes(p)).map((p) => (
                     <button
+                      key={p}
                       disabled={busy}
                       onClick={() =>
                         void act(async () => {
-                          const { checkoutUrl } = await invoiceCheckout(inv.id, "payme");
-                          if (checkoutUrl) window.location.assign(checkoutUrl);
-                          return null;
+                          const result = await invoiceCheckout(inv.id, p);
+                          return pay({ invoice: inv, checkoutUrl: result.checkoutUrl, click: result.click });
                         })
                       }
                       className="rounded-lg bg-primary px-3 py-1 text-primary-foreground hover:opacity-90"
                     >
-                      {t.pay}
+                      {t.pay} · {t.provider[p]}
                     </button>
-                  )}
+                  ))}
               </li>
             ))}
           </ul>
@@ -337,7 +357,9 @@ function PlanChooser(props: {
   const [choice, setChoice] = useState(params.get("plan") ?? "");
   const [cycle, setCycle] = useState<Cycle>(params.get("cycle") === "year" ? "year" : "month");
   const [promo, setPromo] = useState("");
-  const [provider, setProvider] = useState<Provider>(props.providers.includes("payme") ? "payme" : "bank");
+  const [provider, setProvider] = useState<Provider>(
+    CARD_PROVIDERS.find((p) => props.providers.includes(p)) ?? "bank",
+  );
   const [totals, setTotals] = useState<Awaited<ReturnType<typeof props.previewTotals>> | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
 
@@ -416,7 +438,7 @@ function PlanChooser(props: {
             </label>
           )}
           <div className="flex flex-wrap gap-3">
-            {(["payme", "bank"] as const)
+            {(["payme", "click", "bank"] as const)
               .filter((p) => props.providers.includes(p))
               .map((p) => (
                 <label key={p} className="flex items-center gap-1.5">
