@@ -402,7 +402,7 @@ describe.skipIf(!available)("tariffs", () => {
     // 590 000 + 12% VAT = 660 800 sum = 66 080 000 tiyin.
     expect(card.invoice).toMatchObject({ totalSum: 660_800, vatSum: 70_800, discountSum: 0 });
     const link = new URL(card.checkoutUrl!);
-    expect(link.host).toBe("test.paycom.uz");
+    expect(link.host).toBe("checkout.test.paycom.uz");
     const params = Buffer.from(link.pathname.slice(1), "base64").toString();
     expect(params).toContain("m=merchant-1");
     expect(params).toContain(`ac.invoice_id=${Number(card.invoice.number.slice(4))}`);
@@ -460,6 +460,111 @@ describe.skipIf(!available)("tariffs", () => {
       plan: "start",
       status: "active",
       aiQuestionsPerMonth: 80,
+    });
+  });
+
+  it("answers the general errors of Payme's table on a 200: not JSON, not POST, an unknown method named in data", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/billing/payme",
+      payload: "{not json",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Basic ${Buffer.from("Paycom:payme-secret-key").toString("base64")}`,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: null, error: { code: -32700 } });
+    const get = await app.inject({ method: "GET", url: "/v1/billing/payme" });
+    expect(get.statusCode).toBe(200);
+    expect(get.json()).toMatchObject({ error: { code: -32300 } });
+    const unknown = await rpc("Nope", {});
+    expect(unknown.error).toMatchObject({ code: -32601, data: "Nope" });
+  });
+
+  it("adds the fiscal receipt line only when the merchant has fiscalization set up", async () => {
+    const { token } = await register();
+    const { invoice } = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    const account = { invoice_id: Number(invoice.number.slice(4)) };
+    const amount = invoice.totalSum * 100;
+    expect((await rpc("CheckPerformTransaction", { amount, account })).result).toEqual({ allow: true });
+
+    const fiscal = await buildApp(
+      db.db,
+      {
+        ...config,
+        PAYME_FISCAL_CODE: "10305011001000000",
+        PAYME_FISCAL_PACKAGE: "123456",
+        PAYME_FISCAL_UNITS: 796,
+      },
+      { aiModel: fakeModel },
+    );
+    const res = await fiscal.inject({
+      method: "POST",
+      url: "/v1/billing/payme",
+      payload: { id: 1, method: "CheckPerformTransaction", params: { amount, account } },
+      headers: { authorization: `Basic ${Buffer.from("Paycom:payme-secret-key").toString("base64")}` },
+    });
+    expect(res.json().result).toMatchObject({
+      allow: true,
+      detail: {
+        receipt_type: 0,
+        items: [
+          {
+            price: amount,
+            count: 1,
+            code: "10305011001000000",
+            package_code: "123456",
+            vat_percent: 12,
+            units: 796,
+          },
+        ],
+      },
+    });
+    await fiscal.close();
+  });
+
+  it("lists the statement oldest first, inclusive of both ends, and keeps the fiscal data of a paid and of a cancelled receipt apart", async () => {
+    const { token } = await register();
+    const first = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    const second = await checkout(token, { plan: "business", cycle: "month", provider: "payme" });
+    const make = (invoice: { number: string; totalSum: number }) => ({
+      account: { invoice_id: Number(invoice.number.slice(4)) },
+      amount: invoice.totalSum * 100,
+    });
+    // Payme's own times, the newer one created first: the list must still come back by time.
+    await rpc("CreateTransaction", { id: "later", time: 2_000, ...make(second.invoice) });
+    await rpc("CreateTransaction", { id: "earlier", time: 1_000, ...make(first.invoice) });
+    const listed = await rpc("GetStatement", { from: 1_000, to: 2_000 });
+    expect(listed.result.transactions.map((t: { id: string }) => t.id)).toEqual(["earlier", "later"]);
+    expect((await rpc("GetStatement", { from: 1_001, to: 1_999 })).result).toEqual({ transactions: [] });
+
+    const performed = { receipt_id: 121, status_code: 0, message: "accepted", fiscal_sign: "800031554082" };
+    expect(
+      (await rpc("SetFiscalData", { id: "earlier", type: "PERFORM", fiscal_data: performed })).result,
+    ).toEqual({ success: true });
+    expect(
+      (
+        await rpc("SetFiscalData", {
+          id: "earlier",
+          type: "CANCEL",
+          fiscal_data: { ...performed, receipt_id: 123 },
+        })
+      ).result,
+    ).toEqual({ success: true });
+    const [row] = (await db.db.select().from(payments)).filter((p) => p.providerTxnId === "earlier");
+    expect((row?.raw as { fiscal?: Record<string, { receipt_id: number }> }).fiscal).toMatchObject({
+      perform_data: { receipt_id: 121 },
+      cancel_data: { receipt_id: 123 },
+    });
+    expect(
+      (await rpc("SetFiscalData", { id: "nobody", type: "PERFORM", fiscal_data: performed })).error.code,
+    ).toBe(-32001);
+    expect(
+      (await rpc("SetFiscalData", { id: "earlier", type: "REFUND", fiscal_data: performed })).error,
+    ).toMatchObject({
+      code: -32602,
+      data: "type",
     });
   });
 

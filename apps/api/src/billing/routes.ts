@@ -16,7 +16,7 @@ import type { Db } from "../db/client.js";
 import { users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Invoicing } from "./invoicing.js";
-import type { PaymeMerchant } from "./payme.js";
+import { PAYME_NOT_POST, PAYME_PARSE_ERROR, PAYME_SYSTEM_ERROR, type PaymeMerchant } from "./payme.js";
 import type { BillingService } from "./service.js";
 
 export interface RouteDeps {
@@ -138,5 +138,34 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
   });
 
   // Payme calls this (JSON-RPC, Basic auth with the merchant key).
-  app.post("/v1/billing/payme", async (req) => payme.handle(req.headers.authorization, req.body));
+  // Payme's general errors, always on a 200: a body that is not JSON is -32700, a fault of ours (the database, the file system)
+  // is -32400 and is logged, and a request that is not a POST is -32300.
+  app.route({
+    method: ["GET", "PUT", "PATCH", "DELETE"],
+    url: "/v1/billing/payme",
+    handler: async () => ({ id: null, error: PAYME_NOT_POST }),
+  });
+  app.post(
+    "/v1/billing/payme",
+    {
+      errorHandler(error, req, reply) {
+        const code = (error as { code?: string }).code ?? "";
+        if (code.startsWith("FST_ERR_CTP"))
+          return reply.code(200).send({ id: null, error: PAYME_PARSE_ERROR });
+        req.log.error({ err: error }, "payme: internal error");
+        return reply.code(200).send({ id: null, error: PAYME_SYSTEM_ERROR });
+      },
+    },
+    async (req) => {
+      const body = (req.body ?? {}) as { method?: unknown; id?: unknown };
+      const answer = await payme.handle(req.headers.authorization, req.body);
+      // One line per call, for the sandbox runs and for the first real payments: no keys, no card data (Payme sends none).
+      const error = (answer as { error?: { code?: number } }).error;
+      req.log.info(
+        { payme: { method: String(body.method), id: body.id ?? null, error: error?.code ?? null } },
+        "payme call",
+      );
+      return answer;
+    },
+  );
 }

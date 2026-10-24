@@ -98,17 +98,32 @@ to stop enforcing; use is still counted):
 2. For card payments set `PAYME_MERCHANT_ID`, `PAYME_KEY` and `PAYME_TEST=true` (sandbox). Without them
    only bank transfer is offered; set `BANK_REQUISITES` (lines separated by `|`) for the printed invoice.
 
-## Payme: verify before going live
+## Payme: checked against the Merchant API pages
 
-`payme.ts` was written from Payme's Merchant API as we know it (method names, Basic auth `Paycom:<key>`,
-amounts in tiyin, error codes −31001 / −31003 / −31007 / −31008 / −31050 / −31051 / −31099, the 12-hour
-timeout) and the checkout link `https://checkout.paycom.uz/<base64 of m=…;ac.invoice_id=…;a=…>` (the
-sandbox host is `test.paycom.uz`). Payme's documentation could not be reached while building, so
-**compare every method and code with the current documentation, and pass all of Payme's sandbox test
-cases, before `PAYME_TEST=false`** (checklist item 12 of the design). The account field is
-`invoice_id` (our invoice number); register that in the merchant cabinet.
+Checked against Payme's pages for CheckTransaction, CreateTransaction, PerformTransaction, CancelTransaction, GetStatement,
+SetFiscalData, the general errors, the data types, the states and the reasons (the pages the owner pasted, Oct 2026):
 
-A performed transaction is not cancelled automatically (`-31007`); refunds are done by hand.
+- Basic auth `Paycom:<key>`, amounts in tiyin, `account.invoice_id` = our invoice number (register that field in the merchant
+  cabinet), 12-hour timeout (43 200 000 ms: state −1, reason 4), the states 1 / 2 / −1 / −2, the reasons, a repeated
+  CreateTransaction / PerformTransaction answers what was stored.
+- Errors: −31001 wrong amount, −31003 no transaction, −31007, −31008, −31050…−31099 with the sub-field in `data`
+  (−31050 no invoice, −31051 invoice not payable, −31099 another transaction open), and the general ones, all on HTTP 200:
+  −32700 not JSON, −32300 not a POST, −32600 bad request, −32601 unknown method (its name in `data`), −32504 no privileges,
+  −32400 a fault of ours (database…; logged).
+- GetStatement: by the time Payme created the transaction, `from ≤ time ≤ to`, oldest first, an empty list when none.
+- SetFiscalData (optional): the fiscal data of a paid and of a cancelled receipt are kept apart in the payment's `raw.fiscal`;
+  −32001 unknown receipt, −32602 invalid parameters (the parameter named).
+- Every call is logged as one line (method, id, error code).
+
+**A decision to confirm.** CancelTransaction of a _performed_ transaction answers −31007 ("the service has been provided in
+full"): the plan was extended, and refunds are made by hand. Payme's page says a refund from the merchant's Payme cabinet is
+possible only when CancelTransaction is implemented for performed transactions (state −2). If refunds through the cabinet are
+wanted, a refund must take the plan back (move the account to Free); say so and it is added.
+
+**Still to check on pages not yet seen:** CheckPerformTransaction (the optional `detail` of a fiscal receipt: the IKPU code,
+the package code, the unit are set with `PAYME_FISCAL_CODE`, `PAYME_FISCAL_PACKAGE`, `PAYME_FISCAL_UNITS`, off until the code
+and the package are given), the checkout link (`m`, `ac.*`, `a`, `c` and the test host `checkout.test.paycom.uz`), and Payme's
+sandbox test scenarios, which must all pass before `PAYME_TEST=false`.
 
 ## Not built yet
 
