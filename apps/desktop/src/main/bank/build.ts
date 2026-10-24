@@ -13,6 +13,7 @@
  */
 import type { ChangeInput } from "@platform/shared";
 
+import { refOf, textOf } from "../didox/resolve.js";
 import { type Context, choosePosting } from "../engine/posting-rules.js";
 import type { BankCache, BankDeps } from "./resolve.js";
 import { ownAccountOf } from "./roles.js";
@@ -27,8 +28,9 @@ import {
   valueLike,
 } from "./scaffold.js";
 import type { BankPayment } from "./statement.js";
+import { TAX_ACCOUNT, type TaxKind, taxNameIs } from "./tax.js";
 
-export type BuildKind = "fee" | "transferOut" | "transferIn" | "conversionOut" | "conversionIn";
+export type BuildKind = "fee" | "transferOut" | "transferIn" | "conversionOut" | "conversionIn" | "tax";
 
 /** The bank documents (the same names as `OBJECT` in resolve.ts, which this file cannot import at load time). */
 const OBJECT = {
@@ -51,7 +53,7 @@ const KINDS: Record<
     object: string;
     phrases: string[];
     what: string;
-    correspondence: "expense" | "transit" | "conversion";
+    correspondence: "expense" | "transit" | "conversion" | "tax";
     other: boolean;
   }
 > = {
@@ -83,6 +85,13 @@ const KINDS: Record<
     correspondence: "conversion",
     other: false,
   },
+  tax: {
+    object: OBJECT.out,
+    phrases: ["уплата налога", "уплатыналога"],
+    what: "payment to the budget",
+    correspondence: "tax",
+    other: false,
+  },
   conversionIn: {
     object: OBJECT.in,
     phrases: ["прочее поступление", "прочеепоступление", "перевод с другого счета", "переводсдругогосчета"],
@@ -94,6 +103,8 @@ const KINDS: Record<
 
 export interface BuildSpec {
   kind: BuildKind;
+  /** A payment to the budget: which tax, its period ("YYYY-MM-01T00:00:00"), and the tax office as a counterparty of 1C when it has one. */
+  tax?: { kind: TaxKind; period: string | null; office: string | null };
   payment: BankPayment;
   /** The company's organization in 1C. */
   organization: string | null;
@@ -160,6 +171,43 @@ function otherAccountAttribute(described: Described, own: string | null): string
   return named.length === 1 ? (named[0]?.name ?? null) : null;
 }
 
+const TAX_CATALOG = "Справочник.ВидыНалоговИПлатежейВБюджет";
+
+/** The taxes and payments to the budget of 1C's catalog, read once. */
+async function taxItems(deps: BankDeps, cache: BankCache): Promise<{ ref: string; name: string }[] | null> {
+  if (cache.taxItems !== undefined) return cache.taxItems;
+  const outcome = await deps.query({
+    query: `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ ${TAX_CATALOG} КАК Т ГДЕ НЕ Т.ПометкаУдаления`,
+    limit: 500,
+    refs: true,
+  });
+  cache.taxItems = outcome.ok
+    ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+        const ref = refOf(cells[0]);
+        return ref ? [{ ref, name: String(cells[1] ?? textOf(cells[0])) }] : [];
+      })
+    : null;
+  return cache.taxItems;
+}
+
+/** The ledger account a tax item of 1C's catalog itself names (its only attribute of the chart of accounts), or null. */
+async function taxItemAccount(
+  deps: BankDeps,
+  sc: ReturnType<typeof newScaffoldCache>,
+  ref: string,
+): Promise<string | null> {
+  const described = await describeCached(deps, sc, TAX_CATALOG);
+  const charted = (described?.attributes ?? []).filter((a) =>
+    a.types.some((t) => t.startsWith("ПланСчетов")),
+  );
+  const [only] = charted;
+  if (charted.length !== 1 || !only) return null;
+  const outcome = await deps.getObject(TAX_CATALOG, ref);
+  if (!outcome.ok) return null;
+  const fields = (outcome.data as { fields?: Record<string, unknown> }).fields ?? {};
+  return refOf(fields[only.name]);
+}
+
 export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: BuildSpec): Promise<Built> {
   const sc = (cache.scaffold ??= newScaffoldCache());
   const kind = KINDS[spec.kind];
@@ -201,9 +249,41 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     if (decision.source !== "rule" || decision.needsApproval) notes.push(`accounts: ${decision.reason}`);
   } else if (kind.correspondence === "conversion") {
     code = CONVERSION_ACCOUNT[spec.conversion?.direction ?? "buy"];
+  } else if (kind.correspondence === "tax") {
+    code = spec.tax ? TAX_ACCOUNT[spec.tax.kind] : "";
   } else code = TRANSIT_ACCOUNT;
   const refs = await accountRefs(deps, sc, code ? [code] : []);
-  const accountRef = code ? (refs.get(code) ?? null) : null;
+  let accountRef = code ? (refs.get(code) ?? null) : null;
+
+  // A payment to the budget: the tax of 1C's own catalog (by its name), and the account that tax item itself names, when it has one.
+  let taxItem: { ref: string; name: string } | null = null;
+  const taxAttribute =
+    kind.correspondence === "tax"
+      ? described.attributes.find((a) => a.types.includes(TAX_CATALOG))?.name
+      : undefined;
+  if (kind.correspondence === "tax") {
+    if (!spec.tax) return refuse("no tax is given");
+    if (!taxAttribute) return refuse(`${kind.object} has no attribute for the tax (of ${TAX_CATALOG})`);
+    const found = await taxItems(deps, cache);
+    if (!found) return refuse("the taxes of 1C's catalog could not be read");
+    const named = found.filter((t) => taxNameIs(spec.tax?.kind ?? "vat", t.name));
+    const [only] = named;
+    if (named.length !== 1 || !only)
+      return refuse(
+        named.length === 0
+          ? `1C's catalog of taxes has none like ${spec.tax.kind} (it has ${found.map((t) => t.name).join(", ") || "none"})`
+          : `several taxes of 1C's catalog could be ${spec.tax.kind}: ${named.map((t) => t.name).join(", ")}; the accountant says which`,
+      );
+    taxItem = only;
+    const own = await taxItemAccount(deps, sc, only.ref);
+    if (own) {
+      accountRef = own;
+      notes.push(`account: the one 1C's own tax item «${only.name}» names`);
+    } else
+      notes.push(
+        `account ${code} is the usual one for taxes (NSBU): the tax item in 1C names none; check it`,
+      );
+  }
   const correspondence = correspondenceAttribute(described);
   if (!correspondence)
     notes.push("the document has no single account attribute: the account is left for 1C to fill");
@@ -236,6 +316,12 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     fields["Организация"] = { type: "Справочник.Организации", ref: spec.organization };
   if (correspondence && accountRef)
     fields[correspondence] = { type: "ПланСчетов.Хозрасчетный", ref: accountRef };
+  if (taxItem && taxAttribute) {
+    fields[taxAttribute] = { type: TAX_CATALOG, ref: taxItem.ref };
+    if (have.has("НалоговыйПериод") && spec.tax?.period) fields["НалоговыйПериод"] = spec.tax.period;
+    if (have.has("Контрагент") && spec.tax?.office)
+      fields["Контрагент"] = { type: "Справочник.Контрагенты", ref: spec.tax.office };
+  }
   if (spec.conversion) {
     for (const name of ["Комментарий", "Содержание"]) {
       if (have.has(name)) {

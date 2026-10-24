@@ -35,6 +35,8 @@ const DESCRIPTIONS: Record<string, unknown> = {
       Контрагент: ["Справочник.Контрагенты"],
       ДоговорКонтрагента: ["Справочник.ДоговорыКонтрагентов"],
       СчетУчетаРасчетовСКонтрагентом: ["ПланСчетов.Хозрасчетный"],
+      Налог: ["Справочник.ВидыНалоговИПлатежейВБюджет"],
+      НалоговыйПериод: [],
       ВалютаДокумента: ["Справочник.Валюты"],
       КурсДокумента: [],
       КратностьДокумента: [],
@@ -67,16 +69,28 @@ const DESCRIPTIONS: Record<string, unknown> = {
   },
 };
 
-const fake = (options: { chart?: string[]; operations?: boolean } = {}) => {
+const TAX_NDFL = "88888888-8888-4888-8888-888888888888";
+const TAX_VAT = "99999999-9999-4999-8999-999999999999";
+const A6410 = "a6410000-0000-4000-8000-000000000000";
+const A6520 = "a6520000-0000-4000-8000-000000000000";
+
+const fake = (
+  options: { chart?: string[]; operations?: boolean; taxes?: [string, string][]; taxAccount?: boolean } = {},
+) => {
   const seen: RunQueryInput[] = [];
-  const chart = new Set(options.chart ?? ["5710", "5730", "5740", "9420", "9430"]);
+  const chart = new Set(options.chart ?? ["5710", "5730", "5740", "9420", "9430", "6410"]);
   const accounts: Record<string, string> = {
     "5710": A5710,
     "5730": A5730,
     "5740": A5740,
     "9420": A9430,
     "9430": A9430,
+    "6410": A6410,
   };
+  const taxes = options.taxes ?? [
+    [TAX_NDFL, "Налог на доходы физических лиц"],
+    [TAX_VAT, "Налог на добавленную стоимость"],
+  ];
   const deps: BankDeps = {
     query: async (input) => {
       seen.push(input);
@@ -93,6 +107,7 @@ const fake = (options: { chart?: string[]; operations?: boolean } = {}) => {
             ),
           ],
           [enumValue("ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")],
+          [enumValue("ВидыОперацийСписаниеДенежныхСредств", "УплатаНалога", "Уплата налога")],
         ]);
       if (q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств"))
         return rows([
@@ -111,10 +126,31 @@ const fake = (options: { chart?: string[]; operations?: boolean } = {}) => {
         return rows(found.map(([code, id]) => [code, ref("ПланСчетов.Хозрасчетный", id, code)]));
       }
       if (q.includes("Справочник.Валюты")) return rows([[ref("Справочник.Валюты", SOUM, "сўм")]]);
+      if (q.includes("Справочник.ВидыНалоговИПлатежейВБюджет"))
+        return rows(
+          taxes.map(([id, name]) => [ref("Справочник.ВидыНалоговИПлатежейВБюджет", id, name), name]),
+        );
       return rows([]);
     },
-    describe: async (objects) => ({ ok: true, data: objects.map((o) => DESCRIPTIONS[o]).filter(Boolean) }),
-    getObject: async () => ({ ok: false, code: "X", message: "none" }),
+    describe: async (objects) => ({
+      ok: true,
+      data: objects
+        .map((o) =>
+          o === "Справочник.ВидыНалоговИПлатежейВБюджет"
+            ? {
+                attributes: options.taxAccount
+                  ? attrs({ СчетУчета: ["ПланСчетов.Хозрасчетный"] })
+                  : attrs({ Код: [] }),
+                tabularSections: [],
+              }
+            : DESCRIPTIONS[o],
+        )
+        .filter(Boolean),
+    }),
+    getObject: async (_object, id) =>
+      options.taxAccount && id === TAX_VAT
+        ? { ok: true, data: { fields: { СчетУчета: ref("ПланСчетов.Хозрасчетный", A6520, "6520") } } }
+        : { ok: false, code: "X", message: "none" },
   };
   const cache: BankCache = { lists: new Map(), snapshots: new Map() };
   return { deps, cache, seen };
@@ -361,5 +397,87 @@ describe("the two legs of a currency conversion, as the design has them", () => 
     });
     expect(noItem.ok).toBe(false);
     if (!noItem.ok) expect(noItem.message).toContain("no currency USD");
+  });
+});
+
+describe("a payment to the budget made from 1C's description of the document", () => {
+  const tax = (over: Partial<BankPayment> = {}) =>
+    payment({
+      counterparty: "Казначейство Министерства финансов",
+      inn: "201173017",
+      amount: 1_234_500_00,
+      purpose: "Оплата за 46 Налог на доходы физических лиц (НДФЛ)",
+      ...over,
+    });
+
+  it("is «Уплата налога» with the tax of 1C's catalog, its period, the tax office and the usual tax account", async () => {
+    const { deps, cache } = fake();
+    const out = await buildBankDocument(deps, cache, {
+      kind: "tax",
+      payment: tax(),
+      organization: ORG,
+      ownAccount: OWN,
+      currency: "UZS",
+      tax: { kind: "ndfl", period: "2023-12-01T00:00:00", office: BANK },
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const f = out.change.fields ?? {};
+    expect(f["ВидОперации"]).toBe("УплатаНалога");
+    expect(f["Налог"]).toEqual({ type: "Справочник.ВидыНалоговИПлатежейВБюджет", ref: TAX_NDFL });
+    expect(f["НалоговыйПериод"]).toBe("2023-12-01T00:00:00");
+    expect(f["Контрагент"]).toEqual({ type: "Справочник.Контрагенты", ref: BANK });
+    expect(f["СчетУчетаРасчетовСКонтрагентом"]).toEqual({ type: "ПланСчетов.Хозрасчетный", ref: A6410 });
+    expect(f["СуммаДокумента"]).toBe(1_234_500);
+    expect(out.notes.join(" ")).toContain("usual one for taxes");
+  });
+
+  it("takes the account the tax item itself names", async () => {
+    const { deps, cache } = fake({ taxAccount: true });
+    const out = await buildBankDocument(deps, cache, {
+      kind: "tax",
+      payment: tax({ purpose: "Налог на добавленную стоимость за март" }),
+      organization: ORG,
+      ownAccount: OWN,
+      currency: "UZS",
+      tax: { kind: "vat", period: "2024-03-01T00:00:00", office: null },
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.change.fields?.["СчетУчетаРасчетовСКонтрагентом"]).toEqual({
+      type: "ПланСчетов.Хозрасчетный",
+      ref: A6520,
+    });
+    expect(out.change.fields?.["Контрагент"]).toBeUndefined();
+  });
+
+  it("says what 1C's catalog of taxes lacks and does not choose between two", async () => {
+    const none = fake({ taxes: [[TAX_VAT, "Налог на добавленную стоимость"]] });
+    const a = await buildBankDocument(none.deps, none.cache, {
+      kind: "tax",
+      payment: tax(),
+      organization: ORG,
+      ownAccount: OWN,
+      currency: "UZS",
+      tax: { kind: "ndfl", period: null, office: null },
+    });
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.message).toContain("has none like ndfl");
+    const two = fake({
+      taxes: [
+        [TAX_NDFL, "НДФЛ"],
+        [TAX_VAT, "Налог на доходы физических лиц (пеня)"],
+      ],
+    });
+    const b = await buildBankDocument(two.deps, two.cache, {
+      kind: "tax",
+      payment: tax(),
+      organization: ORG,
+      ownAccount: OWN,
+      currency: "UZS",
+      tax: { kind: "ndfl", period: null, office: null },
+    });
+    expect(b.ok).toBe(false);
+    if (!b.ok) expect(b.message).toContain("several taxes");
   });
 });

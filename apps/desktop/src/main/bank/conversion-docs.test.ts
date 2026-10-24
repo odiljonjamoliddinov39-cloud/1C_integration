@@ -80,6 +80,8 @@ interface World {
   contracts?: [string, string, string, string][];
   rate?: number | null;
   chart?: string[];
+  /** The bank's name in 1C's classifier of banks, by its MFO. */
+  bankName?: string;
 }
 
 const BANK_INN = "207117389";
@@ -103,6 +105,7 @@ function deps(world: World = {}): BankDeps {
       const q = input.query;
       const rows = (list: unknown[][]) => ({ ok: true as const, data: { rows: list } });
       if (q.includes("КурсыВалют")) return rows(world.rate === null ? [] : [[world.rate ?? 12_421.76, 1]]);
+      if (q.includes("Справочник.Банки")) return rows(world.bankName ? [[world.bankName]] : []);
       if (q.includes("Справочник.Валюты"))
         return rows([[ref("Справочник.Валюты", input.params?.Код === "840" ? USD_ITEM : SOUM_ITEM, "x")]]);
       if (q.includes("Справочник.БанковскиеСчета"))
@@ -244,6 +247,16 @@ describe("a currency purchase, entered by the program with no earlier document t
     });
     expect(noBank.ready).toEqual([]);
     expect(noBank.problems[0]?.message).toContain("create the bank as a counterparty first");
+    expect(noBank.missing).toEqual([]);
+
+    // The classifier of banks knows the MFO: the bank is offered for creation on a card, under its name.
+    const named = await run({
+      counterparties: [[BANK_LINE, "К получению с Головного Офиса - Долларов США"]],
+      bankName: "Kapitalbank",
+    });
+    expect(named.ready).toEqual([]);
+    expect(named.missing).toEqual([{ inn: BANK_INN, name: "Kapitalbank", rows: [], key: BANK_INN }]);
+    expect(named.problems[0]?.message).toContain("it is made on a card (Kapitalbank)");
 
     const noContract = await run({ contracts: [[BANK, CONTRACT_UZS, "Прочее", "860"]] });
     // the soum leg can be made, the dollar leg cannot

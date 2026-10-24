@@ -66,6 +66,23 @@ const KINDS: { kind: TaxKind; purpose: RegExp; name: RegExp }[] = [
 ];
 
 /**
+ * The account a payment of each tax is booked to when the company's own base names none: the NSBU account of settlements
+ * with the budget. A tax item of 1C's catalog that names its own account beats it (see build.ts); the note says which.
+ */
+export const TAX_ACCOUNT: Record<TaxKind, string> = {
+  ndfl: "6410",
+  social: "6410",
+  inps: "6410",
+  vat: "6410",
+  profit: "6410",
+  property: "6410",
+  land: "6410",
+  water: "6410",
+  turnover: "6410",
+  excise: "6410",
+};
+
+/**
  * The VAT a price or a fee already contains is not a payment of VAT: "…Тариф-1 000,00 UZS.в том числе НДС",
  * "…курс 12869, без НДС", "сумма с НДС 12%", "QQS bilan". A purpose is read without such clauses.
  */

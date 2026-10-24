@@ -104,6 +104,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
+import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
@@ -3621,6 +3622,22 @@ export class AssistantService {
       beneficiaries.unknown.push(...matched.unknown);
       beneficiaries.ambiguous.push(...matched.ambiguous);
     }
+    // A payment the statement writes to one of the bank's transit accounts (money to an individual's card, the customs'
+    // payment system) is written to its real payee, named in the text.
+    const transit = {
+      people: 0,
+      peopleNotInOneC: [] as string[],
+      customs: 0,
+      customsProblems: [] as string[],
+    };
+    for (const task of tasks) {
+      const found = await matchTransit(bankDeps, task.prepared, statements);
+      task.prepared = found.statement;
+      transit.people += found.persons.rows;
+      transit.peopleNotInOneC.push(...found.persons.unknown);
+      transit.customs += found.customs.rows;
+      if (found.customs.problem) transit.customsProblems.push(found.customs.problem);
+    }
     // Money moved between the company's own accounts: a pair of documents copied from the company's own earlier ones.
     const organization = this.deps.store.organizationRef(chat.companyId);
     const posting = {
@@ -3649,8 +3666,29 @@ export class AssistantService {
           }
         : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
+      ...(transit.people + transit.customs > 0
+        ? {
+            throughBankTransitAccounts: {
+              ...(transit.people > 0
+                ? {
+                    toIndividuals: transit.people,
+                    note: "payments through the bank's transit account for cards are written to the person the text names (and the contract it names)",
+                    notInOneC: [...new Set(transit.peopleNotInOneC)],
+                  }
+                : {}),
+              ...(transit.customs > 0
+                ? { customsPayments: transit.customs, customsProblems: [...new Set(transit.customsProblems)] }
+                : {}),
+            },
+          }
+        : {}),
     };
-    if (tasks.length === 0 && moved.ready.length === 0 && moved.contractsToCreate.length === 0) {
+    if (
+      tasks.length === 0 &&
+      moved.ready.length === 0 &&
+      moved.contractsToCreate.length === 0 &&
+      moved.missing.length === 0
+    ) {
       return {
         ok: true,
         data: {
@@ -3720,7 +3758,9 @@ export class AssistantService {
       }
       if (round >= 3) break;
       const missing = [
-        ...new Map(results.flatMap((r) => r.resolved.missing).map((m) => [m.key, m])).values(),
+        ...new Map(
+          [...results.flatMap((r) => r.resolved.missing), ...moved.missing].map((m) => [m.key, m]),
+        ).values(),
       ];
       if (missing.length > 0) {
         const made = await this.proposeBatch(

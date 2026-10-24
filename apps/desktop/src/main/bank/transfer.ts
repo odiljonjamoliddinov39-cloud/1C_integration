@@ -22,6 +22,7 @@ import {
   type BankDeps,
   CURRENCY_CODES,
   type CopyContext,
+  type MissingCounterparty,
   OBJECT,
   type Template,
   conversionFor,
@@ -51,6 +52,8 @@ export interface TransferProblem {
 }
 
 export interface TransfersResolved {
+  /** The banks of conversions that 1C lacks as counterparties: made on a card, then the legs are entered. */
+  missing: MissingCounterparty[];
   /** Contracts the conversions need (the bank's «Прочее» per currency) and 1C lacks: made on a card, then the legs are entered. */
   contractsToCreate: { rows: number[]; label: string; change: ChangeInput }[];
   ready: TransferDoc[];
@@ -183,6 +186,8 @@ async function pickTemplate(
 interface BankParty {
   bank?: { counterparty: string | null; contract: string | null };
   message?: string;
+  /** The bank is not a counterparty of 1C: it is made on a card (its name is the one 1C's bank classifier has for the MFO). */
+  createBank?: { inn: string; name: string };
   /** The bank's contract «Прочее» in the currency is not in 1C: it is made on a card, then the legs are entered. */
   create?: { label: string; change: ChangeInput };
 }
@@ -229,6 +234,19 @@ async function bankFor(
       return ref && !BANK_LINE.test(name) ? [{ ref, name }] : [];
     });
     const [only] = banks;
+    if (banks.length === 0) {
+      // The bank's name as 1C's own classifier of banks spells it (by the MFO the statement gives), never a guess.
+      const name = payment.mfo ? await bankNameOf(deps, payment.mfo) : null;
+      const why = `1C has no counterparty for the bank (INN ${inn}) apart from the bank's own ledger lines: a conversion is with the bank on both legs`;
+      return name
+        ? {
+            message: `${why}; it is made on a card (${name}), then this leg is entered`,
+            createBank: { inn, name },
+          }
+        : {
+            message: `${why}, so create the bank as a counterparty first (the statement does not give its name)`,
+          };
+    }
     if (banks.length !== 1 || !only) {
       return {
         message:
@@ -282,6 +300,22 @@ async function bankFor(
   return result;
 }
 
+/** The name of a bank in 1C's classifier of banks, by its MFO; null when the classifier has none or not exactly one. */
+async function bankNameOf(deps: BankDeps, mfo: string): Promise<string | null> {
+  const outcome = await deps.query({
+    query:
+      "ВЫБРАТЬ ПЕРВЫЕ 2 Т.Наименование КАК Наименование ИЗ Справочник.Банки КАК Т ГДЕ Т.Код = &код И НЕ Т.ПометкаУдаления",
+    params: { код: mfo },
+    limit: 2,
+    refs: true,
+  });
+  const names = outcome.ok
+    ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).map((cells) => String(cells[0] ?? "").trim())
+    : [];
+  const [only] = names;
+  return names.length === 1 && only ? only : null;
+}
+
 /** One line for the accountant: the two legs of a conversion as they will be entered, and where the rates come from. */
 function conversionPreview(t: Transfer, official: number | null, change: ChangeInput): string {
   const fx = t.fx;
@@ -319,6 +353,7 @@ export async function resolveTransfers(
 ): Promise<TransfersResolved> {
   const cache: BankCache = options.cache ?? { lists: new Map(), snapshots: new Map() };
   const result: TransfersResolved = {
+    missing: [],
     contractsToCreate: [],
     ready: [],
     problems: [],
@@ -488,6 +523,8 @@ export async function resolveTransfers(
         options.organization ?? null,
         firstDay,
       );
+      if (bank.createBank && !result.missing.some((m) => m.key === bank.createBank?.inn))
+        result.missing.push({ ...bank.createBank, rows: [], key: bank.createBank.inn });
       if (bank.create && !result.contractsToCreate.some((c) => c.label === bank.create?.label))
         result.contractsToCreate.push({ rows: [], ...bank.create });
       if (bank.message) {

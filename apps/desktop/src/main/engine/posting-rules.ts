@@ -130,13 +130,14 @@ export const GENERAL_RULES: PostingRule[] = [
     credit: "5110",
     priority: 0,
   },
-  // The fee goes to the period's expense account the company's accounting policy names; 9420 is the usual one.
+  // The fee goes to the period's expense account the company's accounting policy names; 9430 (other operating expenses, the
+  // bank's services among them) is the usual one, and the one this company's accountant has posted fees to.
   {
     id: "g-bank-fee",
     scope: "general",
     operation: "bank_fee",
     document: "Списание с расчетного счета",
-    debit: "9420",
+    debit: "9430",
     credit: "5110",
     priority: 0,
   },

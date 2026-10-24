@@ -342,3 +342,31 @@ another owner: …") instead of "not found".
 
 The bank's contract of kind «Прочее» per currency (the conversion method's rule) is made on a card when 1C lacks it, dated the
 first conversion's day, and the conversion's legs are entered after it.
+
+## Taxes with no earlier payment, payments through the bank's transit accounts, the conversion's bank
+
+**A payment to the budget with no earlier one of that tax** is made from 1C's own description of «Списание с расчетного счета»:
+the operation «Уплата налога», the tax of the catalog «Виды налогов и платежей в бюджет» (found by its name; two that could be
+it, or none, stop it and are named), the tax period (the purpose's month, else the month before the payment, said in the note),
+the tax office as the counterparty 1C has under the INN the statement gives (left empty when it has none), and the account the
+tax item itself names, else 6410 (NSBU), said in the note. An earlier payment of the tax, posted or only a sample not yet
+posted, is still copied first: the laptop's 1C is the model, the description only fills what it lacks.
+
+**A payment the statement writes to the bank's transit account is written to its real payee** (`bank/transit.ts`):
+
+- «транзитный счет для зач на ПК физ лиц …»: money to an individual's card; the person is in the text («… с Qodirov Farruh
+  Bozorovich на поставку …») and so is the contract. He is found among 1C's counterparties by his letters («ИП»/«YTT» in front
+  or not), else taken with his INN from his other rows, else offered for creation by name. A payer's 14 digits (an individual
+  entrepreneur's) are not an INN 1C keeps: he is found, and created, by name (only an entrepreneur, «YTT …»/«ИП …»).
+- «Транзитный счёт МУНИС …» / «таможенных пошлин»: the customs; written to the customs counterparty 1C already has (a
+  payment to a government body goes only to a counterparty in the base); when 1C has none, or several, it says so.
+
+**The bank of a conversion** that 1C lacks as a counterparty is offered on a card under the name 1C's own classifier of banks has
+for the MFO of the statement's row (never a guess; with no such name it asks for the bank). Its «Прочее» contract per currency
+is offered the same way, and the conversion's legs are entered after both.
+
+A payer with a blank INN cell (not zeros) is found by the name the bank wrote, like one with zeros; the bank's own ledger lines
+and its fees are not looked up.
+
+The general rule for a bank fee is 9430 (other operating expenses); the company's own rule or the account its history shows
+beats it.

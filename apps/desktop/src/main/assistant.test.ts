@@ -5014,14 +5014,14 @@ describe("the table of account rules", () => {
     });
 
   it("keeps the accountant's decision for the company, refuses an account the chart lacks, and journals the correction", async () => {
-    const t = call({ action: "set", operation: "bank_fee", debit: "9430", credit: "5110" });
+    const t = call({ action: "set", operation: "bank_fee", debit: "9420", credit: "5110" });
     chart(t, ["9420", "9430", "5110"]);
     t.store.setAiEnabled(t.company.id, true);
-    await t.assistant.send({ companyId: t.company.id, text: "bank xizmati 9430 ga" });
+    await t.assistant.send({ companyId: t.company.id, text: "bank xizmati 9420 ga" });
     expect(t.store.postingRules(t.company.id)).toMatchObject([
-      { id: "c-bank_fee", scope: "company", debit: "9430", credit: "5110" },
+      { id: "c-bank_fee", scope: "company", debit: "9420", credit: "5110" },
     ]);
-    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("9420/5110");
+    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("9430/5110");
 
     const bad = call({ action: "set", operation: "bank_fee", debit: "9999", credit: "5110" });
     chart(bad, ["9420", "5110"]);
