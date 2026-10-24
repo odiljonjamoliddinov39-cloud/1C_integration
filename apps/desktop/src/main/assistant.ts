@@ -104,6 +104,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
+import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
@@ -3407,6 +3408,47 @@ export class AssistantService {
         continue;
       }
       const codes = CURRENCY_CODES[currency] ?? [currency];
+      // 1C writes a rate to the currency's own item: a base without it (a cleared one) gets the item first, on the same card.
+      const known = await this.deps.connector.tool(connection, "run_query", {
+        query: `ВЫБРАТЬ ПЕРВЫЕ 1 Т.Ссылка КАК Ссылка ИЗ Справочник.Валюты КАК Т ГДЕ Т.Код В (${codes.map((c) => `"${c}"`).join(", ")})`,
+        limit: 1,
+      });
+      const lacking = known.ok && ((known.data as { rows?: unknown[][] }).rows ?? []).length === 0;
+      const item = currencyItem(currency);
+      if (lacking && item) {
+        const change: ChangeInput = {
+          action: "create",
+          object: "Справочник.Валюты",
+          fields: {
+            Код: item.code,
+            Наименование: item.name,
+            НаименованиеПолное: item.fullName,
+            ПараметрыПрописи: item.spelling,
+          },
+        };
+        const preview = await this.deps.connector.tool(connection, "previewChange", change);
+        const shown = preview.ok ? (preview.data as ChangePreview) : null;
+        entries.push({
+          item: {
+            action: "create",
+            object: change.object,
+            preview: shown,
+            error: preview.ok ? null : { code: preview.code, message: preview.message },
+          },
+          change,
+          apply: shown
+            ? async () => {
+                const applied = await this.deps.connector.tool(connection, "applyChange", {
+                  ...change,
+                  version: shown.version,
+                });
+                return applied.ok
+                  ? { ok: true, state: applied.data as ObjectState }
+                  : { ok: false, code: applied.code, message: applied.message };
+              }
+            : null,
+        });
+      }
       const existing = new Map<string, number>();
       const asked = await this.deps.connector.tool(connection, "run_query", {
         query:

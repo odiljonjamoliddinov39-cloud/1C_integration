@@ -318,3 +318,10 @@ that nobody sees (`bank/conversion.ts`, `bank/transfer.ts`):
 What the program still does not do (said by the answers, never guessed): tax payments with no earlier payment of the same tax
 (`«Уплата налога»`: the tax, its period and the tax office are the company's own), salary and loan rows, payments to individuals
 through the bank's transit account, and the GTD (customs import) part of the design.
+
+### A base with no currency item
+
+Rates are written to the currency's own item in 1C's catalog. On a cleared base the ruble (and any currency never used) has
+none, and the rate card failed with "В справочнике Валюты нет валюты с кодом 643 / RUB". The card now makes the item first
+(`currency/items.ts`: the numeric code the loader looks it up by, the short and full names, the spelling of the amount in
+words) and then writes the rates, as two lines of the same card.

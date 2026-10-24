@@ -98,21 +98,67 @@ to stop enforcing; use is still counted):
 2. For card payments set `PAYME_MERCHANT_ID`, `PAYME_KEY` and `PAYME_TEST=true` (sandbox). Without them
    only bank transfer is offered; set `BANK_REQUISITES` (lines separated by `|`) for the printed invoice.
 
-## Payme: verify before going live
+## Payme: checked against the Merchant API pages
 
-`payme.ts` was written from Payme's Merchant API as we know it (method names, Basic auth `Paycom:<key>`,
-amounts in tiyin, error codes −31001 / −31003 / −31007 / −31008 / −31050 / −31051 / −31099, the 12-hour
-timeout) and the checkout link `https://checkout.paycom.uz/<base64 of m=…;ac.invoice_id=…;a=…>` (the
-sandbox host is `test.paycom.uz`). Payme's documentation could not be reached while building, so
-**compare every method and code with the current documentation, and pass all of Payme's sandbox test
-cases, before `PAYME_TEST=false`** (checklist item 12 of the design). The account field is
-`invoice_id` (our invoice number); register that in the merchant cabinet.
+Checked against Payme's pages for CheckTransaction, CreateTransaction, PerformTransaction, CancelTransaction, GetStatement,
+SetFiscalData, the general errors, the data types, the states and the reasons (the pages the owner pasted, Oct 2026):
 
-A performed transaction is not cancelled automatically (`-31007`); refunds are done by hand.
+- Basic auth `Paycom:<key>`, amounts in tiyin, `account.invoice_id` = our invoice number (register that field in the merchant
+  cabinet), 12-hour timeout (43 200 000 ms: state −1, reason 4), the states 1 / 2 / −1 / −2, the reasons, a repeated
+  CreateTransaction / PerformTransaction answers what was stored.
+- Errors: −31001 wrong amount, −31003 no transaction, −31007, −31008, −31050…−31099 with the sub-field in `data`
+  (−31050 no invoice, −31051 invoice not payable, −31099 another transaction open), and the general ones, all on HTTP 200:
+  −32700 not JSON, −32300 not a POST, −32600 bad request, −32601 unknown method (its name in `data`), −32504 no privileges,
+  −32400 a fault of ours (database…; logged).
+- GetStatement: by the time Payme created the transaction, `from ≤ time ≤ to`, oldest first, an empty list when none.
+- SetFiscalData (optional): the fiscal data of a paid and of a cancelled receipt are kept apart in the payment's `raw.fiscal`;
+  −32001 unknown receipt, −32602 invalid parameters (the parameter named).
+- Every call is logged as one line (method, id, error code).
+
+**A decision to confirm.** CancelTransaction of a _performed_ transaction answers −31007 ("the service has been provided in
+full"): the plan was extended, and refunds are made by hand. Payme's page says a refund from the merchant's Payme cabinet is
+possible only when CancelTransaction is implemented for performed transactions (state −2). If refunds through the cabinet are
+wanted, a refund must take the plan back (move the account to Free); say so and it is added.
+
+**Still to check on pages not yet seen:** CheckPerformTransaction (the optional `detail` of a fiscal receipt: the IKPU code,
+the package code, the unit are set with `PAYME_FISCAL_CODE`, `PAYME_FISCAL_PACKAGE`, `PAYME_FISCAL_UNITS`, off until the code
+and the package are given), the checkout link (`m`, `ac.*`, `a`, `c` and the test host `checkout.test.paycom.uz`), and Payme's
+sandbox test scenarios, which must all pass before `PAYME_TEST=false`.
+
+## Click: checked against the SHOP API pages
+
+Click calls `POST /v1/billing/click/prepare` and `/complete` (form-urlencoded in, JSON out, always 200 with `error` /
+`error_note`); `merchant_trans_id` is our invoice number. The signature is MD5 over the request's own values and the service's
+secret key (Prepare without `merchant_prepare_id`, Complete with it); the error table is Click's (−1 signature, −2 amount, −3
+action, −4 already paid, −5 no order, −6 no transaction, −7 could not update, −8 bad request, −9 cancelled). A repeated Prepare
+returns the same payment (`merchant_prepare_id` = invoice number × 1000 + the attempt); a Complete applies the plan once; a status
+below 0 from Click cancels the prepared payment; an invoice paid another way meanwhile answers −4 and is logged
+(`duplicate_payment`) for a refund by hand (Click's `payment/reversal` is not called by the program).
+
+On the page the customer pays **without leaving it**: the cabinet opens Click's own window (`checkout.js`,
+`createPaymentRequest`), or the link `https://my.click.uz/services/pay?...` when the window cannot be opened. The card is typed in
+Click's window or in the Click and Payme apps; nothing of it reaches the page or the server.
+
+Set `CLICK_SERVICE_ID`, `CLICK_MERCHANT_ID`, `CLICK_SECRET_KEY` (and `CLICK_MERCHANT_USER_ID` if Click gave one) in the server's
+`.env` (the deploy file passes them on; the keys are never in the repository) and give Click the two URLs
+`https://<api>/v1/billing/click/prepare` and `/complete`. Click's fiscalization calls (`submit_items`, `submit_qrcode`) are not
+made yet.
+
+## Paynet: what the developer guide says (not built)
+
+Paynet is a different model: **Paynet always calls us** (UWS, JSON-RPC 2.0 on one endpoint: GetInformation, PerformTransaction,
+CheckTransaction, CancelTransaction, GetStatement, optional ChangePassword), and the customer pays in the Paynet app or at a
+terminal by entering the account (our invoice number) under our `serviceId`; the guide has no web checkout link or card window.
+So a Paynet button on the cabinet cannot open a payment window: it can only tell the customer the service and the invoice number to
+pay in Paynet. Needs: HTTP Basic Auth (a wrong login is HTTP 401, not an error object), Paynet's two IP ranges (a firewall rule),
+TLS 1.3, answers within 500 ms, error codes of its own table (201 duplicate, 202/203/77/306 for cancellation, 302 unknown account,
+413 amount, state 3 for an unknown transaction in CheckTransaction), the `timestamp` of CheckTransaction in
+`EEE MMM dd HH:mm:ss z yyyy`, amounts in tiyin, dates `YYYY-MM-dd HH:mm:ss` (GMT+5), daily reconciliation by GetStatement, a "technical
+interaction" form with the service list, and the connection over TAS-IX. The field-level OpenAPI file ("OpenAPI (UWS) in
+English.yaml") is not in the guide: it is needed before this is written.
 
 ## Not built yet
 
-- Click (phase 2): `POST /billing/click/prepare` and `/complete`.
 - Payme auto-renewal with card tokens (Subscribe API, phase 2). Renewal invoices are made and shown in
   the cabinet; the customer pays them.
 - Sending the reminders: they are recorded as `reminder_*` billing events (visible in the dashboard)

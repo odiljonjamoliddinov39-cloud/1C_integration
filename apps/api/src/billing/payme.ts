@@ -19,6 +19,25 @@ import type { Invoicing } from "./invoicing.js";
 /** A pending transaction nobody finished is cancelled after 12 hours. */
 export const PAYME_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 
+/** Errors of the transport, as Payme's table of general errors has them; every answer stays "200 OK" with an error member. */
+export const PAYME_PARSE_ERROR = {
+  code: -32700,
+  message: { ru: "Ошибка разбора JSON", uz: "JSON oʻqib boʻlmadi", en: "Parse error" },
+};
+export const PAYME_NOT_POST = {
+  code: -32300,
+  message: {
+    ru: "Метод запроса не POST",
+    uz: "Soʻrov metodi POST emas",
+    en: "The request method is not POST",
+  },
+};
+/** A fault of ours (database, file system): Payme's -32400. */
+export const PAYME_SYSTEM_ERROR = {
+  code: -32400,
+  message: { ru: "Внутренняя ошибка", uz: "Ichki xatolik", en: "System error" },
+};
+
 export function paymeCheckoutUrl(
   config: Pick<Config, "PAYME_MERCHANT_ID" | "PAYME_TEST" | "SITE_URL">,
   invoice: { number: number | null; totalSum: number },
@@ -29,7 +48,7 @@ export function paymeCheckoutUrl(
     `a=${invoice.totalSum * 100}`,
     ...(config.SITE_URL ? [`c=${config.SITE_URL}/cabinet`] : []),
   ].join(";");
-  const host = config.PAYME_TEST ? "https://test.paycom.uz" : "https://checkout.paycom.uz";
+  const host = config.PAYME_TEST ? "https://checkout.test.paycom.uz" : "https://checkout.paycom.uz";
   return `${host}/${Buffer.from(params).toString("base64")}`;
 }
 
@@ -52,6 +71,14 @@ const ERR = {
     message: msg("Insufficient privileges", "Недостаточно привилегий", "Huquqlar yetarli emas"),
   },
   method: { code: -32601, message: msg("Method not found", "Метод не найден", "Metod topilmadi") },
+  fiscalReceipt: {
+    code: -32001,
+    message: msg("Receipt not found", "Чек с таким id не найден", "Chek topilmadi"),
+  },
+  fiscalParams: {
+    code: -32602,
+    message: msg("Invalid parameters", "Не валидные параметры", "Parametrlar notoʻgʻri"),
+  },
   request: { code: -32600, message: msg("Invalid request", "Неверный запрос", "Notoʻgʻri soʻrov") },
   amount: { code: -31001, message: msg("Wrong amount", "Неверная сумма", "Notoʻgʻri summa") },
   noTransaction: {
@@ -170,8 +197,11 @@ export class PaymeMerchant {
           return { id, result: await this.checkTransaction(p) };
         case "GetStatement":
           return { id, result: await this.statement(p) };
+        case "SetFiscalData":
+          return { id, result: await this.setFiscalData(p) };
         default:
-          throw new RpcFailure(ERR.method);
+          // The name of the method asked for is in "data".
+          throw new RpcFailure({ ...ERR.method, data: request.method });
       }
     } catch (e) {
       if (e instanceof RpcFailure) return { id, error: e.error };
@@ -193,8 +223,27 @@ export class PaymeMerchant {
   }
 
   private async check(params: Record<string, unknown>) {
-    await this.payable(params);
-    return { allow: true };
+    const invoice = await this.payable(params);
+    const { PAYME_FISCAL_CODE: code, PAYME_FISCAL_PACKAGE: pack, PAYME_FISCAL_UNITS: units } = this.config;
+    if (!code || !pack) return { allow: true };
+    // The fiscal receipt: one line, the whole invoice (prices in tiyin, VAT included), when fiscalization is on.
+    return {
+      allow: true,
+      detail: {
+        receipt_type: 0,
+        items: [
+          {
+            title: `AI Accounting Assistant, schyot ${invoice.number ?? ""}`.trim(),
+            price: invoice.totalSum * 100,
+            count: 1,
+            code,
+            package_code: pack,
+            vat_percent: this.config.VAT_PERCENT,
+            ...(units === undefined ? {} : { units }),
+          },
+        ],
+      },
+    };
   }
 
   private async create(params: Record<string, unknown>, now: number) {
@@ -304,14 +353,57 @@ export class PaymeMerchant {
     };
   }
 
+  /**
+   * The fiscal data of a receipt, which Payme sends after the receipt is paid or cancelled (optional for the merchant). The
+   * receipt's id is the transaction's; a paid receipt's data and a cancelled one's are kept apart (two receipts at the tax office).
+   */
+  private async setFiscalData(params: Record<string, unknown>) {
+    const type = params.type;
+    const data = params.fiscal_data;
+    if (
+      typeof params.id !== "string" ||
+      (type !== "PERFORM" && type !== "CANCEL") ||
+      typeof data !== "object" ||
+      data === null ||
+      Array.isArray(data)
+    ) {
+      throw new RpcFailure({
+        ...ERR.fiscalParams,
+        data:
+          typeof params.id !== "string"
+            ? "id"
+            : type !== "PERFORM" && type !== "CANCEL"
+              ? "type"
+              : "fiscal_data",
+      });
+    }
+    const row = await this.db.query.payments.findFirst({
+      where: and(eq(payments.providerTxnId, params.id), eq(payments.provider, "payme")),
+    });
+    if (!row) throw new RpcFailure(ERR.fiscalReceipt);
+    const raw = row.raw as Raw & { fiscal?: Record<string, unknown> };
+    await this.db
+      .update(payments)
+      .set({
+        raw: {
+          ...raw,
+          fiscal: { ...raw.fiscal, [type === "PERFORM" ? "perform_data" : "cancel_data"]: data },
+        },
+      })
+      .where(eq(payments.id, row.id));
+    return { success: true };
+  }
+
   private async statement(params: Record<string, unknown>) {
     const from = Number(params.from);
     const to = Number(params.to);
     const rows = await this.db.query.payments.findMany({ where: eq(payments.provider, "payme") });
+    // By the time Payme created the transaction, from <= time <= to, oldest first.
     return {
       transactions: rows
         .map((row) => ({ row, raw: row.raw as Raw }))
         .filter(({ raw }) => raw.time >= from && raw.time <= to)
+        .sort((a, b) => a.raw.time - b.raw.time)
         .map(({ row, raw }) => ({
           id: row.providerTxnId,
           time: raw.time,

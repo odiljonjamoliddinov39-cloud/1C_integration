@@ -5,6 +5,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaMessage, BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
+import { createHash } from "node:crypto";
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -82,6 +84,10 @@ describe.skipIf(!available)("tariffs", () => {
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",
       PAYME_TEST: "true",
+      CLICK_SERVICE_ID: "31",
+      CLICK_MERCHANT_ID: "46",
+      CLICK_MERCHANT_USER_ID: "4",
+      CLICK_SECRET_KEY: "click-secret",
       SITE_URL: "https://site.example",
       ADMIN_EMAIL: "boss@platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
@@ -402,7 +408,7 @@ describe.skipIf(!available)("tariffs", () => {
     // 590 000 + 12% VAT = 660 800 sum = 66 080 000 tiyin.
     expect(card.invoice).toMatchObject({ totalSum: 660_800, vatSum: 70_800, discountSum: 0 });
     const link = new URL(card.checkoutUrl!);
-    expect(link.host).toBe("test.paycom.uz");
+    expect(link.host).toBe("checkout.test.paycom.uz");
     const params = Buffer.from(link.pathname.slice(1), "base64").toString();
     expect(params).toContain("m=merchant-1");
     expect(params).toContain(`ac.invoice_id=${Number(card.invoice.number.slice(4))}`);
@@ -460,6 +466,267 @@ describe.skipIf(!available)("tariffs", () => {
       plan: "start",
       status: "active",
       aiQuestionsPerMonth: 80,
+    });
+  });
+
+  it("answers the general errors of Payme's table on a 200: not JSON, not POST, an unknown method named in data", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/billing/payme",
+      payload: "{not json",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Basic ${Buffer.from("Paycom:payme-secret-key").toString("base64")}`,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: null, error: { code: -32700 } });
+    const get = await app.inject({ method: "GET", url: "/v1/billing/payme" });
+    expect(get.statusCode).toBe(200);
+    expect(get.json()).toMatchObject({ error: { code: -32300 } });
+    const unknown = await rpc("Nope", {});
+    expect(unknown.error).toMatchObject({ code: -32601, data: "Nope" });
+  });
+
+  it("adds the fiscal receipt line only when the merchant has fiscalization set up", async () => {
+    const { token } = await register();
+    const { invoice } = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    const account = { invoice_id: Number(invoice.number.slice(4)) };
+    const amount = invoice.totalSum * 100;
+    expect((await rpc("CheckPerformTransaction", { amount, account })).result).toEqual({ allow: true });
+
+    const fiscal = await buildApp(
+      db.db,
+      {
+        ...config,
+        PAYME_FISCAL_CODE: "10305011001000000",
+        PAYME_FISCAL_PACKAGE: "123456",
+        PAYME_FISCAL_UNITS: 796,
+      },
+      { aiModel: fakeModel },
+    );
+    const res = await fiscal.inject({
+      method: "POST",
+      url: "/v1/billing/payme",
+      payload: { id: 1, method: "CheckPerformTransaction", params: { amount, account } },
+      headers: { authorization: `Basic ${Buffer.from("Paycom:payme-secret-key").toString("base64")}` },
+    });
+    expect(res.json().result).toMatchObject({
+      allow: true,
+      detail: {
+        receipt_type: 0,
+        items: [
+          {
+            price: amount,
+            count: 1,
+            code: "10305011001000000",
+            package_code: "123456",
+            vat_percent: 12,
+            units: 796,
+          },
+        ],
+      },
+    });
+    await fiscal.close();
+  });
+
+  it("lists the statement oldest first, inclusive of both ends, and keeps the fiscal data of a paid and of a cancelled receipt apart", async () => {
+    const { token } = await register();
+    const first = await checkout(token, { plan: "start", cycle: "month", provider: "payme" });
+    const second = await checkout(token, { plan: "business", cycle: "month", provider: "payme" });
+    const make = (invoice: { number: string; totalSum: number }) => ({
+      account: { invoice_id: Number(invoice.number.slice(4)) },
+      amount: invoice.totalSum * 100,
+    });
+    // Payme's own times, the newer one created first: the list must still come back by time.
+    await rpc("CreateTransaction", { id: "later", time: 2_000, ...make(second.invoice) });
+    await rpc("CreateTransaction", { id: "earlier", time: 1_000, ...make(first.invoice) });
+    const listed = await rpc("GetStatement", { from: 1_000, to: 2_000 });
+    expect(listed.result.transactions.map((t: { id: string }) => t.id)).toEqual(["earlier", "later"]);
+    expect((await rpc("GetStatement", { from: 1_001, to: 1_999 })).result).toEqual({ transactions: [] });
+
+    const performed = { receipt_id: 121, status_code: 0, message: "accepted", fiscal_sign: "800031554082" };
+    expect(
+      (await rpc("SetFiscalData", { id: "earlier", type: "PERFORM", fiscal_data: performed })).result,
+    ).toEqual({ success: true });
+    expect(
+      (
+        await rpc("SetFiscalData", {
+          id: "earlier",
+          type: "CANCEL",
+          fiscal_data: { ...performed, receipt_id: 123 },
+        })
+      ).result,
+    ).toEqual({ success: true });
+    const [row] = (await db.db.select().from(payments)).filter((p) => p.providerTxnId === "earlier");
+    expect((row?.raw as { fiscal?: Record<string, { receipt_id: number }> }).fiscal).toMatchObject({
+      perform_data: { receipt_id: 121 },
+      cancel_data: { receipt_id: 123 },
+    });
+    expect(
+      (await rpc("SetFiscalData", { id: "nobody", type: "PERFORM", fiscal_data: performed })).error.code,
+    ).toBe(-32001);
+    expect(
+      (await rpc("SetFiscalData", { id: "earlier", type: "REFUND", fiscal_data: performed })).error,
+    ).toMatchObject({
+      code: -32602,
+      data: "type",
+    });
+  });
+
+  describe("Click", () => {
+    const md5 = (s: string) => createHash("md5").update(s).digest("hex");
+    /** A request from Click, signed as its SHOP API says, and sent form-urlencoded. */
+    const click = async (
+      action: "prepare" | "complete",
+      fields: Record<string, string | number>,
+      key = "click-secret",
+    ) => {
+      const f: Record<string, string | number> = {
+        click_trans_id: 7001,
+        service_id: 31,
+        click_paydoc_id: 9001,
+        action: action === "prepare" ? 0 : 1,
+        error: 0,
+        error_note: "Success",
+        sign_time: "2026-10-24 12:00:00",
+        ...fields,
+      };
+      const sign = md5(
+        `${f.click_trans_id}${f.service_id}${key}${f.merchant_trans_id}${action === "complete" ? (f.merchant_prepare_id ?? "") : ""}${f.amount}${f.action}${f.sign_time}`,
+      );
+      const res = await app.inject({
+        method: "POST",
+        url: `/v1/billing/click/${action}`,
+        payload: new URLSearchParams(
+          Object.entries({ sign_string: sign, ...f }).map(([k2, v]): [string, string] => [k2, String(v)]),
+        ).toString(),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as Record<string, unknown>;
+    };
+    const order = async () => {
+      const { token, accountId } = await register();
+      const made = await checkout(token, { plan: "start", cycle: "month", provider: "click" });
+      return {
+        token,
+        accountId,
+        made,
+        merchant_trans_id: String(Number(made.invoice.number.slice(4))),
+        amount: made.invoice.totalSum,
+      };
+    };
+
+    it("gives the link and the values of Click's window over the page, with the amount as N.NN", async () => {
+      const { made, merchant_trans_id } = await order();
+      const link = new URL(made.checkoutUrl!);
+      expect(link.host).toBe("my.click.uz");
+      expect(Object.fromEntries(link.searchParams)).toMatchObject({
+        service_id: "31",
+        merchant_id: "46",
+        merchant_user_id: "4",
+        amount: "660800.00",
+        transaction_param: merchant_trans_id,
+        return_url: "https://site.example/cabinet",
+      });
+      expect((made as unknown as { click: unknown }).click).toEqual({
+        serviceId: "31",
+        merchantId: "46",
+        merchantUserId: "4",
+        amount: "660800.00",
+        transactionParam: merchant_trans_id,
+      });
+    });
+
+    it("prepares, completes once, and is idempotent: the plan is applied once and a repeat is «already paid»", async () => {
+      const { accountId, merchant_trans_id, amount } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      expect(prepared).toMatchObject({ error: 0, click_trans_id: 7001, merchant_trans_id });
+      const prepareId = prepared.merchant_prepare_id as number;
+      expect(prepareId).toBe(Number(merchant_trans_id) * 1000 + 1);
+      // The same Prepare again returns the same payment.
+      expect(await click("prepare", { merchant_trans_id, amount })).toMatchObject({
+        error: 0,
+        merchant_prepare_id: prepareId,
+      });
+      expect(await db.db.select().from(payments)).toHaveLength(1);
+
+      // Complete with another prepare id is «transaction does not exist».
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId + 5, amount }),
+      ).toMatchObject({ error: -6 });
+      const done = await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount });
+      expect(done).toMatchObject({ error: 0, merchant_confirm_id: prepareId });
+      const before = await subscription(accountId);
+      expect(before).toMatchObject({ status: "active" });
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount }),
+      ).toMatchObject({
+        error: -4,
+      });
+      expect((await subscription(accountId)).endsAt).toEqual(before.endsAt);
+      // A new Prepare for the paid invoice is refused too.
+      expect(await click("prepare", { click_trans_id: 7002, merchant_trans_id, amount })).toMatchObject({
+        error: -4,
+      });
+    });
+
+    it("answers Click's error table: signature, amount, action, order, service, a negative status", async () => {
+      const { merchant_trans_id, amount } = await order();
+      expect(await click("prepare", { merchant_trans_id, amount }, "wrong-key")).toMatchObject({ error: -1 });
+      expect(await click("prepare", { merchant_trans_id, amount: amount + 1 })).toMatchObject({ error: -2 });
+      // action 1 sent to Prepare (signed as Prepare): «action not found»
+      expect(await click("prepare", { merchant_trans_id, amount, action: 1 })).toMatchObject({ error: -3 });
+      expect(await click("prepare", { merchant_trans_id: "999999", amount })).toMatchObject({ error: -5 });
+      expect(await click("prepare", { merchant_trans_id: "abc", amount })).toMatchObject({ error: -5 });
+      expect(await click("prepare", { merchant_trans_id, amount, service_id: 32 })).toMatchObject({
+        error: -8,
+      });
+      expect(await click("prepare", { merchant_trans_id, amount, error: -5 })).toMatchObject({ error: -9 });
+      expect(await db.db.select().from(payments)).toHaveLength(0);
+    });
+
+    it("cancels a prepared payment when Click reports its own error, and then refuses to complete it", async () => {
+      const { merchant_trans_id, amount, accountId } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      const prepareId = prepared.merchant_prepare_id as number;
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount, error: -5017 }),
+      ).toMatchObject({ error: -9 });
+      expect(
+        await click("complete", { merchant_trans_id, merchant_prepare_id: prepareId, amount }),
+      ).toMatchObject({
+        error: -9,
+      });
+      expect(await subscription(accountId)).not.toMatchObject({ status: "active" });
+      // A new attempt (another Click transaction) is a new payment, numbered next, and can be paid.
+      const again = await click("prepare", { click_trans_id: 7003, merchant_trans_id, amount });
+      expect(again.merchant_prepare_id).toBe(prepareId + 1);
+      expect(
+        await click("complete", {
+          click_trans_id: 7003,
+          merchant_trans_id,
+          merchant_prepare_id: prepareId + 1,
+          amount,
+        }),
+      ).toMatchObject({ error: 0 });
+    });
+
+    it("an invoice paid another way meanwhile is «already paid» for Click, and the twice-paid is logged for a refund", async () => {
+      const { merchant_trans_id, amount, accountId, made } = await order();
+      const prepared = await click("prepare", { merchant_trans_id, amount });
+      // The customer pays the same invoice through Payme before Click completes.
+      await pay(made.invoice);
+      expect(
+        await click("complete", {
+          merchant_trans_id,
+          merchant_prepare_id: prepared.merchant_prepare_id as number,
+          amount,
+        }),
+      ).toMatchObject({ error: -4 });
+      const events = await db.sql`SELECT type FROM billing_events WHERE account_id = ${accountId}`;
+      expect(events.map((e) => e.type)).toContain("duplicate_payment");
     });
   });
 
