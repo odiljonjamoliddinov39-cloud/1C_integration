@@ -10,16 +10,21 @@
 import type { ChangeInput } from "@platform/shared";
 
 import { type QueryOutcome, lookup, refOf, textOf } from "../didox/resolve.js";
+import type { Context } from "../engine/posting-rules.js";
+import { type BuildKind, buildBankDocument } from "./build.js";
 import { type Transfer, currencyOfAccount } from "./ledger.js";
 import { CONVERSION_KIND, TRANSFER_KIND } from "./policy.js";
+import { ownAccountAttribute, ownAccountKey } from "./roles.js";
 import {
   type BankCache,
   type BankDeps,
+  CURRENCY_CODES,
   type CopyContext,
   OBJECT,
   type Template,
   conversionFor,
   copyTemplate,
+  currencyRef,
   rateOn,
   refTo,
   sameCurrency,
@@ -129,7 +134,7 @@ async function transferList(
 
 /** The attribute of a transfer document that names the other account. */
 function otherAccountKey(template: Template): string | null {
-  const bankAccount = "БанковскийСчет";
+  const bankAccount = ownAccountKey(template.fields);
   const isAccount = (v: unknown) =>
     Boolean(v) && typeof v === "object" && (v as { type?: unknown }).type === "Справочник.БанковскиеСчета";
   const candidates = Object.entries(template.fields).filter(([k, v]) => k !== bankAccount && isAccount(v));
@@ -161,12 +166,104 @@ async function pickTemplate(
     newest ??= template;
     const fits = currency === "" || sameCurrency(template, currency);
     if (fits) inCurrency ??= template;
-    if (refText(template.fields["БанковскийСчет"]) !== own) continue;
+    const ownKey = ownAccountKey(template.fields);
+    if (!ownKey || refText(template.fields[ownKey]) !== own) continue;
     const key = otherAccountKey(template);
     if (fits && key && refText(template.fields[key]) === other) return template;
     if (fits) sameAccount ??= template;
   }
   return sameAccount ?? inCurrency ?? newest;
+}
+
+interface BankParty {
+  bank?: { counterparty: string | null; contract: string | null };
+  message?: string;
+}
+
+/** The bank's own ledger lines, which the program or an accountant may have made counterparties of: not the bank. */
+const BANK_LINE =
+  /головн|получению|транзит|комисс|депозит|продажа\s+иностр|покупка\s+иностр|валют|казначей|физ\.?\s|конвертац/iu;
+
+/** The soum, whichever code 1C's catalog keeps it under; and the letters of a currency item's code. */
+const SOUM_CODES = ["860", "UZS", "000", "сўм", "сум"];
+const codeMatches = (code: string, currency: string) =>
+  currency === "UZS" ? SOUM_CODES.includes(code) : (CURRENCY_CODES[currency] ?? [currency]).includes(code);
+
+/**
+ * The bank of a conversion and its contract of kind «Прочее» in the leg's currency: the conversion passes through the
+ * bank on both legs, a contract per currency (the method's setup rule). Said exactly when 1C lacks either.
+ */
+async function bankFor(
+  deps: BankDeps,
+  cache: Map<string, BankParty>,
+  payment: BankPayment,
+  currency: string,
+): Promise<BankParty> {
+  const inn = payment.inn;
+  const key = `${inn || payment.counterparty}|${currency}`;
+  const known = cache.get(key);
+  if (known) return known;
+  const answer = async (): Promise<BankParty> => {
+    if (!inn)
+      return { message: "the conversion's bank has no INN in the statement: the bank cannot be found in 1C" };
+    const rows = await lookup(
+      deps,
+      (ph) =>
+        `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.Контрагенты КАК Т ГДЕ Т.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
+      [inn],
+    );
+    if (!rows) return { message: "1C could not be asked for the conversion's bank" };
+    const banks = rows.flatMap(({ cells }) => {
+      const ref = refOf(cells[0]);
+      const name = textOf(cells[1]);
+      return ref && !BANK_LINE.test(name) ? [{ ref, name }] : [];
+    });
+    const [only] = banks;
+    if (banks.length !== 1 || !only) {
+      return {
+        message:
+          banks.length === 0
+            ? `1C has no counterparty for the bank (INN ${inn}) apart from the bank's own ledger lines: a conversion is with the bank on both legs, so create the bank as a counterparty first`
+            : `${banks.length} counterparties could be the conversion's bank (INN ${inn}): ${banks.map((b) => b.name).join(", ")}; the accountant says which`,
+      };
+    }
+    const contracts = await lookup(
+      deps,
+      (ph) =>
+        `ВЫБРАТЬ Т.Владелец КАК Владелец, Т.Ссылка КАК Ссылка, Т.ВидДоговора КАК Вид, Т.ВалютаВзаиморасчетов.Код КАК Код, Т.Дата КАК Дата ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ Т.Владелец.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
+      [inn],
+    );
+    if (!contracts) return { message: "1C could not be asked for the bank's contracts" };
+    const other = contracts
+      .filter(
+        ({ cells }) =>
+          refOf(cells[0]) === only.ref &&
+          /проч|other/iu.test(`${textOf(cells[2])} ${(cells[2] as { ref?: string } | null)?.ref ?? ""}`) &&
+          codeMatches(String(cells[3] ?? ""), currency),
+      )
+      .sort((a, b) => String(b.cells[4] ?? "").localeCompare(String(a.cells[4] ?? "")));
+    const contract = refOf(other[0]?.cells[1]);
+    if (!contract) {
+      return {
+        message: `${only.name} has no contract of kind «Прочее» in ${currency}: the conversion method needs one contract with the bank per currency (create it, the legs are made with it)`,
+      };
+    }
+    return { bank: { counterparty: only.ref, contract } };
+  };
+  const result = await answer();
+  cache.set(key, result);
+  return result;
+}
+
+/** One line for the accountant: the two legs of a conversion as they will be entered, and where the rates come from. */
+function conversionPreview(t: Transfer, official: number | null, change: ChangeInput): string {
+  const fx = t.fx;
+  if (!fx) return "";
+  const account = (change.fields ?? {})["СчетУчетаРасчетовСКонтрагентом"];
+  void account;
+  const gap =
+    official === null ? "" : `, the gap to the Central Bank's rate (${official}) is the bank's: 9690`;
+  return `conversion ${fx.id}: ${fx.direction === "buy" ? "bought" : "sold"} ${fx.amount} ${fx.currency} at the bank's rate ${fx.rate}; two linked documents through the conversion account ${fx.direction === "buy" ? "5730" : "5740"}, the paying one first${gap}; the account must close to zero`;
 }
 
 interface Leg {
@@ -182,11 +279,20 @@ interface Leg {
 export async function resolveTransfers(
   transfers: Transfer[],
   statements: BankStatement[],
-  options: { ownInn?: string; cache?: BankCache; files: Set<string>; done?: Set<string> },
+  options: {
+    ownInn?: string;
+    cache?: BankCache;
+    files: Set<string>;
+    done?: Set<string>;
+    /** The company's organization in 1C and its account rules: for a document made with no earlier one to copy. */
+    organization?: string | null;
+    posting?: Context;
+  },
   deps: BankDeps,
 ): Promise<TransfersResolved> {
-  const cache = options.cache ?? { lists: new Map(), snapshots: new Map() };
+  const cache: BankCache = options.cache ?? { lists: new Map(), snapshots: new Map() };
   const result: TransfersResolved = { ready: [], problems: [], notes: [], alreadyIn1c: [] };
+  const bankCache = new Map<string, BankParty>();
   const key = (file: string, row: number) => `${file}#${row}`;
 
   const legs: Leg[] = [];
@@ -237,8 +343,9 @@ export async function resolveTransfers(
   const dates = legs.map((l) => l.transfer.date).sort();
   for (const side of ["out", "in"] as const) {
     if (!legs.some((l) => l.side === side)) continue;
+    const accountKey = await ownAccountAttribute(deps, cache, OBJECT[side]);
     const outcome: QueryOutcome = await deps.query({
-      query: `ВЫБРАТЬ Т.БанковскийСчет КАК Счет, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${OBJECT[side]} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+      query: `ВЫБРАТЬ Т.${accountKey} КАК Счет, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${OBJECT[side]} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
       params: { начало: `${dates[0]}T00:00:00`, конец: `${dates.at(-1)}T23:59:59` },
       limit: 2000,
       refs: true,
@@ -304,7 +411,7 @@ export async function resolveTransfers(
       fail(leg, `no bank account ${leg.own || "(none)"} of the company in 1C`);
       continue;
     }
-    if (!otherRef) {
+    if (!otherRef && !leg.transfer.fx) {
       fail(
         leg,
         leg.other
@@ -317,6 +424,46 @@ export async function resolveTransfers(
       result.alreadyIn1c.push({ file: leg.file, row: leg.row });
       continue;
     }
+    // A purchase or a sale of currency is one conversion of two linked legs through the conversion account.
+    if (leg.transfer.fx) {
+      const fx = leg.transfer.fx;
+      const legCurrency = ownCurrency || "UZS";
+      const foreignLeg = legCurrency !== "UZS";
+      const official = foreignLeg ? await rateOn(deps, cache, fx.currency, day(payment.date)) : null;
+      const bank = await bankFor(deps, bankCache, payment, legCurrency);
+      if (bank.message) {
+        fail(leg, bank.message);
+        continue;
+      }
+      const built = await buildBankDocument(deps, cache, {
+        kind: leg.side === "out" ? "conversionOut" : "conversionIn",
+        payment,
+        organization: options.organization ?? null,
+        ownAccount: ownRef,
+        currency: legCurrency,
+        currencyRef: foreignLeg ? await currencyRef(deps, cache, legCurrency) : null,
+        rate: official,
+        ...(options.posting ? { posting: options.posting } : {}),
+        conversion: { id: fx.id, direction: fx.direction, leg: leg.side, bank: bank.bank },
+      });
+      if (!built.ok) {
+        fail(leg, built.message);
+        continue;
+      }
+      for (const n of built.notes) if (!result.notes.includes(n)) result.notes.push(n);
+      const preview = conversionPreview(leg.transfer, official, built.change);
+      if (!result.notes.includes(preview)) result.notes.push(preview);
+      result.ready.push({
+        transfer: leg.transfer,
+        side: leg.side,
+        file: leg.file,
+        row: leg.row,
+        change: built.change,
+      });
+      continue;
+    }
+    // Past the conversion, a leg has its other account (the check above let only a conversion leg go without).
+    if (!otherRef) continue;
     const object = OBJECT[leg.side];
     const kindName: TemplateKind = cross
       ? leg.side === "out"
@@ -335,11 +482,50 @@ export async function resolveTransfers(
       cross ? ownCurrency : "",
     );
     if (!template) {
+      // Nothing to copy (a new base, or its documents were deleted): the document is made from 1C's own description.
+      const buildKind: BuildKind = cross
+        ? leg.side === "out"
+          ? "conversionOut"
+          : "conversionIn"
+        : leg.side === "out"
+          ? "transferOut"
+          : "transferIn";
+      const foreignLeg = ownCurrency !== "" && ownCurrency !== "UZS";
+      const paired = conversionRate.get(leg);
+      const built = await buildBankDocument(deps, cache, {
+        kind: buildKind,
+        payment,
+        organization: options.organization ?? null,
+        ownAccount: ownRef,
+        otherAccount: otherRef,
+        currency: ownCurrency || "UZS",
+        currencyRef: foreignLeg ? await currencyRef(deps, cache, ownCurrency) : null,
+        rate: foreignLeg
+          ? (paired?.rate ?? (await rateOn(deps, cache, ownCurrency, day(payment.date))))
+          : null,
+        ...(options.posting ? { posting: options.posting } : {}),
+      });
+      if (built.ok) {
+        for (const n of built.notes) if (!result.notes.includes(n)) result.notes.push(n);
+        if (paired) {
+          const note = `${ownCurrency} leg of a conversion booked at the conversion's own rate (the soums paid ÷ the ${ownCurrency} received), so that the two sides close each other in the transit accounts; the Central Bank's rate of the day is only for revaluing at the month's end`;
+          if (!result.notes.includes(note)) result.notes.push(note);
+        }
+        result.ready.push({
+          transfer: leg.transfer,
+          side: leg.side,
+          file: leg.file,
+          row: leg.row,
+          change: built.change,
+        });
+        continue;
+      }
       fail(
         leg,
-        cross
-          ? `1C has no ${object.replace("Документ.", "")} of the operation «${leg.side === "out" ? "other write-off (Прочее списание)" : "transfer from another account (Перевод с другого счёта)"}» to copy for a conversion between ${ownCurrency} and ${currencyOfAccount(leg.other)} accounts (1C refuses a transfer between accounts of two currencies): enter the first one, the rest are copied from it`
-          : `1C has no posted ${object.replace("Документ.", "")} of the operation «transfer to/from another account of the company»${leg.transfer.kind === "conversion" ? " (conversion)" : ""} to copy: the accountant says how the company books it`,
+        built.message +
+          (cross
+            ? `. Between accounts of two currencies 1C refuses «Перевод на другой счёт»: the paying leg is «Прочее списание» and the receiving one «Перевод с другого счёта»`
+            : ""),
       );
       continue;
     }
@@ -402,5 +588,8 @@ export async function resolveTransfers(
       change: made.change,
     });
   }
+  // Entered in date order, the paying leg of a conversion before its receiving one: the conversion account must not run negative.
+  const dateOf = (d: TransferDoc) => String(d.change.fields?.["Дата"] ?? "");
+  result.ready.sort((a, b) => dateOf(a).localeCompare(dateOf(b)));
   return result;
 }

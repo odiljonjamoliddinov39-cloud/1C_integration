@@ -98,10 +98,12 @@ import {
   type BankCandidate,
   type BankProblem,
   type BankResolved,
+  BANK_FEE_NAME,
   CURRENCY_CODES,
   rateOn,
   resolvePayments,
 } from "./bank/resolve.js";
+import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
@@ -3537,7 +3539,7 @@ export class AssistantService {
               payments: statement.payments.map((p) => {
                 if (!fees.has(p.row)) return p;
                 // The bank wrote no INN for a fee: the zero-INN flag goes too, or it would be looked up by name.
-                const rest: BankPayment = { ...p, inn: "", counterparty: "Bank fee" };
+                const rest: BankPayment = { ...p, inn: "", counterparty: BANK_FEE_NAME };
                 delete rest.innZero;
                 return rest;
               }),
@@ -3567,16 +3569,41 @@ export class AssistantService {
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
     const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    // A currency account's SWIFT payments are written to their real beneficiaries (in the text), not to the bank's own line.
+    const beneficiaries = { found: 0, unknown: [] as string[], ambiguous: [] as PayeeMatch["ambiguous"] };
+    for (const task of tasks) {
+      if (task.currency === "" || task.currency === "UZS") continue;
+      const matched = await matchPayees(bankDeps, task.prepared);
+      task.prepared = matched.statement;
+      beneficiaries.found += matched.found;
+      beneficiaries.unknown.push(...matched.unknown);
+      beneficiaries.ambiguous.push(...matched.ambiguous);
+    }
     // Money moved between the company's own accounts: a pair of documents copied from the company's own earlier ones.
+    const organization = this.deps.store.organizationRef(chat.companyId);
+    const posting = {
+      companyRules: this.deps.store.postingRules(chat.companyId),
+      chart: await this.chartCodes(chat),
+    };
     const moved = await resolveTransfers(
       plan.transfers,
       statements,
-      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done },
+      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
       bankDeps,
     );
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
     const notEntered = {
       ...notEnteredOf(plan, chosen, moved),
+      ...(beneficiaries.found + beneficiaries.unknown.length + beneficiaries.ambiguous.length > 0
+        ? {
+            foreignBeneficiaries: {
+              inOneC: beneficiaries.found,
+              notInOneC: [...new Set(beneficiaries.unknown)],
+              severalInOneC: beneficiaries.ambiguous,
+              note: "SWIFT payments are written to the beneficiary and the contract named in the bank's text, not to the bank's own ledger line",
+            },
+          }
+        : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
     };
     if (tasks.length === 0 && moved.ready.length === 0) {
@@ -3623,11 +3650,8 @@ export class AssistantService {
             currency: task.currency,
             // A document with no earlier one to copy is made from 1C's own description: the organization, the company's
             // account rules and its chart are what it needs.
-            organization: this.deps.store.organizationRef(chat.companyId),
-            posting: {
-              companyRules: this.deps.store.postingRules(chat.companyId),
-              chart: await this.chartCodes(chat),
-            },
+            organization,
+            posting,
             ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
             overrides: {
               ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),

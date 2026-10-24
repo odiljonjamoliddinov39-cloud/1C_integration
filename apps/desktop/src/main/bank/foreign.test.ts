@@ -279,7 +279,8 @@ describe("the first payment in a currency, when the counterparty has only paymen
     const out = await resolvePayments(statement([payment()]), { currency: "USD" }, d);
     expect(out.ready[0]?.change.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
       СуммаПлатежа: 1200,
-      КурсВзаиморасчетов: 1,
+      // The contract is in dollars: its rate is the dollar's of the day, and the settlement is the payment.
+      КурсВзаиморасчетов: 12_700.5,
       СуммаВзаиморасчетов: 1200,
     });
   });
@@ -292,6 +293,6 @@ describe("the first payment in a currency, when the counterparty has only paymen
     const third = deps(undefined, { ...onlySoums, contractIn: "EUR" });
     const b = await resolvePayments(statement([payment()]), { currency: "USD" }, third.d);
     expect(b.ready).toEqual([]);
-    expect(b.problems[0]?.message).toContain("must be in USD");
+    expect(b.problems[0]?.message).toContain("EUR");
   });
 });

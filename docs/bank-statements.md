@@ -259,3 +259,62 @@ close the balances would only hide a wrong rate. What the app does (`revaluation
   should be, against what 1C carries: the adjustment, the side (gain on 9540, loss on 9620) and the entry.
 - It says which months need the operation and the amounts it must give; the accountant runs 1C's revaluation for those
   months, and the same call afterwards must find no differences. It needs the rates loaded first.
+
+## A cleared base: what the real run showed, and what the program does now (v2)
+
+A real run on a base whose bank documents had been deleted (8 statements: the main account, a block account, two transit
+accounts for fees, a dollar and a ruble account) failed for reasons that were all in how the program read 1C, not in the
+accountant's data:
+
+- **The company's bank account has another name in the Uzbek configuration** («СчетОрганизации», not «БанковскийСчет»), so
+  every document was written with no bank account. The names of the roles are now read from the document itself
+  (`bank/roles.ts`: a copied document's own fields, or 1C's description of the object, by type), never assumed.
+- **Documents did not post** ("debit account not filled" on 172 payments, "credit account" on 37). The breakdown row had no
+  «Погашение задолженности» and no «Счет авансов»: with the way empty 1C books the whole payment to the account of
+  advances, finds it empty, and refuses. Every payment document the program makes is now completed
+  (`bank/complete.ts`): the way «Автоматически», the account of advances and the settlement account from the account
+  rules, found among the columns by name and by the title the form shows, and a currency account for a contract in a currency.
+- **Payments to foreign suppliers went to the bank's own ledger line.** In a currency account's statement the bank writes a
+  SWIFT payment to «К получению с Головного Офиса - Долларов США». The supplier, the contract and the advance are in the text
+  (`BC: /acct NAME … PD: PREPAYMENT PER CONTRACT GR-TI-01 D.D. 30.01.2024`, or the bank's own message with the beneficiary
+  after the orderer's address). `bank/swift.ts` reads them (the bank wraps and cuts the text: a name is compared by its letters
+  and its beginning, a contract number is read with its spaces removed); `bank/foreign-payees.ts` finds the beneficiary in
+  1C by its first word and writes the payment with 1C's own spelling; a return of an international transfer names the day
+  and amount of the payment it returns, so it takes that payment's beneficiary and contract. All 33 dollar payments and the
+  ruble one of the real statements are read this way.
+- **A contract the purpose names and 1C lacks** is made from 1C's description of the directory (`bank/contract.ts`: the owner,
+  number, date, kind by the direction of the money, the currency of the payment), on a card, and the payment waits for it.
+- **A payment's settlement is worked out, not copied**: the contract's currency is read from the contract; the settlement amount
+  is the payment × the document's rate ÷ the contract's rate, and the row carries the contract's rate (1 for a soum contract),
+  the document's own rate is in its header («КурсДокумента»). A contract in dollars is posted to an account that can hold a
+  currency (the chart's own flag «Валютный», found by `currencyAccount`).
+- **Fees, transfers between own accounts and the legs of a conversion are made from the description too** when the base has no
+  earlier document to copy (`bank/build.ts`): a fee is «Прочее списание» to the expense account of bank services; a transfer is
+  «Перевод на другой счёт» / «Перевод с другого счёта» through the transit account (5710), each side naming the other account.
+
+### Currency conversion, by the technical design (transit account, two linked legs)
+
+A purchase or a sale of currency is **one conversion of two linked legs** and never a move of money between two bank accounts
+that nobody sees (`bank/conversion.ts`, `bank/transfer.ts`):
+
+- The bank writes both legs with the same words («Конвертация валютных средств 4165.0 'Доллар США' по курсу 12484.0»), so the
+  legs are paired by them: the currency, the amount in it, the rate, the day. Purchase: the soum account pays, the currency
+  account takes in; sale: the other way. A leg whose partner is not in the attached statements is left to the accountant.
+  On the real statements 37 conversions (35 dollar, 2 ruble) are paired and none is left alone.
+- The money passes through the **conversion (transit) account of the direction**: 5730 for a purchase, 5740 for a sale (the
+  design's worked example sells dollars through 5740); both are read from the company's chart, and when the chart lacks one the
+  conversion stops and says so: it is never booked anywhere else.
+- **Leg 1 first** (the paying document, at 10:00:00), **leg 2 a second later**, so that the account never runs negative. Both carry
+  the conversion's id in their comment, the bank as the counterparty, and the bank's contract of kind «Прочее» in the leg's own
+  currency (one per currency: the design's setup rule); if 1C lacks the bank or the contract the answer says exactly which.
+- The currency leg is at the **official rate** of the day (1C's rate register, loaded from the Central Bank), the soum leg is what
+  was really paid: the gap is the bank's own rate, which 1C books to its own account (9690 in the design), apart from the
+  revaluation of the currency balance (9540 gain / 9620 loss, done by the month-end revaluation, see `revaluation_check`). The
+  earlier approach, booking the currency leg at the bank's rate so that the transit account closed, hid that gap and is gone.
+- Every conversion comes back with a line: the id, the direction, the amount and the bank's rate, the two linked documents, the
+  conversion account, and "the account must close to zero". The design's remaining controls (confirmation limits, duplicates,
+  payments to government bodies only to counterparties marked as such) belong to the card and are not part of this change.
+
+What the program still does not do (said by the answers, never guessed): tax payments with no earlier payment of the same tax
+(`«Уплата налога»`: the tax, its period and the tax office are the company's own), salary and loan rows, payments to individuals
+through the bank's transit account, and the GTD (customs import) part of the design.

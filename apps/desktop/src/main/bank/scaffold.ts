@@ -14,14 +14,16 @@
 import { type QueryOutcome, lookup, refOf, textOf } from "../didox/resolve.js";
 import { type Context, type OperationType, choosePosting } from "../engine/posting-rules.js";
 import type { BankCache, BankDeps, Template, Who } from "./resolve.js";
+import { currencyFromText } from "./policy.js";
+import { THEIR_ACCOUNT_NAMES, ownAccountOf } from "./roles.js";
 import type { BankPayment } from "./statement.js";
 
-type Field = { name: string; types: string[] };
-interface Described {
+export type Field = { name: string; types: string[]; synonym?: string };
+export interface Described {
   attributes: Field[];
   tabularSections: { name: string; attributes: Field[] }[];
 }
-interface EnumValue {
+export interface EnumValue {
   type: string;
   /** The value's name, which is what a change writes. */
   ref: string;
@@ -32,6 +34,8 @@ interface ContractRow {
   ref: string;
   number: string;
   date: string;
+  /** The currency the contract is settled in, in letters ("" when 1C did not say). */
+  currency: string;
   /** "buyer", "supplier" or "other". */
   kind: "buyer" | "supplier" | "other";
 }
@@ -41,6 +45,8 @@ export interface ScaffoldCache {
   enums: Map<string, EnumValue[] | null>;
   accounts: Map<string, string | null>;
   contracts: Map<string, ContractRow[] | null>;
+  /** Accounts that can hold settlements in a currency, by the code the rules name (see `currencyAccount`). */
+  currencyAccounts: Map<string, { ref: string; code: string } | { ref: null; message: string }>;
   soum?: string | null;
 }
 
@@ -54,10 +60,14 @@ export interface ScaffoldInput {
   posting?: Context;
   /** The contract the purpose names, when it has already been found. */
   contract?: string | null;
+  /** The account's currency in letters ("" or "UZS": soums) and its item in 1C's catalog, for an account in a currency. */
+  currency?: string;
+  currencyRef?: string | null;
 }
 
 export type Scaffolded =
-  { ok: true; template: Template; contract: string | null; notes: string[] } | { ok: false; message: string };
+  | { ok: true; template: Template; contract: string | null; contractCurrency: string; notes: string[] }
+  | { ok: false; message: string };
 
 /** Payments whose operation and accounts are the company's own choice, not a supplier's or a buyer's payment. */
 const NOT_PLAIN =
@@ -67,7 +77,7 @@ const rounded = (n: number) => Math.round(n * 1e12) / 1e12;
 
 const attributeNames = (d: Described) => new Set(d.attributes.map((a) => a.name));
 
-async function describeCached(
+export async function describeCached(
   deps: BankDeps,
   cache: ScaffoldCache,
   object: string,
@@ -84,7 +94,7 @@ async function describeCached(
 }
 
 /** The values of an enumeration, as 1C writes them: the name to write, and the presentation a person reads. */
-async function enumValues(
+export async function enumValues(
   deps: BankDeps,
   cache: ScaffoldCache,
   enumeration: string,
@@ -108,11 +118,11 @@ async function enumValues(
 const squash = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
 
 /** The enumeration value whose name or presentation contains one of the phrases. */
-const valueLike = (values: EnumValue[], phrases: string[]) =>
+export const valueLike = (values: EnumValue[], phrases: string[]) =>
   values.find((v) => phrases.some((p) => squash(`${v.name} ${v.ref}`).includes(squash(p))));
 
 /** The refs of ledger accounts by their codes (one read), null for a code the chart does not have. */
-async function accountRefs(
+export async function accountRefs(
   deps: BankDeps,
   cache: ScaffoldCache,
   codes: string[],
@@ -134,13 +144,69 @@ async function accountRefs(
   return new Map(codes.map((c) => [c, cache.accounts.get(c) ?? null]));
 }
 
+/**
+ * An account of the chart that can hold settlements in a currency, for the code a rule names. 1C refuses a currency
+ * contract on an account that is not a currency one ("the account is not meant for settlements in a currency"), so the
+ * account is checked for the chart's own flag; when the named one is not, the currency one of the same group is used if
+ * there is exactly one, else the answer says which there are.
+ */
+export async function currencyAccount(
+  deps: BankDeps,
+  cache: ScaffoldCache,
+  code: string,
+): Promise<{ ref: string; code: string } | { ref: null; message: string }> {
+  const known = cache.currencyAccounts.get(code);
+  if (known) return known;
+  const answer = async (): Promise<{ ref: string; code: string } | { ref: null; message: string }> => {
+    const rows = await lookup(
+      deps,
+      (ph) =>
+        `ВЫБРАТЬ Т.Код КАК Код, Т.Ссылка КАК Ссылка, Т.Валютный КАК Валютный ИЗ ПланСчетов.Хозрасчетный КАК Т ГДЕ Т.Код В (${ph})`,
+      [code],
+    );
+    const first = rows?.[0]?.cells;
+    const ref = first ? refOf(first[1]) : null;
+    // The chart could not be asked about the flag: the account is taken as it is, and the card shows 1C's own opinion.
+    if (rows === null) {
+      const plain = (await accountRefs(deps, cache, [code])).get(code) ?? null;
+      return plain
+        ? { ref: plain, code }
+        : { ref: null, message: `the company's chart has no account ${code}` };
+    }
+    if (!first || !ref) return { ref: null, message: `the company's chart has no account ${code}` };
+    if (first[2] === true) return { ref, code };
+    const group = await deps.query({
+      query:
+        "ВЫБРАТЬ Т.Код КАК Код, Т.Ссылка КАК Ссылка ИЗ ПланСчетов.Хозрасчетный КАК Т ГДЕ Т.Код ПОДОБНО &Группа И Т.Валютный УПОРЯДОЧИТЬ ПО Т.Код",
+      params: { Группа: `${code.slice(0, 2)}%` },
+      limit: 20,
+      refs: true,
+    });
+    const options = group.ok
+      ? ((group.data as { rows?: unknown[][] }).rows ?? []).flatMap((cells) => {
+          const r = refOf(cells[1]);
+          return r ? [{ ref: r, code: String(cells[0] ?? "") }] : [];
+        })
+      : [];
+    const [only] = options;
+    if (options.length === 1 && only) return only;
+    return {
+      ref: null,
+      message: `account ${code} is not meant for settlements in a currency, and ${options.length === 0 ? "the chart has no currency account of its group" : `the chart has several currency accounts of its group (${options.map((o) => o.code).join(", ")})`}: the accountant says which`,
+    };
+  };
+  const result = await answer();
+  cache.currencyAccounts.set(code, result);
+  return result;
+}
+
 async function contractsOf(deps: BankDeps, cache: ScaffoldCache, who: Who): Promise<ContractRow[] | null> {
   const key = who.key;
   if (cache.contracts.has(key)) return cache.contracts.get(key) ?? null;
   const rows = await lookup(
     deps,
     (ph) =>
-      `ВЫБРАТЬ Т.Владелец.${who.field} КАК Ключ, Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.ВидДоговора КАК Вид ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ Т.Владелец.${who.field} В (${ph}) И НЕ Т.ПометкаУдаления`,
+      `ВЫБРАТЬ Т.Владелец.${who.field} КАК Ключ, Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.ВидДоговора КАК Вид, Т.ВалютаВзаиморасчетов.Код КАК Валюта ИЗ Справочник.ДоговорыКонтрагентов КАК Т ГДЕ Т.Владелец.${who.field} В (${ph}) И НЕ Т.ПометкаУдаления`,
     [who.value],
   );
   const list: ContractRow[] | null = rows
@@ -153,6 +219,7 @@ async function contractsOf(deps: BankDeps, cache: ScaffoldCache, who: Who): Prom
             ref,
             number: String(cells[2] ?? ""),
             date: String(cells[3] ?? "").slice(0, 10),
+            currency: currencyFromText(String(cells[5] ?? "")),
             kind:
               kind.includes("спокупател") || kind.includes("покупател")
                 ? ("buyer" as const)
@@ -177,7 +244,7 @@ export function vatRateIn(purpose: string): number | null {
   return found ? Number((found[1] ?? "0").replace(",", ".")) : null;
 }
 
-const OPERATIONS = {
+export const OPERATIONS = {
   buyerPays: {
     phrases: ["оплата покупателя", "оплатапокупателя"],
     money: "payment_from_buyer",
@@ -199,7 +266,7 @@ const OPERATIONS = {
     advance: "advance_to_supplier",
   },
 } as const;
-type Operation = keyof typeof OPERATIONS;
+export type Operation = keyof typeof OPERATIONS;
 
 const operationOf = (direction: "in" | "out", kind: ContractRow["kind"]): Operation | null =>
   kind === "buyer"
@@ -228,7 +295,13 @@ function pickContract(
 }
 
 export function newScaffoldCache(): ScaffoldCache {
-  return { described: new Map(), enums: new Map(), accounts: new Map(), contracts: new Map() };
+  return {
+    described: new Map(),
+    enums: new Map(),
+    accounts: new Map(),
+    contracts: new Map(),
+    currencyAccounts: new Map(),
+  };
 }
 
 export async function scaffoldTemplate(
@@ -308,8 +381,21 @@ export async function scaffoldTemplate(
     operation === "buyerPays" || operation === "buyerRefund" ? advance.credit : advance.debit;
   const codes = [settlementCode, advanceCode].filter((c): c is string => Boolean(c));
   const refs = await accountRefs(deps, sc, codes);
-  const account = (code: string | undefined) =>
-    code && refs.get(code) ? { type: "ПланСчетов.Хозрасчетный", ref: refs.get(code) as string } : null;
+  // A contract in a currency needs accounts that can hold settlements in it; 1C refuses the soum ones.
+  const inCurrency = chosen.currency !== "" && chosen.currency !== "UZS";
+  const currencyOnes = new Map<string, { ref: string; code: string }>();
+  if (inCurrency) {
+    for (const code of codes) {
+      const found = await currencyAccount(deps, sc, code);
+      if ("message" in found) notes.push(`${found.message}: that column is left for 1C to fill; check it`);
+      else currencyOnes.set(code, found);
+    }
+  }
+  const account = (code: string | undefined) => {
+    if (!code) return null;
+    const ref = inCurrency ? currencyOnes.get(code)?.ref : refs.get(code);
+    return ref ? { type: "ПланСчетов.Хозрасчетный", ref } : null;
+  };
   const settlement = columns.has("СчетРасчетов")
     ? "СчетРасчетов"
     : [...columns].find((c) => /^СчетУчетаРасчетов/.test(c));
@@ -320,7 +406,7 @@ export async function scaffoldTemplate(
     ["settlement", settlementCode, settlement],
     ["advance", advanceCode, advances],
   ] as const) {
-    if (column && !account(code))
+    if (column && !inCurrency && !account(code))
       notes.push(
         `the ${label} account ${code ?? "(none)"} is not in the company's chart: that column is left for 1C to fill; check it`,
       );
@@ -363,23 +449,33 @@ export async function scaffoldTemplate(
   };
   put("ВидОперации", kindValue);
   put("СуммаДокумента", 1);
+  const ownKey = ownAccountOf(described.attributes);
   for (const name of [
     "НазначениеПлатежа",
     "НомерВходящегоДокумента",
     "ДатаВходящегоДокумента",
-    "БанковскийСчет",
+    ...(ownKey ? [ownKey] : []),
     "Контрагент",
-    "СчетКонтрагента",
+    ...THEIR_ACCOUNT_NAMES,
   ])
     put(name, null);
   put("ДоговорКонтрагента", null);
   if (have.has("Организация") && input.organization)
     fields["Организация"] = { type: "Справочник.Организации", ref: input.organization };
+  const foreign = input.currency !== undefined && input.currency !== "" && input.currency !== "UZS";
   if (have.has("ВалютаДокумента")) {
-    sc.soum ??= await soumRef(deps);
-    if (sc.soum) fields["ВалютаДокумента"] = { type: "Справочник.Валюты", ref: sc.soum };
-    else notes.push("the soum is not in 1C's currencies: the document's currency is left for 1C to fill");
-  }
+    if (foreign) {
+      if (!input.currencyRef) return refuse(`1C has no currency ${input.currency} in its catalog`);
+      fields["ВалютаДокумента"] = { type: "Справочник.Валюты", ref: input.currencyRef };
+    } else {
+      sc.soum ??= await soumRef(deps);
+      if (sc.soum) fields["ВалютаДокумента"] = { type: "Справочник.Валюты", ref: sc.soum };
+      else notes.push("the soum is not in 1C's currencies: the document's currency is left for 1C to fill");
+    }
+  } else if (foreign) return refuse(`${object} has no currency of the document`);
+  // The rate of the document's currency: the copy puts the day's rate in.
+  put("КурсДокумента", 1);
+  put("КратностьДокумента", 1);
   if (!("Контрагент" in fields)) return refuse(`${object} has no Контрагент`);
 
   // One row, as the company's own payments have: sums of 1 that the copy scales to the payment's amount.
@@ -410,12 +506,13 @@ export async function scaffoldTemplate(
       synthetic: true,
     },
     contract: chosen.ref,
+    contractCurrency: chosen.currency || "UZS",
     notes,
   };
 }
 
 /** The soum item of the currencies catalog, whichever code the base keeps it under. */
-async function soumRef(deps: BankDeps): Promise<string | null> {
+export async function soumRef(deps: BankDeps): Promise<string | null> {
   for (const code of ["860", "UZS", "000", "сўм", "сум"]) {
     const outcome = await deps.query({
       query: "ВЫБРАТЬ ПЕРВЫЕ 1 Т.Ссылка КАК Ссылка ИЗ Справочник.Валюты КАК Т ГДЕ Т.Код = &Код",

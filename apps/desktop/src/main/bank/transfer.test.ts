@@ -267,7 +267,7 @@ describe("money moved between the company's own accounts", () => {
   it("says why when it cannot: no earlier document, an account 1C lacks", async () => {
     const none = await run([move()], { kinds: false });
     expect(none.ready).toEqual([]);
-    expect(none.problems[0]?.message).toContain("1C has no posted");
+    expect(none.problems[0]?.message).toContain("cannot be made from 1C's own description");
     const missing = await run([move()], { accounts: [[A, REF_A]] });
     expect(missing.problems[0]?.message).toContain(`the other account ${B}`);
     expect(missing.ready).toEqual([]);
