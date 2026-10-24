@@ -325,3 +325,20 @@ Rates are written to the currency's own item in 1C's catalog. On a cleared base 
 none, and the rate card failed with "В справочнике Валюты нет валюты с кодом 643 / RUB". The card now makes the item first
 (`currency/items.ts`: the numeric code the loader looks it up by, the short and full names, the spelling of the amount in
 words) and then writes the rates, as two lines of the same card.
+
+## Bank fees are not tax payments; the company's own account is the organization's
+
+A fee names VAT as a part of its sum ("…Тариф-1 000,00 UZS.в том числе НДС", "комиссия … без НДС"), and a supplier's payment
+often says "в т.ч. НДС 12%". That is VAT a price contains, not a payment of VAT, so such a row is never a tax payment: the
+bank's fees (iBank, «Тариф», «за документ №…», SWIFT, «Комиссия инобанка», conversion commission, passive-account service)
+go the fee way (with no counterparty, to the expense account of the company's rules), and a tax payment is a payment to the
+treasury or the tax office (or one whose purpose names the tax outside such a clause). On the real statements 202 of 257 rows
+the tax check took were fees.
+
+A bank account's number is looked up among the accounts the **organization** owns: a company is often a counterparty of itself
+too, with its own accounts written there, and one number is then in the catalog twice. When it still is not one account, the
+answer names the owners ("2 bank accounts of the company have the number … (owners …)", "the account … is in 1C only under
+another owner: …") instead of "not found".
+
+The bank's contract of kind «Прочее» per currency (the conversion method's rule) is made on a card when 1C lacks it, dated the
+first conversion's day, and the conversion's legs are entered after it.

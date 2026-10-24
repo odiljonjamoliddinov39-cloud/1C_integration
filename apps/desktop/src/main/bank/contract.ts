@@ -19,6 +19,8 @@ export interface ContractInput {
   currency: string;
   currencyRef: string | null;
   organization: string | null;
+  /** The kind of contract: "other" is «Прочее» (a contract with a bank for a conversion); by default it follows the direction. */
+  kind?: "other";
 }
 
 const OBJECT = "Справочник.ДоговорыКонтрагентов";
@@ -51,7 +53,11 @@ export async function contractFromDescription(
     const kind = values
       ? valueLike(
           values,
-          input.direction === "out" ? ["с поставщиком", "споставщиком"] : ["с покупателем", "спокупателем"],
+          input.kind === "other"
+            ? ["прочее"]
+            : input.direction === "out"
+              ? ["с поставщиком", "споставщиком"]
+              : ["с покупателем", "спокупателем"],
         )
       : undefined;
     if (!kind) return { ok: false, message: "the kinds of contract could not be read from 1C" };
@@ -68,6 +74,6 @@ export async function contractFromDescription(
   return {
     ok: true,
     change: { action: "create", object: OBJECT, fields },
-    note: `contract ${name} made from 1C's description of the directory: ${input.direction === "out" ? "with a supplier" : "with a buyer"}, settled in ${input.currency}, no expiry date; check it`,
+    note: `contract ${name} made from 1C's description of the directory: ${input.kind === "other" ? "of kind «Прочее»" : input.direction === "out" ? "with a supplier" : "with a buyer"}, settled in ${input.currency}, no expiry date; check it`,
   };
 }

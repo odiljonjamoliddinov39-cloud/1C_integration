@@ -65,10 +65,22 @@ const KINDS: { kind: TaxKind; purpose: RegExp; name: RegExp }[] = [
   },
 ];
 
+/**
+ * The VAT a price or a fee already contains is not a payment of VAT: "…Тариф-1 000,00 UZS.в том числе НДС",
+ * "…курс 12869, без НДС", "сумма с НДС 12%", "QQS bilan". A purpose is read without such clauses.
+ */
+export function withoutVatClause(purpose: string): string {
+  return purpose.replace(
+    /(?<!\p{L})(?:в\s+том\s+числе|в\s+т\.?\s?ч\.?|включая|вкл\.?|без|с\s+учетом|с\s+учётом|с|jumladan|shu\s+jumladan|bilan|qo['‘’ʻ`]shgan\s+holda)\s+(?:ндс|qqs)(?:\s*\d+(?:[.,]\d+)?\s*%)?|(?<!\p{L})(?:ндс|qqs)\s+(?:включен\p{L}*|bilan|qqsiz)/giu,
+    " ",
+  );
+}
+
 /** Which tax a payment is for, by its purpose; null when it names none (the model decides). */
 export function taxKindOf(purpose: string): TaxKind | null {
+  const text = withoutVatClause(purpose);
   // Order matters: "налог на доходы физических лиц" is ндфл before the general word "налог".
-  const found = KINDS.filter((k) => k.purpose.test(purpose));
+  const found = KINDS.filter((k) => k.purpose.test(text));
   // A purpose that names two ("НДФЛ и социальный налог") is not one tax: it is left to the model.
   return found.length === 1 ? (found[0]?.kind ?? null) : null;
 }

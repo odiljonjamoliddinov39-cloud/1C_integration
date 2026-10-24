@@ -43,6 +43,17 @@ const DESCRIBE: Record<string, unknown> = {
     }),
     tabularSections: [],
   },
+  "Справочник.ДоговорыКонтрагентов": {
+    attributes: attrs({
+      Владелец: ["Справочник.Контрагенты"],
+      Номер: [],
+      Дата: [],
+      ВидДоговора: ["Перечисление.ВидыДоговоровКонтрагентов"],
+      ВалютаВзаиморасчетов: ["Справочник.Валюты"],
+      Организация: ["Справочник.Организации"],
+    }),
+    tabularSections: [],
+  },
   "Документ.ПоступлениеНаРасчетныйСчет": {
     attributes: attrs({
       Организация: ["Справочник.Организации"],
@@ -112,6 +123,11 @@ function deps(world: World = {}): BankDeps {
             "2024-01-01T00:00:00",
           ]),
         );
+      if (q.includes("Перечисление.ВидыДоговоровКонтрагентов"))
+        return rows([
+          [value("ВидыДоговоровКонтрагентов", "СПоставщиком", "С поставщиком")],
+          [value("ВидыДоговоровКонтрагентов", "Прочее", "Прочее")],
+        ]);
       if (q.includes("Перечисление.ВидыОперацийСписаниеДенежныхСредств"))
         return rows([[value("ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")]]);
       if (q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств"))
@@ -233,6 +249,15 @@ describe("a currency purchase, entered by the program with no earlier document t
     // the soum leg can be made, the dollar leg cannot
     expect(noContract.ready.map((r) => r.side)).toEqual(["out"]);
     expect(noContract.problems[0]?.message).toContain("has no contract of kind «Прочее» in USD");
+    // the contract is offered, made from 1C's description of the directory, dated the conversion's first day
+    expect(noContract.contractsToCreate).toHaveLength(1);
+    expect(noContract.contractsToCreate[0]?.label).toBe("KAPITALBANK · «Прочее» USD");
+    expect(noContract.contractsToCreate[0]?.change.fields).toMatchObject({
+      Владелец: { ref: BANK },
+      Номер: "FX-USD",
+      Дата: "2024-01-25",
+      ВидДоговора: "Прочее",
+    });
 
     const noRate = await run({ rate: null });
     expect(noRate.ready.map((r) => r.side)).toEqual(["out"]);

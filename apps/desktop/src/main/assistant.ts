@@ -3627,12 +3627,14 @@ export class AssistantService {
       companyRules: this.deps.store.postingRules(chat.companyId),
       chart: await this.chartCodes(chat),
     };
-    const moved = await resolveTransfers(
-      plan.transfers,
-      statements,
-      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
-      bankDeps,
-    );
+    const moveOwn = () =>
+      resolveTransfers(
+        plan.transfers,
+        statements,
+        { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
+        bankDeps,
+      );
+    let moved = await moveOwn();
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
     const notEntered = {
       ...notEnteredOf(plan, chosen, moved),
@@ -3648,7 +3650,7 @@ export class AssistantService {
         : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
     };
-    if (tasks.length === 0 && moved.ready.length === 0) {
+    if (tasks.length === 0 && moved.ready.length === 0 && moved.contractsToCreate.length === 0) {
       return {
         ok: true,
         data: {
@@ -3674,6 +3676,8 @@ export class AssistantService {
     // A counterparty the statements name and 1C lacks is created first (one card), then its contract (one card),
     // then the payments: each round is looked up again, with no step of the model between.
     for (let round = 0; ; round++) {
+      // What a round made (the bank's contract of a conversion) is looked up again by the transfers too.
+      if (round > 0) moved = await moveOwn();
       results = [];
       for (const task of tasks) {
         const counterparties = mine(task.statement, input.counterparties)?.map(({ row, ref }) => ({
@@ -3748,7 +3752,12 @@ export class AssistantService {
         continue;
       }
       const pending = [
-        ...new Map(results.flatMap((r) => r.resolved.contractsToCreate).map((c) => [c.label, c])).values(),
+        ...new Map(
+          [...results.flatMap((r) => r.resolved.contractsToCreate), ...moved.contractsToCreate].map((c) => [
+            c.label,
+            c,
+          ]),
+        ).values(),
       ];
       if (pending.length > 0) {
         const made = await this.proposeBatch(

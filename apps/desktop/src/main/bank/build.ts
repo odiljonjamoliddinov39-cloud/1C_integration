@@ -152,7 +152,12 @@ function otherAccountAttribute(described: Described, own: string | null): string
   ]) {
     if (accounts.some((a) => a.name === name)) return name;
   }
-  return accounts.length === 1 ? (accounts[0]?.name ?? null) : null;
+  if (accounts.length === 1) return accounts[0]?.name ?? null;
+  // Several bank-account attributes (the counterparty's account is one of them): the one named for the other side of a transfer.
+  const named = accounts.filter((a) =>
+    /Получател|Отправител|Корреспонд|Другого|Другой|Перевод/iu.test(a.name),
+  );
+  return named.length === 1 ? (named[0]?.name ?? null) : null;
 }
 
 export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: BuildSpec): Promise<Built> {

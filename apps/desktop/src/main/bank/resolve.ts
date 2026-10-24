@@ -21,7 +21,8 @@ import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
 import { foreignContract } from "./swift.js";
 import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
-import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
+import { ACCOUNT_OWNER_COLUMNS, candidateOf, pickAccount } from "./accounts.js";
+import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor, withoutVatClause } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
 export interface BankDeps extends ResolverDeps {
@@ -145,6 +146,10 @@ export const BANK_FEE_NAME = "Bank fee";
 
 /** What the bank writes in a payment for its own fees: not a counterparty to look up or create by name. */
 const BANK_FEE = /комисси|commission|komissiya/i;
+
+/** What the bank writes in a fee's purpose: a commission, a tariff, a charge "за документ №…", a service charge, iBank. */
+const BANK_FEE_PURPOSE =
+  /комисси|commission|komissiya|(?<!\p{L})тариф|tariff|за\s+документ\s+№|обслуживани\p{L}*\s+(?:пассивн|счет|счёт)|ibank|swift/iu;
 
 /** How a payment's counterparty is looked up in 1C: by INN, or by name when the bank wrote no INN (zeros). */
 export interface Who {
@@ -348,10 +353,13 @@ const normalNumber = (n: string) =>
 export function isTaxPayment(payment: BankPayment): boolean {
   if (payment.direction !== "out") return false;
   const who =
-    /(?<!\p{L})(гнк|гни|дск|dsq|gnk)(?!\p{L})|moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
+    /(?<!\p{L})(гнк|гни|дск|дси|dsq|dsi|gnk)(?!\p{L})|moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
   const what =
     /(?<!\p{L})(солиқ\p{L}*|soliq\p{L}*|налог\p{L}*|инпс|inps|ндфл|жшдс|jshds|ндс|qqs|акциз\p{L}*|aksiz\p{L}*)(?!\p{L})/iu;
-  return who.test(payment.counterparty) || what.test(payment.purpose);
+  if (who.test(payment.counterparty)) return true;
+  // The bank's own fee names VAT too ("…Тариф-1 000,00 UZS.в том числе НДС", "комиссия … без НДС"): it is not a tax payment.
+  if (payment.counterparty === BANK_FEE_NAME || BANK_FEE_PURPOSE.test(payment.purpose)) return false;
+  return what.test(withoutVatClause(payment.purpose));
 }
 
 export interface CopyContext {
@@ -700,21 +708,19 @@ export async function resolvePayments(
     const rows = await lookup(
       deps,
       (ph) =>
-        `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
+        `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование, ${ACCOUNT_OWNER_COLUMNS} ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
       [statement.account],
     );
     const found = (rows ?? []).flatMap(({ cells }) => {
       const ref = refOf(cells[0]);
-      return ref ? [ref] : [];
+      return ref ? [candidateOf(ref, cells, 2)] : [];
     });
-    const [only] = found;
-    if (found.length === 1 && only) ownAccount = only;
+    const picked = pickAccount(statement.account, found, options.companyInn);
+    if (picked.ok) ownAccount = picked.ref;
     else if (rows) {
       addNote(
         payments.map((p) => p.row),
-        found.length === 0
-          ? `no bank account ${statement.account} in 1C: each document keeps the account of the payment it was copied from`
-          : `${found.length} bank accounts have the number ${statement.account}: each document keeps the account of the payment it was copied from`,
+        `${picked.why}: each document keeps the account of the payment it was copied from`,
       );
     }
   }

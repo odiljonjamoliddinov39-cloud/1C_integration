@@ -89,3 +89,19 @@ describe("found by the simulations", () => {
     expect(taxKindOf("ЕСП и налог на имущество")).toBeNull();
   });
 });
+
+describe("VAT named as part of a sum", () => {
+  it.each([
+    'Тариф-ТАРИФ "CORPORATE"-1 000,00 UZS.в том числе НДС',
+    "Комиссия 112500.00 UZS, курс 12869, без НДС.",
+    "по договору, в т.ч. НДС 12%",
+    "To'lov QQS bilan",
+  ])("is not a payment of VAT: %s", (purpose) => {
+    expect(taxKindOf(purpose)).toBeNull();
+  });
+
+  it("is still VAT when the purpose says VAT is paid", () => {
+    expect(taxKindOf("Задолженность по Налог на добавленную стоимость")).toBe("vat");
+    expect(taxKindOf("Оплата НДС за март 2024")).toBe("vat");
+  });
+});

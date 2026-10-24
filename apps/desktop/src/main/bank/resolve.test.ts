@@ -548,6 +548,28 @@ describe("bank payments for 1C", () => {
     });
     expect([treasury, tax, supplier].map(isTaxPayment)).toEqual([true, true, false]);
     expect(isTaxPayment(payment({ direction: "in", purpose: "налог" }))).toBe(false);
+    // The bank's fee and a price name VAT as part of their sum: that is not a payment of VAT.
+    for (const purpose of [
+      'За документ №48 S=100 000,00 Тариф-ТАРИФ "CORPORATE"-1 000,00 UZS.в том числе НДС',
+      "Комиссия 112500.00 UZS за продажу 102952000.00UZS в 8000.00USD в соотв. к тарифам, курс 12869, без НДС.",
+      "Оплата по договору 5 от 01.02.2024, в т.ч. НДС 12%",
+      "To'lov shartnoma bo'yicha, QQS bilan",
+    ]) {
+      expect(
+        isTaxPayment(payment({ row: 9, direction: "out", counterparty: "TEXMASH IMPORT MCHJ", purpose })),
+      ).toBe(false);
+    }
+    // A payment to the tax office or the treasury stays one, and so does one that names the tax on its own.
+    expect(
+      isTaxPayment(
+        payment({ direction: "out", counterparty: "Kogon numan DSI", purpose: "Оплата за 101 Отчисление" }),
+      ),
+    ).toBe(true);
+    expect(
+      isTaxPayment(
+        payment({ direction: "out", counterparty: "ООО Ромашка", purpose: "Оплата НДС за март 2024" }),
+      ),
+    ).toBe(true);
 
     const { d } = deps({
       docs: [
