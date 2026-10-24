@@ -4307,6 +4307,11 @@ describe("exchange rates", () => {
         truncated: false,
       }),
     });
+    // The currency is in 1C's catalog (the loader looks the item up before it writes a rate to it).
+    t.base.queryAnswers.unshift({
+      match: /Справочник\.Валюты КАК Т ГДЕ Т\.Код В/,
+      answer: () => ({ columns: ["Ссылка"], rows: [["ref"]], truncated: false }),
+    });
     t.store.setAiEnabled(t.company.id, true);
     const sending = t.assistant.send({ companyId: t.company.id, text: "Valyuta bilan yordam ber" });
     const timer = setInterval(() => {
@@ -4320,6 +4325,38 @@ describe("exchange rates", () => {
     clearInterval(timer);
     return t;
   }
+
+  it("makes the currency's item first, on the same card, when the base has none (a cleared base)", async () => {
+    const t = setup(call, "active", undefined, undefined, undefined, false, { fetch: cbu });
+    t.base.queryAnswers.unshift({
+      match: /КурсыВалют/,
+      answer: () => ({ columns: [], rows: [], truncated: false }),
+    });
+    // no item with the code 840 or the letters USD
+    t.base.queryAnswers.unshift({
+      match: /Справочник\.Валюты КАК Т ГДЕ Т\.Код В/,
+      answer: () => ({ columns: ["Ссылка"], rows: [], truncated: false }),
+    });
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({ companyId: t.company.id, text: "Valyuta bilan yordam ber" });
+    const timer = setInterval(() => {
+      const card = t.events.find((e) => e.type === "confirm");
+      if (card?.type === "confirm") {
+        clearInterval(timer);
+        t.assistant.decide(card.companyId, card.id, true);
+      }
+    }, 1);
+    await sending;
+    clearInterval(timer);
+    const card = t.events.find((e) => e.type === "confirm");
+    expect(card).toMatchObject({
+      proposal: {
+        kind: "batch",
+        items: [{ object: "Справочник.Валюты" }, { object: "РегистрСведений.КурсыВалют" }],
+      },
+    });
+    expect(t.base.currencyRates.get("840")?.size).toBeGreaterThan(0);
+  });
 
   it("writes the Central Bank's rates for the days 1C has none for, on one card", async () => {
     const t = await run([["2024-01-03", 12_003]]);
@@ -4381,6 +4418,11 @@ describe("exchange rates", () => {
     t.base.queryAnswers.unshift({
       match: /КурсыВалют/,
       answer: () => ({ columns: [], rows: [], truncated: false }),
+    });
+    // The currency is in 1C's catalog (the loader looks the item up before it writes a rate to it).
+    t.base.queryAnswers.unshift({
+      match: /Справочник\.Валюты КАК Т ГДЕ Т\.Код В/,
+      answer: () => ({ columns: ["Ссылка"], rows: [["ref"]], truncated: false }),
     });
     t.store.setAiEnabled(t.company.id, true);
     const statement = [
