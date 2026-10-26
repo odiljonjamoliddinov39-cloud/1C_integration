@@ -161,8 +161,10 @@ function deps(world: World = {}) {
       if (q.includes("Т.ВидОперации = ЗНАЧЕНИЕ(")) {
         return rows(docs.filter((x) => x.object === object).map((x) => [ref(x.object, x.ref, "док")]));
       }
-      if (q.includes("Т.БанковскийСчет КАК Счет, Т.Дата")) {
-        return rows((world.existing ?? []).map(([acct, date, , sum]) => [account(acct), date, sum]));
+      if (q.includes("Т.БанковскийСчет КАК Счет, Т.Контрагент КАК Контрагент")) {
+        return rows(
+          (world.existing ?? []).map(([acct, date, , sum]) => [account(acct), null, date, sum, ""]),
+        );
       }
       return rows([]);
     },

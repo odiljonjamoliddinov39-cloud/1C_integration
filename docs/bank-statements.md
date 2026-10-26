@@ -452,3 +452,10 @@ leg always goes with it. The statement's lines become enterable again. Only what
 - A move between the company's accounts finds the other account in «СчетКонтрагента» (the Uzbek configuration), where it used to find no attribute.
 - Of several currency accounts in a group, the one of the plain account's own kind (6010 → 6015, 4310 → 4315) is taken.
 - Names of one foreign beneficiary that the bank cut differently («… TOWER B JINSH», «… TOW ER B JINSH», «… TOWER B JINSHA») are one counterparty, made once under the longest spelling.
+
+## One document of 1C stands for one row of the statement
+
+- What 1C already has is matched by the bank account, the day and the amount, and then by the bank number or the counterparty; a payment with no counterparty of its own (a tax, a fee, cash) matches by the account, the day and the amount alone, whatever kind of document it was entered as (a tax first entered as a payment to a supplier is not entered again as a tax).
+- Each document of 1C is used up by the first row it matches: two equal rows of a statement need two documents.
+- The documents are read in windows of a quarter (5000 rows each); before, one read of 1000 rows hid the rest of a long period and the payments beyond it were entered a second time.
+- The same for the moves between own accounts. The assistant is told never to create a bank document by hand that 1C may already have.

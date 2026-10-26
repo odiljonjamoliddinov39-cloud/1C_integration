@@ -9,13 +9,14 @@
  * What cannot be settled this way (no INN, no counterparty in 1C, no earlier payment to copy, a
  * foreign-currency contract) goes to the model as a short list, grouped by counterparty.
  */
-import type { ChangeInput, RunQueryInput } from "@platform/shared";
+import type { ChangeInput } from "@platform/shared";
 
 import { type QueryOutcome, type ResolverDeps, lookup, refOf, textOf } from "../didox/resolve.js";
 import type { Context } from "../engine/posting-rules.js";
 import { isAcquiringFee, parseAcquiring } from "./acquiring.js";
 import { buildBankDocument } from "./build.js";
 import { completePayment } from "./complete.js";
+import { ExistingPool, existingDocs } from "./existing.js";
 import { contractFromDescription } from "./contract.js";
 import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
@@ -670,10 +671,6 @@ function dropEmpty(change: ChangeInput): void {
 
 const day = (date: string) => date.slice(0, 10);
 
-/** Only exact matches are "already in 1C": the same day, counterparty and amount. */
-const sameKey = (date: string, counterparty: string, amount: number) =>
-  `${day(date)}|${counterparty}|${Math.round(amount * 100)}`;
-
 const label = (p: BankPayment) =>
   p.inn
     ? `${p.counterparty} (INN ${p.inn})`
@@ -904,23 +901,13 @@ export async function resolvePayments(
   }
   if (withCounterparty.length === 0) return nothing();
 
-  // 4. Payments already in 1C: the same day, counterparty and amount in the same kind of document.
+  // 4. Payments already in 1C: the same bank account, day and amount, with the same bank number or counterparty (see existing.ts).
   const dates = withCounterparty.map((x) => x.payment.date).sort();
-  const existing = new Set<string>();
+  const pools: Partial<Record<"in" | "out", ExistingPool>> = {};
   for (const direction of ["in", "out"] as const) {
     if (!withCounterparty.some((x) => x.payment.direction === direction)) continue;
-    const query: RunQueryInput = {
-      query: `ВЫБРАТЬ Т.Контрагент КАК Контрагент, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${OBJECT[direction]} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      params: { начало: `${dates[0]}T00:00:00`, конец: `${dates.at(-1)}T23:59:59` },
-      limit: 1000,
-      refs: true,
-    };
-    const outcome = await deps.query(query);
-    if (!outcome.ok) continue;
-    for (const cells of (outcome.data as { rows?: unknown[][] }).rows ?? []) {
-      if (typeof cells[2] === "number")
-        existing.add(`${direction}|${sameKey(String(cells[1]), refOf(cells[0]) ?? "", cells[2])}`);
-    }
+    const docs = await existingDocs(deps, cache, direction, dates[0] ?? "", dates.at(-1) ?? "");
+    if (docs) pools[direction] = new ExistingPool(docs);
   }
 
   // 5. The contracts the purposes name, and the counterparties' bank accounts, by INN or name.
@@ -975,7 +962,13 @@ export async function resolvePayments(
   const ready: BankResolved["ready"] = [];
   for (const { payment, counterparty } of withCounterparty) {
     if (
-      existing.has(`${payment.direction}|${sameKey(payment.date, counterparty ?? "", payment.amount / 100)}`)
+      pools[payment.direction]?.take({
+        account: ownAccount,
+        day: day(payment.date),
+        cents: Math.round(payment.amount),
+        number: payment.number,
+        counterparty,
+      })
     ) {
       alreadyIn1c.push(payment.row);
       continue;
