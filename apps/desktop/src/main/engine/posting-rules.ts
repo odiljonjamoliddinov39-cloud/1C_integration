@@ -130,6 +130,55 @@ export const GENERAL_RULES: PostingRule[] = [
     credit: "5110",
     priority: 0,
   },
+  // A founder's contribution to the charter capital: the money Dt 5110 / Cr 4610 (the capital itself, Dt 4610 / Cr 8330, is the
+  // accountant's operation; goods contributed are Dt 2910 / Cr 4610).
+  {
+    id: "g-capital-contribution",
+    scope: "general",
+    operation: "capital_contribution",
+    document: "Поступление на расчетный счет",
+    debit: "5110",
+    credit: "4610",
+    priority: 0,
+  },
+  // Cash to the bank is two steps through the transit account 5710: the cash order Dt 5710 / Cr 5010, then the bank receipt
+  // Dt 5110 / Cr 5710. Cash from the bank is the reverse: the bank write-off Dt 5710 / Cr 5110, then the cash receipt Dt 5010 / Cr 5710.
+  {
+    id: "g-cash-to-bank-order",
+    scope: "general",
+    operation: "cash_to_bank_order",
+    document: "Расходный кассовый ордер",
+    debit: "5710",
+    credit: "5010",
+    priority: 0,
+  },
+  {
+    id: "g-cash-deposit",
+    scope: "general",
+    operation: "cash_deposit",
+    document: "Поступление на расчетный счет",
+    debit: "5110",
+    credit: "5710",
+    priority: 0,
+  },
+  {
+    id: "g-cash-withdrawal",
+    scope: "general",
+    operation: "cash_withdrawal",
+    document: "Списание с расчетного счета",
+    debit: "5710",
+    credit: "5110",
+    priority: 0,
+  },
+  {
+    id: "g-cash-from-bank-order",
+    scope: "general",
+    operation: "cash_from_bank_order",
+    document: "Приходный кассовый ордер",
+    debit: "5010",
+    credit: "5710",
+    priority: 0,
+  },
   // The fee goes to the period's expense account the company's accounting policy names; 9430 (other operating expenses, the
   // bank's services among them) is the usual one, and the one this company's accountant has posted fees to.
   {

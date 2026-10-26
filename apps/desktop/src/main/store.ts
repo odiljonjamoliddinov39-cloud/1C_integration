@@ -7,6 +7,7 @@
 import { MAX_CORRECTIONS, MAX_OPERATIONS, type Correction, type Operation } from "./engine/journal.js";
 import type { PostingRule } from "./engine/posting-rules.js";
 import type { TaxProfile } from "./engine/tax-tables.js";
+import type { BankLineType } from "@platform/shared";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -54,9 +55,39 @@ interface StoredCompany {
   engine?: EngineData;
 }
 
+/** A row of the table of bank statement lines by counterparty account that the accountant confirmed or changed. */
+export interface BankMapping {
+  prefix: string;
+  type: BankLineType;
+  account?: string;
+  updatedAt: string;
+}
+
+/** A document the program wrote from a bank statement: what it was read as, and whether it has been taken back. */
+export interface BankWrite {
+  ref: string;
+  object: string;
+  presentation: string;
+  /** Which card it was written on, and its place in the order of writing. */
+  runId: string;
+  seq: number;
+  file: string;
+  row: number;
+  /** What the line was read as and by which rule (see bank/classify.ts). */
+  rule: string;
+  /** The conversion a document is a leg of: all its legs go together. */
+  conversionId?: string;
+  createdAt: string;
+  reversedAt?: string;
+}
+
 export interface EngineData {
+  /** The log of what was written from bank statements, so that each write can be taken back (see propose_undo_bank). */
+  bankWrites?: BankWrite[];
   taxProfile?: TaxProfile;
   postingRules?: PostingRule[];
+  /** The accountant's confirmed rows of the table of statement lines by counterparty account (see bank/classify.ts). */
+  bankMappings?: BankMapping[];
   operations?: Operation[];
   corrections?: Correction[];
   /** The cost method of the company's stock (the accountant's decision; the program never chooses it). */
@@ -222,6 +253,50 @@ export class LocalStore {
 
   postingRules(id: string): PostingRule[] {
     return structuredClone(this.find(id).engine?.postingRules ?? []);
+  }
+
+  bankWrites(id: string): BankWrite[] {
+    return structuredClone(this.find(id).engine?.bankWrites ?? []);
+  }
+
+  addBankWrites(id: string, list: BankWrite[]): void {
+    const c = this.find(id);
+    c.engine = {
+      ...c.engine,
+      bankWrites: [...(c.engine?.bankWrites ?? []), ...structuredClone(list)].slice(-5000),
+    };
+    this.save();
+  }
+
+  markBankReversed(id: string, refs: string[], now: Date = new Date()): void {
+    const c = this.find(id);
+    const taken = new Set(refs);
+    c.engine = {
+      ...c.engine,
+      bankWrites: (c.engine?.bankWrites ?? []).map((w) =>
+        taken.has(w.ref) && !w.reversedAt ? { ...w, reversedAt: now.toISOString() } : w,
+      ),
+    };
+    this.save();
+  }
+
+  bankMappings(id: string): BankMapping[] {
+    return structuredClone(this.find(id).engine?.bankMappings ?? []);
+  }
+
+  /** Keeps rows the accountant confirmed; a row of the same prefix replaces the earlier one. */
+  saveBankMappings(
+    id: string,
+    rows: Omit<BankMapping, "updatedAt">[],
+    now: Date = new Date(),
+  ): BankMapping[] {
+    const c = this.find(id);
+    const prefixes = new Set(rows.map((r) => r.prefix));
+    const held = (c.engine?.bankMappings ?? []).filter((r) => !prefixes.has(r.prefix));
+    const stamped = rows.map((r) => ({ ...r, updatedAt: now.toISOString() }));
+    c.engine = { ...c.engine, bankMappings: [...held, ...stamped].slice(-200) };
+    this.save();
+    return structuredClone(c.engine.bankMappings ?? []);
   }
 
   /** Keeps a rule the accountant decided; the same id replaces the earlier one. */

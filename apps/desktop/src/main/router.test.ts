@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { langOf, optionsText, postOptions, readChoice, readPostCommand } from "./router.js";
+import { langOf, optionsText, postOptions, readChoice, readPostCommand, readUndoCommand } from "./router.js";
 
 describe("a bare command to post", () => {
   it.each([
@@ -74,4 +74,27 @@ describe("the options", () => {
     expect(optionsText("uz", options)).toContain("2. Faqat «Поступление товаров и услуг» (12)");
     expect(optionsText("en", options)).toContain("Answer with a number");
   });
+});
+
+describe("the command to take back what the program entered from a statement", () => {
+  it.each([
+    "отмени",
+    "Отмени ввод выписки",
+    "отмени последнее",
+    "bekor qil",
+    "bekor qiling hammasini",
+    "undo",
+    "undo it",
+    "cancel the last entry",
+    "qaytar",
+    "откат",
+  ])("%s", (text) => expect(readUndoCommand(text)).toBe(true));
+  it.each([
+    "отмени оплату поставщику 5 от 01.02.2024 на 12 млн",
+    "проведи",
+    "введи выписку",
+    "bekor qilingan hujjatlar bo'yicha hisobot ber 2024 yil uchun",
+    "hello",
+    "",
+  ])("%s is not one", (text) => expect(readUndoCommand(text)).toBe(false));
 });

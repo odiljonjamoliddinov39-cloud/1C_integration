@@ -272,6 +272,7 @@ const en = {
       financial_report: "Building the financial statement:",
       stock_movement: "Preparing the stock document:",
       posting_rules: "Account rules:",
+      bank_mapping: "Statement account table:",
       revaluation_check: "Checking the currency revaluation:",
       accounting_calc: "Calculating:",
       company_rules: "Company rules:",
@@ -284,6 +285,7 @@ const en = {
       propose_bank_payments: "Preparing the bank statement payments:",
       propose_currency_rates: "Loading exchange rates:",
       propose_post_created: "Preparing to post the documents:",
+      propose_undo_bank: "Preparing to take back the statement entries:",
       propose_delete_marked: "Checking what is marked for deletion:",
     },
     proposal: {
@@ -856,6 +858,7 @@ const ru: Dict = {
       financial_report: "Составляю финансовую отчётность:",
       stock_movement: "Готовлю складской документ:",
       posting_rules: "Правила счетов:",
+      bank_mapping: "Таблица счетов выписки:",
       revaluation_check: "Проверяю переоценку валюты:",
       accounting_calc: "Считаю:",
       company_rules: "Правила компании:",
@@ -867,6 +870,7 @@ const ru: Dict = {
       propose_currency_rates: "Загружаю курсы валют:",
       propose_bank_payments: "Готовлю платежи из банковской выписки:",
       propose_post_created: "Готовлю проведение документов:",
+      propose_undo_bank: "Готовлю отмену ввода выписки:",
       propose_delete_marked: "Проверяю, что помечено на удаление:",
     },
     proposal: {
@@ -1440,6 +1444,7 @@ const uz: Dict = {
       financial_report: "Moliyaviy hisobotni tuzyapman:",
       stock_movement: "Ombor hujjatini tayyorlayapman:",
       posting_rules: "Schet qoidalari:",
+      bank_mapping: "Ko'chirma hisoblari jadvali:",
       revaluation_check: "Valyuta qayta baholashini tekshiryapman:",
       accounting_calc: "Hisoblayapman:",
       company_rules: "Kompaniya qoidalari:",
@@ -1453,6 +1458,7 @@ const uz: Dict = {
       propose_bank_payments: "Bank ko'chirmasidagi to'lovlarni tayyorlayapman:",
       propose_currency_rates: "Valyuta kurslarini yuklayapman:",
       propose_post_created: "Hujjatlarni o'tkazishga tayyorlayapman:",
+      propose_undo_bank: "Ko'chirma yozuvlarini bekor qilishga tayyorlayapman:",
       propose_delete_marked: "Oʻchirishga belgilanganlarni tekshiryapman:",
     },
     proposal: {

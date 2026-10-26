@@ -11,6 +11,8 @@
  * Only a line of high confidence is entered. A medium or low one goes to a list for the accountant, with the reason: nothing
  * is written that was not read.
  */
+import type { BankLineType } from "@platform/shared";
+
 import { currencyOfAccount } from "./ledger.js";
 import { parseAcquiring } from "./acquiring.js";
 import { BANK_INTERNAL, contractMention } from "./resolve.js";
@@ -18,17 +20,7 @@ import type { BankPayment, BankStatement } from "./statement.js";
 import { type TaxKind, taxKindOf, withoutVatClause } from "./tax.js";
 import { personIn } from "./transit.js";
 
-export type LineType =
-  | "bank_fee"
-  | "conversion"
-  | "own_transfer"
-  | "tax"
-  | "customs"
-  | "individual_card"
-  | "swift"
-  | "terminal_receipt"
-  | "contract_payment"
-  | "unknown";
+export type LineType = BankLineType;
 
 export type Confidence = "high" | "medium" | "low";
 
@@ -44,11 +36,21 @@ export interface Classified {
   tax?: TaxKind | null;
 }
 
+/** One row of the table: the first five digits of the counterparty's account, what such a line is, and where it is booked. */
+export interface PrefixRow {
+  prefix: string;
+  type: LineType;
+  /** The ledger account the entry goes to, when the table says (the expense account of a fee). */
+  account?: string;
+  what: string;
+}
+
 /**
  * The first five digits of the counterparty's account and what such a line is (the 720 lines of the main account of the
- * Texmash Import statements fall into these and no other kinds). `account` is where the entry goes, when the table says.
+ * Texmash Import statements fall into these and no other kinds). The accountant confirms the table once, and may change a
+ * row or add one (see `effectiveTable`).
  */
-export const ACCOUNT_PREFIXES: { prefixes: string[]; type: LineType; account?: string; what: string }[] = [
+const DEFAULTS: { prefixes: string[]; type: LineType; account?: string; what: string }[] = [
   {
     prefixes: ["16401", "16413"],
     type: "bank_fee",
@@ -70,11 +72,43 @@ export const ACCOUNT_PREFIXES: { prefixes: string[]; type: LineType; account?: s
   },
 ];
 
+/** The program's own table, row by row. */
+export const DEFAULT_TABLE: PrefixRow[] = DEFAULTS.flatMap((d) =>
+  d.prefixes.map((prefix) => ({
+    prefix,
+    type: d.type,
+    ...(d.account ? { account: d.account } : {}),
+    what: d.what,
+  })),
+);
+
+/** The table in force: the program's own, with the rows the accountant confirmed, changed or added over it. */
+export function effectiveTable(
+  stored: { prefix: string; type: LineType; account?: string }[] = [],
+): PrefixRow[] {
+  const rows = new Map(DEFAULT_TABLE.map((r) => [r.prefix, r]));
+  for (const s of stored)
+    rows.set(s.prefix, {
+      prefix: s.prefix,
+      type: s.type,
+      ...(s.account ? { account: s.account } : {}),
+      what: rows.get(s.prefix)?.what ?? "a row the accountant added",
+    });
+  return [...rows.values()];
+}
+
 /** What the text of a purpose says it is, by words (the account decides first; these only break ties). */
 const FEE_WORDS =
   /комисси|(?<!\p{L})тариф|за\s+документ\s+№|ibank|swift|обслуживани\p{L}*\s+(?:пассивн|счет|счёт)/iu;
 const CONVERSION_WORDS = /конвертац/iu;
 const CUSTOMS_WORDS = /таможенн\p{L}*\s+(?:пошлин|платеж|сбор)|bojxona\s+to['‘’ʻ`]lov/iu;
+/** Cash to the bank (the company's own cash paid into its account), cash from the bank, and a founder's contribution. */
+const CASH_IN_WORDS =
+  /взнос\s+наличн|внесени\p{L}*\s+наличн|сдача\s+наличн|пополнени\p{L}*\s+(?:сч[её]та\s+)?наличн|naqd\s+pul\s+(?:kirit|topshir)|депонир\p{L}*\s+наличн/iu;
+const CASH_OUT_WORDS =
+  /снятие\s+наличн|получени\p{L}*\s+наличн|выдач\p{L}*\s+наличн|naqd\s+pul\s+(?:olish|yechish)|на\s+хоз\p{L}*\s+нужд|на\s+выплат\p{L}*\s+(?:заработн|зарплат)/iu;
+const CAPITAL_WORDS =
+  /устав\p{L}*\s+(?:капитал|фонд)|взнос\s+(?:учредител|в\s+устав)|вклад\s+(?:учредител|в\s+устав)|ustav\s+(?:kapital|fond)|ta['‘’ʻ`]sischi/iu;
 const RETURN_WORDS = /возврат|vozvrat|qaytar/iu;
 /** A foreign currency named with an amount or in quotes ("8000.00USD", "4165.0 'Доллар США'"). */
 const FOREIGN_AMOUNT =
@@ -83,14 +117,16 @@ const FOREIGN_AMOUNT =
 /** A current account of a legal entity or an entrepreneur (202xx) is a company's, whatever its last digits. */
 const COMPANY_ACCOUNT = /^20[2-4]\d\d/;
 
-const prefixOf = (account: string) =>
-  ACCOUNT_PREFIXES.find((r) => r.prefixes.includes(account.slice(0, 5))) ??
-  (COMPANY_ACCOUNT.test(account) ? ACCOUNT_PREFIXES.find((r) => r.type === "contract_payment") : undefined);
+const prefixOf = (account: string, table: PrefixRow[]): PrefixRow | undefined =>
+  table.find((r) => r.prefix === account.slice(0, 5)) ??
+  (COMPANY_ACCOUNT.test(account) ? table.find((r) => r.type === "contract_payment") : undefined);
 
 export interface ClassifyContext {
   /** The statement's own account, and the number of every attached account of the company. */
   account: string;
   own: Set<string>;
+  /** The table in force; the program's own when absent. */
+  table?: PrefixRow[];
 }
 
 /** Words a purpose has beyond its codes: a purpose of digits and a bank code alone is no text. */
@@ -120,7 +156,7 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
 
   const accountCurrency = currencyOfAccount(ctx.account);
   const foreignAccount = accountCurrency !== "" && accountCurrency !== "UZS";
-  const matched = prefixOf(p.account);
+  const matched = prefixOf(p.account, ctx.table ?? DEFAULT_TABLE);
   // The company's own accounts, attached: a move between them. The bank's own accounts (the commission, conversion and SWIFT
   // ones) are attached too, but they say what the line is first.
   if (
@@ -139,11 +175,16 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
   const taxKind = taxKindOf(purpose);
 
   if (matched) {
-    const rule = `account ${matched.prefixes.length === 1 ? matched.prefixes[0] : matched.prefixes.join("/")}`;
+    const rule = `account ${matched.prefix}`;
     switch (matched.type) {
       case "bank_fee":
         // The prefix decides: a fee that says «в том числе НДС» is a fee, not a payment of VAT.
-        return line("bank_fee", "high", rule, `bank commission (${matched.what}), to ${matched.account}`);
+        return line(
+          "bank_fee",
+          "high",
+          rule,
+          `bank commission (${matched.what})${matched.account ? `, to ${matched.account}` : ""}`,
+        );
       case "conversion":
       case "swift":
         return line(matched.type, "high", rule, `${matched.what}: a leg of a conversion or a SWIFT payment`);
@@ -189,6 +230,28 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
 
   /** A company's account: a payment under a contract, unless the text says it is something else. */
   function contractLine(rule: string): Classified {
+    // A founder's contribution, and the company's own cash paid in or taken out, are told by the text.
+    if (p.direction === "in" && CAPITAL_WORDS.test(text))
+      return line(
+        "charter_capital",
+        /^\d{9,14}$/.test(p.inn) ? "high" : "medium",
+        `${rule} + text`,
+        "a founder's contribution to the charter capital (the text says so)",
+      );
+    if (p.direction === "in" && CASH_IN_WORDS.test(text) && !contractMention(purpose))
+      return line(
+        "cash_deposit",
+        "high",
+        `${rule} + text`,
+        "cash paid into the account (two steps through 5710)",
+      );
+    if (p.direction === "out" && CASH_OUT_WORDS.test(text))
+      return line(
+        "cash_withdrawal",
+        "high",
+        `${rule} + text`,
+        "cash taken out of the account (two steps through 5710)",
+      );
     const other: string[] = [];
     if (FEE_WORDS.test(text) && !/договор|shartnoma|контракт|contract/iu.test(text)) other.push("a fee");
     if (taxKind) other.push("a tax");
@@ -223,6 +286,9 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
     if (taxKind) guesses.push("tax");
     if (CONVERSION_WORDS.test(text)) guesses.push("conversion");
     if (CUSTOMS_WORDS.test(text)) guesses.push("customs");
+    if (p.direction === "in" && CAPITAL_WORDS.test(text)) guesses.push("charter_capital");
+    if (p.direction === "in" && CASH_IN_WORDS.test(text)) guesses.push("cash_deposit");
+    if (p.direction === "out" && CASH_OUT_WORDS.test(text)) guesses.push("cash_withdrawal");
     const which = p.account ? p.account.slice(0, 5) : "(none)";
     if (guesses.length === 1 && guesses[0])
       return line(
@@ -243,8 +309,12 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
   }
 }
 
-export function classifyStatement(statement: BankStatement, own: Set<string>): Classified[] {
-  const ctx = { account: statement.account, own };
+export function classifyStatement(
+  statement: BankStatement,
+  own: Set<string>,
+  table?: PrefixRow[],
+): Classified[] {
+  const ctx = { account: statement.account, own, ...(table ? { table } : {}) };
   return statement.payments.map((p) => classifyLine(p, ctx));
 }
 
@@ -257,6 +327,9 @@ export const ENTERABLE: LineType[] = [
   "swift",
   "terminal_receipt",
   "contract_payment",
+  "cash_deposit",
+  "cash_withdrawal",
+  "charter_capital",
 ];
 
 export interface Unclassified {
@@ -281,8 +354,9 @@ export function gate(
   statement: BankStatement,
   rows: number[],
   own: Set<string>,
+  table?: PrefixRow[],
 ): { allowed: number[]; held: Unclassified[]; classes: Map<number, Classified> } {
-  const classes = new Map(classifyStatement(statement, own).map((c) => [c.row, c]));
+  const classes = new Map(classifyStatement(statement, own, table).map((c) => [c.row, c]));
   const byRow = new Map(statement.payments.map((p) => [p.row, p]));
   const allowed: number[] = [];
   const held: Unclassified[] = [];
