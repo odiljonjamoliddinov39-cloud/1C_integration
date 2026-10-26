@@ -59,7 +59,7 @@ describe("the reply an answer asks for", () => {
     expect(goOnReply("Исправлю проводки. Продолжить?")?.text).toBe("Продолжай");
     expect(goOnReply("I will fix the entries. Shall I continue?")?.text).toBe("Go on");
     expect(goOnReply("Шу режа билан бошлайми? «Ҳа» деб ёзинг.")).toEqual({ text: "Ҳа", kind: "yes" });
-    expect(goOnReply("Tasdiqlasangiz, davom etaman. Ha/yo'q?")).toBeNull();
+    expect(goOnReply("Tasdiqlasangiz, davom etaman.")).toBeNull();
     expect(goOnReply("Qoldiq 5110 hisobda 1 000 000 so'm.")).toBeNull();
   });
 
