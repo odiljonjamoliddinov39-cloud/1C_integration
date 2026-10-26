@@ -205,6 +205,9 @@ function otherAccountAttribute(described: Described, own: string | null): string
     "СчетОтправитель",
     "БанковскийСчетКорреспондент",
     "СчетКорреспондент",
+    // The Uzbek configuration: «СчетКонтрагента» is the account of the other side, also in a move between the company's accounts.
+    "СчетКонтрагента",
+    "БанковскийСчетКонтрагента",
   ]) {
     if (accounts.some((a) => a.name === name)) return name;
   }

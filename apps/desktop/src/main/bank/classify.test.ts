@@ -227,3 +227,23 @@ describe("the accountant's rule for budget payments that name no tax", () => {
     expect(classifyLine(named, { ...ctx, table })).toMatchObject({ type: "tax", confidence: "high" });
   });
 });
+
+describe("a table row set too broadly does not turn the state's payments into payments under a contract", () => {
+  const table = effectiveTable([
+    { prefix: "23402", type: "contract_payment" },
+    { prefix: "29801", type: "contract_payment" },
+  ]);
+  it("a named tax and a customs payment stay what the text says", () => {
+    const tax = pay({
+      account: "23402000900000000001",
+      purpose:
+        "~1000218600062193111103093~1000218600062193111103093~201173017~Задолженность по Налог на доходы с физических лиц",
+    });
+    expect(classifyLine(tax, { ...ctx, table })).toMatchObject({ type: "tax", confidence: "high" });
+    const customs = pay({
+      account: "29801000900000000001",
+      purpose: "Оплата таможенных пошлин по ГТД 123",
+    });
+    expect(classifyLine(customs, { ...ctx, table })).toMatchObject({ type: "customs", confidence: "high" });
+  });
+});
