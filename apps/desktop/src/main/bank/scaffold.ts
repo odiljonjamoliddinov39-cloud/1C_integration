@@ -193,8 +193,10 @@ export async function currencyAccount(
           return r ? [{ ref: r, code: String(cells[0] ?? "") }] : [];
         })
       : [];
-    const [only] = options;
-    if (options.length === 1 && only) return only;
+    // Several currency accounts in the group: the one that is the plain account's own kind (6010 → 6015, 4310 → 4315).
+    const near = options.filter((o) => o.code.slice(0, 3) === code.slice(0, 3));
+    const [only] = options.length === 1 ? options : near;
+    if ((options.length === 1 || near.length === 1) && only) return only;
     return {
       ref: null,
       message: `account ${code} is not meant for settlements in a currency, and ${options.length === 0 ? "the chart has no currency account of its group" : `the chart has several currency accounts of its group (${options.map((o) => o.code).join(", ")})`}: the accountant says which`,

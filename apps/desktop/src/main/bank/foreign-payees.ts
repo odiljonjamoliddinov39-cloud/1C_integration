@@ -29,6 +29,7 @@ export async function matchPayees(deps: BankDeps, statement: BankStatement): Pro
   for (const payee of payees.values()) names.set(squashName(payee.name), payee);
 
   const spelling = new Map<string, string>();
+  const inOneC = new Set<string>();
   const unknown: string[] = [];
   const ambiguous: PayeeMatch["ambiguous"] = [];
   for (const [key, payee] of names) {
@@ -47,10 +48,24 @@ export async function matchPayees(deps: BankDeps, statement: BankStatement): Pro
       ),
     ];
     const [only] = candidates;
-    if (candidates.length === 1 && only) spelling.set(key, only);
-    else if (candidates.length > 1) ambiguous.push({ name: payee.name, candidates });
+    if (candidates.length === 1 && only) {
+      spelling.set(key, only);
+      inOneC.add(key);
+    } else if (candidates.length > 1) ambiguous.push({ name: payee.name, candidates });
     else unknown.push(payee.name);
   }
+  // The bank cuts a name differently in each payment ("… TOWER B JINSH", "… TOW ER B JINSH", "… TOWER B JINSHA"): the names
+  // that are one another's beginning are one beneficiary, and a new one is made once, under the longest spelling.
+  for (const [key, payee] of names) {
+    if (spelling.has(key) || ambiguous.some((x) => x.name === payee.name)) continue;
+    const longest = [...names.values()]
+      .filter((other) => other !== payee && sameForeignName(payee.name, other.name))
+      .map((other) => other.name)
+      .reduce((best, name) => (name.length > best.length ? name : best), payee.name);
+    if (longest !== payee.name) spelling.set(key, longest);
+  }
+  const once = new Set(unknown.map((name) => spelling.get(squashName(name)) ?? name));
+  unknown.splice(0, unknown.length, ...once);
   const payments = moved.payments.map((p) => {
     const payee = payees.get(p.row);
     const exact = payee ? spelling.get(squashName(payee.name)) : undefined;
@@ -58,7 +73,7 @@ export async function matchPayees(deps: BankDeps, statement: BankStatement): Pro
   });
   return {
     statement: { ...moved, payments },
-    found: [...payees.values()].filter((p) => spelling.has(squashName(p.name))).length,
+    found: [...payees.values()].filter((p) => inOneC.has(squashName(p.name))).length,
     unknown,
     ambiguous,
   };

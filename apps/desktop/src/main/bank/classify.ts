@@ -159,7 +159,19 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
 
   const accountCurrency = currencyOfAccount(ctx.account);
   const foreignAccount = accountCurrency !== "" && accountCurrency !== "UZS";
-  const matched = prefixOf(p.account, ctx.table ?? DEFAULT_TABLE);
+  let matched = prefixOf(p.account, ctx.table ?? DEFAULT_TABLE);
+  // The budget's and the customs' accounts are the state's, whatever the company's table says of them (a rule set too
+  // broadly turned every payment to the Treasury into a payment under a contract): a text that names a tax, or a customs
+  // payment, is that, as the program's own table reads it.
+  if (matched?.type === "contract_payment") {
+    const own = DEFAULT_TABLE.find((r) => r.prefix === matched?.prefix);
+    const words = withoutVatClause(purpose);
+    if (
+      own &&
+      ((own.type === "tax" && taxKindOf(purpose)) || (own.type === "customs" && CUSTOMS_WORDS.test(words)))
+    )
+      matched = own;
+  }
   // The company's own accounts, attached: a move between them. The bank's own accounts (the commission, conversion and SWIFT
   // ones) are attached too, but they say what the line is first.
   if (

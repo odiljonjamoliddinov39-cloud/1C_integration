@@ -444,3 +444,11 @@ leg always goes with it. The statement's lines become enterable again. Only what
 
 - A payment to the budget is «Уплата налога» itself, never «Уплата налога за третьих лиц» (which contains the same words and may come first in 1C's list): an operation named by a phrase is the value that is exactly the phrase, and for a tax the third-party one is never taken, nor copied from.
 - «Счет учета» of the tax document is the bank's own ledger account (5110): the program no longer writes the tax account over it. The account of the tax (e.g. 4420.1 for personal income tax) is 1C's, from the tax and the kind of liability; the kind («Налог» or «Пеня») is set from the text.
+
+## Fixes from the second laptop run (empty base)
+
+- The tax history query had a condition on the operation's presentation, which 1C does not allow in a condition: every tax payment was refused («1C could not be asked for the company's tax payments»). The operation is read as a column and filtered in the program.
+- A table row set too broadly (23402, 29801 as «contract payment») no longer turns a payment to the Treasury that names a tax, or a customs payment, into a held line: the program's own reading of those prefixes applies to them.
+- A move between the company's accounts finds the other account in «СчетКонтрагента» (the Uzbek configuration), where it used to find no attribute.
+- Of several currency accounts in a group, the one of the plain account's own kind (6010 → 6015, 4310 → 4315) is taken.
+- Names of one foreign beneficiary that the bank cut differently («… TOWER B JINSH», «… TOW ER B JINSH», «… TOWER B JINSHA») are one counterparty, made once under the longest spelling.
