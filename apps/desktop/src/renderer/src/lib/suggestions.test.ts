@@ -75,6 +75,28 @@ describe("the reply an answer asks for", () => {
   });
 });
 
+describe("the customs declaration button", () => {
+  it("is offered first for a PDF that is named like a declaration", () => {
+    const chips = suggest({
+      lang: "ru",
+      files: [{ name: "ГТД 26003.pdf", kind: "pdf" }],
+      typed: "",
+      lastAnswer: "",
+      busy: false,
+    });
+    expect(chips[0]?.id).toBe("gtd");
+    expect(
+      suggest({
+        lang: "ru",
+        files: [{ name: "scan.pdf", kind: "pdf" }],
+        typed: "",
+        lastAnswer: "",
+        busy: false,
+      }).map((s) => s.id),
+    ).not.toContain("gtd");
+  });
+});
+
 describe("the duplicates button", () => {
   it("is offered when the balances do not agree with the statement", () => {
     expect(
@@ -86,5 +108,16 @@ describe("the duplicates button", () => {
         busy: false,
       }).map((s) => s.id),
     ).toContain("duplicates");
+  });
+
+  it("the postings button comes with it, and its text is the command the program reads without the model", () => {
+    const chips = suggest({
+      lang: "ru",
+      files: [],
+      typed: "",
+      lastAnswer: "Остаток расходится: на счёте отрицательный остаток.",
+      busy: false,
+    });
+    expect(chips.map((s) => s.id)).toContain("postings");
   });
 });

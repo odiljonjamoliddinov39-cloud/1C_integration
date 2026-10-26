@@ -31,6 +31,8 @@ export interface BankDoc {
   incoming: string;
   counterparty: string;
   direction: "in" | "out";
+  /** The bank's ledger account the document is booked to (its reference), "" when not read. */
+  ledger: string;
 }
 
 const day = (iso: string) => iso.slice(0, 10);
@@ -41,18 +43,22 @@ export async function readBankDocs(
   cache: BankCache,
   from: string,
   to: string,
+  /** The attribute of the documents that holds the bank's ledger account, to read it too. */
+  ledgerAttribute?: string | null,
 ): Promise<BankDoc[] | null> {
   const found: BankDoc[] = [];
   let readAny = false;
   for (const direction of ["out", "in"] as const) {
     const object = OBJECT[direction];
     const accountKey = await ownAccountAttribute(deps, cache, object);
+    const extra = ledgerAttribute ? `, Т.${ledgerAttribute} КАК Банк` : "";
     // The richest query first; a configuration without a column gets the poorer one.
     const shapes = [
-      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен, ПРЕДСТАВЛЕНИЕ(Т.ВидОперации) КАК Вид, Т.${accountKey}.НомерСчета КАК Счет, Т.НомерВходящегоДокумента КАК Входящий, Т.Контрагент.Наименование КАК Контрагент ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен, ПРЕДСТАВЛЕНИЕ(Т.ВидОперации) КАК Вид, Т.${accountKey}.НомерСчета КАК Счет ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен, ПРЕДСТАВЛЕНИЕ(Т.ВидОперации) КАК Вид, Т.${accountKey}.НомерСчета КАК Счет, Т.НомерВходящегоДокумента КАК Входящий, Т.Контрагент.Наименование КАК Контрагент${extra} ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен, ПРЕДСТАВЛЕНИЕ(Т.ВидОперации) КАК Вид, Т.${accountKey}.НомерСчета КАК Счет${extra} ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+      `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Номер КАК Номер, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма, Т.Проведен КАК Проведен${extra} ИЗ ${object} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
     ];
+    const columns = [9, 7, 5];
     let shape = 0;
     let rows: unknown[][] | null = null;
     for (; shape < shapes.length; shape += 1) {
@@ -76,6 +82,7 @@ export async function readBankDocs(
         incoming: shape === 0 ? String(cells[7] ?? "").trim() : "",
         counterparty: shape === 0 ? textOf(cells[8]) || String(cells[8] ?? "") : "",
         direction,
+        ledger: ledgerAttribute ? (refOf(cells[columns[shape] ?? 5]) ?? "") : "",
       });
     }
   }

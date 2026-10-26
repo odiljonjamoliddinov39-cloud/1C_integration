@@ -17,6 +17,7 @@ import type { BankCache, BankDeps, Template, Who } from "./resolve.js";
 import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountOf } from "./roles.js";
 import type { BankPayment } from "./statement.js";
+import type { LedgerAccounts } from "./ledger-account.js";
 
 export type Field = { name: string; types: string[]; synonym?: string };
 export interface Described {
@@ -48,6 +49,8 @@ export interface ScaffoldCache {
   /** Accounts that can hold settlements in a currency, by the code the rules name (see `currencyAccount`). */
   currencyAccounts: Map<string, { ref: string; code: string } | { ref: null; message: string }>;
   soum?: string | null;
+  /** The ledger accounts of the bank accounts of 1C, read once (see ledger-account.ts). */
+  ledgerAccounts?: LedgerAccounts;
 }
 
 export interface ScaffoldInput {

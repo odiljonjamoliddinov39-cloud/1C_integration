@@ -6,6 +6,7 @@ import {
   postOptions,
   readChoice,
   readDuplicatesCommand,
+  readPostingsFixCommand,
   readPostCommand,
   readUndoCommand,
 } from "./router.js";
@@ -125,4 +126,20 @@ describe("the duplicates command", () => {
     "",
     "takror hisobot tayyorlab ber 2024 yil uchun barcha kontragentlar bo'yicha batafsil, va uni Excel ga yoz, shuningdek jadvalni sana bo'yicha saralab chiqar va yuborib qo'y",
   ])("%s is not one", (text) => expect(readDuplicatesCommand(text)).toBe(false));
+});
+
+describe("the postings command", () => {
+  it.each([
+    "fix the transfer postings",
+    "o'tkazma provodkalarini tuzat",
+    "исправь проводки переводов",
+    "ўтказма проводкаларини тузат",
+    // the texts of the button
+    "Исправь проводки банковских документов: счёт банка и переводы между счетами",
+    "Bank hujjatlarining provodkalarini tuzat: bank schyoti va hisoblar orasidagi o'tkazmalar",
+    "Fix the postings of the bank documents: the bank account and the transfers between accounts",
+  ])("%s", (text) => expect(readPostingsFixCommand(text)).toBe(true));
+  it.each(["проведи", "введи выписку", "provodka qil", "отмени", ""])("%s is not one", (text) =>
+    expect(readPostingsFixCommand(text)).toBe(false),
+  );
 });

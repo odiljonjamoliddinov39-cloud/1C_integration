@@ -147,7 +147,9 @@ VAT account this company uses and is offset once; payments to customs settle thr
 uses for customs. Check that every import receipt has its declaration, that the customs value is the invoice value \
 times the rate (plus delivery to the border when the terms say so), and that duty, fees and VAT match the \
 declaration's column 47. An import is several documents (receipt, declaration, customs payment, supplier payment): \
-prepare them together on one card, in the order they are posted.
+prepare them together on one card, in the order they are posted. A GTD that is ATTACHED (a PDF or photo) is read with \
+gtd_declaration, not by hand: the regime comes first (IM 74 is a customs warehouse: only the processing fee, no import VAT \
+and no duty yet, they are posted when the goods are released by an IM 40), and nothing is posted on a failed check.
 - Foreign currency: currency accounts (5210) and settlements with foreign counterparties are revalued at the \
 Central Bank rate on each operation and at month end (gains 9540, losses 9620); advances paid or received are not \
 revalued. Rates are in РегистрСведений.КурсыВалют.
@@ -186,7 +188,7 @@ tax and social contributions on pay (accounting_calc payroll), withholding on pa
 tax, excise, customs duty. Work out the base and the amount, find where in 1C the company posts it, compare with what was \
 declared or paid, and list the differences. Payments to the budget on the bank statement are entered by the program from \
 the company's earlier payment of the same tax; check the amount against the accrual.
-- Import (GTD): build the cost of each item with accounting_calc landed_cost (customs value at the declaration's rate, \
+- Import (GTD) from an attached declaration: gtd_declaration (see the tool). Without a file, build the cost of each item with accounting_calc landed_cost (customs value at the declaration's rate, \
 freight and insurance shared by value or weight, duty, excise, customs fee, import VAT apart); compare it with the \
 declaration and the receipt in 1C; the receipt, the declaration, the customs payment and the supplier payment are one job.
 - Terminals and acquiring (SmartVista and the like): the bank pays the takings less its commission; the program enters the \
@@ -422,6 +424,34 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "payment_from_buyer, payment_to_supplier, bank_fee, profit_tax_accrual): action list shows the table and what each resolves " +
     "to; action set {operation, debit, credit, document?} records the accountant's decision for this company. Set only what the " +
     "accountant decided; an account the chart lacks is refused.",
+  gtd_declaration:
+    "A customs declaration (GTD, ГТД) attached as a PDF or photo. The program has ALREADY read the PDF's footers (sheets present) and " +
+    "the item descriptions of graph 31 from the clean back pages (English and Russian split at the first «/»); you read only the NUMBERS " +
+    "and short words of the form pages (TD-1 and every TD-2 sheet) and pass them in this one call, every graph as it is printed and " +
+    "null for one the scan does not show (never guess a digit, never fill a missing exchange rate from the central bank): regime " +
+    "(graph 1, e.g. 'IM 74'), form_no, declaration_no, date (ISO), customs_post, exporter {name, country}, importer {name, inn} " +
+    "(graph 8), contract {no, date} and invoice {no, date, currency, amount} (graph 44 codes 202 and 223, graph 22), fx_rate " +
+    "(graph 23), customs_value_uzs, items_declared (graph 5), preceding_document (graph 40), warehouse {licence, date, " +
+    "release_deadline} (graphs 49, 50), charges [{type, base, rate_text, amount, payment_type, item_no}] (EVERY line of graph " +
+    "47; a line on the TD-1 sheet has item_no null, a line at the bottom of a TD-2 sheet belongs to the item printed above it) and " +
+    "items [{no (graph 32), hs (33), qty and unit_code (41), gross_kg (35), net_kg (38), procedure (37), value (42, invoice " +
+    "currency), statistical_value (46)}] — one entry per item number, none merged by name. Give name_en/name_ru only when the " +
+    "note on the attachment says the PDF has no text layer; sheets_seen {present, total} only then too. The program decides the " +
+    "regime FIRST: IM 74 (customs warehouse) carries only the processing fee, so there is never import VAT or duty from it; IM 40 " +
+    "is a release for consumption (or the release from a warehouse); any other regime stops with a question — pass it on. Then it " +
+    "judges the numbers (V1–V12: sheets, item numbers, items = invoice, invoice × rate = customs value, HS digits, weights, " +
+    "procedure, importer INN = this company, fee = multiplier × base value, graph 46, warehouse data, contract in 1C) and " +
+    "proposes the postings with the fee shared over the items by value to the kopeck. Statuses: checks_failed — re-read the " +
+    "sheets named in `reread` as pictures ONCE and call again with retry true; needs_user — a failed rule that only the " +
+    "accountant can settle (missing sheet, another company's declaration, no contract in 1C, no rate): say which two numbers " +
+    "disagree and ask; NEVER post, propose or compute on a failed rule; proposal — show the report (it is the program's " +
+    "text: the numbers in your answer are its numbers) with the warnings and the open decisions, and ask the accountant to " +
+    "confirm. Nothing is written by this tool. After the accountant confirms, write only the entries whose status is ready (both " +
+    "accounts are the base's own, found in posted documents); for one marked confirm ask which account, naming a posted example, " +
+    "and never invent an account; the goods of an IM 74 declaration are kept apart from goods released for consumption (a " +
+    "dedicated warehouse or a batch attribute: the accountant's decision). Use this tool for every GTD instead of accounting_calc " +
+    "landed_cost or your own arithmetic. Services of the customs warehouse (storage, handling) in a bank statement are services, " +
+    "not part of the declaration's fee.",
   bank_mapping:
     "The table that says what a bank statement line is by the first five digits of the counterparty's account (16401/16413 the " +
     "bank's fees, 22613/22614/17101 a conversion, 16103 SWIFT, 23402/22628 tax, 29801 customs, 23120 an individual's card, 202xx " +
@@ -508,6 +538,16 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "leg of a conversion, is unposted and marked for deletion, the later before the earlier; 1C keeps them and the lines can be " +
     'entered again. Use it when the accountant asks to cancel or undo the statement entry ("отмени", "bekor qil", "undo"); ' +
     "never delete bank documents by hand with propose_changes.",
+  propose_fix_bank_postings:
+    "Set right the bank documents 1C has BOOKED TO THE WRONG ACCOUNT, on ONE card with a title. The app does it itself from " +
+    "the attached statements: each bank document's bank ledger account («Счет учета»: 5110 settlement, 5530 blocked funds, 5210 " +
+    "currency) is set to the one on its bank account's card and the document is posted again; a move between the company's " +
+    "accounts written as the operation «Перевод на другой счет» / «Перевод с другого счета» (which posts to the wrong account, " +
+    "or not at all, when written without the form) is taken back and entered again from the statement as «Прочее списание» / " +
+    "«Прочее поступление» through the transit account 5710. Use it when the balances do not agree, a transfer posted nothing, or " +
+    'the accountant asks to fix the postings ("проводки", "provodka"). NEVER fix postings by editing documents one by ' +
+    "one or with ОперацияБух: call this tool. Always give the bank accounts of the blocked-funds and currency accounts a ledger " +
+    "account on their card first, when the tool says one has none.",
   propose_bank_duplicates:
     "Find the bank documents 1C has MORE THAN ONCE and take the extra ones back, on ONE card with a title. The app judges " +
     "them itself against the attached statements (a bank account, a day, an amount and a direction listed n times are n " +

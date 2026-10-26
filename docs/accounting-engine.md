@@ -28,7 +28,7 @@ largest fractional part). Operations:
 - `fx_revaluation`: foreign balances at the closing rate, gain or loss each (an asset worth more is a gain, a liability that costs more is a loss).
 - `costing`: FIFO, LIFO, average; cost of what is issued, what stays, shortages named.
 - `payroll`: gross to net and net to gross; the rates are inputs (defaults: income tax 12, employee INPS 0.1, employer social 12) and are reported back.
-- `landed_cost` (GTD): customs value at the declaration's rate, freight and insurance shared by value or weight, duty, excise, customs fee, import VAT apart (or in the cost when not recoverable), cost and unit cost by item.
+- `landed_cost` (GTD): customs value at the declaration's rate, freight and insurance shared by value or weight, duty, excise, customs fee, import VAT apart (or in the cost when not recoverable), cost and unit cost by item. An _attached_ declaration is read, checked and proposed by the `gtd_declaration` tool instead (see `docs/gtd.md`).
 - `penalty`: per day on a principal for days or dates, with a cap.
 - `ratios`: liquidity, turnover days, margins, returns, cover, from the figures given.
 - `break_even`: units and revenue, and for a target profit.

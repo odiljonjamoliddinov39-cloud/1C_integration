@@ -12,6 +12,8 @@ import readXlsxFile from "read-excel-file/node";
 import type { AssistantFile, AttachmentInfo } from "../shared/ipc.js";
 import { type DidoxDocument, batchOf, describeBatch, parseDidoxDocument } from "./didox/document.js";
 import { type BankStatement, describeBankStatement, parseBankStatement } from "./bank/statement.js";
+import { type GtdFile, gtdNote, isDeclaration, readPages } from "./gtd/pages.js";
+import { readPdfPages } from "./gtd/pdf-text.js";
 import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
 import { ZipError, readZip } from "./zip.js";
 
@@ -67,6 +69,8 @@ export interface ReadAttachments {
   didox: DidoxDocument[];
   /** Bank statements read by the program, whole, for propose_bank_payments. */
   bank: BankStatement[];
+  /** Customs declarations (GTD) found among the PDFs: their footers and item texts, read by the program, for gtd_declaration. */
+  gtd: GtdFile[];
 }
 
 export async function readAttachments(
@@ -78,6 +82,7 @@ export async function readAttachments(
   const tables: TableFile[] = [];
   const didox: DidoxDocument[] = [];
   const bank: BankStatement[] = [];
+  const gtd: GtdFile[] = [];
   const budget: Budget = { sent: 0 };
   for (const file of files) {
     if (extensionOf(file.name) === ".zip") {
@@ -87,17 +92,22 @@ export async function readAttachments(
       tables.push(...archive.tables);
       didox.push(...archive.didox);
       bank.push(...archive.tables.flatMap((table) => parseBankStatement(table) ?? []));
+      gtd.push(...archive.gtd);
       continue;
     }
     const read = await readOne(file, shrink);
     budget.sent += pagesSize(read.block);
     blocks.push(read.block);
+    if (read.gtd) {
+      blocks.push({ type: "text", text: gtdNote(read.gtd) });
+      gtd.push(read.gtd);
+    }
     info.push({ name: file.name, kind: read.kind, size: file.data.byteLength });
     if (read.table) tables.push(read.table);
     if (read.didox) didox.push(read.didox);
     if (read.bank) bank.push(read.bank);
   }
-  return { blocks, info, tables, didox, bank };
+  return { blocks, info, tables, didox, bank, gtd };
 }
 
 async function readOne(
@@ -109,12 +119,16 @@ async function readOne(
   table?: TableFile;
   didox?: DidoxDocument;
   bank?: BankStatement;
+  gtd?: GtdFile;
 }> {
   const extension = extensionOf(name);
   const image = imageType(data);
   if (image) return { block: imageBlock(data, image, shrink, name), kind: "image" };
   if (extension === ".pdf" || startsWith(data, "%PDF-")) {
     if (!startsWith(data, "%PDF-")) throw unreadable(name);
+    // A customs declaration has a clean footer on every page: the program reads that text, the model reads the form pages.
+    const text = await readPdfPages(data);
+    const pages = text ? readPages(text) : null;
     return {
       block: {
         type: "document",
@@ -122,6 +136,7 @@ async function readOne(
         title: name,
       },
       kind: "pdf",
+      ...(pages && isDeclaration(pages) ? { gtd: { fileName: name, pages } } : {}),
     };
   }
   if (extension === ".xlsx" || extension === ".xlsm") {
@@ -257,6 +272,8 @@ interface Walk {
   budget: Budget;
   blocks: AiContentBlock[];
   tables: TableFile[];
+  /** Customs declarations among the PDFs. */
+  gtd: GtdFile[];
   read: string[];
   /** Didox documents, read by the program: they go as one summary, not as files. */
   didox: DidoxDocument[];
@@ -279,11 +296,12 @@ async function readArchive(
   { name, data }: AssistantFile,
   budget: Budget,
   shrink?: ShrinkImage,
-): Promise<{ blocks: AiContentBlock[]; tables: TableFile[]; didox: DidoxDocument[] }> {
+): Promise<{ blocks: AiContentBlock[]; tables: TableFile[]; didox: DidoxDocument[]; gtd: GtdFile[] }> {
   const walk: Walk = {
     budget,
     blocks: [],
     tables: [],
+    gtd: [],
     read: [],
     didox: [],
     leftOut: 0,
@@ -319,6 +337,7 @@ async function readArchive(
     blocks: [{ type: "text", text: note }, ...didox, ...walk.blocks],
     tables: walk.tables,
     didox: walk.didox,
+    gtd: walk.gtd,
   };
 }
 
@@ -422,6 +441,10 @@ async function walkArchive(
       }
       walk.budget.sent += pages;
       walk.blocks.push(file.block);
+      if (file.gtd) {
+        walk.blocks.push({ type: "text", text: gtdNote(file.gtd) });
+        walk.gtd.push(file.gtd);
+      }
       if (file.table) walk.tables.push(file.table);
       walk.read.push(path);
     } catch (error) {

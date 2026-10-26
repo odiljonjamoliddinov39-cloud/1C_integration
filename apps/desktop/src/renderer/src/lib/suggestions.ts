@@ -57,6 +57,17 @@ const CHIPS = {
     ["Qatorlarni 1C ga kiritish", "Jadvaldagi qatorlarni 1C ga hujjat qilib kirit"],
     ["Enter the rows into 1C", "Enter the rows of the table into 1C as documents"],
   ),
+  gtd: word(
+    ["Проверить ГТД и проводки", "Прочитай таможенную декларацию, проверь все числа и предложи проводки"],
+    [
+      "GTD va provodkalarni tekshirish",
+      "Bojxona deklaratsiyasini o'qib, hamma raqamlarni tekshir va provodkalarni taklif qil",
+    ],
+    [
+      "Check the GTD and the postings",
+      "Read the customs declaration, check every number and propose the postings",
+    ],
+  ),
   readDocument: word(
     ["Прочитать и кратко изложить", "Прочитай документ и изложи кратко, что в нём важно для учёта"],
     ["O'qib, qisqa aytib berish", "Hujjatni o'qib, hisob uchun nima muhimligini qisqa ayt"],
@@ -92,6 +103,17 @@ const CHIPS = {
     ["Takrorlarni topish", "Ikki marta kiritilgan bank hujjatlarini top va ortiqchasini o'chir"],
     ["Find the duplicates", "Find the bank documents entered twice and remove the extra ones"],
   ),
+  postings: word(
+    ["Исправить проводки", "Исправь проводки банковских документов: счёт банка и переводы между счетами"],
+    [
+      "Provodkalarni tuzatish",
+      "Bank hujjatlarining provodkalarini tuzat: bank schyoti va hisoblar orasidagi o'tkazmalar",
+    ],
+    [
+      "Fix the postings",
+      "Fix the postings of the bank documents: the bank account and the transfers between accounts",
+    ],
+  ),
   rest: word(
     ["Что осталось?", "Что осталось не введено и почему? Коротко, списком"],
     ["Nima qoldi?", "Nima kiritilmay qoldi va nega? Qisqa, ro'yxat bilan"],
@@ -124,6 +146,8 @@ const CHIPS = {
   ),
 } as const;
 
+/** A customs declaration by its file name (ГТД, GTD, декларация, deklaratsiya, bojxona). */
+const GTD_NAME = /(^|[^\p{L}])(гтд|gtd|деклар|deklarats|bojxona|божхона|customs)/iu;
 const STATEMENT_NAME = /сч[её]т|выписк|vypiska|ko'?chirma|statement|bank|\d{20}/iu;
 const XML_OR_ARCHIVE = /\.zip$/iu;
 
@@ -183,6 +207,7 @@ export function suggest(ctx: SuggestContext): Suggestion[] {
       add("analyseSheet");
       add("enterRows");
     }
+    if (ctx.files.some((f) => (f.kind === "pdf" || f.kind === "image") && GTD_NAME.test(f.name))) add("gtd");
     if (ctx.files.some((f) => f.kind === "pdf" || f.kind === "document")) {
       add("readDocument");
       add("enterDocument");
@@ -227,8 +252,10 @@ export function suggest(ctx: SuggestContext): Suggestion[] {
       /расхожден|не\s+совпад|farq|mos\s+kelma|мос\s+келма|мос\s+эмас|mismatch|differs|манфий|negativ|отрицател/u.test(
         said,
       )
-    )
+    ) {
       add("duplicates");
+      add("postings");
+    }
     if (out.length > 0) return out.slice(0, 4);
     // A plain answer: the questions that usually follow, other than the one just answered.
     const topics: [keyof typeof CHIPS, RegExp][] = [

@@ -861,6 +861,28 @@ export const BankDuplicatesInput = z.object({
 });
 export type BankDuplicatesInput = z.infer<typeof BankDuplicatesInput>;
 
+/**
+ * Sets right the bank documents 1C has booked to the wrong account. The attached statements say which documents are the
+ * company's moves between its accounts. Each bank document's bank ledger account («Счет учета»: 5110, 5530, 5210…) is set to
+ * the one on its bank account's card and the document posted again; a move written as the operation «Перевод на другой счет» /
+ * «Перевод с другого счета» (which posts to the wrong account, or not at all, when written without the form) is taken back and
+ * entered again from the statement as «Прочее списание» / «Прочее поступление» through the transit account. One card; nothing
+ * else is touched.
+ */
+export const FixBankPostingsInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  /** YYYY-MM-DD; the period of the statements by default. */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type FixBankPostingsInput = z.infer<typeof FixBankPostingsInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -885,6 +907,91 @@ export const ReportFindingsInput = z.object({
 });
 export type ReportFindingsInput = z.infer<typeof ReportFindingsInput>;
 
+/** A number as the declaration shows it, kept as text so no amount ever passes through a float; null when the scan does not show it. */
+const GtdNumber = z
+  .union([z.string(), z.number()])
+  .transform((v) => String(v).trim())
+  .nullable()
+  .optional();
+const GtdText = z.string().trim().max(300).nullable().optional();
+
+/**
+ * What the model read from the FORM pages of a customs declaration (GTD): the numbers and the words of its graphs. The
+ * program reads the footers and the item names itself and checks every number (V1–V12), so only what is a picture is asked of
+ * the model. A graph the scan does not show is null, never guessed.
+ */
+export const GtdReadInput = z.object({
+  /** The attached PDF (or image) file the declaration is in. */
+  file: z.string().trim().max(300).optional(),
+  /** Set when this is the second reading of a sheet the program asked to read again. */
+  retry: z.boolean().optional(),
+  /** Graph 1, as written: "IM 74", "IM 40". */
+  regime: GtdText,
+  form_no: GtdText,
+  declaration_no: GtdText,
+  /** ISO date of the declaration. */
+  date: GtdText,
+  customs_post: GtdText,
+  exporter: z.object({ name: GtdText, country: GtdText }).optional(),
+  importer: z.object({ name: GtdText, inn: GtdText }).optional(),
+  contract: z.object({ no: GtdText, date: GtdText }).optional(),
+  invoice: z.object({ no: GtdText, date: GtdText, currency: GtdText, amount: GtdNumber }).optional(),
+  /** Graph 23: UZS per unit of the invoice currency. */
+  fx_rate: GtdNumber,
+  /** The customs value in UZS. */
+  customs_value_uzs: GtdNumber,
+  /** Graph 5: how many items the declaration says it has. */
+  items_declared: z.number().int().min(0).max(999).nullable().optional(),
+  /** Graph 40. */
+  preceding_document: GtdText,
+  /** Graphs 49 and 50 (a customs warehouse). */
+  warehouse: z.object({ licence: GtdText, date: GtdText, release_deadline: GtdText }).nullable().optional(),
+  /** Every line of graph 47: a line on the TD-1 sheet has item_no null, a line on a TD-2 sheet belongs to the item above it. */
+  charges: z
+    .array(
+      z.object({
+        type: z.string().trim().max(20),
+        base: GtdNumber,
+        rate_text: GtdText,
+        amount: GtdNumber,
+        payment_type: GtdText,
+        item_no: z.number().int().min(1).max(999).nullable().optional(),
+      }),
+    )
+    .max(400)
+    .default([]),
+  items: z
+    .array(
+      z.object({
+        no: z.number().int().min(1).max(999),
+        hs: GtdText,
+        qty: GtdNumber,
+        unit_code: GtdText,
+        gross_kg: GtdNumber,
+        net_kg: GtdNumber,
+        /** Graph 42, in the invoice currency. */
+        value: GtdNumber,
+        /** Graph 37. */
+        procedure: GtdText,
+        /** Graph 46, thousands of USD. */
+        statistical_value: GtdNumber,
+        /** Only when the program could not read the item's text (a scan with no text layer). */
+        name_en: GtdText,
+        name_ru: GtdText,
+      }),
+    )
+    .max(999)
+    .default([]),
+  /** Only when the file has no text layer (a photo): the footers the model read, so V1 can still be judged. */
+  sheets_seen: z
+    .object({
+      present: z.array(z.number().int().min(1).max(999)).max(999),
+      total: z.number().int().min(1).max(999),
+    })
+    .optional(),
+});
+export type GtdReadInput = z.infer<typeof GtdReadInput>;
+
 /**
  * Tools the assistant may call; the desktop runs them through PlatformAPI. The read tools run at
  * once. The propose_* tools never write: the desktop shows the document to the user, and only the
@@ -906,6 +1013,7 @@ export const AI_TOOLS = {
   stock_movement: StockMovementInput,
   posting_rules: PostingRulesInput,
   bank_mapping: BankMappingInput,
+  gtd_declaration: GtdReadInput,
   revaluation_check: RevaluationCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
@@ -926,6 +1034,7 @@ export const AI_TOOLS = {
   propose_bank_payments: BankPaymentsInput,
   propose_undo_bank: UndoBankInput,
   propose_bank_duplicates: BankDuplicatesInput,
+  propose_fix_bank_postings: FixBankPostingsInput,
   propose_currency_rates: CurrencyRatesToolInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -949,6 +1058,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_bank_payments",
   "propose_undo_bank",
   "propose_bank_duplicates",
+  "propose_fix_bank_postings",
   "propose_currency_rates",
   "propose_post_created",
   "propose_delete_marked",
@@ -964,6 +1074,7 @@ export const AI_LOCAL_TOOLS = [
   "stock_movement",
   "posting_rules",
   "bank_mapping",
+  "gtd_declaration",
   "revaluation_check",
   "accounting_calc",
   "company_rules",

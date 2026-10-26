@@ -42,6 +42,7 @@ const doc = (over: Partial<BankDoc>): BankDoc => ({
   incoming: "",
   counterparty: "",
   direction: "out",
+  ledger: "",
   ...over,
 });
 

@@ -6,6 +6,7 @@
  */
 import { MAX_CORRECTIONS, MAX_OPERATIONS, type Correction, type Operation } from "./engine/journal.js";
 import type { PostingRule } from "./engine/posting-rules.js";
+import { type GtdRecord, remember } from "./gtd/registry.js";
 import type { TaxProfile } from "./engine/tax-tables.js";
 import type { BankLineType } from "@platform/shared";
 import { randomUUID } from "node:crypto";
@@ -53,6 +54,8 @@ interface StoredCompany {
   bookkeeping?: Bookkeeping;
   /** The engine's own data for this company (see engine/): tax profile, posting rules, journal of operations. */
   engine?: EngineData;
+  /** The customs declarations (GTD) the program has read for this company: a later release links to them. */
+  gtd?: GtdRecord[];
 }
 
 /** A row of the table of bank statement lines by counterparty account that the accountant confirmed or changed. */
@@ -354,6 +357,18 @@ export class LocalStore {
       this.save();
     }
     return structuredClone(next);
+  }
+
+  /** The customs declarations read for this company, oldest first. */
+  gtdDeclarations(id: string): GtdRecord[] {
+    return [...(this.find(id).gtd ?? [])];
+  }
+
+  /** Keeps what was read of a declaration (the same number twice: the later reading). */
+  rememberGtd(id: string, record: GtdRecord): void {
+    const c = this.find(id);
+    c.gtd = remember(c.gtd ?? [], record);
+    this.save();
   }
 
   /** The accountant's rules for this company, in the order they were given. */

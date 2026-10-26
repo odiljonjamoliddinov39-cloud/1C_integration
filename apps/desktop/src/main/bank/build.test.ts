@@ -239,7 +239,7 @@ describe("a bank fee made from 1C's description of the document", () => {
 });
 
 describe("a transfer between the company's own accounts", () => {
-  it("is a pair: «Перевод на другой счёт» out and «Перевод с другого счёта» in, each naming the other account, through the transit account", async () => {
+  it("is a pair: «Прочее списание» to the transit account and «Прочее поступление» from it, each naming the other account", async () => {
     const { deps, cache } = fake();
     const out = await buildBankDocument(deps, cache, {
       kind: "transferOut",
@@ -261,7 +261,7 @@ describe("a transfer between the company's own accounts", () => {
     if (!out.ok || !into.ok) return;
     expect(out.change.object).toBe("Документ.СписаниеСРасчетногоСчета");
     expect(out.change.fields).toMatchObject({
-      ВидОперации: "ПереводНаДругойСчет",
+      ВидОперации: "ПрочееСписание",
       СчетОрганизации: { ref: OWN },
       СчетПолучатель: { ref: OTHER },
       СчетУчетаРасчетовСКонтрагентом: { ref: A5710 },
@@ -269,13 +269,13 @@ describe("a transfer between the company's own accounts", () => {
     });
     expect(into.change.object).toBe("Документ.ПоступлениеНаРасчетныйСчет");
     expect(into.change.fields).toMatchObject({
-      ВидОперации: "ПереводСДругогоСчета",
+      ВидОперации: "ПрочееПоступление",
       СчетОрганизации: { ref: OTHER },
       СчетОтправитель: { ref: OWN },
     });
   });
 
-  it("is refused when the other account is not known", async () => {
+  it("does not need the other account: it is told on the document when known, the entry does not depend on it", async () => {
     const { deps, cache } = fake();
     const out = await buildBankDocument(deps, cache, {
       kind: "transferOut",
@@ -284,7 +284,8 @@ describe("a transfer between the company's own accounts", () => {
       ownAccount: OWN,
       currency: "UZS",
     });
-    expect(out.ok).toBe(false);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.change.fields).not.toHaveProperty("СчетПолучатель");
   });
 });
 
