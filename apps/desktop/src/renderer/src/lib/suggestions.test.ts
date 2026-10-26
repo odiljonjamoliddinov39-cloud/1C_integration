@@ -87,4 +87,15 @@ describe("the duplicates button", () => {
       }).map((s) => s.id),
     ).toContain("duplicates");
   });
+
+  it("the postings button comes with it, and its text is the command the program reads without the model", () => {
+    const chips = suggest({
+      lang: "ru",
+      files: [],
+      typed: "",
+      lastAnswer: "Остаток расходится: на счёте отрицательный остаток.",
+      busy: false,
+    });
+    expect(chips.map((s) => s.id)).toContain("postings");
+  });
 });

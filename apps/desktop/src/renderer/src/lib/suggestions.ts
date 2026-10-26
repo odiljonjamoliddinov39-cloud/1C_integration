@@ -92,6 +92,17 @@ const CHIPS = {
     ["Takrorlarni topish", "Ikki marta kiritilgan bank hujjatlarini top va ortiqchasini o'chir"],
     ["Find the duplicates", "Find the bank documents entered twice and remove the extra ones"],
   ),
+  postings: word(
+    ["Исправить проводки", "Исправь проводки банковских документов: счёт банка и переводы между счетами"],
+    [
+      "Provodkalarni tuzatish",
+      "Bank hujjatlarining provodkalarini tuzat: bank schyoti va hisoblar orasidagi o'tkazmalar",
+    ],
+    [
+      "Fix the postings",
+      "Fix the postings of the bank documents: the bank account and the transfers between accounts",
+    ],
+  ),
   rest: word(
     ["Что осталось?", "Что осталось не введено и почему? Коротко, списком"],
     ["Nima qoldi?", "Nima kiritilmay qoldi va nega? Qisqa, ro'yxat bilan"],
@@ -227,8 +238,10 @@ export function suggest(ctx: SuggestContext): Suggestion[] {
       /расхожден|не\s+совпад|farq|mos\s+kelma|мос\s+келма|мос\s+эмас|mismatch|differs|манфий|negativ|отрицател/u.test(
         said,
       )
-    )
+    ) {
       add("duplicates");
+      add("postings");
+    }
     if (out.length > 0) return out.slice(0, 4);
     // A plain answer: the questions that usually follow, other than the one just answered.
     const topics: [keyof typeof CHIPS, RegExp][] = [

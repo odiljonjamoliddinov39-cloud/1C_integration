@@ -605,19 +605,12 @@ export async function resolveTransfers(
       : leg.transfer.kind === "conversion"
         ? "conversion"
         : "own";
-    let template = await pickTemplate(
-      deps,
-      cache,
-      object,
-      kindName,
-      ownRef,
-      otherRef,
-      cross ? ownCurrency : "",
-    );
-    // A move from the settlement account to the blocked-funds account (both soums) is a conversion by the ledger's reading, but
-    // the company may book it as its plain transfer between accounts: that document is the one to copy.
-    if (!template && kindName === "conversion")
-      template = await pickTemplate(deps, cache, object, "own", ownRef, otherRef, "");
+    // A move between two accounts of one currency is made by the program from 1C's description (see build.ts), never copied:
+    // a document of the operation «Перевод на другой счет», written without the form, posts to the wrong account or not at all, and
+    // an earlier one of the kind that the program or a person wrote that way would be copied again.
+    const template = cross
+      ? await pickTemplate(deps, cache, object, kindName, ownRef, otherRef, ownCurrency)
+      : null;
     if (!template) {
       // Nothing to copy (a new base, or its documents were deleted): the document is made from 1C's own description.
       const buildKind: BuildKind = cross

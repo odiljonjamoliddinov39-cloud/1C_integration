@@ -38,6 +38,7 @@ import {
   type BankMappingInput,
   type PostCreatedInput,
   type BankDuplicatesInput,
+  type FixBankPostingsInput,
   type UndoBankInput,
   type DidoxDeleteDraftInput,
   type DidoxDocumentInput,
@@ -110,7 +111,7 @@ import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
 import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
-import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
+import { MIRROR, type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
   type PostOption,
   type Lang,
@@ -120,6 +121,7 @@ import {
   readChoice,
   readPostCommand,
   readDuplicatesCommand,
+  readPostingsFixCommand,
   readUndoCommand,
   say,
 } from "./router.js";
@@ -141,6 +143,9 @@ import {
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { findDuplicates, readBankDocs } from "./bank/duplicates.js";
+import { documentLedgerAttribute, ledgerAccounts, setBankLedgerAccount } from "./bank/ledger-account.js";
+import { findPostingFixes, reledgerChange } from "./bank/postings.js";
+import { describeCached, newScaffoldCache } from "./bank/scaffold.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -148,6 +153,7 @@ import {
   batchText,
   calcText,
   duplicatesText,
+  postingsText,
   MODEL_OFF_CODES,
   failureText,
   offlineAnswer,
@@ -758,6 +764,28 @@ export class AssistantService {
         if (!option) return this.reply(chat, say(lang).askWhich, emit);
         return this.postChosen(chat, option, lang, emit, signal);
       }
+    }
+    // "fix the transfer postings": the bank documents booked to the wrong account, set right and entered again where needed.
+    if (readPostingsFixCommand(question) && (chat.bank ?? []).length > 0) {
+      chat.entry = true;
+      const result = await this.proposeFixBankPostings(
+        chat,
+        {
+          title:
+            lang === "ru"
+              ? "Проводки банковских документов"
+              : lang === "en"
+                ? "Postings of the bank documents"
+                : "Bank hujjatlarining provodkalari",
+        },
+        emit,
+        signal,
+      );
+      return this.reply(
+        chat,
+        result.ok ? postingsText(result.data, lang) : failureText(result.message, lang),
+        emit,
+      );
     }
     // "икки марта киритган ҳужжатларни ўчир": the bank documents 1C has more than once, found against the statements.
     if (readDuplicatesCommand(question) && (chat.bank ?? []).length > 0) {
@@ -1687,6 +1715,9 @@ export class AssistantService {
     }
     if (tool === "propose_undo_bank") {
       return this.proposeUndoBank(chat, input as UndoBankInput, emit, signal);
+    }
+    if (tool === "propose_fix_bank_postings") {
+      return this.proposeFixBankPostings(chat, input as FixBankPostingsInput, emit, signal);
     }
     if (tool === "propose_bank_duplicates") {
       return this.proposeBankDuplicates(chat, input as BankDuplicatesInput, emit, signal);
@@ -4053,6 +4084,12 @@ export class AssistantService {
     const notes = results.flatMap(({ task, resolved }) =>
       resolved.notes.map((n) => ({ rows: n.rows, message: `${n.message}${where(task)}` })),
     );
+    // The bank's side of every entry is the ledger account of the bank account the document is on (5110, 5530, 5210…): a document
+    // written without the form does not get it, and 1C then books every account to the default one.
+    const ledgerNotes = new Set<string>();
+    for (const item of [...ready, ...moved.ready])
+      for (const note of await setBankLedgerAccount(bankDeps, cache, item.change)) ledgerNotes.add(note);
+    for (const note of ledgerNotes) notes.push({ rows: [], message: note });
     // The record of each line: what it was read as and by which rule (the account, the text), so a wrong entry can be traced.
     for (const item of ready) {
       const c = classes.get(item.file)?.get(item.payment.row);
@@ -4278,6 +4315,130 @@ export class AssistantService {
         ...(data ?? {}),
         takenBack: taken.length,
         note: "Unposted and marked for deletion (1C keeps them; the mark can be lifted). The statement's lines can be entered again.",
+      },
+    };
+  }
+
+  /**
+   * The bank documents 1C has booked to the wrong account (see bank/postings.ts): the bank's ledger account set to the one of the
+   * bank account's card and the document posted again; a move written as «Перевод на другой счет» taken back and entered again
+   * from the statement as «Прочее списание» / «Прочее поступление» through the transit account. One card, then the entry.
+   */
+  private async proposeFixBankPostings(
+    chat: StoredChat,
+    input: FixBankPostingsInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    emit({ type: "tool", name: "propose_fix_bank_postings", detail: input.title });
+    const statements = chat.bank ?? [];
+    if (statements.length === 0)
+      return {
+        ok: false,
+        code: "NO_BANK_STATEMENT",
+        message:
+          "No bank statement was read from the files attached to this chat: the moves are told from the statements. Attach them.",
+      };
+    const dates = statements.flatMap((s) => s.payments.map((p) => p.date.slice(0, 10))).sort();
+    const from = input.from ?? dates[0];
+    const to = input.to ?? dates.at(-1);
+    if (!from || !to) return { ok: true, data: { status: "nothing_to_fix" } };
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const deps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const sc = (cache.scaffold ??= newScaffoldCache());
+    const attributes = new Map<string, string>();
+    for (const object of ["Документ.СписаниеСРасчетногоСчета", "Документ.ПоступлениеНаРасчетныйСчет"]) {
+      const described = await describeCached(deps, sc, object);
+      const attribute = described ? documentLedgerAttribute(described.attributes) : null;
+      if (attribute) attributes.set(object, attribute);
+    }
+    const attribute =
+      attributes.get("Документ.СписаниеСРасчетногоСчета") ?? [...attributes.values()][0] ?? null;
+    if (!attribute)
+      return {
+        ok: false,
+        code: "NO_LEDGER_ATTRIBUTE",
+        message:
+          "The bank documents of this 1C have no attribute for the bank's ledger account: nothing to set right.",
+      };
+    const ledger = await ledgerAccounts(deps, cache);
+    if (ledger.why && ledger.byNumber.size === 0)
+      return { ok: false, code: "NO_LEDGER", message: ledger.why };
+    const docs = await readBankDocs(deps, cache, from, to, attribute);
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    if (!docs)
+      return {
+        ok: false,
+        code: "ONEC_READ",
+        message: "1C could not be asked for its bank documents: nothing was judged.",
+      };
+    const fixes = findPostingFixes(statements, docs, ledger);
+    const sameAttribute = (doc: { object: string }) => attributes.get(doc.object) === attribute;
+    const reledger = fixes.reledger.filter(({ doc }) => sameAttribute(doc));
+    const changes: ChangeInput[] = [
+      ...fixes.retire.map((d) => ({ action: "delete" as const, object: d.object, ref: d.ref })),
+      ...reledger.map(({ doc, ledger: account }) => reledgerChange(doc, attribute, account)),
+    ];
+    const summary = {
+      retire: fixes.retire.length,
+      reledger: reledger.length,
+      unknownLedger: fixes.unknownLedger,
+      checked: docs.length,
+      accountsWithoutLedger: [...ledger.byNumber].filter(([, v]) => !v.ledger).map(([number]) => number),
+    };
+    if (changes.length === 0) return { ok: true, data: { status: "nothing_to_fix", ...summary } };
+    const result = await this.proposeBatch(chat, { title: input.title, changes }, emit, signal);
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    if (data?.status !== "done") return { ok: true, data: { ...(data ?? {}), ...summary } };
+    const applied = new Set((data.applied ?? []).map(({ n }) => n - 1));
+    const retired = fixes.retire.filter((_, i) => applied.has(i));
+    // The lines the retired documents stood for can be entered again.
+    if (retired.length > 0) {
+      const keys = new Set<string>();
+      for (const doc of retired)
+        for (const s of statements)
+          if (s.account === doc.account)
+            for (const p of s.payments)
+              if (
+                p.direction === doc.direction &&
+                p.date.slice(0, 10) === doc.day &&
+                Math.round(p.amount) === doc.cents
+              ) {
+                keys.add(`${s.fileName}#${p.row}`);
+                keys.add(`${s.fileName}#${p.row + MIRROR}`);
+              }
+      chat.bankDone = (chat.bankDone ?? []).filter((k) => !keys.has(k));
+      const gone = new Set(retired.map((d) => d.ref));
+      chat.created = (chat.created ?? []).filter((d) => !gone.has(d.ref));
+      this.deps.store.markBankReversed(chat.companyId, [...gone]);
+      this.save(chat);
+    }
+    let reentered: unknown = null;
+    if (retired.length > 0) {
+      const again = await this.proposeBank(
+        chat,
+        { title: `${input.title}: ${retired.length}`, from, to },
+        emit,
+        signal,
+      );
+      reentered = again.ok ? again.data : { error: again.message };
+    }
+    return {
+      ok: true,
+      data: {
+        status: "done",
+        ...summary,
+        retired: retired.length,
+        reledgered: reledger.filter((_, i) => applied.has(fixes.retire.length + i)).length,
+        reentered,
       },
     };
   }
@@ -4649,6 +4810,7 @@ function describe(name: string, input: unknown): string {
     return `${draft.number} · ${draft.title}`;
   }
   if (
+    name === "propose_fix_bank_postings" ||
     name === "propose_post_created" ||
     name === "propose_currency_rates" ||
     name === "propose_undo_bank" ||

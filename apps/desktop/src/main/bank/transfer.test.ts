@@ -12,11 +12,11 @@ const B = "20208000200438330002";
 const REF_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const REF_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OUT_DOC = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const OUT_OTHER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const IN_DOC = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const ORG = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const USD = "20208840300438330003";
 const REF_USD = "99999999-9999-4999-8999-999999999999";
+const A5710 = "a5710000-0000-4000-8000-000000000000";
 const USD_ITEM = "88888888-8888-4888-8888-888888888888";
 
 const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
@@ -94,6 +94,8 @@ interface World {
   /** account ref, day, amount in soums */
   existing?: [string, string, string, number][];
   kinds?: boolean;
+  /** 1C does not describe its documents. */
+  noDescription?: boolean;
   /** Soums per dollar on the day, when 1C has a rate. */
   rate?: number;
 }
@@ -122,6 +124,45 @@ function deps(world: World = {}) {
       const object = q.includes("СписаниеСРасчетногоСчета")
         ? "Документ.СписаниеСРасчетногоСчета"
         : "Документ.ПоступлениеНаРасчетныйСчет";
+      if (
+        q.includes("Перечисление.ВидыОперацийСписаниеДенежныхСредств") &&
+        !q.includes("СГРУППИРОВАТЬ") &&
+        !q.includes("ЗНАЧЕНИЕ(")
+      )
+        return rows([
+          [ref("Перечисление.ВидыОперацийСписаниеДенежныхСредств", "ОплатаПоставщику", "Оплата поставщику")],
+          [
+            ref(
+              "Перечисление.ВидыОперацийСписаниеДенежныхСредств",
+              "ПереводНаДругойСчет",
+              "Перевод на другой счет организации",
+            ),
+          ],
+          [ref("Перечисление.ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")],
+        ]);
+      if (
+        q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств") &&
+        !q.includes("СГРУППИРОВАТЬ") &&
+        !q.includes("ЗНАЧЕНИЕ(")
+      )
+        return rows([
+          [
+            ref(
+              "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
+              "ПереводСДругогоСчета",
+              "Перевод с другого счета организации",
+            ),
+          ],
+          [
+            ref(
+              "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
+              "ПрочееПоступление",
+              "Прочее поступление",
+            ),
+          ],
+        ]);
+      if (q.includes("ПланСчетов.Хозрасчетный") && q.includes("Код В"))
+        return rows([["5710", ref("ПланСчетов.Хозрасчетный", A5710, "5710")]]);
       if (q.includes("КурсыВалют")) return rows(world.rate ? [[world.rate, 1]] : []);
       if (q.includes("Справочник.Валюты")) return rows([[ref("Справочник.Валюты", USD_ITEM, "Доллар США")]]);
       if (q.includes("Справочник.БанковскиеСчета")) {
@@ -161,15 +202,51 @@ function deps(world: World = {}) {
       if (q.includes("Т.ВидОперации = ЗНАЧЕНИЕ(")) {
         return rows(docs.filter((x) => x.object === object).map((x) => [ref(x.object, x.ref, "док")]));
       }
-      if (q.includes("Т.БанковскийСчет КАК Счет, Т.Контрагент КАК Контрагент")) {
+      if (q.includes("КАК Счет, Т.Контрагент КАК Контрагент")) {
         return rows(
           (world.existing ?? []).map(([acct, date, , sum]) => [account(acct), null, date, sum, ""]),
         );
       }
       return rows([]);
     },
-    async describe() {
-      return { ok: true, data: [] };
+    async describe(objects) {
+      if (world.noDescription) return { ok: true, data: [] };
+      const attrs = (names: Record<string, string[]>) =>
+        Object.entries(names).map(([name, types]) => ({ name, synonym: "", types }));
+      const bank = ["Справочник.БанковскиеСчета"];
+      const common = {
+        Организация: ["Справочник.Организации"],
+        СчетОрганизации: bank,
+        СчетУчетаРасчетовСКонтрагентом: ["ПланСчетов.Хозрасчетный"],
+        ВалютаДокумента: ["Справочник.Валюты"],
+        КурсДокумента: [],
+        СуммаДокумента: [],
+        НазначениеПлатежа: [],
+        НомерВходящегоДокумента: [],
+        ДатаВходящегоДокумента: [],
+      };
+      return {
+        ok: true,
+        data: objects.map((o) =>
+          o.includes("Списание")
+            ? {
+                attributes: attrs({
+                  ...common,
+                  ВидОперации: ["Перечисление.ВидыОперацийСписаниеДенежныхСредств"],
+                  СчетПолучатель: bank,
+                }),
+                tabularSections: [],
+              }
+            : {
+                attributes: attrs({
+                  ...common,
+                  ВидОперации: ["Перечисление.ВидыОперацийПоступлениеДенежныхСредств"],
+                  СчетОтправитель: bank,
+                }),
+                tabularSections: [],
+              },
+        ),
+      };
     },
     async getObject(objectName, id) {
       const found = docs.find((x) => x.ref === id && x.object === objectName);
@@ -190,7 +267,7 @@ const run = (transfers: Transfer[], world: World = {}, files = ["a.xlsx", "b.xls
   );
 
 describe("money moved between the company's own accounts", () => {
-  it("is entered as a pair of documents copied from the company's own earlier ones", async () => {
+  it("is entered as a pair of documents made from 1C's description: «Прочее списание» to the transit account and «Прочее поступление» from it", async () => {
     const out = await run([move()]);
     expect(out.problems).toEqual([]);
     expect(out.ready).toHaveLength(2);
@@ -204,24 +281,31 @@ describe("money moved between the company's own accounts", () => {
         Дата: "2026-09-10",
         СуммаДокумента: 250_000,
         НазначениеПлатежа: "Перевод между своими счетами",
-        ВидОперации: "ПереводНаДругойСчетОрганизации",
-        БанковскийСчет: { type: "Справочник.БанковскиеСчета", ref: REF_A },
+        ВидОперации: "ПрочееСписание",
+        СчетОрганизации: { type: "Справочник.БанковскиеСчета", ref: REF_A },
         СчетПолучатель: { type: "Справочник.БанковскиеСчета", ref: REF_B },
+        СчетУчетаРасчетовСКонтрагентом: { ref: A5710 },
       },
     });
     expect(receipt).toMatchObject({ side: "in", file: "b.xlsx", row: 9 });
     expect(receipt?.change).toMatchObject({
       object: "Документ.ПоступлениеНаРасчетныйСчет",
       fields: {
-        БанковскийСчет: { ref: REF_B },
-        СчетПолучатель: { ref: REF_A },
+        ВидОперации: "ПрочееПоступление",
+        СчетОрганизации: { ref: REF_B },
+        СчетОтправитель: { ref: REF_A },
+        СчетУчетаРасчетовСКонтрагентом: { ref: A5710 },
         СуммаДокумента: 250_000,
       },
     });
-    // Nothing of the old document that belongs to it alone is carried over.
-    expect(debit?.change.fields).not.toHaveProperty("Номер");
-    expect(debit?.change.fields).not.toHaveProperty("Проведен");
-    expect(out.notes[0]).toContain("copied from the company's 0000-000003 of 2026-08-01");
+  });
+
+  it("never copies an earlier transfer document: one written without the form posts to the wrong account, and would be copied again", async () => {
+    const out = await run([move()]);
+    expect(out.notes.join(" ")).not.toContain("copied from the company's");
+    expect(
+      out.ready.every((r) => r.change.fields?.["ВидОперации"] !== "ПереводНаДругойСчетОрганизации"),
+    ).toBe(true);
   });
 
   it("enters the other side too from the attached row (mirrored), and never twice", async () => {
@@ -232,37 +316,13 @@ describe("money moved between the company's own accounts", () => {
     expect(mirrored?.row).toBe(5 + MIRROR);
     expect(mirrored?.change).toMatchObject({
       object: "Документ.ПоступлениеНаРасчетныйСчет",
-      fields: { Дата: "2026-09-10", СуммаДокумента: 250_000, БанковскийСчет: { ref: REF_B } },
+      fields: { Дата: "2026-09-10", СуммаДокумента: 250_000, СчетОрганизации: { ref: REF_B } },
     });
     // the mirrored side is not made again once the chat has it
     const again = await run([move({ in: null })], {}, ["a.xlsx"], new Set([`a.xlsx#${5 + MIRROR}`]));
     expect(again.ready.map((r) => r.side)).toEqual(["out"]);
     const other = await run([move()], {}, ["b.xlsx"]);
     expect(other.ready.map((r) => r.side)).toEqual(["in"]);
-  });
-
-  it("prefers the earlier document of the same pair of accounts", async () => {
-    const same = earlier("Документ.СписаниеСРасчетногоСчета", {
-      Номер: "0000-000009",
-      БанковскийСчет: account(REF_A),
-      СчетПолучатель: account(REF_B),
-    });
-    const out = await run(
-      [move({ in: null })],
-      {
-        docs: [
-          {
-            object: "Документ.СписаниеСРасчетногоСчета",
-            ref: OUT_DOC,
-            kind: "own",
-            snapshot: earlier("Документ.СписаниеСРасчетногоСчета"),
-          },
-          { object: "Документ.СписаниеСРасчетногоСчета", ref: OUT_OTHER, kind: "own", snapshot: same },
-        ],
-      },
-      ["a.xlsx"],
-    );
-    expect(out.notes[0]).toContain("0000-000009");
   });
 
   it("leaves out a leg 1C already has: the same account, day and amount", async () => {
@@ -277,31 +337,12 @@ describe("money moved between the company's own accounts", () => {
   });
 
   it("says why when it cannot: no earlier document, an account 1C lacks", async () => {
-    const none = await run([move()], { kinds: false });
+    const none = await run([move()], { noDescription: true });
     expect(none.ready).toEqual([]);
     expect(none.problems[0]?.message).toContain("cannot be made from 1C's own description");
     const missing = await run([move()], { accounts: [[A, REF_A]] });
     expect(missing.problems[0]?.message).toContain(`the other account ${B}`);
     expect(missing.ready).toEqual([]);
-  });
-
-  it("refuses a document with no place for the other account", async () => {
-    const bare = earlier("Документ.СписаниеСРасчетногоСчета", { СчетПолучатель: undefined });
-    const out = await run(
-      [move({ in: null })],
-      {
-        docs: [
-          {
-            object: "Документ.СписаниеСРасчетногоСчета",
-            ref: OUT_DOC,
-            kind: "own",
-            snapshot: bare,
-          },
-        ],
-      },
-      ["a.xlsx"],
-    );
-    expect(out.problems[0]?.message).toContain("no attribute for the other account");
   });
 
   describe("a conversion between a soum account and a dollar account", () => {
@@ -331,6 +372,7 @@ describe("money moved between the company's own accounts", () => {
         { object: "Документ.СписаниеСРасчетногоСчета", ref: OUT_DOC, kind: "x", snapshot: writeOff() },
         { object: "Документ.ПоступлениеНаРасчетныйСчет", ref: IN_DOC, kind: "x", snapshot: takeIn() },
       ],
+      noDescription: true,
       ...over,
     });
     const buy = move({

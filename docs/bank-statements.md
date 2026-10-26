@@ -466,3 +466,26 @@ leg always goes with it. The statement's lines become enterable again. Only what
 - **Searching for duplicates** (`propose_bank_duplicates`, and by itself, with no model, for «икки марта киритган ҳужжатларингни ўчир», «takror», «дубли», «twice»): the attached statements are the truth. A bank account, a day, an amount and a direction that a statement lists n times are n documents in 1C, whatever the kind of each (a payment, a transfer, a conversion leg, a tax entered as a payment to a supplier). The extra ones are marked for deletion on one card, the later copy first; the document that carries the row's bank number stays, then a posted one, then the earliest.
 - What no row of the statements stands behind (a fee split off a payment, an entry of an account whose statement is not attached) is reported, never touched. The answer says how many rows and documents were checked, and how many were left alone and why.
 - The assistant is told never to say "no duplicates" from its own queries: it calls the tool and reports what it says.
+
+## Postings of the moves between the company's accounts
+
+A bank document is booked on the bank's side to the ledger account named in its «Счет учета» («СчетБанк» in the Uzbek
+configuration): 5110 for the settlement account, 5530 for the account of blocked funds, 5210 for a currency account. A form
+fills it from the card of the bank account; a document written through the API did not, so every document carried the default
+and the blocked-funds account stayed empty while the settlement account took its money (the negative balances of both).
+Moves written as the operation «Перевод на другой счет организации» / «Перевод с другого счета» had the same trouble: without
+the form they post to the wrong account or not at all.
+
+What the program does now:
+
+- **New documents.** A move between two accounts in soum is built from the 1C description of the documents as «Прочее списание» on
+  one side and «Прочее поступление» on the other, through the transit account (5710), never as «Перевод…». Every bank document
+  the program makes gets the ledger account of its bank account, read from the bank account's card
+  (`bank/ledger-account.ts`). An account whose card names none is said in the notes, never guessed. Conversions between
+  currencies still follow a sample of the company's own.
+- **Documents already in 1C.** «Fix the postings» (`propose_fix_bank_postings`, or the words «исправь проводки», «provodkalarini
+  tuzat», «fix the postings» without the model) reads the bank documents of the statements' period and finds the ones whose
+  «Счет учета» is not their bank account's (set right, posted again) and the «Перевод…» ones that a statement row stands behind
+  (taken back, then entered again from the statement the new way). One card lists the deletions and the changes; nothing is
+  touched before it is accepted. Rows of the retired documents are free again for the entry (`bank/postings.ts`).
+- The button «Fix the postings» is offered next to «Find the duplicates» when the answer speaks of a mismatch or a negative balance.

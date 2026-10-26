@@ -77,19 +77,23 @@ const KINDS: Record<
     correspondence: "expense",
     other: false,
   },
+  // A move between the company's accounts is «Прочее списание» to the transit account and «Прочее поступление» from it: the
+  // entry of such a document is its header's account against the bank's (Dt 5710 / Kt 5110, then Dt 5530 / Kt 5710), as 1C posts
+  // the conversion legs. The documents of the operations «Перевод на другой счет» / «Перевод с другого счета» written without
+  // the form posted to the wrong account, or not at all.
   transferOut: {
     object: OBJECT.out,
-    phrases: ["перевод на другой счет", "переводнадругойсчет"],
+    phrases: ["прочее списание", "прочеесписание"],
     what: "transfer to another account of the company",
     correspondence: "transit",
-    other: true,
+    other: false,
   },
   transferIn: {
     object: OBJECT.in,
-    phrases: ["перевод с другого счета", "переводсдругогосчета"],
+    phrases: ["прочее поступление", "прочеепоступление"],
     what: "transfer from another account of the company",
     correspondence: "transit",
-    other: true,
+    other: false,
   },
   conversionOut: {
     object: OBJECT.out,
@@ -386,6 +390,11 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
       fields["ДоговорКонтрагента"] = { type: "Справочник.ДоговорыКонтрагентов", ref: bank.contract };
   }
 
+  // The other account of a move is told on the document when it has a place for it; the entry does not depend on it.
+  if ((spec.kind === "transferOut" || spec.kind === "transferIn") && spec.otherAccount) {
+    const key = otherAccountAttribute(described, own);
+    if (key) fields[key] = { type: "Справочник.БанковскиеСчета", ref: spec.otherAccount };
+  }
   if (kind.other) {
     const key = otherAccountAttribute(described, own);
     if (!key || !spec.otherAccount)

@@ -122,6 +122,18 @@ export function readDuplicatesCommand(text: string): boolean {
   return DUPLICATE_WORD.test(t) && (DUPLICATE_VERB.test(t) || t.trim().length <= 60);
 }
 
+/** "o'tkazma provodkalarini tuzat", "исправь проводки", "fix the transfer postings": the bank documents booked to the wrong account. */
+const POSTING_WORD = /(проводк|провод\b|provodka|provodkal|postings?|booking|entries)/u;
+const POSTING_VERB = /(тузат|tuzat|исправ|поправ|fix|correct|to'g'rila|тўғрила|тугрила|ўзгартир|o'zgartir)/u;
+
+export function readPostingsFixCommand(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[‘’`ʻʼ]/g, "'");
+  return t.trim().length <= 300 && POSTING_WORD.test(t) && POSTING_VERB.test(t);
+}
+
 export function readUndoCommand(text: string): boolean {
   const words = tokens(text);
   if (words.length === 0 || words.length > 7) return false;

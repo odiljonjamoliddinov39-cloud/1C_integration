@@ -628,3 +628,73 @@ export function duplicatesText(data: unknown, lang: Lang): string {
   lines.push(w.source);
   return lines.join("\n");
 }
+
+/** What the setting right of the postings of the bank documents did, in the accountant's language. */
+export function postingsText(data: unknown, lang: Lang): string {
+  const d = (data ?? {}) as {
+    status?: string;
+    retire?: number;
+    reledger?: number;
+    retired?: number;
+    reledgered?: number;
+    unknownLedger?: number;
+    checked?: number;
+    accountsWithoutLedger?: string[];
+    reentered?: { enteredBefore?: number; applied?: unknown[]; status?: string; error?: string } | null;
+  };
+  const w = {
+    ru: {
+      declined: "Карточка отклонена: ничего не изменено.",
+      none: (n: number) =>
+        `Проверено банковских документов: ${n}. Все проведены на счёт банка своего расчётного счёта, переводов формы «Перевод на другой счёт» нет: исправлять нечего.`,
+      done: (a: number, b: number) =>
+        `Исправлено: счёт банка у ${a} документов (проведены заново); переводов «Перевод на другой/с другого счёта» снято и введено заново: ${b}.`,
+      reentered: (n: number) => `Введено заново из выписки: ${n} (не проведены: «проведи»).`,
+      checked: (n: number) => `Проверено документов: ${n}.`,
+      noLedger: (list: string) =>
+        `У банковских счетов нет счёта учёта в карточке 1С (документы не тронуты): ${list}. Укажите его в карточке счёта (5530 — блокировка, 5210 — валютный).`,
+      next: "Дальше: «проведи», потом «проверь остатки».",
+      source: "Программа сделала это сама, без модели.",
+    },
+    uz: {
+      declined: "Kartochka rad etildi: hech narsa o'zgarmadi.",
+      none: (n: number) =>
+        `Tekshirilgan bank hujjatlari: ${n}. Hammasi o'z hisobining bank schyotiga o'tgan, «Перевод на другой счет» shaklidagi o'tkazma yo'q: tuzatadigan narsa yo'q.`,
+      done: (a: number, b: number) =>
+        `Tuzatildi: bank schyoti ${a} ta hujjatda (qayta o'tkazildi); «Перевод на другой/с другого счета» o'tkazmalari olib tashlanib, qayta kiritildi: ${b} ta.`,
+      reentered: (n: number) => `Ko'chirmadan qayta kiritildi: ${n} ta (o'tkazilmagan: «проведи»).`,
+      checked: (n: number) => `Tekshirilgan hujjatlar: ${n}.`,
+      noLedger: (list: string) =>
+        `Bank hisoblarining 1C kartochkasida hisob raqami (счёт учёта) yo'q (hujjatlarga tegilmadi): ${list}. Uni hisob kartochkasida ko'rsating (5530 — blokirovka, 5210 — valyuta).`,
+      next: "Keyingisi: «проведи», keyin «qoldiqlarni tekshir».",
+      source: "Buni dastur o'zi, modelsiz bajardi.",
+    },
+    en: {
+      declined: "Card declined: nothing was changed.",
+      none: (n: number) =>
+        `Bank documents checked: ${n}. All are booked to the bank account of their own account and there is no «Перевод на другой счёт» move: nothing to set right.`,
+      done: (a: number, b: number) =>
+        `Set right: the bank account of ${a} documents (posted again); moves of the operation «Перевод на другой/с другого счёта» taken back and entered again: ${b}.`,
+      reentered: (n: number) => `Entered again from the statement: ${n} (not posted: «post them»).`,
+      checked: (n: number) => `Documents checked: ${n}.`,
+      noLedger: (list: string) =>
+        `The bank accounts have no ledger account on their card in 1C (documents left alone): ${list}. Give it on the account's card (5530 for blocked funds, 5210 for a currency account).`,
+      next: "Next: «post them», then «check the balances».",
+      source: "The program did this itself, no model.",
+    },
+  }[lang];
+  if (d.status === "declined_by_user") return w.declined;
+  const lines: string[] = [];
+  if (d.status === "nothing_to_fix") lines.push(w.none(d.checked ?? 0));
+  else {
+    lines.push(w.done(d.reledgered ?? d.reledger ?? 0, d.retired ?? d.retire ?? 0));
+    if (d.checked) lines.push(w.checked(d.checked));
+    const entered = d.reentered?.applied?.length ?? d.reentered?.enteredBefore;
+    if (entered) lines.push(w.reentered(entered));
+    lines.push(w.next);
+  }
+  if ((d.accountsWithoutLedger ?? []).length > 0)
+    lines.push(w.noLedger((d.accountsWithoutLedger ?? []).join(", ")));
+  lines.push(w.source);
+  return lines.join("\n");
+}

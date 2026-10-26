@@ -289,6 +289,7 @@ const en = {
       propose_post_created: "Preparing to post the documents:",
       propose_undo_bank: "Preparing to take back the statement entries:",
       propose_bank_duplicates: "Looking for bank documents entered twice:",
+      propose_fix_bank_postings: "Setting right the postings of the bank documents:",
       propose_delete_marked: "Checking what is marked for deletion:",
     },
     proposal: {
@@ -877,6 +878,7 @@ const ru: Dict = {
       propose_post_created: "Готовлю проведение документов:",
       propose_undo_bank: "Готовлю отмену ввода выписки:",
       propose_bank_duplicates: "Ищу банковские документы, введённые дважды:",
+      propose_fix_bank_postings: "Исправляю проводки банковских документов:",
       propose_delete_marked: "Проверяю, что помечено на удаление:",
     },
     proposal: {
@@ -1468,6 +1470,7 @@ const uz: Dict = {
       propose_post_created: "Hujjatlarni o'tkazishga tayyorlayapman:",
       propose_undo_bank: "Ko'chirma yozuvlarini bekor qilishga tayyorlayapman:",
       propose_bank_duplicates: "Ikki marta kiritilgan bank hujjatlarini qidiryapman:",
+      propose_fix_bank_postings: "Bank hujjatlarining provodkalarini tuzatyapman:",
       propose_delete_marked: "Oʻchirishga belgilanganlarni tekshiryapman:",
     },
     proposal: {

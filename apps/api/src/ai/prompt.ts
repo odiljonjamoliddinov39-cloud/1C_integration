@@ -508,6 +508,16 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "leg of a conversion, is unposted and marked for deletion, the later before the earlier; 1C keeps them and the lines can be " +
     'entered again. Use it when the accountant asks to cancel or undo the statement entry ("отмени", "bekor qil", "undo"); ' +
     "never delete bank documents by hand with propose_changes.",
+  propose_fix_bank_postings:
+    "Set right the bank documents 1C has BOOKED TO THE WRONG ACCOUNT, on ONE card with a title. The app does it itself from " +
+    "the attached statements: each bank document's bank ledger account («Счет учета»: 5110 settlement, 5530 blocked funds, 5210 " +
+    "currency) is set to the one on its bank account's card and the document is posted again; a move between the company's " +
+    "accounts written as the operation «Перевод на другой счет» / «Перевод с другого счета» (which posts to the wrong account, " +
+    "or not at all, when written without the form) is taken back and entered again from the statement as «Прочее списание» / " +
+    "«Прочее поступление» through the transit account 5710. Use it when the balances do not agree, a transfer posted nothing, or " +
+    'the accountant asks to fix the postings ("проводки", "provodka"). NEVER fix postings by editing documents one by ' +
+    "one or with ОперацияБух: call this tool. Always give the bank accounts of the blocked-funds and currency accounts a ledger " +
+    "account on their card first, when the tool says one has none.",
   propose_bank_duplicates:
     "Find the bank documents 1C has MORE THAN ONCE and take the extra ones back, on ONE card with a title. The app judges " +
     "them itself against the attached statements (a bank account, a day, an amount and a direction listed n times are n " +

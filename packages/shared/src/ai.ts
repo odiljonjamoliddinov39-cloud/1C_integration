@@ -861,6 +861,28 @@ export const BankDuplicatesInput = z.object({
 });
 export type BankDuplicatesInput = z.infer<typeof BankDuplicatesInput>;
 
+/**
+ * Sets right the bank documents 1C has booked to the wrong account. The attached statements say which documents are the
+ * company's moves between its accounts. Each bank document's bank ledger account («Счет учета»: 5110, 5530, 5210…) is set to
+ * the one on its bank account's card and the document posted again; a move written as the operation «Перевод на другой счет» /
+ * «Перевод с другого счета» (which posts to the wrong account, or not at all, when written without the form) is taken back and
+ * entered again from the statement as «Прочее списание» / «Прочее поступление» through the transit account. One card; nothing
+ * else is touched.
+ */
+export const FixBankPostingsInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  /** YYYY-MM-DD; the period of the statements by default. */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type FixBankPostingsInput = z.infer<typeof FixBankPostingsInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -926,6 +948,7 @@ export const AI_TOOLS = {
   propose_bank_payments: BankPaymentsInput,
   propose_undo_bank: UndoBankInput,
   propose_bank_duplicates: BankDuplicatesInput,
+  propose_fix_bank_postings: FixBankPostingsInput,
   propose_currency_rates: CurrencyRatesToolInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -949,6 +972,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_bank_payments",
   "propose_undo_bank",
   "propose_bank_duplicates",
+  "propose_fix_bank_postings",
   "propose_currency_rates",
   "propose_post_created",
   "propose_delete_marked",

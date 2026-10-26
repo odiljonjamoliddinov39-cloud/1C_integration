@@ -2575,6 +2575,86 @@ describe("assistant", () => {
           answer: () => ({ columns: [], rows: [], truncated: false }),
         },
       );
+      const attrs = (names: Record<string, string[]>) =>
+        Object.entries(names).map(([name, types]) => ({ name, synonym: "", types }));
+      const bankType = ["Справочник.БанковскиеСчета"];
+      const common = {
+        Организация: ["Справочник.Организации"],
+        СчетОрганизации: bankType,
+        СчетУчетаРасчетовСКонтрагентом: ["ПланСчетов.Хозрасчетный"],
+        ВалютаДокумента: ["Справочник.Валюты"],
+        СуммаДокумента: [],
+        НазначениеПлатежа: [],
+        НомерВходящегоДокумента: [],
+        ДатаВходящегоДокумента: [],
+      };
+      base.metadata = [
+        {
+          fullName: "Документ.СписаниеСРасчетногоСчета",
+          synonym: "",
+          attributes: attrs({
+            ...common,
+            ВидОперации: ["Перечисление.ВидыОперацийСписаниеДенежныхСредств"],
+            СчетПолучатель: bankType,
+          }),
+          tabularSections: [],
+        },
+        {
+          fullName: "Документ.ПоступлениеНаРасчетныйСчет",
+          synonym: "",
+          attributes: attrs({
+            ...common,
+            ВидОперации: ["Перечисление.ВидыОперацийПоступлениеДенежныхСредств"],
+            СчетОтправитель: bankType,
+          }),
+          tabularSections: [],
+        },
+      ];
+      const transit = crypto.randomUUID();
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.Валюты/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Справочник.Валюты", crypto.randomUUID(), "сўм")]],
+            truncated: false,
+          }),
+        },
+        {
+          match: /Перечисление\.ВидыОперацийСписаниеДенежныхСредств КАК/,
+          answer: () => ({
+            columns: [],
+            rows: [
+              [ref("Перечисление.ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")],
+            ],
+            truncated: false,
+          }),
+        },
+        {
+          match: /Перечисление\.ВидыОперацийПоступлениеДенежныхСредств КАК/,
+          answer: () => ({
+            columns: [],
+            rows: [
+              [
+                ref(
+                  "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
+                  "ПрочееПоступление",
+                  "Прочее поступление",
+                ),
+              ],
+            ],
+            truncated: false,
+          }),
+        },
+        {
+          match: /ПланСчетов\.Хозрасчетный КАК Т ГДЕ Т\.Код В/,
+          answer: () => ({
+            columns: [],
+            rows: [["5710", ref("ПланСчетов.Хозрасчетный", transit, "5710")]],
+            truncated: false,
+          }),
+        },
+      );
       store.setAiEnabled(company.id, true);
       const csv = (account: string, row: string) =>
         new TextEncoder().encode(
@@ -2611,8 +2691,10 @@ describe("assistant", () => {
       const debit = made.find((o) => o.object === "Документ.СписаниеСРасчетногоСчета");
       expect(debit?.fields).toMatchObject({
         СуммаДокумента: 250000,
-        БанковскийСчет: { ref: refA },
+        ВидОперации: "ПрочееСписание",
+        СчетОрганизации: { ref: refA },
         СчетПолучатель: { ref: refB },
+        СчетУчетаРасчетовСКонтрагентом: { ref: transit },
       });
       expect(made.every((o) => !o.posted)).toBe(true);
       expect(events.filter((e) => e.type === "confirm")).toHaveLength(1);
