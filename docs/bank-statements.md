@@ -402,3 +402,28 @@ On the eight Texmash Import statements it reports: the main account's 720 lines 
 (→ 63 500 366.52); 365 commission lines, 34 607 027.67 (all to 9430); 85 budget lines, 71 773 370.40, of them 6 VAT,
 57 067 900.00; 37 conversions paired and agreeing with their rates; 22613 blocked 3 648 397 126.50 = sold + returned, ending at
 zero; 704 lines would be entered, 3 held (a treasury return and two payments through the treasury account that are no tax).
+
+## Cash, a founder's contribution, the confirmed table and taking back (the rest of the technical design)
+
+**The table of counterparty accounts is the accountant's, confirmed once** (`bank_mapping`): the program's own rows (the table
+above) are applied from the start, and while no row is confirmed the answer says so once, so that the model asks the accountant
+ONE question. `confirm` stores the table (or the prefixes named) and is never asked about again; `set {prefix, type?, account?}`
+changes or adds a row (a fee's account must be in the company's chart and becomes the company's rule for the bank fee, so the
+builder takes it). A confirmed row beats the default in the classifier; a changed row is recorded as a correction.
+
+**Cash paid into the bank** (a line whose text says «взнос наличными», «сдача наличных», «пополнение счета наличными» and names
+no contract) is two steps through the transit account 5710: the bank receipt «Взнос наличными» Dt 5110 / Cr 5710 (the line's
+document, made from 1C's description), and the cashier's cash order Dt 5710 / Cr 5010, which the program looks for (the same
+amount within three days) and, when the company has not entered it, makes from the description of «Расходный кассовый ордер»
+(its operation, the single cash desk 1C has, the account the rules name); with several cash desks, or none, it says so and 5710
+stays open. **Cash taken out** is the reverse (bank write-off Dt 5710 / Cr 5110, then the cash receipt Dt 5010 / Cr 5710).
+**A founder's contribution** (the text names the charter capital and the founder has an INN) is the bank receipt with the founder
+as the counterparty, Dt 5110 / Cr 4610; the capital itself (Dt 4610 / Cr 8330) is the accountant's operation and the note says to
+check it. The accounts are in the table of account rules (`cash_deposit`, `cash_withdrawal`, `capital_contribution`,
+`cash_to_bank_order`, `cash_from_bank_order`) and are checked against the chart: a missing account refuses the document.
+
+**Taking back** (`propose_undo_bank`, or the short message «отмени» / «bekor qil» / «undo»): every document the program writes from
+a statement is logged (the line, what it was read as and by which rule, the conversion it is a leg of, the order of writing).
+Taking back is one card of deletions (1C unposts a document it marks for deletion; the mark can be lifted): the newest card's
+documents (`last`), all of them (`all`) or one conversion; the later document goes before the earlier, and a conversion's other
+leg always goes with it. The statement's lines become enterable again. Only what the program wrote is taken back.

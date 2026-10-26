@@ -100,6 +100,20 @@ export function readPostCommand(text: string): boolean {
   return words.every((w) => POST_WORD.test(w) || COMMAND_FILLER.has(w));
 }
 
+/** Verbs for taking back, by their beginning: "отмени", "откат", "bekor", "qaytar", "undo", "cancel", "revert". */
+const UNDO_WORD = /^(отмен|откат|отзов|верни|bekor|qaytar|undo|revert|rollback|cancel)/u;
+/** What may stand beside the verb: the thing taken back ("ввод выписки", "последнее", "hujjatlar"), without naming a period. */
+const UNDO_OBJECT =
+  /^(ввод|выписк|ввели|введен|введённ|последн|банков|документ|проводк|vypiska|vypiskani|kiritilgan|kiritish|oxirgi|hujjat|bank|last|entry|entries|statement|it|them|this|все|всё|все|их|это|hammasini|ularni|buni|qil|qiling|ber|пожалуйста|iltimos|please|the|of|ha|да|yes|ok)/u;
+
+/** A message that is only the command to take back what the program entered from a statement. */
+export function readUndoCommand(text: string): boolean {
+  const words = tokens(text);
+  if (words.length === 0 || words.length > 7) return false;
+  if (!words.some((w) => UNDO_WORD.test(w))) return false;
+  return words.every((w) => UNDO_WORD.test(w) || UNDO_OBJECT.test(w) || COMMAND_FILLER.has(w));
+}
+
 export interface PostOption {
   label: string;
   /** YYYY-MM-DD, inclusive. */

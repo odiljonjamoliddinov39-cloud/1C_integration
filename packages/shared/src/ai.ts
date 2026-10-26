@@ -697,6 +697,11 @@ export const POSTING_OPERATIONS = [
   "profit_tax_accrual",
   "advance_from_buyer",
   "advance_to_supplier",
+  "capital_contribution",
+  "cash_deposit",
+  "cash_withdrawal",
+  "cash_to_bank_order",
+  "cash_from_bank_order",
 ] as const;
 export type PostingOperation = (typeof POSTING_OPERATIONS)[number];
 
@@ -721,6 +726,51 @@ export const PostingRulesInput = z.object({
   currency: z.string().trim().min(1).max(10).optional(),
 });
 export type PostingRulesInput = z.infer<typeof PostingRulesInput>;
+
+/** What a bank statement line can be (see apps/desktop/src/main/bank/classify.ts). */
+export const BANK_LINE_TYPES = [
+  "bank_fee",
+  "conversion",
+  "own_transfer",
+  "tax",
+  "customs",
+  "individual_card",
+  "swift",
+  "terminal_receipt",
+  "contract_payment",
+  "cash_deposit",
+  "cash_withdrawal",
+  "charter_capital",
+  "unknown",
+] as const;
+export type BankLineType = (typeof BANK_LINE_TYPES)[number];
+
+/**
+ * The table that says what a line is by the first five digits of the counterparty's account (and, for a bank fee, the
+ * account it is booked to). `list` shows it with what the accountant has confirmed; `confirm` records the table as it stands
+ * (once, for all its rows, or for the prefixes named); `set` changes or adds one row and confirms it. A confirmed row is
+ * applied from then on and never asked again.
+ */
+export const BankMappingInput = z.object({
+  action: z.enum(["list", "set", "confirm"]),
+  /** The first five digits of the counterparty's account. */
+  prefix: z
+    .string()
+    .regex(/^\d{5}$/)
+    .optional(),
+  type: z.enum(BANK_LINE_TYPES).optional(),
+  /** The ledger account the entry goes to (for a fee: the expense account). */
+  account: z
+    .string()
+    .regex(/^\d{3,10}$/)
+    .optional(),
+  /** For confirm: only these prefixes; absent: the whole table. */
+  prefixes: z
+    .array(z.string().regex(/^\d{5}$/))
+    .max(50)
+    .optional(),
+});
+export type BankMappingInput = z.infer<typeof BankMappingInput>;
 
 /**
  * What the month-end revaluation of currency balances has to produce, worked out by the app: for each month's end in
@@ -772,6 +822,21 @@ export const PostCreatedInput = z.object({
 });
 export type PostCreatedInput = z.infer<typeof PostCreatedInput>;
 
+/**
+ * Takes back what the program wrote from bank statements: each document it entered (and the other leg of a conversion, which
+ * is never left alone) is unposted and marked for deletion, the later one before the earlier, on one card. 1C keeps it
+ * (the mark can be lifted); the statement's lines become enterable again. `last` is the newest card's documents, `all` every
+ * bank document the program wrote and nobody took back, `conversion` one conversion by its id.
+ */
+export const UndoBankInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  scope: z.enum(["last", "all", "conversion"]).optional(),
+  conversionId: z.string().trim().min(1).max(200).optional(),
+  /** Only the documents made from this statement file. */
+  file: z.string().trim().min(1).max(300).optional(),
+});
+export type UndoBankInput = z.infer<typeof UndoBankInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -816,6 +881,7 @@ export const AI_TOOLS = {
   financial_report: FinancialReportInput,
   stock_movement: StockMovementInput,
   posting_rules: PostingRulesInput,
+  bank_mapping: BankMappingInput,
   revaluation_check: RevaluationCheckInput,
   accounting_calc: AccountingCalcTool,
   company_rules: CompanyRulesInput,
@@ -834,6 +900,7 @@ export const AI_TOOLS = {
   propose_didox_reconciliation: DidoxReconciliationInput,
   propose_didox_delete_draft: DidoxDeleteDraftInput,
   propose_bank_payments: BankPaymentsInput,
+  propose_undo_bank: UndoBankInput,
   propose_currency_rates: CurrencyRatesToolInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -855,6 +922,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_didox_reconciliation",
   "propose_didox_delete_draft",
   "propose_bank_payments",
+  "propose_undo_bank",
   "propose_currency_rates",
   "propose_post_created",
   "propose_delete_marked",
@@ -869,6 +937,7 @@ export const AI_LOCAL_TOOLS = [
   "financial_report",
   "stock_movement",
   "posting_rules",
+  "bank_mapping",
   "revaluation_check",
   "accounting_calc",
   "company_rules",

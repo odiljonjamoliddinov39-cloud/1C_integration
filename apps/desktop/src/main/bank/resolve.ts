@@ -21,6 +21,7 @@ import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
 import { foreignContract } from "./swift.js";
 import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
+import { cashOrderFor } from "./cash.js";
 import { isEntrepreneur } from "./transit.js";
 import { ACCOUNT_OWNER_COLUMNS, candidateOf, pickAccount } from "./accounts.js";
 import { type TaxKind, periodBefore, taxKindOf, taxNameIs, taxPeriodFor, withoutVatClause } from "./tax.js";
@@ -89,7 +90,7 @@ export interface BankResolved {
   /** Contracts to create for counterparties created in this run; their payments wait for the next round. */
   contractsToCreate: PendingContract[];
   /** `part: "commission"`: the bank's commission of an acquiring receipt, a document of its own. */
-  ready: { payment: BankPayment; change: ChangeInput; part?: "commission" }[];
+  ready: { payment: BankPayment; change: ChangeInput; part?: "commission" | "cash_order" }[];
   /** Payments already in 1C (same date, counterparty and amount): left out. */
   alreadyIn1c: number[];
   problems: BankProblem[];
@@ -644,6 +645,8 @@ export async function resolvePayments(
     /** The company's organization in 1C, and its posting rules and chart: for a document made with no earlier one to copy. */
     organization?: string;
     posting?: Context;
+    /** What each line was read as (see classify.ts): a founder's contribution and cash paid in or out are made from it. */
+    kinds?: Map<number, { type: string }>;
   },
   deps: BankDeps,
 ): Promise<BankResolved> {
@@ -780,7 +783,14 @@ export async function resolvePayments(
     }
     const who = whoOf(p);
     // A payment to the budget has no counterparty to look up: it is copied from the company's payment of the same tax.
-    if (!who || (isTaxPayment(p) && taxKindOf(p.purpose))) {
+    const readAs = options.kinds?.get(p.row)?.type;
+    // The company's own cash paid in or out names the company itself: no counterparty to look up.
+    if (
+      !who ||
+      readAs === "cash_deposit" ||
+      readAs === "cash_withdrawal" ||
+      (isTaxPayment(p) && taxKindOf(p.purpose))
+    ) {
       withCounterparty.push({ payment: p, counterparty: null });
       continue;
     }
@@ -978,6 +988,55 @@ export async function resolvePayments(
     // 1C's own description of it, for a plain payment with a counterparty that has a contract.
     let scaffoldedContract: string | null = null;
     let whyNot = "";
+    // Cash paid into the bank or taken out of it, and a founder's contribution to the charter capital: made from 1C's own
+    // description of the document, with the cash order that closes 5710 (see cash.ts).
+    const readAs = options.kinds?.get(payment.row)?.type;
+    if (
+      !asked &&
+      !foreignAccount &&
+      (readAs === "cash_deposit" || readAs === "cash_withdrawal" || readAs === "charter_capital")
+    ) {
+      if (!ownAccount) {
+        addProblem(
+          payment,
+          "NO_TEMPLATE",
+          `the company's bank account ${statement.account || ""} is not in 1C: the document cannot be made`,
+        );
+        continue;
+      }
+      const built = await buildBankDocument(deps, cache, {
+        kind: readAs === "cash_deposit" ? "cashIn" : readAs === "cash_withdrawal" ? "cashOut" : "capital",
+        payment,
+        organization: options.organization ?? null,
+        ownAccount,
+        currency: "UZS",
+        ...(readAs === "charter_capital" ? { counterparty } : {}),
+        ...(options.posting ? { posting: options.posting } : {}),
+      });
+      if (!built.ok) {
+        addProblem(payment, "NO_TEMPLATE", built.message);
+        continue;
+      }
+      ready.push({ payment, change: built.change });
+      for (const note of built.notes) addNote([payment.row], note);
+      if (readAs === "charter_capital")
+        addNote(
+          [payment.row],
+          "the capital itself (Dt 4610 / Cr 8330) is the accountant's operation: check that it is in 1C",
+        );
+      else {
+        const order = await cashOrderFor(deps, cache, {
+          direction: readAs === "cash_deposit" ? "toBank" : "fromBank",
+          payment,
+          organization: options.organization ?? null,
+          ownAccount,
+          ...(options.posting ? { posting: options.posting } : {}),
+        });
+        if (order.status === "made") ready.push({ payment, change: order.change, part: "cash_order" });
+        addNote([payment.row], order.note);
+      }
+      continue;
+    }
     // The bank's fee (the statement's own line to a transit account, cleared of the company's name): no counterparty, no
     // contract, and no earlier fee to copy: the document is made from 1C's own description.
     if (

@@ -419,6 +419,12 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "payment_from_buyer, payment_to_supplier, bank_fee, profit_tax_accrual): action list shows the table and what each resolves " +
     "to; action set {operation, debit, credit, document?} records the accountant's decision for this company. Set only what the " +
     "accountant decided; an account the chart lacks is refused.",
+  bank_mapping:
+    "The table that says what a bank statement line is by the first five digits of the counterparty's account (16401/16413 the " +
+    "bank's fees, 22613/22614/17101 a conversion, 16103 SWIFT, 23402/22628 tax, 29801 customs, 23120 an individual's card, 202xx " +
+    "a company) and the account a fee goes to (9430). The program applies it by itself; action list shows it and what the " +
+    "accountant has confirmed. Ask the accountant ONCE to confirm it (action confirm), or to change a row (action set {prefix, " +
+    "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed.",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +
@@ -490,6 +496,12 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "sent; the accountant checks and signs it in Didox. Never pass an invoice that is not posted or has a " +
     "placeholder number: tell the accountant to post it and fix the number first. If Didox is not connected for " +
     "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
+  propose_undo_bank:
+    "Take back what the program entered from bank statements, on ONE card with a title (scope last: the newest card's " +
+    "documents, the default; all; conversion with conversionId; file to limit it to one statement). Each document, and the other " +
+    "leg of a conversion, is unposted and marked for deletion, the later before the earlier; 1C keeps them and the lines can be " +
+    'entered again. Use it when the accountant asks to cancel or undo the statement entry ("отмени", "bekor qil", "undo"); ' +
+    "never delete bank documents by hand with propose_changes.",
   propose_post_created:
     "Post (проведение) the documents THIS chat created and left unposted (a bank statement's payments, a batch of " +
     "documents), on ONE card with a title. The app knows which they are: send only the title (objects, full names, " +

@@ -1931,6 +1931,192 @@ describe("assistant", () => {
       });
     });
 
+    it("takes back what it entered from a statement when told «отмени»: the documents are unposted and marked, the lines can be entered again", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const ownAccount = crypto.randomUUID();
+      const earlierPayment = crypto.randomUUID();
+      const contract = crypto.randomUUID();
+      const { assistant, store, company, events, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "b1", name: "propose_bank_payments", input: { title: "Vypiska: 5" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const counterparty = base.counterparties[0]!;
+      base.objects.set(earlierPayment, {
+        object: "Документ.ПоступлениеНаРасчетныйСчет",
+        fields: {
+          Номер: "0000-000007",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", counterparty.ref, counterparty.name),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+          НомерВходящегоДокумента: "55",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 1000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Справочник.БанковскиеСчета", ownAccount, "р/с")]],
+            truncated: false,
+          }),
+        },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.counterparties
+              .filter((c) => values(input).includes(c.inn))
+              .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Документ.ПоступлениеНаРасчетныйСчет", earlierPayment, "старый"), "старое"]],
+            truncated: false,
+          }),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: () => ({ columns: [], rows: [], truncated: false }) },
+      );
+      store.setAiEnabled(company.id, true);
+      const rows = [1, 2, 3].map(
+        (n) =>
+          `0${n}.09.2026;10${n};${counterparty.name};${counterparty.inn};;${n * 1000},00;${n === 2 ? "" : `Оплата ${n}`}`,
+      );
+      const statement = [
+        "Выписка по счёту 20208000100438330001",
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        ...rows,
+      ].join("\n");
+
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskani ko'rib chiq",
+        files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const mine = () =>
+        [...base.objects.values()].filter(
+          (o) =>
+            o.object === "Документ.ПоступлениеНаРасчетныйСчет" && o.fields.НазначениеПлатежа !== "старое",
+        );
+      expect(mine()).toHaveLength(2);
+      expect(mine().every((o) => !o.deletionMark)).toBe(true);
+      // Every write is logged with the line and the rule that read it.
+      const log = store.bankWrites(company.id);
+      expect(log).toHaveLength(2);
+      expect(log[0]?.rule).toContain("contract_payment");
+
+      // «отмени»: one card of deletions, answered by the accountant; no model step.
+      const undo = assistant.send({ companyId: company.id, text: "отмени" });
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          const cards = events.filter((e) => e.type === "confirm");
+          const card = cards[1];
+          if (card?.type === "confirm") {
+            clearInterval(timer);
+            assistant.decide(card.companyId, card.id, true);
+            resolve();
+          }
+        }, 1);
+      });
+      await undo;
+      expect(mine().every((o) => o.deletionMark)).toBe(true);
+      expect(store.bankWrites(company.id).every((w) => w.reversedAt)).toBe(true);
+      // Nothing is left to take back.
+      await assistant.send({ companyId: company.id, text: "отмени" });
+      expect(events.filter((e) => e.type === "confirm")).toHaveLength(2);
+    });
+
+    it("takes back both legs of a conversion together, the later first, and leaves an unrelated document alone", async () => {
+      const { assistant, store, company, events, base } = setup([]);
+      const make = (object: string) => {
+        const ref = crypto.randomUUID();
+        base.objects.set(ref, {
+          object,
+          fields: { Номер: "1", Дата: "2024-01-25T00:00:00", Проведен: false },
+          tables: {},
+          posted: false,
+          deletionMark: false,
+          version: 1,
+        });
+        return ref;
+      };
+      const out = make("Документ.СписаниеСРасчетногоСчета");
+      const incoming = make("Документ.ПоступлениеНаРасчетныйСчет");
+      const other = make("Документ.СписаниеСРасчетногоСчета");
+      const write = (ref: string, object: string, runId: string, seq: number, conversionId?: string) => ({
+        ref,
+        object,
+        presentation: "док",
+        runId,
+        seq,
+        file: "main.xlsx",
+        row: seq,
+        rule: conversionId ? "conversion" : "bank_fee by account 16401",
+        ...(conversionId ? { conversionId } : {}),
+        createdAt: "2024-01-26T10:00:00Z",
+      });
+      store.addBankWrites(company.id, [
+        write(other, "Документ.СписаниеСРасчетногоСчета", "run-a", 1),
+        write(out, "Документ.СписаниеСРасчетногоСчета", "run-a", 2, "FX-1"),
+        write(incoming, "Документ.ПоступлениеНаРасчетныйСчет", "run-b", 3, "FX-1"),
+      ]);
+      store.setAiEnabled(company.id, true);
+      const undo = assistant.send({ companyId: company.id, text: "undo" });
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          const card = events.find((e) => e.type === "confirm");
+          if (card?.type === "confirm") {
+            clearInterval(timer);
+            // The card lists the later leg first.
+            assistant.decide(card.companyId, card.id, true);
+            resolve();
+          }
+        }, 1);
+      });
+      await undo;
+      expect(base.objects.get(incoming)?.deletionMark).toBe(true);
+      expect(base.objects.get(out)?.deletionMark).toBe(true);
+      expect(base.objects.get(other)?.deletionMark).toBe(false);
+      expect(
+        store
+          .bankWrites(company.id)
+          .filter((w) => w.reversedAt)
+          .map((w) => w.ref)
+          .sort(),
+      ).toEqual([incoming, out].sort());
+    });
+
     it("enters the company's own Didox documents as sales copied from its last sale, on one card, unposted", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const [contract, item, oldSale, unit] = [
@@ -4992,6 +5178,74 @@ describe("the program works with no model", () => {
       expect(text).toContain("vat: 120 000");
       expect(text).toContain("tasdiqlamagan");
     });
+  });
+});
+
+describe("the table of statement lines by counterparty account", () => {
+  const call = (input: Record<string, unknown>) =>
+    setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "m1", name: "bank_mapping", input }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+  const chart = (t: ReturnType<typeof setup>, codes: string[]) =>
+    t.base.queryAnswers.unshift({
+      match: /ПланСчетов\.Хозрасчетный КАК Т$/,
+      answer: () => ({ columns: [], rows: codes.map((c) => [c]), truncated: false }),
+    });
+  const told = (t: ReturnType<typeof setup>) => JSON.stringify(t.proxy.requests[1]?.messages.at(-1));
+
+  it("shows the program's own table, nothing confirmed", async () => {
+    const t = call({ action: "list" });
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "jadval" });
+    expect(told(t)).toContain("16401");
+    expect(told(t)).toContain("allConfirmed");
+    expect(t.store.bankMappings(t.company.id)).toEqual([]);
+  });
+
+  it("is confirmed once for every row, and the fee's account becomes the company's rule for the bank fee", async () => {
+    const t = call({ action: "confirm" });
+    chart(t, ["9430", "5110"]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "tasdiqlayman" });
+    const rows = t.store.bankMappings(t.company.id);
+    expect(rows.find((r) => r.prefix === "16401")).toMatchObject({ type: "bank_fee", account: "9430" });
+    expect(rows.length).toBeGreaterThan(10);
+    expect(t.store.postingRules(t.company.id)).toMatchObject([
+      { id: "c-bank_fee", debit: "9430", credit: "5110" },
+    ]);
+    expect(told(t)).toContain("not to be asked about again");
+  });
+
+  it("changes one row, refuses an account the chart lacks, and adds a prefix the program does not know", async () => {
+    const t = call({ action: "set", prefix: "16401", account: "9420" });
+    chart(t, ["9420", "5110"]);
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "x" });
+    expect(t.store.bankMappings(t.company.id)).toMatchObject([
+      { prefix: "16401", type: "bank_fee", account: "9420" },
+    ]);
+    expect(t.store.postingRules(t.company.id)).toMatchObject([{ id: "c-bank_fee", debit: "9420" }]);
+
+    const bad = call({ action: "set", prefix: "16401", account: "9999" });
+    chart(bad, ["9420", "5110"]);
+    bad.store.setAiEnabled(bad.company.id, true);
+    await bad.assistant.send({ companyId: bad.company.id, text: "x" });
+    expect(bad.store.bankMappings(bad.company.id)).toEqual([]);
+    expect(told(bad)).toContain("ACCOUNT_NOT_IN_CHART");
+
+    const added = call({ action: "set", prefix: "29898", type: "terminal_receipt" });
+    added.store.setAiEnabled(added.company.id, true);
+    await added.assistant.send({ companyId: added.company.id, text: "x" });
+    expect(added.store.bankMappings(added.company.id)).toMatchObject([
+      { prefix: "29898", type: "terminal_receipt" },
+    ]);
   });
 });
 

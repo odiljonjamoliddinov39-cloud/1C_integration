@@ -14,6 +14,8 @@
 import type { ChangeInput } from "@platform/shared";
 
 import { refOf, textOf } from "../didox/resolve.js";
+import type { PostingOperation } from "@platform/shared";
+
 import { type Context, choosePosting } from "../engine/posting-rules.js";
 import type { BankCache, BankDeps } from "./resolve.js";
 import { ownAccountOf } from "./roles.js";
@@ -30,7 +32,16 @@ import {
 import type { BankPayment } from "./statement.js";
 import { TAX_ACCOUNT, type TaxKind, taxNameIs } from "./tax.js";
 
-export type BuildKind = "fee" | "transferOut" | "transferIn" | "conversionOut" | "conversionIn" | "tax";
+export type BuildKind =
+  | "fee"
+  | "transferOut"
+  | "transferIn"
+  | "conversionOut"
+  | "conversionIn"
+  | "tax"
+  | "cashIn"
+  | "cashOut"
+  | "capital";
 
 /** The bank documents (the same names as `OBJECT` in resolve.ts, which this file cannot import at load time). */
 const OBJECT = {
@@ -53,8 +64,10 @@ const KINDS: Record<
     object: string;
     phrases: string[];
     what: string;
-    correspondence: "expense" | "transit" | "conversion" | "tax";
+    correspondence: "expense" | "transit" | "conversion" | "tax" | "rule";
     other: boolean;
+    /** For "rule": the operation of the table of account rules and which side of its entry is the account of this document. */
+    rule?: { op: PostingOperation; side: "debit" | "credit" };
   }
 > = {
   fee: {
@@ -92,6 +105,36 @@ const KINDS: Record<
     correspondence: "tax",
     other: false,
   },
+  cashIn: {
+    object: OBJECT.in,
+    phrases: ["взнос наличными", "взнос наличных", "внесение наличных", "поступление наличных"],
+    what: "cash paid into the account",
+    correspondence: "rule",
+    other: false,
+    rule: { op: "cash_deposit", side: "credit" },
+  },
+  cashOut: {
+    object: OBJECT.out,
+    phrases: ["снятие наличных", "получение наличных", "выдача наличных"],
+    what: "cash taken out of the account",
+    correspondence: "rule",
+    other: false,
+    rule: { op: "cash_withdrawal", side: "debit" },
+  },
+  capital: {
+    object: OBJECT.in,
+    phrases: [
+      "взнос учредителя",
+      "вклад учредителя",
+      "взнос в уставный",
+      "вклад в уставный",
+      "прочее поступление",
+    ],
+    what: "a founder's contribution to the charter capital",
+    correspondence: "rule",
+    other: false,
+    rule: { op: "capital_contribution", side: "credit" },
+  },
   conversionIn: {
     object: OBJECT.in,
     phrases: ["прочее поступление", "прочеепоступление", "перевод с другого счета", "переводсдругогосчета"],
@@ -103,6 +146,8 @@ const KINDS: Record<
 
 export interface BuildSpec {
   kind: BuildKind;
+  /** The founder, for a contribution to the charter capital (a counterparty of 1C). */
+  counterparty?: string | null;
   /** A payment to the budget: which tax, its period ("YYYY-MM-01T00:00:00"), and the tax office as a counterparty of 1C when it has one. */
   tax?: { kind: TaxKind; period: string | null; office: string | null };
   payment: BankPayment;
@@ -134,7 +179,7 @@ export interface BuildSpec {
 export type Built = { ok: true; change: ChangeInput; notes: string[] } | { ok: false; message: string };
 
 /** Where a document keeps the account its other side is booked to: the header's reference to the chart of accounts. */
-function correspondenceAttribute(described: Described): string | null {
+export function correspondenceAttribute(described: Described): string | null {
   const charted = described.attributes.filter((a) => a.types.some((t) => t.startsWith("ПланСчетов")));
   for (const name of [
     "СчетУчетаРасчетовСКонтрагентом",
@@ -251,6 +296,10 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     code = CONVERSION_ACCOUNT[spec.conversion?.direction ?? "buy"];
   } else if (kind.correspondence === "tax") {
     code = spec.tax ? TAX_ACCOUNT[spec.tax.kind] : "";
+  } else if (kind.correspondence === "rule" && kind.rule) {
+    const decision = choosePosting({ type: kind.rule.op, date: spec.payment.date }, spec.posting);
+    code = (kind.rule.side === "credit" ? decision.credit : decision.debit) ?? "";
+    if (decision.source !== "rule" || decision.needsApproval) notes.push(`accounts: ${decision.reason}`);
   } else code = TRANSIT_ACCOUNT;
   const refs = await accountRefs(deps, sc, code ? [code] : []);
   let accountRef = code ? (refs.get(code) ?? null) : null;
@@ -287,6 +336,10 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
   const correspondence = correspondenceAttribute(described);
   if (!correspondence)
     notes.push("the document has no single account attribute: the account is left for 1C to fill");
+  else if (!accountRef && kind.correspondence === "rule")
+    return refuse(
+      `the company's chart has no account ${code || "(none)"}: ${kind.what} is booked to it and the program does not book it anywhere else`,
+    );
   else if (!accountRef && kind.correspondence === "conversion")
     return refuse(
       `the company's chart has no conversion account ${code}: a conversion passes through it and the program does not book it anywhere else`,
@@ -316,6 +369,8 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     fields["Организация"] = { type: "Справочник.Организации", ref: spec.organization };
   if (correspondence && accountRef)
     fields[correspondence] = { type: "ПланСчетов.Хозрасчетный", ref: accountRef };
+  if (kind.correspondence === "rule" && spec.counterparty && have.has("Контрагент"))
+    fields["Контрагент"] = { type: "Справочник.Контрагенты", ref: spec.counterparty };
   if (taxItem && taxAttribute) {
     fields[taxAttribute] = { type: TAX_CATALOG, ref: taxItem.ref };
     if (have.has("НалоговыйПериод") && spec.tax?.period) fields["НалоговыйПериод"] = spec.tax.period;

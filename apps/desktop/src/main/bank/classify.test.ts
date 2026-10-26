@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyLine, gate } from "./classify.js";
+import { DEFAULT_TABLE, classifyLine, effectiveTable, gate } from "./classify.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 const MAIN = "20208000705733821001";
@@ -149,6 +149,58 @@ describe("what may be written", () => {
     ]);
     expect(out.held[0]?.why).toContain(
       "no text is not written".replace("no text is", "line with no text is"),
+    );
+  });
+});
+
+describe("the table of counterparty accounts", () => {
+  it("is the program's own until the accountant changes a row or adds one", () => {
+    expect(effectiveTable()).toEqual(DEFAULT_TABLE);
+    const table = effectiveTable([
+      { prefix: "16401", type: "bank_fee", account: "9420" },
+      { prefix: "29898", type: "terminal_receipt" },
+    ]);
+    expect(table.find((r) => r.prefix === "16401")?.account).toBe("9420");
+    expect(table.find((r) => r.prefix === "29898")?.type).toBe("terminal_receipt");
+    expect(table).toHaveLength(DEFAULT_TABLE.length + 1);
+  });
+
+  it("is what a line is read by: a row added by the accountant makes a known account of an unknown one", () => {
+    const unknown = pay({ account: "29898000900000000001", purpose: "Эквайринг за март" });
+    expect(classifyLine(unknown, ctx).confidence).toBe("medium");
+    const table = effectiveTable([{ prefix: "29898", type: "customs" }]);
+    expect(classifyLine(unknown, { ...ctx, table })).toMatchObject({ type: "customs", confidence: "high" });
+  });
+});
+
+describe("cash paid in or out, and a founder's contribution", () => {
+  it("is told by the text on a company's account", () => {
+    expect(kind({ direction: "in", purpose: "Взнос наличными на расчетный счет" })).toBe("cash_deposit/high");
+    expect(kind({ direction: "out", purpose: "Снятие наличных на хозяйственные нужды" })).toBe(
+      "cash_withdrawal/high",
+    );
+    expect(kind({ direction: "in", purpose: "Взнос учредителя в уставный капитал по протоколу 1" })).toBe(
+      "charter_capital/high",
+    );
+  });
+
+  it("holds a contribution back when the bank wrote no tax number for the founder, and a deposit under a contract is a payment", () => {
+    expect(
+      kind({
+        direction: "in",
+        inn: "",
+        account: "20208000900000000001",
+        purpose: "Вклад в уставный капитал",
+      }),
+    ).toBe("charter_capital/medium");
+    expect(kind({ direction: "in", purpose: "Взнос наличными по договору TI-05 от 01.02.2024" })).toBe(
+      "contract_payment/high",
+    );
+  });
+
+  it("is only a guess, never enough to write, on an account the table does not know", () => {
+    expect(kind({ direction: "in", account: "99999000900000000001", purpose: "Взнос наличными" })).toBe(
+      "cash_deposit/medium",
     );
   });
 });

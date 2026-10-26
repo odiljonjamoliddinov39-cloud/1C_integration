@@ -35,7 +35,9 @@ import {
   type DeleteMarkedPreview,
   type DeleteMarkedResult,
   type BankPaymentsInput,
+  type BankMappingInput,
   type PostCreatedInput,
+  type UndoBankInput,
   type DidoxDeleteDraftInput,
   type DidoxDocumentInput,
   type DidoxReconciliationInput,
@@ -116,6 +118,7 @@ import {
   postOptions,
   readChoice,
   readPostCommand,
+  readUndoCommand,
   say,
 } from "./router.js";
 import { type SalesCache, resolveSales } from "./didox/sales.js";
@@ -134,7 +137,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
-import { type Classified, type Unclassified, gate } from "./bank/classify.js";
+import { type Classified, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -176,7 +179,7 @@ import { type Problem, type ResolverCache, lookup, refOf, resolveDocuments } fro
 import { ControlError } from "./control-client.js";
 import type { ToolResult } from "./onec-jobs.js";
 import type { SessionService } from "./session.js";
-import type { LocalStore } from "./store.js";
+import type { BankWrite, LocalStore } from "./store.js";
 
 /**
  * Model turns per question: a safety stop for a model going in circles, far above what real work
@@ -751,6 +754,45 @@ export class AssistantService {
         if (!option) return this.reply(chat, say(lang).askWhich, emit);
         return this.postChosen(chat, option, lang, emit, signal);
       }
+    }
+    // "отмени" / "bekor qil": take back what the program entered from the statement, on one card.
+    if (readUndoCommand(question)) {
+      const open = this.deps.store.bankWrites(chat.companyId).filter((w: BankWrite) => !w.reversedAt);
+      if (open.length === 0)
+        return this.reply(
+          chat,
+          lang === "ru"
+            ? "Программа не вводила банковских документов, которые ещё остались: отменять нечего."
+            : lang === "en"
+              ? "The program has entered no bank documents that are still there: nothing to take back."
+              : "Dastur kiritgan, hali turgan bank hujjati yo'q: bekor qiladigan narsa yo'q.",
+          emit,
+        );
+      const result = await this.proposeUndoBank(
+        chat,
+        {
+          title:
+            lang === "ru"
+              ? `Отмена ввода выписки: ${open.length} документов`
+              : lang === "en"
+                ? `Taking back the statement entries: ${open.length} documents`
+                : `Ko'chirma yozuvlarini bekor qilish: ${open.length} ta hujjat`,
+        },
+        emit,
+        signal,
+      );
+      const data = result.ok ? (result.data as { takenBack?: number } | null) : null;
+      return this.reply(
+        chat,
+        !result.ok
+          ? result.message
+          : lang === "ru"
+            ? `Отменено документов: ${data?.takenBack ?? 0}. Они сняты с проведения и помечены на удаление; строки выписки можно ввести снова.`
+            : lang === "en"
+              ? `Taken back: ${data?.takenBack ?? 0} documents (unposted and marked for deletion); the lines can be entered again.`
+              : `Bekor qilindi: ${data?.takenBack ?? 0} ta hujjat (o'tkazish bekor qilindi va o'chirishga belgilandi); satrlarni qayta kiritish mumkin.`,
+        emit,
+      );
     }
     if (!readPostCommand(question)) return null;
     const made = chat.created ?? [];
@@ -1532,6 +1574,9 @@ export class AssistantService {
     if (use.name === "posting_rules") {
       return this.postingRules(chat, input.data as PostingRulesInput);
     }
+    if (use.name === "bank_mapping") {
+      return this.bankMapping(chat, input.data as BankMappingInput);
+    }
     if (use.name === "stock_movement") {
       return this.stockMovement(chat, input.data as StockMovementInput, emit, signal);
     }
@@ -1613,6 +1658,9 @@ export class AssistantService {
     }
     if (tool === "propose_post_created") {
       return this.proposePostCreated(chat, input as PostCreatedInput, emit, signal);
+    }
+    if (tool === "propose_undo_bank") {
+      return this.proposeUndoBank(chat, input as UndoBankInput, emit, signal);
     }
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
@@ -2111,6 +2159,84 @@ export class AssistantService {
         createdAt: new Date().toISOString(),
       });
     return { ok: true, data: { saved: rule, replaced: `${before.debit ?? "?"}/${before.credit ?? "?"}` } };
+  }
+
+  /**
+   * The table of statement lines by the counterparty's account (see bank/classify.ts): the program's own rows, with what the
+   * accountant confirmed over them. Confirmed once, it is applied from then on and never asked again; a fee's account is
+   * also the company's rule for the bank fee, so the document builder takes it.
+   */
+  private async bankMapping(chat: StoredChat, input: BankMappingInput): Promise<ToolResult> {
+    const stored = this.deps.store.bankMappings(chat.companyId);
+    const table = () => effectiveTable(this.deps.store.bankMappings(chat.companyId));
+    const view = () => {
+      const confirmed = new Set(this.deps.store.bankMappings(chat.companyId).map((r) => r.prefix));
+      const rows = table().map((r) => ({ ...r, confirmed: confirmed.has(r.prefix) }));
+      return { table: rows, allConfirmed: rows.every((r) => r.confirmed) };
+    };
+    if (input.action === "list") return { ok: true, data: view() };
+    const chart = await this.chartCodes(chat);
+    const saveFeeRule = (account: string) => {
+      const facts = { type: "bank_fee" as const };
+      const general = GENERAL_RULES.find((r) => r.operation === "bank_fee");
+      this.deps.store.addPostingRule(
+        chat.companyId,
+        companyRule(
+          facts,
+          { document: general?.document ?? "", debit: account, credit: general?.credit ?? "5110" },
+          "c-bank_fee",
+        ),
+      );
+    };
+    if (input.action === "set") {
+      const { prefix } = input;
+      if (!prefix || (!input.type && !input.account))
+        return { ok: false, code: "VALIDATION", message: "set needs a prefix and a type or an account" };
+      const current = table().find((r) => r.prefix === prefix);
+      const type = input.type ?? current?.type;
+      if (!type || type === "unknown")
+        return { ok: false, code: "VALIDATION", message: "a new prefix needs a type" };
+      const account = input.account ?? current?.account;
+      if (input.account) {
+        const missing = missingIn(chart, [input.account]);
+        if (missing.length > 0)
+          return {
+            ok: false,
+            code: "ACCOUNT_NOT_IN_CHART",
+            message: `The company's chart of accounts has no ${missing.join(", ")}: choose an account it has.`,
+          };
+      }
+      this.deps.store.saveBankMappings(chat.companyId, [{ prefix, type, ...(account ? { account } : {}) }]);
+      if (type === "bank_fee" && account) saveFeeRule(account);
+      if (current && (current.type !== type || current.account !== account))
+        this.deps.store.addCorrection(chat.companyId, {
+          operationId: `bank_mapping:${prefix}`,
+          step: "bank_mapping.set",
+          before: `${current.type}/${current.account ?? "-"}`,
+          after: `${type}/${account ?? "-"}`,
+          user: (await this.deps.session.view())?.email ?? "accountant",
+          createdAt: new Date().toISOString(),
+        });
+      return { ok: true, data: { saved: { prefix, type, account }, ...view() } };
+    }
+    // confirm: the table as it stands (or the prefixes named), once.
+    const wanted = input.prefixes ? new Set(input.prefixes) : null;
+    const rows = table().filter((r) => !wanted || wanted.has(r.prefix));
+    this.deps.store.saveBankMappings(
+      chat.companyId,
+      rows.map(({ prefix, type, account }) => ({ prefix, type, ...(account ? { account } : {}) })),
+    );
+    const fee = rows.find((r) => r.type === "bank_fee" && r.account);
+    if (fee?.account && missingIn(chart, [fee.account]).length === 0) saveFeeRule(fee.account);
+    return {
+      ok: true,
+      data: {
+        confirmed: rows.length,
+        was: stored.length,
+        ...view(),
+        note: "Confirmed: the table is applied from now on and is not to be asked about again.",
+      },
+    };
   }
 
   /** The financial statements from the ledger, worked out by the program (see engine/financial.ts). */
@@ -3570,6 +3696,9 @@ export class AssistantService {
     // Every line is read before it is written: a line is entered only when its kind is known with confidence (the
     // counterparty's account and the purpose agree); the rest go to a list for the accountant.
     const own = new Set(statements.map((s) => s.account).filter(Boolean));
+    const stored = this.deps.store.bankMappings(chat.companyId);
+    const mapping = effectiveTable(stored);
+    const mappingConfirmed = new Set(stored.map((r) => r.prefix));
     const held: Unclassified[] = [];
     const classes = new Map<string, Map<number, Classified>>();
     const tasks = chosen.flatMap((statement) => {
@@ -3577,7 +3706,7 @@ export class AssistantService {
       const planned = (plan.rows.get(statement.fileName) ?? []).filter(
         (row) => (!wanted || wanted.has(row)) && !done.has(doneKey(statement.fileName, row)),
       );
-      const gated = gate(statement, planned, own);
+      const gated = gate(statement, planned, own, mapping);
       held.push(...gated.held);
       classes.set(statement.fileName, gated.classes);
       const rows = gated.allowed;
@@ -3676,6 +3805,14 @@ export class AssistantService {
           }
         : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
+      ...(mapping.some((r) => !mappingConfirmed.has(r.prefix))
+        ? {
+            accountMapping: {
+              confirmed: false,
+              note: "The table that says what a line is by its counterparty's account (and the fee account, 9430) is the program's own, not yet confirmed by the accountant. Ask ONCE: bank_mapping action confirm (or set a row). It is applied meanwhile; do not ask again after it is confirmed.",
+            },
+          }
+        : {}),
       ...(plan.mismatched.length > 0
         ? {
             conversionsNotAgreeing: {
@@ -3777,6 +3914,7 @@ export class AssistantService {
             // account rules and its chart are what it needs.
             organization,
             posting,
+            ...(classes.get(task.statement.fileName) ? { kinds: classes.get(task.statement.fileName) } : {}),
             ...(input.splitCommission === undefined ? {} : { splitCommission: input.splitCommission }),
             overrides: {
               ...(input.ownAccount && tasks.length === 1 ? { ownAccount: input.ownAccount } : {}),
@@ -3943,8 +4081,8 @@ export class AssistantService {
     }
     // The payments, then the two legs of each move between the company's own accounts, on one card.
     const items = [
-      ...ready.map((r) => ({ file: r.file, row: r.payment.row, change: r.change })),
-      ...moved.ready.map((r) => ({ file: r.file, row: r.row, change: r.change })),
+      ...ready.map((r) => ({ file: r.file, row: r.payment.row, change: r.change, move: false })),
+      ...moved.ready.map((r) => ({ file: r.file, row: r.row, change: r.change, move: true })),
     ];
     const proposal = {
       title: input.title,
@@ -3961,6 +4099,7 @@ export class AssistantService {
       }
       chat.bankDone = [...entered];
       this.save(chat);
+      this.logBankWrites(chat, items, (data.applied ?? []) as { n: number; object?: ObjectState }[], classes);
     }
     // Rows that had no earlier document to copy may have one now: those just entered. Looked at again at once,
     // with no step of the model between (a base with no posted payment otherwise costs a step per kind of payment).
@@ -3984,6 +4123,120 @@ export class AssistantService {
     return {
       ok: true,
       data: { ...(data ?? {}), ...attention, ...(hasAttention ? { next: BANK_NEXT } : {}) },
+    };
+  }
+
+  /**
+   * The log of what a card wrote from a statement (the line, the rule that read it, the conversion it belongs to), so that
+   * each write can be taken back by propose_undo_bank.
+   */
+  private logBankWrites(
+    chat: StoredChat,
+    items: { file: string; row: number; change: ChangeInput; move: boolean }[],
+    applied: { n: number; object?: ObjectState }[],
+    classes: Map<string, Map<number, Classified>>,
+  ): void {
+    const known = this.deps.store.bankWrites(chat.companyId);
+    let seq = known.reduce((m, w) => Math.max(m, w.seq), 0);
+    const runId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const log: BankWrite[] = [];
+    for (const { n, object } of applied) {
+      const item = items[n - 1];
+      if (!item || !object?.ref) continue;
+      const comment = item.change.fields?.["Комментарий"];
+      const conversion = typeof comment === "string" ? /^Conversion (\S+)/.exec(comment)?.[1] : undefined;
+      const read = classes.get(item.file)?.get(item.row);
+      log.push({
+        ref: object.ref,
+        object: object.object,
+        presentation: object.presentation,
+        runId,
+        seq: ++seq,
+        file: item.file,
+        row: item.row,
+        rule: conversion
+          ? "conversion"
+          : item.move
+            ? "transfer between the company's own accounts"
+            : read
+              ? `${read.type} by ${read.rule}`
+              : "payment",
+        ...(conversion ? { conversionId: conversion } : {}),
+        createdAt: now,
+      });
+    }
+    if (log.length > 0) this.deps.store.addBankWrites(chat.companyId, log);
+  }
+
+  /**
+   * Takes back what the program wrote from bank statements: one card of deletions (1C unposts a document it marks), the later
+   * document before the earlier, and a conversion's other leg with it. The lines become enterable again.
+   */
+  private async proposeUndoBank(
+    chat: StoredChat,
+    input: UndoBankInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    emit({ type: "tool", name: "propose_undo_bank", detail: input.title });
+    const scope = input.scope ?? "last";
+    if (scope === "conversion" && !input.conversionId)
+      return { ok: false, code: "VALIDATION", message: "scope conversion needs conversionId" };
+    const open = this.deps.store.bankWrites(chat.companyId).filter((w) => !w.reversedAt);
+    let picked = open.filter((w) => !input.file || w.file.toLowerCase() === input.file.toLowerCase());
+    if (scope === "last") {
+      const run = [...picked].sort((a, b) => b.seq - a.seq)[0]?.runId;
+      picked = picked.filter((w) => w.runId === run);
+    } else if (scope === "conversion") picked = picked.filter((w) => w.conversionId === input.conversionId);
+    // A conversion is never taken back by half: every leg of one goes with it.
+    const legs = new Set(picked.flatMap((w) => (w.conversionId ? [w.conversionId] : [])));
+    for (const w of open)
+      if (w.conversionId && legs.has(w.conversionId) && !picked.includes(w)) picked.push(w);
+    if (picked.length === 0)
+      return {
+        ok: true,
+        data: {
+          status: "nothing_to_undo",
+          note: "The program has written no bank document that is still there.",
+        },
+      };
+    picked.sort((a, b) => b.seq - a.seq);
+    const result = await this.proposeBatch(
+      chat,
+      {
+        title: input.title,
+        changes: picked.map((w) => ({ action: "delete" as const, object: w.object, ref: w.ref })),
+      },
+      emit,
+      signal,
+    );
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    const taken: BankWrite[] = [];
+    if (data?.status === "done")
+      for (const { n } of data.applied ?? []) {
+        const w = picked[n - 1];
+        if (w) taken.push(w);
+      }
+    if (taken.length > 0) {
+      this.deps.store.markBankReversed(
+        chat.companyId,
+        taken.map((w) => w.ref),
+      );
+      const refs = new Set(taken.map((w) => w.ref));
+      chat.created = (chat.created ?? []).filter((d) => !refs.has(d.ref));
+      const lines = new Set(taken.map((w) => `${w.file}#${w.row}`));
+      chat.bankDone = (chat.bankDone ?? []).filter((k) => !lines.has(k));
+      this.save(chat);
+    }
+    return {
+      ok: true,
+      data: {
+        ...(data ?? {}),
+        takenBack: taken.length,
+        note: "Unposted and marked for deletion (1C keeps them; the mark can be lifted). The statement's lines can be entered again.",
+      },
     };
   }
 
@@ -4257,7 +4510,7 @@ function describe(name: string, input: unknown): string {
     const draft = input as { number: string; title: string };
     return `${draft.number} · ${draft.title}`;
   }
-  if (name === "propose_post_created" || name === "propose_currency_rates") {
+  if (name === "propose_post_created" || name === "propose_currency_rates" || name === "propose_undo_bank") {
     const batch = input as { title: string };
     return batch.title;
   }

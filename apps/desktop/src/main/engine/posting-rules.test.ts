@@ -20,7 +20,7 @@ describe("choosing the accounts", () => {
     for (const type of GENERAL_RULES.map((r) => r.operation)) {
       expect(choosePosting({ type }).source).toBe("rule");
     }
-    expect(GENERAL_RULES).toHaveLength(11); // the plan's eight, the profit tax accrual and the two advances
+    expect(GENERAL_RULES).toHaveLength(16); // the plan's eight, the profit tax accrual, the two advances, the charter capital and the cash flows
   });
 
   it("checks the accounts against the company's chart and asks for confirmation when one is missing", () => {
