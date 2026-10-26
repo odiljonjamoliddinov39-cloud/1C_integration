@@ -23,7 +23,18 @@ describe("bank gaps", () => {
       contracts: ["№183 от 15.10.2026"],
       problems: [{ message: "No earlier payment to copy", rows: 6 }],
       unclassified: [],
+      transfers: [],
     });
+  });
+
+  it("tells the moves between own accounts the program could not enter, with the reason", () => {
+    const gaps = gapsOf(
+      [],
+      [],
+      [{ message: "no attribute for the other account" }, { message: "no attribute for the other account" }],
+    );
+    expect(gaps.transfers).toEqual([{ message: "no attribute for the other account", rows: 2 }]);
+    expect(gapsText("en", gaps)).toContain("between own accounts the program could not enter (2)");
   });
 
   it("lists the lines held back, by reason, apart from the unsettled ones", () => {
@@ -44,7 +55,14 @@ describe("bank gaps", () => {
 
   it("says nothing when nothing is missing", () => {
     expect(
-      gapsText("uz", { ready: 5, counterparties: [], contracts: [], problems: [], unclassified: [] }),
+      gapsText("uz", {
+        ready: 5,
+        counterparties: [],
+        contracts: [],
+        problems: [],
+        unclassified: [],
+        transfers: [],
+      }),
     ).toBe("");
   });
 
@@ -55,6 +73,7 @@ describe("bank gaps", () => {
       contracts: [],
       problems: [{ message: "x", rows: 1 }],
       unclassified: [],
+      transfers: [],
     });
     expect(text).not.toContain("card");
   });

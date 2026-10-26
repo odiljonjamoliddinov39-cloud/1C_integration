@@ -5,7 +5,7 @@ import type { RunQueryInput } from "@platform/shared";
 import type { Transfer } from "./ledger.js";
 import type { BankDeps } from "./resolve.js";
 import type { BankPayment, BankStatement } from "./statement.js";
-import { resolveTransfers } from "./transfer.js";
+import { MIRROR, resolveTransfers } from "./transfer.js";
 
 const A = "20208000100438330001";
 const B = "20208000200438330002";
@@ -222,9 +222,19 @@ describe("money moved between the company's own accounts", () => {
     expect(out.notes[0]).toContain("copied from the company's 0000-000003 of 2026-08-01");
   });
 
-  it("enters only the leg whose statement is attached", async () => {
+  it("enters the other side too from the attached row (mirrored), and never twice", async () => {
     const out = await run([move({ in: null })], {}, ["a.xlsx"]);
-    expect(out.ready.map((r) => r.side)).toEqual(["out"]);
+    expect(out.problems).toEqual([]);
+    expect(out.ready.map((r) => r.side)).toEqual(["out", "in"]);
+    const mirrored = out.ready[1];
+    expect(mirrored?.row).toBe(5 + MIRROR);
+    expect(mirrored?.change).toMatchObject({
+      object: "Документ.ПоступлениеНаРасчетныйСчет",
+      fields: { Дата: "2026-09-10", СуммаДокумента: 250_000, БанковскийСчет: { ref: REF_B } },
+    });
+    // the mirrored side is not made again once the chat has it
+    const again = await run([move({ in: null })], {}, ["a.xlsx"], new Set([`a.xlsx#${5 + MIRROR}`]));
+    expect(again.ready.map((r) => r.side)).toEqual(["out"]);
     const other = await run([move()], {}, ["b.xlsx"]);
     expect(other.ready.map((r) => r.side)).toEqual(["in"]);
   });

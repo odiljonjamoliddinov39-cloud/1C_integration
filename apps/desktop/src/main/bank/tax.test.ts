@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { lagOf, periodBefore, periodOfPurpose, taxKindOf, taxNameIs, taxPeriodFor, usualLag } from "./tax.js";
+import {
+  isPenaltyPurpose,
+  lagOf,
+  periodBefore,
+  periodOfPurpose,
+  taxItemFor,
+  taxKindOf,
+  taxNameIs,
+  taxPeriodFor,
+  usualLag,
+} from "./tax.js";
 
 describe("taxKindOf", () => {
   it("names the tax a purpose is for", () => {
@@ -17,6 +27,16 @@ describe("taxKindOf", () => {
   it("leaves a purpose that names two taxes, or none, to the model", () => {
     expect(taxKindOf("НДФЛ и социальный налог")).toBeNull();
     expect(taxKindOf("Оплата за товар")).toBeNull();
+  });
+
+  it("tells an INPS penalty from the contribution", () => {
+    expect(isPenaltyPurpose("Оплата за 191 ИНПС пеня $TAX_ID$1")).toBe(true);
+    expect(isPenaltyPurpose("Оплата за 101 Отчисление в ИНПС $TAX_ID$1")).toBe(false);
+    expect(isPenaltyPurpose("Оплата за 101 пенсия бадалига ажратма 2025 март")).toBe(false);
+    expect(taxItemFor("inps", "191 ИНПС Пеня", "Оплата за 191 ИНПС пеня")).toBe(true);
+    expect(taxItemFor("inps", "Отчисления в ИНПС", "Оплата за 191 ИНПС пеня")).toBe(false);
+    expect(taxItemFor("inps", "Отчисления в ИНПС", "Оплата за 101 Отчисление в ИНПС")).toBe(true);
+    expect(taxItemFor("ndfl", "Налог на доходы физических лиц", "Оплата за 46 НДФЛ")).toBe(true);
   });
 
   it("knows a tax by its name in 1C", () => {

@@ -71,7 +71,7 @@ export type Scaffolded =
 
 /** Payments whose operation and accounts are the company's own choice, not a supplier's or a buyer's payment. */
 const NOT_PLAIN =
-  /зарплат|заработн|ish\s*haq|oylik|аванс\p{L}*\s+(?:сотрудн|работник|по\s+зп)|комисси|komissiya|xizmat\s+haqi\s+bank|кредит|займ|ссуд|процент|foiz|qarz\s+(?:berish|qaytar)|дивиденд|dividend|подотч|hisobdor|командиров|алимент|штраф|jarima|конвертац|konvertats|собственн\p{L}*\s+сч[её]т|o['‘’ʻ`]z\s+hisob/iu;
+  /зарплат|заработн|ish\s*haq|oylik|аванс\p{L}*\s+(?:сотрудн|работник|по\s+зп)|комисси|komissiya|xizmat\s+haqi\s+bank|кредит|займ|ссуд|(?<!\d\s?)процент|foiz|qarz\s+(?:berish|qaytar)|дивиденд|dividend|подотч|hisobdor|командиров|алимент|штраф|jarima|конвертац|konvertats|собственн\p{L}*\s+сч[её]т|o['‘’ʻ`]z\s+hisob/iu;
 
 const rounded = (n: number) => Math.round(n * 1e12) / 1e12;
 
@@ -118,7 +118,12 @@ export async function enumValues(
 const squash = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
 
 /** The enumeration value whose name or presentation contains one of the phrases. */
+/**
+ * The value of an enumeration that a phrase names. The value that is exactly the phrase comes first: «Уплата налога» is
+ * not «Уплата налога за третьих лиц», which contains it and may come earlier in 1C's list.
+ */
 export const valueLike = (values: EnumValue[], phrases: string[]) =>
+  values.find((v) => phrases.some((p) => squash(v.name) === squash(p))) ??
   values.find((v) => phrases.some((p) => squash(`${v.name} ${v.ref}`).includes(squash(p))));
 
 /** The refs of ledger accounts by their codes (one read), null for a code the chart does not have. */

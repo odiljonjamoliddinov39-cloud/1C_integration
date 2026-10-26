@@ -424,7 +424,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "bank's fees, 22613/22614/17101 a conversion, 16103 SWIFT, 23402/22628 tax, 29801 customs, 23120 an individual's card, 202xx " +
     "a company) and the account a fee goes to (9430). The program applies it by itself; action list shows it and what the " +
     "accountant has confirmed. Ask the accountant ONCE to confirm it (action confirm), or to change a row (action set {prefix, " +
-    "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed.",
+    "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed. Payments to the " +
+    "budget that name no tax (customs prepayments held as «tax/medium»): when the accountant says to book them as a payment to " +
+    "the supplier, set {prefix: '23402', type: 'contract_payment', untaxed: true}: only the unnamed ones change, named taxes " +
+    "stay taxes.",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +
@@ -529,7 +532,11 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the reason): tell the accountant about those. A statement of a foreign-currency account is entered in its currency " +
     "(foreignCurrencyAccounts): each payment is copied from the counterparty's last payment in that currency, with the " +
     "rate of the payment's day from 1C's rates (a note says when 1C had none and the earlier rate was kept: pass it on); " +
-    "a conversion between a soum and a currency account is not paired by the program: tell the accountant. Its reflections " +
+    "a conversion between a soum and a currency account is paired and entered by the program through the conversion " +
+    "accounts, its two legs linked: say a conversion or a move between the company's own accounts was NOT entered only " +
+    "when transfersNotEntered says so, with the reasons it gives (never count them yourself, never say 1C has no field for " +
+    "the other account, never write the entries by hand). Do not repeat a list the program has already shown " +
+    "(alreadyShownToAccountant): say what happens next. Its reflections " +
     "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
     "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
     "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +

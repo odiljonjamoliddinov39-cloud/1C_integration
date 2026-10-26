@@ -24,7 +24,15 @@ import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from 
 import { cashOrderFor } from "./cash.js";
 import { isEntrepreneur } from "./transit.js";
 import { ACCOUNT_OWNER_COLUMNS, candidateOf, pickAccount } from "./accounts.js";
-import { type TaxKind, periodBefore, taxKindOf, taxNameIs, taxPeriodFor, withoutVatClause } from "./tax.js";
+import {
+  type TaxKind,
+  isPenaltyPurpose,
+  periodBefore,
+  taxItemFor,
+  taxKindOf,
+  taxPeriodFor,
+  withoutVatClause,
+} from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
 export interface BankDeps extends ResolverDeps {
@@ -144,6 +152,47 @@ export const OBJECT = {
 const NEUTRAL_NUMBER = "б/н";
 
 const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** The words that tell a name from another one: a legal form or a bank's branch is not one of them. */
+const NAME_NOISE = new Set([
+  "ооо",
+  "ooo",
+  "mchj",
+  "мчж",
+  "ao",
+  "ао",
+  "ик",
+  "ск",
+  "oao",
+  "ип",
+  "yatt",
+  "yttf",
+]);
+const nameWords = (name: string) =>
+  new Set(
+    name
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length >= 2 && !NAME_NOISE.has(w)),
+  );
+
+/**
+ * One of the counterparties that share an INN, by the name the statement wrote: the one with the most of the statement's
+ * words and the fewest words the statement does not have ("Kapitalbank" and "Kapitalbank ATB Buxoro filiali" under one
+ * INN). Null when the names do not tell them apart.
+ */
+export function pickByName(matches: BankCandidate[], statementName: string): BankCandidate | null {
+  const wanted = nameWords(statementName);
+  if (wanted.size === 0) return null;
+  const scored = matches.map((m) => {
+    const words = nameWords(m.name);
+    const shared = [...words].filter((w) => wanted.has(w)).length;
+    return { m, score: shared * 2 - (words.size - shared) - ([...wanted].length - shared) };
+  });
+  scored.sort((x, y) => y.score - x.score);
+  const [best, next] = scored;
+  return best && best.score > 0 && (!next || best.score > next.score) ? best.m : null;
+}
 
 /** The name the program gives a bank fee's counterparty (the bank's own line): no counterparty is looked up for it. */
 export const BANK_FEE_NAME = "Bank fee";
@@ -517,9 +566,14 @@ export function copyTemplate(
       };
     }
     const rowTotal = parsePositive(row["СуммаПлатежа"] ?? row["Сумма"]);
-    if (!(rowTotal > 0) || Math.abs(rowTotal - oldTotal) > 0.005) {
-      return { ok: false, message: `the earlier payment's ${name} does not add up to its amount` };
-    }
+    // A hand-made earlier document may have a breakdown that is empty or differs from its header: its one row is taken
+    // as the shape and gets the new amount (an earlier row that does not give one is set to the amount itself).
+    const rowDiffers = !(rowTotal > 0) || Math.abs(rowTotal - oldTotal) > 0.005;
+    if (rowDiffers)
+      notes.push(
+        `the earlier payment's ${name} did not add up to its amount (${rowTotal > 0 ? rowTotal : "empty"} against ${oldTotal}): its row is made for the new amount; check it`,
+      );
+    const rowBase = rowTotal > 0 ? rowTotal : null;
     // Settled in soums (the settlement amount is the payment at the rate) or in the payment's own currency.
     const settlement = parsePositive(row["СуммаВзаиморасчетов"]);
     const inSoums = ctx.foreign && settlement > 0 && Math.abs(settlement - rowTotal) > rowTotal * 0.01;
@@ -565,7 +619,7 @@ export function copyTemplate(
       ) {
         scaled[column] = round2((amount * newRate) / multiplicity);
       } else if (MONEY_COLUMNS.includes(column) && typeof value === "number") {
-        scaled[column] = round2((value * amount) / oldTotal);
+        scaled[column] = rowBase ? round2((value * amount) / rowBase) : amount;
       } else if (ctx.foreign && newRate !== null && (column === "КурсВзаиморасчетов" || column === "Курс")) {
         scaled[column] = newRate;
       } else scaled[column] = writable(value);
@@ -802,8 +856,15 @@ export async function resolvePayments(
     const [only] = matches;
     const named =
       who.field === "Наименование" ? `the name "${who.value}" (no INN in the statement)` : `INN ${p.inn}`;
+    const byName = matches.length > 1 && who.field === "ИНН" ? pickByName(matches, p.counterparty) : null;
     if (matches.length === 1 && only) withCounterparty.push({ payment: p, counterparty: only.ref });
-    else if (matches.length === 0) {
+    else if (byName) {
+      withCounterparty.push({ payment: p, counterparty: byName.ref });
+      addNote(
+        [p.row],
+        `${matches.length} counterparties have ${named}: «${byName.name}» was taken, the one the statement's name «${p.counterparty.trim()}» fits`,
+      );
+    } else if (matches.length === 0) {
       // A company's INN is 9 digits; a person's (14) is not written here, and a nameless row cannot be created. A payer known by name only
       // is created under the zeros the bank wrote, so a later statement finds it by name again.
       if (BANK_INTERNAL.test(p.counterparty.trim())) {
@@ -922,7 +983,7 @@ export async function resolvePayments(
     const object = OBJECT[payment.direction];
     const asked = overrides.templates?.find((o) => o.row === payment.row);
     // A tax payment: the tax is named by the payment, and the template is the company's payment of that same tax.
-    if (!asked && isTaxPayment(payment)) {
+    if (!asked && isTaxPayment(payment) && options.kinds?.get(payment.row)?.type !== "contract_payment") {
       const made = await taxPayment(deps, cache, payment, ownAccount, {
         organization: options.organization ?? null,
         ...(options.posting ? { posting: options.posting } : {}),
@@ -1095,6 +1156,41 @@ export async function resolvePayments(
         scaffoldedCurrency = made.contractCurrency;
         addNote([payment.row], made.notes[made.notes.length - 1] ?? "");
         for (const note of made.notes.slice(0, -1)) addNote([payment.row], note);
+      } else if (counterparty && who && !fresh && !named && /has no contract in 1C$/.test(made.message)) {
+        // A counterparty 1C has but that has no contract at all, and a purpose that names none: the neutral contract, as for a
+        // new counterparty, made on a card; the payment waits for the next pass.
+        const earliest = withCounterparty
+          .filter((x) => x.payment.direction === payment.direction && whoOf(x.payment)?.key === who.key)
+          .map((x) => x.payment.date)
+          .sort()[0];
+        const mention = { number: NEUTRAL_NUMBER, date: day(earliest ?? payment.date) };
+        const key = `${who.key}|${normalNumber(mention.number)}|${mention.date}`;
+        const pending = pendingContracts.get(key);
+        if (pending) {
+          pending.rows.push(payment.row);
+          continue;
+        }
+        const item = foreignAccount
+          ? await currencyRef(deps, cache, currency)
+          : ((cache.scaffold ??= newScaffoldCache()).soum ??= await soumRef(deps));
+        const neutralContract = await contractFromDescription(deps, cache, {
+          owner: counterparty,
+          mention,
+          direction: payment.direction,
+          currency: foreignAccount ? currency : "UZS",
+          currencyRef: item,
+          organization: options.organization ?? null,
+        });
+        if (neutralContract.ok) {
+          pendingContracts.set(key, {
+            rows: [payment.row],
+            label: `№${mention.number} ${mention.date.split("-").reverse().join(".")} · ${payment.counterparty}`,
+            change: neutralContract.change,
+          });
+          addNote([payment.row], neutralContract.note);
+          continue;
+        }
+        whyNot = `: ${made.message.replace(/^no earlier [^,]*, and one cannot be made from 1C's own description: /, "")} (and a neutral contract cannot be made: ${neutralContract.message})`;
       } else
         whyNot = `: ${made.message.replace(/^no earlier [^,]*, and one cannot be made from 1C's own description: /, "")}`;
     }
@@ -1278,7 +1374,7 @@ async function loadTaxHistory(deps: BankDeps, cache: BankCache): Promise<TaxHist
   const outcome = await deps.query({
     query:
       "ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.Дата КАК Дата, Т.НалоговыйПериод КАК Период, Т.Налог.Наименование КАК Налог, Т.НазначениеПлатежа КАК Назначение " +
-      `ИЗ ${OBJECT.out} КАК Т ГДЕ НЕ Т.ПометкаУдаления И Т.Налог <> ЗНАЧЕНИЕ(Справочник.ВидыНалоговИПлатежейВБюджет.ПустаяСсылка) УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`,
+      `ИЗ ${OBJECT.out} КАК Т ГДЕ НЕ Т.ПометкаУдаления И Т.Налог <> ЗНАЧЕНИЕ(Справочник.ВидыНалоговИПлатежейВБюджет.ПустаяСсылка) И НЕ ПРЕДСТАВЛЕНИЕ(Т.ВидОперации) ПОДОБНО "%третьих%" УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`,
     limit: 300,
     refs: true,
   });
@@ -1301,8 +1397,11 @@ async function loadTaxHistory(deps: BankDeps, cache: BankCache): Promise<TaxHist
   return cache.tax;
 }
 
-const isKind = (row: TaxHistory, kind: TaxKind) =>
-  taxNameIs(kind, row.tax) || taxKindOf(row.purpose) === kind;
+/** An earlier payment of the same tax; for INPS a penalty is another item than the contribution. */
+const isKind = (row: TaxHistory, kind: TaxKind, purpose: string) =>
+  taxItemFor(kind, row.tax, purpose) ||
+  (taxKindOf(row.purpose) === kind &&
+    (kind !== "inps" || isPenaltyPurpose(row.purpose) === isPenaltyPurpose(purpose)));
 
 /**
  * A payment to the budget made from the company's newest posted payment of the same tax: its operation, accounts,
@@ -1324,7 +1423,7 @@ async function taxPayment(
   const history = await loadTaxHistory(deps, cache);
   if (!history)
     return { ok: false, message: `1C could not be asked for the company's tax payments: ${TAX_NEEDS}` };
-  const same = history.filter((h) => isKind(h, kind));
+  const same = history.filter((h) => isKind(h, kind, payment.purpose));
   const latest = same[0];
   if (!latest) {
     // No payment of this tax in 1C to copy: the document is made from 1C's own description of it.

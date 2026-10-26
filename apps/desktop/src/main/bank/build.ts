@@ -30,7 +30,7 @@ import {
   valueLike,
 } from "./scaffold.js";
 import type { BankPayment } from "./statement.js";
-import { TAX_ACCOUNT, type TaxKind, taxNameIs } from "./tax.js";
+import { TAX_ACCOUNT, type TaxKind, isPenaltyPurpose, taxItemFor } from "./tax.js";
 
 export type BuildKind =
   | "fee"
@@ -235,24 +235,6 @@ async function taxItems(deps: BankDeps, cache: BankCache): Promise<{ ref: string
   return cache.taxItems;
 }
 
-/** The ledger account a tax item of 1C's catalog itself names (its only attribute of the chart of accounts), or null. */
-async function taxItemAccount(
-  deps: BankDeps,
-  sc: ReturnType<typeof newScaffoldCache>,
-  ref: string,
-): Promise<string | null> {
-  const described = await describeCached(deps, sc, TAX_CATALOG);
-  const charted = (described?.attributes ?? []).filter((a) =>
-    a.types.some((t) => t.startsWith("ПланСчетов")),
-  );
-  const [only] = charted;
-  if (charted.length !== 1 || !only) return null;
-  const outcome = await deps.getObject(TAX_CATALOG, ref);
-  if (!outcome.ok) return null;
-  const fields = (outcome.data as { fields?: Record<string, unknown> }).fields ?? {};
-  return refOf(fields[only.name]);
-}
-
 export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: BuildSpec): Promise<Built> {
   const sc = (cache.scaffold ??= newScaffoldCache());
   const kind = KINDS[spec.kind];
@@ -279,7 +261,9 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
   const values: EnumValue[] | null = operationType ? await enumValues(deps, sc, operationType) : null;
   if (!values) return refuse("the operations of the document could not be read from 1C");
   // The first phrase 1C has a value for (the usual name before the alternative one).
-  const operation = kind.phrases.map((p) => valueLike(values, [p])).find((v) => v !== undefined);
+  // A payment to the budget is «Уплата налога» itself, never the one «за третьих лиц» (another payer, a contract, 6010).
+  const usable = kind.correspondence === "tax" ? values.filter((v) => !/третьих/iu.test(v.name)) : values;
+  const operation = kind.phrases.map((p) => valueLike(usable, [p])).find((v) => v !== undefined);
   if (!operation)
     return refuse(
       `1C has no operation like «${kind.phrases[0]}» (it has ${values.map((v) => v.name).join(", ")})`,
@@ -302,7 +286,7 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     if (decision.source !== "rule" || decision.needsApproval) notes.push(`accounts: ${decision.reason}`);
   } else code = TRANSIT_ACCOUNT;
   const refs = await accountRefs(deps, sc, code ? [code] : []);
-  let accountRef = code ? (refs.get(code) ?? null) : null;
+  const accountRef = code ? (refs.get(code) ?? null) : null;
 
   // A payment to the budget: the tax of 1C's own catalog (by its name), and the account that tax item itself names, when it has one.
   let taxItem: { ref: string; name: string } | null = null;
@@ -315,7 +299,7 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     if (!taxAttribute) return refuse(`${kind.object} has no attribute for the tax (of ${TAX_CATALOG})`);
     const found = await taxItems(deps, cache);
     if (!found) return refuse("the taxes of 1C's catalog could not be read");
-    const named = found.filter((t) => taxNameIs(spec.tax?.kind ?? "vat", t.name));
+    const named = found.filter((t) => taxItemFor(spec.tax?.kind ?? "vat", t.name, spec.payment.purpose));
     const [only] = named;
     if (named.length !== 1 || !only)
       return refuse(
@@ -324,17 +308,15 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
           : `several taxes of 1C's catalog could be ${spec.tax.kind}: ${named.map((t) => t.name).join(", ")}; the accountant says which`,
       );
     taxItem = only;
-    const own = await taxItemAccount(deps, sc, only.ref);
-    if (own) {
-      accountRef = own;
-      notes.push(`account: the one 1C's own tax item «${only.name}» names`);
-    } else
-      notes.push(
-        `account ${code} is the usual one for taxes (NSBU): the tax item in 1C names none; check it`,
-      );
   }
-  const correspondence = correspondenceAttribute(described);
-  if (!correspondence)
+  // A payment to the budget: «Счет учета» of the document is the bank's own ledger account (5110), not the tax's. The account of
+  // the tax is 1C's: it works it out from the tax and the kind of liability, so nothing is written to the account attribute.
+  const correspondence = kind.correspondence === "tax" ? null : correspondenceAttribute(described);
+  if (kind.correspondence === "tax")
+    notes.push(
+      "the account of the tax (e.g. 4420.1 for personal income tax) is the one 1C itself takes from the tax and the kind of liability; check it on the first document",
+    );
+  else if (!correspondence)
     notes.push("the document has no single account attribute: the account is left for 1C to fill");
   else if (!accountRef && kind.correspondence === "rule")
     return refuse(
@@ -373,6 +355,16 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     fields["Контрагент"] = { type: "Справочник.Контрагенты", ref: spec.counterparty };
   if (taxItem && taxAttribute) {
     fields[taxAttribute] = { type: TAX_CATALOG, ref: taxItem.ref };
+    // The kind of liability: the tax itself, or its penalty.
+    const liability = described.attributes.find(
+      (a) => a.name === "ВидОбязательства" && a.types.some((t) => t.startsWith("Перечисление")),
+    );
+    const liabilityType = liability?.types.find((t) => t.startsWith("Перечисление"));
+    const liabilities = liabilityType ? await enumValues(deps, sc, liabilityType) : null;
+    const wanted = liabilities
+      ? valueLike(liabilities, isPenaltyPurpose(spec.payment.purpose) ? ["пеня", "пени"] : ["налог"])
+      : undefined;
+    if (liability && wanted) fields[liability.name] = wanted.ref;
     if (have.has("НалоговыйПериод") && spec.tax?.period) fields["НалоговыйПериод"] = spec.tax.period;
     if (have.has("Контрагент") && spec.tax?.office)
       fields["Контрагент"] = { type: "Справочник.Контрагенты", ref: spec.tax.office };

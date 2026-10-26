@@ -158,4 +158,26 @@ describe("what a payment document needs to post", () => {
       СчетУчетаРасчетовПоАвансам: { ref: A4310 },
     });
   });
+  it("replaces the soum accounts a payment in soums brought to a contract in a currency, keeps a currency one", async () => {
+    const { deps, cache } = fake({ currencyFlag: false });
+    const plain6010 = ref("ПланСчетов.Хозрасчетный", A6010, "6010");
+    const doc = change("ОплатаПоставщику", {
+      СчетУчетаРасчетовСКонтрагентом: plain6010,
+      СчетУчетаРасчетовПоАвансам: ref("ПланСчетов.Хозрасчетный", A4310, "4310"),
+    });
+    if (doc.fields) doc.fields["СчетУчетаРасчетовСКонтрагентом"] = plain6010;
+    await completePayment(deps, cache, doc, { date: "2024-01-16", contractCurrency: "USD" });
+    expect(doc.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СчетУчетаРасчетовСКонтрагентом: { ref: C6011 },
+      СчетУчетаРасчетовПоАвансам: { ref: A4310 },
+    });
+    expect(doc.fields?.["СчетУчетаРасчетовСКонтрагентом"]).toMatchObject({ ref: C6011 });
+    // in soums nothing is replaced
+    const other = fake({ currencyFlag: false });
+    const soum = change("ОплатаПоставщику", { СчетУчетаРасчетовСКонтрагентом: plain6010 });
+    await completePayment(other.deps, other.cache, soum, { date: "2024-01-16", contractCurrency: "UZS" });
+    expect(soum.tables?.РасшифровкаПлатежа?.[0]).toMatchObject({
+      СчетУчетаРасчетовСКонтрагентом: { ref: A6010 },
+    });
+  });
 });

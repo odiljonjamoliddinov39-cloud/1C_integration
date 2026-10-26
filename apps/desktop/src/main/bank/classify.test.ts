@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_TABLE, classifyLine, effectiveTable, gate } from "./classify.js";
+import { DEFAULT_TABLE, UNTAXED, classifyLine, effectiveTable, gate } from "./classify.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 const MAIN = "20208000705733821001";
@@ -202,5 +202,28 @@ describe("cash paid in or out, and a founder's contribution", () => {
     expect(kind({ direction: "in", account: "99999000900000000001", purpose: "Взнос наличными" })).toBe(
       "cash_deposit/medium",
     );
+  });
+});
+
+describe("the accountant's rule for budget payments that name no tax", () => {
+  const customs = pay({
+    account: "23402000900000000001",
+    counterparty: "Казначейство Министерства финансов",
+    inn: "201122919",
+    purpose: "~402821860262947950100182001~200637640~для лицевого счета УГТК по г.Ташкенту",
+  });
+  it("is held without the rule, and a payment under the Treasury's contract with it; a named tax stays a tax", () => {
+    expect(classifyLine(customs, ctx)).toMatchObject({ type: "tax", confidence: "medium" });
+    const table = effectiveTable([{ prefix: `23402${UNTAXED}`, type: "contract_payment" }]);
+    expect(classifyLine(customs, { ...ctx, table })).toMatchObject({
+      type: "contract_payment",
+      confidence: "high",
+    });
+    const named = pay({
+      account: "23402000900000000001",
+      purpose:
+        "~1000218600062193111103093~1000218600062193111103093~201173017~Задолженность по Налог на доходы с физических лиц",
+    });
+    expect(classifyLine(named, { ...ctx, table })).toMatchObject({ type: "tax", confidence: "high" });
   });
 });

@@ -137,7 +137,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
-import { type Classified, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
+import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -2189,7 +2189,8 @@ export class AssistantService {
       );
     };
     if (input.action === "set") {
-      const { prefix } = input;
+      const { prefix: base } = input;
+      const prefix = base && input.untaxed ? `${base}${UNTAXED}` : base;
       if (!prefix || (!input.type && !input.account))
         return { ok: false, code: "VALIDATION", message: "set needs a prefix and a type or an account" };
       const current = table().find((r) => r.prefix === prefix);
@@ -3934,6 +3935,7 @@ export class AssistantService {
           gapsOf(
             results.map((r) => r.resolved),
             held,
+            moved.problems,
           ),
         );
         if (told) {
@@ -4054,6 +4056,17 @@ export class AssistantService {
       ...(madeNow.length > 0 ? { createdInThisRun: madeNow } : {}),
       ...(notCreated.length > 0 ? { notCreated } : {}),
       ...(problems.length > 0 ? { needsAttention: summarizeBankProblems(problems) } : {}),
+      ...(moved.problems.length > 0
+        ? {
+            transfersNotEntered: {
+              count: moved.problems.length,
+              problems: [...new Set(moved.problems.map((p) => p.message))].map((message) => ({
+                message,
+                rows: moved.problems.filter((p) => p.message === message).length,
+              })),
+            },
+          }
+        : {}),
       ...(notes.length > 0
         ? {
             notes: notes.slice(0, 20).map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),
