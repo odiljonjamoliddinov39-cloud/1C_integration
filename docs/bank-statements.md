@@ -441,3 +441,6 @@ leg always goes with it. The statement's lines become enterable again. Only what
 
 - Payments to the budget that name no tax (customs prepayments «для лицевого счета УГТК», a refund «возврат на р/с»): the accountant can set the rule once, `bank_mapping set {prefix: "23402", type: "contract_payment", untaxed: true}` (stored as `23402:untaxed`). Those lines are then a payment (a receipt) under the Treasury's contract, not a tax; a text that names a tax stays a tax.
 - A move between two soum accounts of the company with only one statement attached: the other side is made from the same row, mirrored (the other direction, the other account), so that both sides are in 1C. When the other statement is read later, its row is found in 1C already.
+
+- A payment to the budget is «Уплата налога» itself, never «Уплата налога за третьих лиц» (which contains the same words and may come first in 1C's list): an operation named by a phrase is the value that is exactly the phrase, and for a tax the third-party one is never taken, nor copied from.
+- «Счет учета» of the tax document is the bank's own ledger account (5110): the program no longer writes the tax account over it. The account of the tax (e.g. 4420.1 for personal income tax) is 1C's, from the tax and the kind of liability; the kind («Налог» or «Пеня») is set from the text.

@@ -118,7 +118,12 @@ export async function enumValues(
 const squash = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
 
 /** The enumeration value whose name or presentation contains one of the phrases. */
+/**
+ * The value of an enumeration that a phrase names. The value that is exactly the phrase comes first: «Уплата налога» is
+ * not «Уплата налога за третьих лиц», which contains it and may come earlier in 1C's list.
+ */
 export const valueLike = (values: EnumValue[], phrases: string[]) =>
+  values.find((v) => phrases.some((p) => squash(v.name) === squash(p))) ??
   values.find((v) => phrases.some((p) => squash(`${v.name} ${v.ref}`).includes(squash(p))));
 
 /** The refs of ledger accounts by their codes (one read), null for a code the chart does not have. */

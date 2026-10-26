@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildBankDocument } from "./build.js";
 import type { BankCache, BankDeps } from "./resolve.js";
+import { valueLike } from "./scaffold.js";
 import type { BankPayment } from "./statement.js";
 
 const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
@@ -107,6 +108,13 @@ const fake = (
             ),
           ],
           [enumValue("ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")],
+          [
+            enumValue(
+              "ВидыОперацийСписаниеДенежныхСредств",
+              "УплатаНалогаЗаТретьихЛиц",
+              "Уплата налога за третьих лиц",
+            ),
+          ],
           [enumValue("ВидыОперацийСписаниеДенежныхСредств", "УплатаНалога", "Уплата налога")],
         ]);
       if (q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств"))
@@ -427,12 +435,13 @@ describe("a payment to the budget made from 1C's description of the document", (
     expect(f["Налог"]).toEqual({ type: "Справочник.ВидыНалоговИПлатежейВБюджет", ref: TAX_NDFL });
     expect(f["НалоговыйПериод"]).toBe("2023-12-01T00:00:00");
     expect(f["Контрагент"]).toEqual({ type: "Справочник.Контрагенты", ref: BANK });
-    expect(f["СчетУчетаРасчетовСКонтрагентом"]).toEqual({ type: "ПланСчетов.Хозрасчетный", ref: A6410 });
+    // the tax's account is 1C's own (from the tax and the kind of liability): nothing is written to the account attribute
+    expect(f).not.toHaveProperty("СчетУчетаРасчетовСКонтрагентом");
     expect(f["СуммаДокумента"]).toBe(1_234_500);
-    expect(out.notes.join(" ")).toContain("usual one for taxes");
+    expect(out.notes.join(" ")).toContain("the account of the tax");
   });
 
-  it("takes the account the tax item itself names", async () => {
+  it("never writes the tax's account over the document's own account, even when the tax item names one", async () => {
     const { deps, cache } = fake({ taxAccount: true });
     const out = await buildBankDocument(deps, cache, {
       kind: "tax",
@@ -444,10 +453,7 @@ describe("a payment to the budget made from 1C's description of the document", (
     });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.change.fields?.["СчетУчетаРасчетовСКонтрагентом"]).toEqual({
-      type: "ПланСчетов.Хозрасчетный",
-      ref: A6520,
-    });
+    expect(out.change.fields).not.toHaveProperty("СчетУчетаРасчетовСКонтрагентом");
     expect(out.change.fields?.["Контрагент"]).toBeUndefined();
   });
 
@@ -506,5 +512,18 @@ describe("a payment to the budget made from 1C's description of the document", (
       expect(pay.change.fields?.["Налог"]).toMatchObject({ ref: TAX_NDFL });
       expect(penalty.change.fields?.["Налог"]).toMatchObject({ ref: TAX_VAT });
     }
+  });
+});
+
+describe("the operation named by a phrase", () => {
+  it("takes «Уплата налога», not «Уплата налога за третьих лиц» that contains it and comes first", () => {
+    const values = [
+      { type: "Перечисление.X", ref: "УплатаНалогаЗаТретьихЛиц", name: "Уплата налога за третьих лиц" },
+      { type: "Перечисление.X", ref: "УплатаНалога", name: "Уплата налога" },
+    ];
+    expect(valueLike(values, ["уплата налога", "уплатыналога"])?.ref).toBe("УплатаНалога");
+    expect(valueLike([values[0] as (typeof values)[0]], ["уплата налога"])?.ref).toBe(
+      "УплатаНалогаЗаТретьихЛиц",
+    );
   });
 });
