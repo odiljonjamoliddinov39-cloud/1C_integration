@@ -107,7 +107,7 @@ function deps(
     docs?: Doc[];
     contracts?: [string, string, string, string][];
     accounts?: [string, string, string][];
-    existing?: [string, string, number][];
+    existing?: [string, string, number, string?][];
     /** Posted tax payments: ref, date, period, name of the tax, purpose. */
     tax?: [string, string, string, string, string][];
     /** Answers before the rest (a base's own description of a document, its enumerations, its chart). */
@@ -193,7 +193,13 @@ function deps(
         );
       }
       return rows(
-        (opts.existing ?? []).map(([date, id, sum]) => [ref("Справочник.Контрагенты", id, "x"), date, sum]),
+        (opts.existing ?? []).map(([date, id, sum, number]) => [
+          ref("Справочник.БанковскиеСчета", OWN, "р/с"),
+          ref("Справочник.Контрагенты", id, "x"),
+          date,
+          sum,
+          number ?? "",
+        ]),
       );
     },
     async describe(objects) {
@@ -505,6 +511,22 @@ describe("bank payments for 1C", () => {
     );
     expect(answered.problems).toEqual([]);
     expect(answered.ready).toHaveLength(1);
+  });
+
+  it("one document of 1C stands for one row: two equal rows need two documents; the bank number or the counterparty decides", async () => {
+    const two = [payment(), payment({ row: 5, number: "102" })];
+    const one = deps({ existing: [["2026-09-01T00:00:00", NAVRUZ, 1_500_000]] });
+    const first = await resolvePayments(statement(two), {}, one.d);
+    expect(first.alreadyIn1c).toEqual([4]);
+    expect(first.ready.map((r) => r.payment.row)).toEqual([5]);
+    // the same bank number in 1C is the same row, whoever the counterparty was written as
+    const numbered = deps({ existing: [["2026-09-01T00:00:00", HYDRO, 1_500_000, "102"]] });
+    const byNumber = await resolvePayments(statement(two), {}, numbered.d);
+    expect(byNumber.alreadyIn1c).toEqual([5]);
+    // another counterparty, another number: a different payment of the same day and amount
+    const other = deps({ existing: [["2026-09-01T00:00:00", HYDRO, 1_500_000, "999"]] });
+    const different = await resolvePayments(statement(two), {}, other.d);
+    expect(different.alreadyIn1c).toEqual([]);
   });
 
   it("leaves out payments already in 1C, and is not stopped by a bank account it cannot find", async () => {

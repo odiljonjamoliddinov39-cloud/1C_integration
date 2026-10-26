@@ -314,7 +314,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "changes) as it would before a card, and returns per change its filling-check warnings, refusal and the " +
     "fields it set. Use it on one or two documents before a large batch, then fix and send the batch once.",
   propose_changes:
-    "Propose many creates / updates / deletes of documents or directory items on ONE card, with one confirmation " +
+    "Propose many creates / updates / deletes of documents or directory items on ONE card, with one confirmation. " +
+    "NEVER create a bank document (payment, receipt, transfer) by hand that 1C may already have: first query 1C for a " +
+    "document of the same bank account, day and amount (any kind, any counterparty), and create only what is missing; " +
+    "a second copy turns the bank balance negative. The bank statement tool already does this check: prefer it. " +
     "(a bank statement's payments, several invoices, a list of items), each like propose_change. What all of " +
     "them share goes once into defaults (object, action, fields, post, and rows: columns every row of a " +
     "tabular section shares); each change has only its own values, which win over the defaults. " +

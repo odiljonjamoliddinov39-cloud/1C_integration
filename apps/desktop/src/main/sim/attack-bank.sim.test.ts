@@ -122,7 +122,13 @@ function deps(w: ReturnType<typeof world>, existing: [string, string, number][])
         return rows(
           existing
             .filter(([o]) => o === object)
-            .map(([, who, sum]) => [ref("Справочник.Контрагенты", who, "x"), "2026-09-10T00:00:00", sum]),
+            .map(([, who, sum]) => [
+              null,
+              ref("Справочник.Контрагенты", who, "x"),
+              "2026-09-10T00:00:00",
+              sum,
+              "",
+            ]),
         );
       }
       return rows([]);

@@ -9,14 +9,15 @@
  */
 import type { ChangeInput } from "@platform/shared";
 
-import { type QueryOutcome, lookup, refOf, textOf } from "../didox/resolve.js";
+import { lookup, refOf, textOf } from "../didox/resolve.js";
 import type { Context } from "../engine/posting-rules.js";
 import { contractFromDescription } from "./contract.js";
+import { ExistingPool, existingDocs } from "./existing.js";
 import { ACCOUNT_OWNER_COLUMNS, type AccountCandidate, candidateOf, pickAccount } from "./accounts.js";
 import { type BuildKind, buildBankDocument } from "./build.js";
 import { type Transfer, currencyOfAccount } from "./ledger.js";
 import { CONVERSION_KIND, TRANSFER_KIND } from "./policy.js";
-import { ownAccountAttribute, ownAccountKey } from "./roles.js";
+import { ownAccountKey } from "./roles.js";
 import {
   type BankCache,
   type BankDeps,
@@ -455,23 +456,13 @@ export async function resolveTransfers(
     else accountWhy.set(number, picked.why);
   }
 
-  // Legs already in 1C: the same account, day and amount.
-  const existing = new Set<string>();
+  // Legs already in 1C: the same account, day and amount; each document of 1C stands for one leg (see existing.ts).
+  const pools: Partial<Record<"in" | "out", ExistingPool>> = {};
   const dates = legs.map((l) => l.transfer.date).sort();
   for (const side of ["out", "in"] as const) {
     if (!legs.some((l) => l.side === side)) continue;
-    const accountKey = await ownAccountAttribute(deps, cache, OBJECT[side]);
-    const outcome: QueryOutcome = await deps.query({
-      query: `ВЫБРАТЬ Т.${accountKey} КАК Счет, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${OBJECT[side]} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      params: { начало: `${dates[0]}T00:00:00`, конец: `${dates.at(-1)}T23:59:59` },
-      limit: 2000,
-      refs: true,
-    });
-    if (!outcome.ok) continue;
-    for (const cells of (outcome.data as { rows?: unknown[][] }).rows ?? []) {
-      if (typeof cells[2] === "number")
-        existing.add(`${side}|${refOf(cells[0]) ?? ""}|${day(String(cells[1]))}|${cents(cells[2] * 100)}`);
-    }
+    const docs = await existingDocs(deps, cache, side, dates[0] ?? "", dates.at(-1) ?? "");
+    if (docs) pools[side] = new ExistingPool(docs);
   }
 
   // A conversion is two legs on two statements, in two currencies. The currency leg is booked at the conversion's own
@@ -543,7 +534,14 @@ export async function resolveTransfers(
       );
       continue;
     }
-    if (existing.has(`${leg.side}|${ownRef}|${day(payment.date)}|${cents(payment.amount)}`)) {
+    if (
+      pools[leg.side]?.take({
+        account: ownRef,
+        day: day(payment.date),
+        cents: cents(payment.amount),
+        number: leg.mirror ? "" : payment.number,
+      })
+    ) {
       result.alreadyIn1c.push({ file: leg.file, row: leg.row });
       continue;
     }
