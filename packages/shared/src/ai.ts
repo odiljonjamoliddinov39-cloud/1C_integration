@@ -842,6 +842,25 @@ export const UndoBankInput = z.object({
 });
 export type UndoBankInput = z.infer<typeof UndoBankInput>;
 
+/**
+ * Takes back the bank documents 1C has more than once. The attached statements are the truth: a bank account, a day, an
+ * amount and a direction that a statement lists n times are n documents; the extra ones (the later copy, whatever the kind of
+ * document) are shown and marked for deletion on ONE card. Documents no row of the statements stands behind are only reported.
+ */
+export const BankDuplicatesInput = z.object({
+  title: z.string().trim().min(1).max(200),
+  /** YYYY-MM-DD; the period of the statements by default. */
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type BankDuplicatesInput = z.infer<typeof BankDuplicatesInput>;
+
 /** One problem an audit check found. */
 export const AuditFinding = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -906,6 +925,7 @@ export const AI_TOOLS = {
   propose_didox_delete_draft: DidoxDeleteDraftInput,
   propose_bank_payments: BankPaymentsInput,
   propose_undo_bank: UndoBankInput,
+  propose_bank_duplicates: BankDuplicatesInput,
   propose_currency_rates: CurrencyRatesToolInput,
   propose_post_created: PostCreatedInput,
   propose_delete_marked: DeleteMarkedInput,
@@ -928,6 +948,7 @@ export const AI_PROPOSAL_TOOLS = [
   "propose_didox_delete_draft",
   "propose_bank_payments",
   "propose_undo_bank",
+  "propose_bank_duplicates",
   "propose_currency_rates",
   "propose_post_created",
   "propose_delete_marked",

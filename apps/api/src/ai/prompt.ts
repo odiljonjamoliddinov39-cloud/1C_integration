@@ -508,6 +508,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "leg of a conversion, is unposted and marked for deletion, the later before the earlier; 1C keeps them and the lines can be " +
     'entered again. Use it when the accountant asks to cancel or undo the statement entry ("отмени", "bekor qil", "undo"); ' +
     "never delete bank documents by hand with propose_changes.",
+  propose_bank_duplicates:
+    "Find the bank documents 1C has MORE THAN ONCE and take the extra ones back, on ONE card with a title. The app judges " +
+    "them itself against the attached statements (a bank account, a day, an amount and a direction listed n times are n " +
+    "documents, whatever the kind of each: a payment, a transfer, a conversion leg, a tax entered as a payment to a " +
+    "supplier); the later copy is marked for deletion, nothing else is touched. Use it whenever the accountant says " +
+    'documents were entered twice or asks for duplicates ("икки марта", "takror", "дубли", "twice"). NEVER ' +
+    "tell the accountant there are no duplicates from your own queries: call this tool and report what it says. Without " +
+    "an attached statement it cannot judge: ask for the statements.",
   propose_post_created:
     "Post (проведение) the documents THIS chat created and left unposted (a bank statement's payments, a batch of " +
     "documents), on ONE card with a title. The app knows which they are: send only the title (objects, full names, " +

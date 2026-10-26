@@ -107,6 +107,21 @@ const UNDO_OBJECT =
   /^(ввод|выписк|ввели|введен|введённ|последн|банков|документ|проводк|vypiska|vypiskani|kiritilgan|kiritish|oxirgi|hujjat|bank|last|entry|entries|statement|it|them|this|все|всё|все|их|это|hammasini|ularni|buni|qil|qiling|ber|пожалуйста|iltimos|please|the|of|ha|да|yes|ok)/u;
 
 /** A message that is only the command to take back what the program entered from a statement. */
+/** "икки марта киритган ҳужжатларингни ўчир", "takror hujjatlarni o'chir", "find the duplicates": the duplicates of the bank documents. */
+const DUPLICATE_WORD =
+  /(такрор|takror|дубл|dubl|икки\s*марта|ikki\s*marta|дважды|два\s*раза|twice|duplicate|double)/u;
+const DUPLICATE_VERB =
+  /(ўчир|учир|o'chir|ochir|удал|убер|delete|remove|топ\b|топиб|topib|найд|find|текшир|tekshir|провер|check|тозала|tozala|олиб\s*таш|olib\s*tash)/u;
+
+export function readDuplicatesCommand(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[‘’`ʻʼ]/g, "'");
+  if (t.trim().length > 300) return false;
+  return DUPLICATE_WORD.test(t) && (DUPLICATE_VERB.test(t) || t.trim().length <= 60);
+}
+
 export function readUndoCommand(text: string): boolean {
   const words = tokens(text);
   if (words.length === 0 || words.length > 7) return false;

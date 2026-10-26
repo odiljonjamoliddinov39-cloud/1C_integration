@@ -518,3 +518,113 @@ export function calcText(op: "vat" | "payroll", result: Record<string, unknown>,
   lines.push(T[lang].sources);
   return lines.join("\n");
 }
+
+/** What the search for bank documents entered twice found and did, in the accountant's language. */
+export function duplicatesText(data: unknown, lang: Lang): string {
+  const d = (data ?? {}) as {
+    status?: string;
+    removed?: number;
+    groups?: {
+      account: string;
+      day: string;
+      amount: string;
+      rows: number;
+      documents: number;
+      kept: string;
+      removed: string;
+    }[];
+    checked?: {
+      accounts: string[];
+      statementRows: number;
+      documents: number;
+      unjudged: number;
+      withoutRow: number;
+      missing: number;
+    };
+  };
+  const w = {
+    ru: {
+      declined: "Карточка отклонена: ничего не удалено.",
+      none: (c: string) => `Дублей нет. ${c}`,
+      checked: (n: { statementRows: number; documents: number; accounts: number }) =>
+        `Проверено: строк выписок ${n.statementRows}, документов 1С ${n.documents}, счетов ${n.accounts}. Дубль — документ сверх числа строк выписки (счёт, день, сумма, направление).`,
+      done: (n: number) => `Помечено на удаление дублей: ${n}. 1С их не проводит; пометку можно снять.`,
+      found: (n: number) => `Найдено дублей: ${n}.`,
+      line: (g: {
+        account: string;
+        day: string;
+        amount: string;
+        rows: number;
+        documents: number;
+        kept: string;
+        removed: string;
+      }) =>
+        `  – ${g.day} · ${g.account.slice(0, 5)}… · ${g.amount}: в выписке ${g.rows}, в 1С ${g.documents}; остался ${g.kept}, лишний ${g.removed}`,
+      aside: (u: number, o: number, m: number) =>
+        `Не трогал: документов чужих счетов ${u}; документов без строки в выписке ${o}. Строк выписки, для которых в 1С документов меньше: ${m}.`,
+      source: "Программа сделала это сама, без модели.",
+    },
+    uz: {
+      declined: "Kartochka rad etildi: hech narsa o'chirilmadi.",
+      none: (c: string) => `Takror yo'q. ${c}`,
+      checked: (n: { statementRows: number; documents: number; accounts: number }) =>
+        `Tekshirildi: ko'chirma qatorlari ${n.statementRows}, 1C hujjatlari ${n.documents}, hisoblar ${n.accounts}. Takror — ko'chirma qatorlari sonidan ortiqcha hujjat (hisob, kun, summa, yo'nalish bo'yicha).`,
+      done: (n: number) =>
+        `Takror hujjatlar o'chirishga belgilandi: ${n} ta. 1C ularni o'tkazmaydi; belgini olib tashlash mumkin.`,
+      found: (n: number) => `Topilgan takrorlar: ${n} ta.`,
+      line: (g: {
+        account: string;
+        day: string;
+        amount: string;
+        rows: number;
+        documents: number;
+        kept: string;
+        removed: string;
+      }) =>
+        `  – ${g.day} · ${g.account.slice(0, 5)}… · ${g.amount}: ko'chirmada ${g.rows}, 1C da ${g.documents}; qoldi ${g.kept}, ortiqcha ${g.removed}`,
+      aside: (u: number, o: number, m: number) =>
+        `Tegmadim: boshqa hisoblarning hujjatlari ${u}; ko'chirmada qatori yo'q hujjatlar ${o}. 1C da hujjati kam bo'lgan ko'chirma qatorlari: ${m}.`,
+      source: "Buni dastur o'zi, modelsiz bajardi.",
+    },
+    en: {
+      declined: "Card declined: nothing was deleted.",
+      none: (c: string) => `No duplicates. ${c}`,
+      checked: (n: { statementRows: number; documents: number; accounts: number }) =>
+        `Checked: ${n.statementRows} statement rows, ${n.documents} documents of 1C, ${n.accounts} accounts. A duplicate is a document beyond the number of statement rows (account, day, amount, direction).`,
+      done: (n: number) =>
+        `Duplicates marked for deletion: ${n}. 1C does not post them; the mark can be lifted.`,
+      found: (n: number) => `Duplicates found: ${n}.`,
+      line: (g: {
+        account: string;
+        day: string;
+        amount: string;
+        rows: number;
+        documents: number;
+        kept: string;
+        removed: string;
+      }) =>
+        `  – ${g.day} · ${g.account.slice(0, 5)}… · ${g.amount}: statement ${g.rows}, 1C ${g.documents}; kept ${g.kept}, extra ${g.removed}`,
+      aside: (u: number, o: number, m: number) =>
+        `Left alone: documents of other accounts ${u}; documents with no statement row ${o}. Statement rows with fewer documents in 1C: ${m}.`,
+      source: "The program did this itself, no model.",
+    },
+  }[lang];
+  if (d.status === "declined_by_user") return w.declined;
+  const c = d.checked;
+  const checked = c
+    ? w.checked({ statementRows: c.statementRows, documents: c.documents, accounts: c.accounts.length })
+    : "";
+  const lines: string[] = [];
+  if (d.status === "no_duplicates") lines.push(w.none(checked));
+  else {
+    if (d.removed !== undefined) lines.push(w.done(d.removed));
+    else lines.push(w.found(d.groups?.length ?? 0));
+    if (checked) lines.push(checked);
+    for (const g of (d.groups ?? []).slice(0, 25)) lines.push(w.line(g));
+    if ((d.groups?.length ?? 0) > 25) lines.push(`  … ${(d.groups?.length ?? 0) - 25}`);
+  }
+  if (c && (c.unjudged > 0 || c.withoutRow > 0 || c.missing > 0))
+    lines.push(w.aside(c.unjudged, c.withoutRow, c.missing));
+  lines.push(w.source);
+  return lines.join("\n");
+}

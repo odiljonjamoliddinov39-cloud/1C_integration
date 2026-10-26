@@ -87,6 +87,11 @@ const CHIPS = {
     ["Kiritilganni bekor qilish", "Отмени введённое"],
     ["Take back what was entered", "Take back what was entered"],
   ),
+  duplicates: word(
+    ["Найти дубли", "Найди банковские документы, введённые дважды, и удали лишние"],
+    ["Takrorlarni topish", "Ikki marta kiritilgan bank hujjatlarini top va ortiqchasini o'chir"],
+    ["Find the duplicates", "Find the bank documents entered twice and remove the extra ones"],
+  ),
   rest: word(
     ["Что осталось?", "Что осталось не введено и почему? Коротко, списком"],
     ["Nima qoldi?", "Nima kiritilmay qoldi va nega? Qisqa, ro'yxat bilan"],
@@ -121,6 +126,38 @@ const CHIPS = {
 
 const STATEMENT_NAME = /сч[её]т|выписк|vypiska|ko'?chirma|statement|bank|\d{20}/iu;
 const XML_OR_ARCHIVE = /\.zip$/iu;
+
+/**
+ * The short reply an answer asks for: «Davom etaymi?» → «Davom et», «… деб ёзинг» → «Ҳа». It is written in the script and the
+ * language of the answer itself (Uzbek in Latin or in Cyrillic, Russian, English), so that it reads as the user's own words.
+ */
+export function goOnReply(answer: string | null): { text: string; kind: "continue" | "yes" } | null {
+  if (!answer) return null;
+  const plain = answer
+    .replace(/[*_`#>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const tail = plain.slice(-260);
+  const asksContinue =
+    /(давом\s+эт|davom\s+et|продолж|продолжить|continue|go\s+on|proceed|бошла|boshla|начн|начать|приступ)[^?؟]*\?\s*$/iu.test(
+      tail,
+    ) || /(шу\s+режа|shu\s+reja|this\s+plan|по\s+этому\s+плану)[^?]*\?\s*$/iu.test(tail);
+  const asksYes =
+    /[«"“]?(ҳа|ха|ha|да|yes)[»"”]?\s*(деб\s+ёзинг|deb\s+yozing|—\s*напишите|write)/iu.test(tail) ||
+    /(напишите|write|ёзинг|yozing)\s*[«"“]?(да|yes|ҳа|ха|ha)[»"”]?/iu.test(tail);
+  if (!asksContinue && !asksYes) return null;
+  const cyrillic = (plain.match(/\p{Script=Cyrillic}/gu) ?? []).length;
+  const latin = (plain.match(/\p{Script=Latin}/gu) ?? []).length;
+  const kind = asksContinue ? "continue" : "yes";
+  if (cyrillic > latin) {
+    const uzbek = /[ўқғҳ]|билан|учун|ҳужжат|керак|эмас|қил/iu.test(plain);
+    if (uzbek) return { text: kind === "continue" ? "Давом эт" : "Ҳа", kind };
+    return { text: kind === "continue" ? "Продолжай" : "Да", kind };
+  }
+  const uzbekLatin = /[ʻ’']|uchun|bilan|hujjat|kerak|emas|qil|ning\b|lar\b|ni\b/iu.test(plain);
+  if (uzbekLatin) return { text: kind === "continue" ? "Davom et" : "Ha", kind };
+  return { text: kind === "continue" ? "Go on" : "Yes", kind };
+}
 
 /** The buttons for this moment, the most likely first (at most four). */
 export function suggest(ctx: SuggestContext): Suggestion[] {
@@ -163,6 +200,11 @@ export function suggest(ctx: SuggestContext): Suggestion[] {
 
   // 2. What the assistant just said says what comes next.
   const said = (ctx.lastAnswer ?? "").toLowerCase();
+  const reply = goOnReply(ctx.lastAnswer);
+  if (reply) {
+    // The answer ends with a question that wants a short yes or go on: that comes first.
+    out.push({ id: "goOn", label: reply.text, send: reply.text });
+  }
   if (said) {
     const entered =
       /введено документов|kiritilgan hujjatlar|documents entered|записано в 1с|1c ga yozildi|written to 1c|ҳужжат киритилган|киритилган ҳужжатлар/u.test(
@@ -181,6 +223,12 @@ export function suggest(ctx: SuggestContext): Suggestion[] {
     if (left) add("rest");
     if (failed) add("tryAgain");
     if (entered) add("undo");
+    if (
+      /расхожден|не\s+совпад|farq|mos\s+kelma|мос\s+келма|мос\s+эмас|mismatch|differs|манфий|negativ|отрицател/u.test(
+        said,
+      )
+    )
+      add("duplicates");
     if (out.length > 0) return out.slice(0, 4);
     // A plain answer: the questions that usually follow, other than the one just answered.
     const topics: [keyof typeof CHIPS, RegExp][] = [

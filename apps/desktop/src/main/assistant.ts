@@ -37,6 +37,7 @@ import {
   type BankPaymentsInput,
   type BankMappingInput,
   type PostCreatedInput,
+  type BankDuplicatesInput,
   type UndoBankInput,
   type DidoxDeleteDraftInput,
   type DidoxDocumentInput,
@@ -118,6 +119,7 @@ import {
   postOptions,
   readChoice,
   readPostCommand,
+  readDuplicatesCommand,
   readUndoCommand,
   say,
 } from "./router.js";
@@ -138,12 +140,14 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
+import { findDuplicates, readBankDocs } from "./bank/duplicates.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
   balancesText,
   batchText,
   calcText,
+  duplicatesText,
   MODEL_OFF_CODES,
   failureText,
   offlineAnswer,
@@ -754,6 +758,28 @@ export class AssistantService {
         if (!option) return this.reply(chat, say(lang).askWhich, emit);
         return this.postChosen(chat, option, lang, emit, signal);
       }
+    }
+    // "икки марта киритган ҳужжатларни ўчир": the bank documents 1C has more than once, found against the statements.
+    if (readDuplicatesCommand(question) && (chat.bank ?? []).length > 0) {
+      chat.entry = true;
+      const result = await this.proposeBankDuplicates(
+        chat,
+        {
+          title:
+            lang === "ru"
+              ? "Банковские документы, введённые дважды"
+              : lang === "en"
+                ? "Bank documents entered twice"
+                : "Ikki marta kiritilgan bank hujjatlari",
+        },
+        emit,
+        signal,
+      );
+      return this.reply(
+        chat,
+        result.ok ? duplicatesText(result.data, lang) : failureText(result.message, lang),
+        emit,
+      );
     }
     // "отмени" / "bekor qil": take back what the program entered from the statement, on one card.
     if (readUndoCommand(question)) {
@@ -1661,6 +1687,9 @@ export class AssistantService {
     }
     if (tool === "propose_undo_bank") {
       return this.proposeUndoBank(chat, input as UndoBankInput, emit, signal);
+    }
+    if (tool === "propose_bank_duplicates") {
+      return this.proposeBankDuplicates(chat, input as BankDuplicatesInput, emit, signal);
     }
     const connection = this.deps.store.connection(companyId);
     let proposal: Proposal;
@@ -4254,6 +4283,102 @@ export class AssistantService {
   }
 
   /**
+   * The bank documents 1C has more than once, found against the attached statements (see bank/duplicates.ts) and marked for
+   * deletion on one card, the later copy before the earlier. What no row of the statements stands behind is only reported.
+   */
+  private async proposeBankDuplicates(
+    chat: StoredChat,
+    input: BankDuplicatesInput,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    emit({ type: "tool", name: "propose_bank_duplicates", detail: input.title });
+    const statements = chat.bank ?? [];
+    if (statements.length === 0)
+      return {
+        ok: false,
+        code: "NO_BANK_STATEMENT",
+        message:
+          "No bank statement was read from the files attached to this chat: the duplicates are found against the statements. Attach them.",
+      };
+    const dates = statements.flatMap((s) => s.payments.map((p) => p.date.slice(0, 10))).sort();
+    const from = input.from ?? dates[0];
+    const to = input.to ?? dates.at(-1);
+    if (!from || !to)
+      return {
+        ok: true,
+        data: {
+          status: "no_duplicates",
+          checked: { accounts: [], statementRows: 0, documents: 0, unjudged: 0, withoutRow: 0, missing: 0 },
+        },
+      };
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const deps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const docs = await readBankDocs(deps, cache, from, to);
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    if (!docs)
+      return {
+        ok: false,
+        code: "ONEC_READ",
+        message: "1C could not be asked for its bank documents: nothing was judged.",
+      };
+    const report = findDuplicates(statements, docs);
+    const money = (cents: number) =>
+      (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 }).replace(/,/g, " ");
+    const groups = report.groups.map((g) => ({
+      account: g.account,
+      day: g.day,
+      amount: `${g.direction === "in" ? "+" : "-"}${money(g.cents)}`,
+      rows: g.rows,
+      documents: g.documents,
+      kept: g.keep.map((d) => d.number).join(", "),
+      removed: g.extra.map((d) => `${d.number}${d.kind ? ` (${d.kind})` : ""}`).join(", "),
+    }));
+    if (report.extra.length === 0)
+      return { ok: true, data: { status: "no_duplicates", checked: report.checked } };
+    const result = await this.proposeBatch(
+      chat,
+      {
+        title: input.title,
+        changes: report.extra.map((d) => ({ action: "delete" as const, object: d.object, ref: d.ref })),
+      },
+      emit,
+      signal,
+    );
+    if (!result.ok) return result;
+    const data = result.data as { status?: string; applied?: { n: number }[] } | null;
+    let removed = 0;
+    if (data?.status === "done") {
+      const taken = (data.applied ?? []).flatMap(({ n }) =>
+        report.extra[n - 1] ? [report.extra[n - 1]] : [],
+      );
+      removed = taken.length;
+      const refs = new Set(taken.flatMap((d) => (d ? [d.ref] : [])));
+      if (refs.size > 0) {
+        this.deps.store.markBankReversed(chat.companyId, [...refs]);
+        chat.created = (chat.created ?? []).filter((d) => !refs.has(d.ref));
+        this.save(chat);
+      }
+    }
+    return {
+      ok: true,
+      data: {
+        ...(data ?? {}),
+        ...(data?.status === "done" ? { removed } : {}),
+        groups,
+        checked: report.checked,
+      },
+    };
+  }
+
+  /**
    * A batch of changes on one card that the app made itself. 1C's filling check is for the accountant to
    * see on the card, not for the model to chase: the first FILL_CHECK refusal is shown the second time.
    */
@@ -4523,7 +4648,12 @@ function describe(name: string, input: unknown): string {
     const draft = input as { number: string; title: string };
     return `${draft.number} · ${draft.title}`;
   }
-  if (name === "propose_post_created" || name === "propose_currency_rates" || name === "propose_undo_bank") {
+  if (
+    name === "propose_post_created" ||
+    name === "propose_currency_rates" ||
+    name === "propose_undo_bank" ||
+    name === "propose_bank_duplicates"
+  ) {
     const batch = input as { title: string };
     return batch.title;
   }

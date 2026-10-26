@@ -40,22 +40,32 @@ describe("what 1C already has of a statement", () => {
     ).toBe(true);
   });
 
-  it("reads a long period in windows of a quarter, so that no window hides the rest", async () => {
+  it("never asks for more than 1000 rows: a period that fills the limit is split until every part fits, and none is hidden", async () => {
     const asked: string[] = [];
     const deps = {
       describe: async () => ({ ok: true, data: [{ attributes: [] }] }),
-      query: async (input: { params?: Record<string, unknown> }) => {
-        asked.push(`${input.params?.["начало"]}..${input.params?.["конец"]}`);
-        return { ok: true as const, data: { rows: [] } };
+      query: async (input: { limit?: number; params?: Record<string, unknown> }) => {
+        expect(input.limit).toBeLessThanOrEqual(1000);
+        const from = String(input.params?.["начало"]).slice(0, 10);
+        const to = String(input.params?.["конец"]).slice(0, 10);
+        asked.push(`${from}..${to}`);
+        // a base with a document on every day: a part of more than 1000 days cannot be answered, a part of 4 days can
+        const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
+        const rows = Array.from({ length: Math.min(days, 1000) }, (_, n) => [
+          null,
+          null,
+          `${new Date(Date.parse(from) + n * 86_400_000).toISOString().slice(0, 10)}T00:00:00`,
+          1,
+          "",
+        ]);
+        return { ok: true as const, data: { rows, truncated: days > 5 } };
       },
     } as unknown as BankDeps;
     const cache: BankCache = { lists: new Map(), snapshots: new Map() };
-    const found = await existingDocs(deps, cache, "out", "2024-02-10", "2024-08-20");
-    expect(found).toEqual([]);
-    expect(asked).toEqual([
-      "2024-02-10T00:00:00..2024-03-31T23:59:59",
-      "2024-04-01T00:00:00..2024-06-30T23:59:59",
-      "2024-07-01T00:00:00..2024-08-20T23:59:59",
-    ]);
+    const found = await existingDocs(deps, cache, "out", "2024-01-01", "2024-01-20");
+    // every part that came back full was split: the parts that were answered are short ones
+    expect(asked.length).toBeGreaterThan(3);
+    expect(found?.length).toBeGreaterThan(0);
+    expect(new Set(found?.map((d) => d.day)).size).toBe(20);
   });
 });
