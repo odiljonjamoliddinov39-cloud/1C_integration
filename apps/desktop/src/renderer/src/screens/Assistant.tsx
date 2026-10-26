@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { useLimitDialog } from "@/components/Limit";
 import { Card } from "@/components/ui/card";
 import { isLimitCode, useBilling } from "@/lib/billing";
+import { type SuggestLang, suggest } from "@/lib/suggestions";
 import { cn } from "@/lib/utils";
 
 type Entry = ChatEntry;
@@ -611,9 +612,11 @@ function Chat({
   onUserMessage: (chatId: string, text: string, files: AttachmentInfo[]) => void;
   onReset: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
+  // The temporary buttons: derived from the attached files, what is typed and the last answer; hidden by ×, until the context changes.
+  const [hiddenFor, setHiddenFor] = useState("");
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -648,6 +651,26 @@ function Chat({
     );
     setFiles((current) => [...current, ...read].slice(0, ATTACHMENTS.maxFiles));
   }
+
+  const lastEntry = transcript.entries.at(-1);
+  const lastAnswerAt = transcript.entries.findLastIndex((e) => e.kind === "assistant");
+  const answered =
+    lastAnswerAt >= 0 &&
+    !transcript.entries.slice(lastAnswerAt + 1).some((e) => e.kind === "user" || e.kind === "proposal");
+  const language: SuggestLang = i18n.language.startsWith("ru")
+    ? "ru"
+    : i18n.language.startsWith("uz")
+      ? "uz"
+      : "en";
+  const suggestions = suggest({
+    lang: language,
+    files: files.map((file) => ({ name: file.name, kind: kindOf(file.name) })),
+    typed: text,
+    lastAnswer:
+      answered && lastEntry ? ((transcript.entries[lastAnswerAt] as { text?: string }).text ?? null) : null,
+    busy: transcript.busy,
+  });
+  const suggestionKey = `${files.map((f) => f.name).join("|")}#${transcript.entries.length}`;
 
   function ask(question: string) {
     const q = question.trim();
@@ -774,6 +797,31 @@ function Chat({
             </span>
           ))}
           {fileError && <span className="text-xs text-destructive">{fileError}</span>}
+        </div>
+      )}
+      {suggestions.length > 0 && hiddenFor !== suggestionKey && (
+        <div className="mt-2 flex flex-wrap items-center gap-2" aria-label={t("assistant.suggestions")}>
+          <span className="text-xs text-muted-foreground">{t("assistant.suggestions")}</span>
+          {suggestions.map((s) => (
+            <Button
+              key={s.id}
+              type="button"
+              variant="outline"
+              size="sm"
+              title={s.send}
+              onClick={() => ask(s.send)}
+            >
+              {s.label}
+            </Button>
+          ))}
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground"
+            aria-label={t("assistant.hideSuggestions")}
+            onClick={() => setHiddenFor(suggestionKey)}
+          >
+            ×
+          </button>
         </div>
       )}
       <form onSubmit={submit} className="mt-3 flex gap-2">
