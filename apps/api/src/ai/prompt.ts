@@ -424,7 +424,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "bank's fees, 22613/22614/17101 a conversion, 16103 SWIFT, 23402/22628 tax, 29801 customs, 23120 an individual's card, 202xx " +
     "a company) and the account a fee goes to (9430). The program applies it by itself; action list shows it and what the " +
     "accountant has confirmed. Ask the accountant ONCE to confirm it (action confirm), or to change a row (action set {prefix, " +
-    "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed.",
+    "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed. Payments to the " +
+    "budget that name no tax (customs prepayments held as «tax/medium»): when the accountant says to book them as a payment to " +
+    "the supplier, set {prefix: '23402', type: 'contract_payment', untaxed: true}: only the unnamed ones change, named taxes " +
+    "stay taxes.",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +

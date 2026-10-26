@@ -983,7 +983,7 @@ export async function resolvePayments(
     const object = OBJECT[payment.direction];
     const asked = overrides.templates?.find((o) => o.row === payment.row);
     // A tax payment: the tax is named by the payment, and the template is the company's payment of that same tax.
-    if (!asked && isTaxPayment(payment)) {
+    if (!asked && isTaxPayment(payment) && options.kinds?.get(payment.row)?.type !== "contract_payment") {
       const made = await taxPayment(deps, cache, payment, ownAccount, {
         organization: options.organization ?? null,
         ...(options.posting ? { posting: options.posting } : {}),

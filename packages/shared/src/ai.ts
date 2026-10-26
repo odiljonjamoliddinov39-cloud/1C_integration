@@ -759,6 +759,11 @@ export const BankMappingInput = z.object({
     .regex(/^\d{5}$/)
     .optional(),
   type: z.enum(BANK_LINE_TYPES).optional(),
+  /**
+   * With `set`: the row is the rule for this prefix's payments whose text names no tax (type contract_payment books them as a
+   * payment to the Treasury under its contract, e.g. customs prepayments), the named taxes stay taxes.
+   */
+  untaxed: z.boolean().optional(),
   /** The ledger account the entry goes to (for a fee: the expense account). */
   account: z
     .string()

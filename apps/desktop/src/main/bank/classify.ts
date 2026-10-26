@@ -114,6 +114,9 @@ const RETURN_WORDS = /возврат|vozvrat|qaytar/iu;
 const FOREIGN_AMOUNT =
   /\d[\d\s.,]*\s*(?:usd|eur|rub|cny|gbp|долл\p{L}*|евро|рубл\p{L}*)(?![\p{L}])|['"«](?:доллар|евро|рубл|юань)\p{L}*/iu;
 
+/** The suffix of a table row that is the rule for a prefix's payments that name no tax (e.g. "23402:untaxed"). */
+export const UNTAXED = ":untaxed";
+
 /** A current account of a legal entity or an entrepreneur (202xx) is a company's, whatever its last digits. */
 const COMPANY_ACCOUNT = /^20[2-4]\d\d/;
 
@@ -190,10 +193,15 @@ export function classifyLine(p: BankPayment, ctx: ClassifyContext): Classified {
         return line(matched.type, "high", rule, `${matched.what}: a leg of a conversion or a SWIFT payment`);
       case "customs":
         return line("customs", "high", rule, `a customs payment (${matched.what})`);
-      case "tax":
-        return taxKind
-          ? line("tax", "high", rule, `a payment to the budget: ${taxKind}`, taxKind)
-          : line("tax", "medium", rule, "a payment to the budget whose tax the text does not name", null);
+      case "tax": {
+        if (taxKind) return line("tax", "high", rule, `a payment to the budget: ${taxKind}`, taxKind);
+        // The accountant's rule for payments to the budget that name no tax (customs prepayments that go into the cost of
+        // goods are booked as a payment to the Treasury under its contract, not as a tax).
+        const untaxed = (ctx.table ?? DEFAULT_TABLE).find((r) => r.prefix === `${matched.prefix}${UNTAXED}`);
+        if (untaxed?.type === "contract_payment")
+          return contractLine(`${rule}, the accountant's rule for budget payments that name no tax`);
+        return line("tax", "medium", rule, "a payment to the budget whose tax the text does not name", null);
+      }
       case "individual_card": {
         const person = personIn(purpose);
         return person || contractMention(purpose)

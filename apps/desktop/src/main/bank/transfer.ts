@@ -335,7 +335,16 @@ interface Leg {
   /** The account number on this leg's own statement, and the other account's. */
   own: string;
   other: string;
+  /** The leg is made from the other side's row: that statement is not attached (see MIRROR). */
+  mirror?: boolean;
 }
+
+/**
+ * A move between two of the company's accounts is two documents. When only one of the two statements is attached, the
+ * other side is made from the same row, mirrored (the same day, amount and purpose on the other account), so that both sides
+ * are in 1C; when the other statement is read later, its row is found in 1C already. Its row number is the real one plus this.
+ */
+export const MIRROR = 1_000_000;
 
 export async function resolveTransfers(
   transfers: Transfer[],
@@ -386,6 +395,30 @@ export async function resolveTransfers(
         other: side === "out" ? transfer.toAccount : transfer.fromAccount,
       });
     }
+  }
+  // The side whose statement is not attached: a plain move between two soum accounts is made from the attached side's row.
+  for (const transfer of transfers) {
+    if (transfer.fx || transfer.kind === "unattached_own") continue;
+    const [present, missing] =
+      transfer.out && !transfer.in
+        ? (["out", "in"] as const)
+        : transfer.in && !transfer.out
+          ? (["in", "out"] as const)
+          : [null, null];
+    const at = present ? transfer[present] : null;
+    if (!present || !missing || !at || !options.files.has(at.file)) continue;
+    if (currencyOfAccount(transfer.fromAccount) !== "UZS" || currencyOfAccount(transfer.toAccount) !== "UZS")
+      continue;
+    if (options.done?.has(key(at.file, at.row + MIRROR))) continue;
+    legs.push({
+      transfer,
+      side: missing,
+      file: at.file,
+      row: at.row + MIRROR,
+      own: missing === "out" ? transfer.fromAccount : transfer.toAccount,
+      other: missing === "out" ? transfer.toAccount : transfer.fromAccount,
+      mirror: true,
+    });
   }
   if (legs.length === 0) return result;
   const fail = (leg: Leg, message: string) =>
@@ -445,8 +478,15 @@ export async function resolveTransfers(
   // rate (the soums paid ÷ the currency received), not the Central Bank's, so that the two sides close each other in
   // the transit accounts; only the difference to the Central Bank's rate is an exchange difference, and 1C finds it
   // when the month is revalued. At the bank's rate of the day the transit accounts keep a residue of each conversion.
-  const paymentOf = (leg: Leg) =>
-    statements.find((s) => s.fileName === leg.file)?.payments.find((p) => p.row === leg.row);
+  const paymentOf = (leg: Leg): BankPayment | undefined => {
+    const statement = statements.find((s) => s.fileName === leg.file);
+    if (!leg.mirror) return statement?.payments.find((p) => p.row === leg.row);
+    const source = statement?.payments.find((p) => p.row === leg.row - MIRROR);
+    // The same row seen from the other account: the other direction, the first account as the counterparty's.
+    return source
+      ? { ...source, row: leg.row, direction: leg.side, account: leg.other, counterparty: "", inn: "" }
+      : undefined;
+  };
   const isCross = (leg: Leg) => {
     const a = currencyOfAccount(leg.own);
     const b = currencyOfAccount(leg.other);
@@ -478,8 +518,7 @@ export async function resolveTransfers(
   }
 
   for (const leg of legs) {
-    const statement = statements.find((s) => s.fileName === leg.file);
-    const payment: BankPayment | undefined = statement?.payments.find((p) => p.row === leg.row);
+    const payment: BankPayment | undefined = paymentOf(leg);
     if (!payment) {
       fail(leg, "the row is not in the statement");
       continue;

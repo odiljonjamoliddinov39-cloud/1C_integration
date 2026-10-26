@@ -438,3 +438,6 @@ leg always goes with it. The statement's lines become enterable again. Only what
 - A counterparty 1C has with no contract at all gets the neutral «№б/н» contract on a card, as a new one does.
 - A move from the settlement account to the blocked-funds account (both soums) is copied from the company's plain transfer between accounts when it has no conversion-named document.
 - The moves and conversions the program could not enter are listed in its own answer, with the reasons (before, only the payments were listed and the model guessed the rest).
+
+- Payments to the budget that name no tax (customs prepayments «для лицевого счета УГТК», a refund «возврат на р/с»): the accountant can set the rule once, `bank_mapping set {prefix: "23402", type: "contract_payment", untaxed: true}` (stored as `23402:untaxed`). Those lines are then a payment (a receipt) under the Treasury's contract, not a tax; a text that names a tax stays a tax.
+- A move between two soum accounts of the company with only one statement attached: the other side is made from the same row, mirrored (the other direction, the other account), so that both sides are in 1C. When the other statement is read later, its row is found in 1C already.

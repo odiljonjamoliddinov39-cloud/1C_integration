@@ -137,7 +137,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
-import { type Classified, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
+import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -2189,7 +2189,8 @@ export class AssistantService {
       );
     };
     if (input.action === "set") {
-      const { prefix } = input;
+      const { prefix: base } = input;
+      const prefix = base && input.untaxed ? `${base}${UNTAXED}` : base;
       if (!prefix || (!input.type && !input.account))
         return { ok: false, code: "VALIDATION", message: "set needs a prefix and a type or an account" };
       const current = table().find((r) => r.prefix === prefix);
