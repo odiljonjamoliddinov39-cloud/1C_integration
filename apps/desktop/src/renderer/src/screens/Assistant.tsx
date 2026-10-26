@@ -670,6 +670,8 @@ function Chat({
       answered && lastEntry ? ((transcript.entries[lastAnswerAt] as { text?: string }).text ?? null) : null,
     busy: transcript.busy,
   });
+  // The reply the last answer asks for («Davom etaymi?»): shown in the empty box as a hint, Tab puts it in.
+  const goOn = text === "" && files.length === 0 ? suggestions.find((s) => s.id === "goOn")?.send : undefined;
   const suggestionKey = `${files.map((f) => f.name).join("|")}#${transcript.entries.length}`;
 
   function ask(question: string) {
@@ -851,11 +853,16 @@ function Chat({
           className="min-h-11 flex-1 resize-none rounded-xl border border-primary/50 bg-card px-3 py-2 text-sm outline-none focus:border-primary"
           rows={2}
           maxLength={4000}
-          placeholder={t("assistant.placeholder")}
+          placeholder={goOn ? `${goOn}   ⇥ Tab` : t("assistant.placeholder")}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onPaste={paste}
           onKeyDown={(e) => {
+            if (e.key === "Tab" && !e.shiftKey && goOn) {
+              e.preventDefault();
+              setText(goOn);
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               ask(text);
