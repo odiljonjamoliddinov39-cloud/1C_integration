@@ -480,4 +480,31 @@ describe("a payment to the budget made from 1C's description of the document", (
     expect(b.ok).toBe(false);
     if (!b.ok) expect(b.message).toContain("several taxes");
   });
+  it("tells the INPS contribution from its penalty by the code and the word of the text", async () => {
+    const inps = fake({
+      taxes: [
+        [TAX_NDFL, "Отчисления в ИНПС"],
+        [TAX_VAT, "191 ИНПС Пеня"],
+      ],
+    });
+    const spec = (purpose: string) => ({
+      kind: "tax" as const,
+      payment: tax({ purpose }),
+      organization: ORG,
+      ownAccount: OWN,
+      currency: "UZS",
+      tax: { kind: "inps" as const, period: null, office: null },
+    });
+    const pay = await buildBankDocument(
+      inps.deps,
+      inps.cache,
+      spec("Оплата за 101 Отчисление в ИНПС $TAX_ID$1"),
+    );
+    const penalty = await buildBankDocument(inps.deps, inps.cache, spec("Оплата за 191 ИНПС пеня $TAX_ID$2"));
+    expect(pay.ok && penalty.ok).toBe(true);
+    if (pay.ok && penalty.ok) {
+      expect(pay.change.fields?.["Налог"]).toMatchObject({ ref: TAX_NDFL });
+      expect(penalty.change.fields?.["Налог"]).toMatchObject({ ref: TAX_VAT });
+    }
+  });
 });

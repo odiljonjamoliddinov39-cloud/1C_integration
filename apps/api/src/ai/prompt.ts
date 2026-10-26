@@ -529,7 +529,11 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the reason): tell the accountant about those. A statement of a foreign-currency account is entered in its currency " +
     "(foreignCurrencyAccounts): each payment is copied from the counterparty's last payment in that currency, with the " +
     "rate of the payment's day from 1C's rates (a note says when 1C had none and the earlier rate was kept: pass it on); " +
-    "a conversion between a soum and a currency account is not paired by the program: tell the accountant. Its reflections " +
+    "a conversion between a soum and a currency account is paired and entered by the program through the conversion " +
+    "accounts, its two legs linked: say a conversion or a move between the company's own accounts was NOT entered only " +
+    "when transfersNotEntered says so, with the reasons it gives (never count them yourself, never say 1C has no field for " +
+    "the other account, never write the entries by hand). Do not repeat a list the program has already shown " +
+    "(alreadyShownToAccountant): say what happens next. Its reflections " +
     "set the statements against how this company's 1C works (an account 1C does not have, how 1C books such transfers): " +
     "pass them on in the answer as they are, without querying 1C to check them (the program has already read it). " +
     "Keep the final answer short: the counts, the totals, and only what needs the accountant's decision. What it could " +

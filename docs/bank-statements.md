@@ -427,3 +427,14 @@ a statement is logged (the line, what it was read as and by which rule, the conv
 Taking back is one card of deletions (1C unposts a document it marks for deletion; the mark can be lifted): the newest card's
 documents (`last`), all of them (`all`) or one conversion; the later document goes before the earlier, and a conversion's other
 leg always goes with it. The statement's lines become enterable again. Only what the program wrote is taken back.
+
+## Fixes from the laptop run of 26 October
+
+- A payment copied from one in soums for a contract in a currency gets the currency accounts (6015/4315): the soum ones (6010/4310) are replaced, a currency account the copy already had is kept. Before, 1C answered «Не заполнен счет дебета» and did not post them.
+- INPS: «Отчисления в ИНПС» and «191 ИНПС Пеня» are told apart by the code (101 / 191) and the word «пеня» in the text, both when a tax item is chosen and when an earlier payment of the same tax is looked for.
+- An earlier document whose breakdown is empty or does not add up to its amount (a hand-made sample) is no longer refused: its row is made for the new amount, with a note.
+- Several counterparties under one INN: the one the statement's own name fits is taken (a note says so); only when the names do not tell them apart is the accountant asked.
+- «100 процент оплата» is a prepayment, not interest on a loan.
+- A counterparty 1C has with no contract at all gets the neutral «№б/н» contract on a card, as a new one does.
+- A move from the settlement account to the blocked-funds account (both soums) is copied from the company's plain transfer between accounts when it has no conversion-named document.
+- The moves and conversions the program could not enter are listed in its own answer, with the reasons (before, only the payments were listed and the model guessed the rest).

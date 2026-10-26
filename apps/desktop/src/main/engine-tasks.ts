@@ -265,6 +265,7 @@ const T = {
     created: (n: number) => `Создано справочных объектов (контрагенты, договоры): ${n}.`,
     left: (n: number) => `Не разобрано программой: ${n}.`,
     reasons: "Причины:",
+    transfersLeft: (n: number) => `Переводов и конвертаций между своими счетами не введено: ${n}. Причины:`,
     notes: (n: number) => `Решений программы, которые стоит проверить: ${n}.`,
     rates: "Курсы валют не загружены:",
     declined: "Карточка отклонена: ничего не записано.",
@@ -292,6 +293,8 @@ const T = {
     created: (n: number) => `Yaratilgan spravochnik elementlari (kontragent, shartnoma): ${n}.`,
     left: (n: number) => `Dastur hal qila olmagan: ${n}.`,
     reasons: "Sabablari:",
+    transfersLeft: (n: number) =>
+      `O'z hisoblari orasidagi o'tkazma va konvertatsiyalar kiritilmadi: ${n}. Sabablari:`,
     notes: (n: number) => `Dastur o'zi qaror qilgan, tekshirishga arziydigan holatlar: ${n}.`,
     rates: "Valyuta kurslari yuklanmadi:",
     declined: "Kartochka rad etildi: hech narsa yozilmadi.",
@@ -319,6 +322,7 @@ const T = {
     created: (n: number) => `Directory items created (counterparties, contracts): ${n}.`,
     left: (n: number) => `The program could not settle: ${n}.`,
     reasons: "Reasons:",
+    transfersLeft: (n: number) => `Moves and conversions between own accounts not entered: ${n}. Reasons:`,
     notes: (n: number) => `Decisions the program made that are worth checking: ${n}.`,
     rates: "Exchange rates not loaded:",
     declined: "Card declined: nothing was written.",
@@ -348,6 +352,7 @@ interface BatchData {
   enteredBefore?: number;
   alreadyIn1c?: { count?: number } | unknown;
   transfersEntered?: { documents?: number };
+  transfersNotEntered?: { count?: number; problems?: { message?: string; rows?: number }[] };
   createdInThisRun?: unknown[];
   notCreated?: unknown[];
   needsAttention?: { count?: number; problems?: { rows?: unknown[]; message?: string }[] };
@@ -381,10 +386,16 @@ export function batchText(data: unknown, lang: Lang): string {
     for (const p of (d.needsAttention?.problems ?? []).slice(0, 6))
       lines.push(`  – ${p.message ?? "?"}${p.rows?.length ? ` (${p.rows.length})` : ""}`);
   }
+  const transfersLeft = d.transfersNotEntered?.count ?? 0;
+  if (transfersLeft > 0) {
+    lines.push(w.transfersLeft(transfersLeft));
+    for (const p of (d.transfersNotEntered?.problems ?? []).slice(0, 6))
+      lines.push(`  – ${p.message ?? "?"}${p.rows ? ` (${p.rows})` : ""}`);
+  }
   if (d.notes?.length) lines.push(w.notes(d.notes.length));
   if (d.ratesNotLoaded) lines.push(`${w.rates} ${d.ratesNotLoaded}`);
   if (lines.length === 0) lines.push(w.nothing);
-  if (left > 0 || failed.length > 0) lines.push(w.next);
+  if (left > 0 || failed.length > 0 || transfersLeft > 0) lines.push(w.next);
   lines.push(w.sources);
   return lines.join("\n");
 }

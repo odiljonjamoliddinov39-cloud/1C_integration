@@ -568,7 +568,7 @@ export async function resolveTransfers(
       : leg.transfer.kind === "conversion"
         ? "conversion"
         : "own";
-    const template = await pickTemplate(
+    let template = await pickTemplate(
       deps,
       cache,
       object,
@@ -577,6 +577,10 @@ export async function resolveTransfers(
       otherRef,
       cross ? ownCurrency : "",
     );
+    // A move from the settlement account to the blocked-funds account (both soums) is a conversion by the ledger's reading, but
+    // the company may book it as its plain transfer between accounts: that document is the one to copy.
+    if (!template && kindName === "conversion")
+      template = await pickTemplate(deps, cache, object, "own", ownRef, otherRef, "");
     if (!template) {
       // Nothing to copy (a new base, or its documents were deleted): the document is made from 1C's own description.
       const buildKind: BuildKind = cross

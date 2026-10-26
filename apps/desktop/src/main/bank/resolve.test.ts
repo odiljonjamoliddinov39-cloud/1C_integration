@@ -6,6 +6,7 @@ import {
   type BankDeps,
   contractMention,
   copyTemplate,
+  pickByName,
   isTaxPayment,
   resolvePayments,
   shapeOf,
@@ -246,7 +247,7 @@ describe("copying the counterparty's last payment", () => {
     ]);
   });
 
-  it("refuses what it cannot copy honestly: a split payment, another currency, an unbalanced breakdown", () => {
+  it("refuses what it cannot copy honestly: a split payment, another currency (an unbalanced breakdown is made for the new amount)", () => {
     const base = { object: "Документ.ПоступлениеНаРасчетныйСчет", ref: OLD_IN };
     const one = earlier().tables.РасшифровкаПлатежа[0] ?? {};
     const split = copyTemplate(
@@ -266,7 +267,23 @@ describe("copying the counterparty's last payment", () => {
       payment(),
       {},
     );
-    expect(off).toMatchObject({ ok: false, message: expect.stringContaining("does not add up") });
+    // a hand-made breakdown that differs from its header is made for the new amount, with a note
+    expect(off).toMatchObject({ ok: true, notes: [expect.stringContaining("did not add up")] });
+    const empty = copyTemplate(
+      {
+        ...base,
+        ...earlier(),
+        tables: { РасшифровкаПлатежа: [{ ...one, СуммаПлатежа: 0, СуммаВзаиморасчетов: 0 }] },
+      },
+      payment(),
+      {},
+    );
+    expect(empty).toMatchObject({ ok: true });
+    if (empty.ok) {
+      const row = empty.change.tables?.РасшифровкаПлатежа?.[0] ?? {};
+      expect(row["СуммаПлатежа"]).toBe(row["СуммаВзаиморасчетов"]);
+      expect(Number(row["СуммаПлатежа"])).toBeGreaterThan(0);
+    }
     const none = copyTemplate({ ...base, ...earlier({ СуммаДокумента: 0 }) }, payment(), {});
     expect(none.ok).toBe(false);
   });
@@ -528,8 +545,12 @@ describe("bank payments for 1C", () => {
         ["201607534", HYDRO, "NAVRUZ dublikat"],
       ],
     });
-    const dup = await resolvePayments(statement([payment()]), {}, twins.d);
+    const dup = await resolvePayments(statement([payment({ counterparty: "Boshqa nom" })]), {}, twins.d);
     expect(dup.problems[0]).toMatchObject({ code: "COUNTERPARTY_AMBIGUOUS", candidates: expect.any(Array) });
+    // the statement's own name tells the twins apart
+    const named = await resolvePayments(statement([payment({ counterparty: "NAVRO'Z-PTK" })]), {}, twins.d);
+    expect(named.problems).toEqual([]);
+    expect(named.notes.map((n) => n.message).join(" ")).toContain("was taken");
   });
 
   it("does not copy a supplier payment for a payment to the budget, unless the model names the tax document", async () => {
@@ -1252,6 +1273,29 @@ describe("a payment with no earlier document of its kind in the base", () => {
     expect(out.notes.map((n) => n.message).join(" ")).toContain("does not state VAT");
   });
 
+  it("a figure before «процент» is a prepayment («100 процент оплата»), not interest on a loan", async () => {
+    const { d } = base();
+    const out = await resolvePayments(
+      statement([
+        payment({
+          direction: "out",
+          purpose: "100 процент оплата по договору №5 от 01.05.2025 на поставку",
+          amount: 20_000_000,
+        }),
+      ]),
+      {},
+      d,
+    );
+    expect(out.problems).toEqual([]);
+    expect(out.ready).toHaveLength(1);
+    const interest = await resolvePayments(
+      statement([payment({ direction: "out", purpose: "Проценты по кредиту за май", amount: 20_000_000 })]),
+      {},
+      base().d,
+    );
+    expect(interest.problems[0]?.message).toContain("not a plain payment");
+  });
+
   it("leaves a salary, a loan or a bank fee to the accountant, and says why", async () => {
     const { d } = base();
     const out = await resolvePayments(
@@ -1326,6 +1370,30 @@ describe("a payment with no earlier document of its kind in the base", () => {
     });
   });
 
+  it("a counterparty 1C has with no contract at all, and a purpose that names none, gets the neutral «б/н» one on a card", async () => {
+    const none = deps({
+      docs: [],
+      contracts: [],
+      describe: (o) => o.map(description),
+      extra: (input) => (input.query.includes("Справочник.ДоговорыКонтрагентов") ? [] : answers()(input)),
+    });
+    const out = await resolvePayments(
+      statement([
+        payment({ direction: "out", purpose: "Оплата за услуги", date: "2026-02-05" }),
+        payment({ direction: "out", purpose: "Оплата за услуги", date: "2026-02-01", row: 5 }),
+      ]),
+      { organization: "66666666-6666-4666-8666-666666666666" },
+      none.d,
+    );
+    expect(out.ready).toEqual([]);
+    expect(out.contractsToCreate).toHaveLength(1);
+    expect(out.contractsToCreate[0]?.change.fields).toMatchObject({
+      Владелец: { type: "Справочник.Контрагенты", ref: NAVRUZ },
+      Номер: "б/н",
+      Дата: "2026-02-01",
+    });
+  });
+
   it("does not make a payment for a counterparty with no contract and none named", async () => {
     const none = deps({
       docs: [],
@@ -1342,5 +1410,16 @@ describe("a payment with no earlier document of its kind in the base", () => {
     const { d, seen } = base();
     await resolvePayments(statement([payment({ purpose: "Оплата по договору №17 от 08.01.2026" })]), {}, d);
     expect(seen.filter((s) => /СОЗДАТЬ|создать/i.test(s.query))).toEqual([]);
+  });
+});
+
+describe("one INN, two counterparties", () => {
+  const plain = { ref: "r1", name: "Kapitalbank" };
+  const branch = { ref: "r2", name: '"Kapitalbank" ATB Buxoro filiali' };
+  it("is told apart by the name the statement wrote, or left to the accountant", () => {
+    expect(pickByName([plain, branch], "Kapitalbank ATB Buxoro filiali")).toBe(branch);
+    expect(pickByName([plain, branch], "KAPITALBANK")).toBe(plain);
+    expect(pickByName([plain, branch], "Другой банк")).toBeNull();
+    expect(pickByName([plain, { ref: "r3", name: "Kapitalbank" }], "Kapitalbank")).toBeNull();
   });
 });

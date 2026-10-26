@@ -136,6 +136,18 @@ export function taxKindOf(purpose: string): TaxKind | null {
   return found.length === 1 ? (found[0]?.kind ?? null) : null;
 }
 
+/** A payment of a penalty on a tax: code 191 ("Оплата за 191 ИНПС пеня"), or the word itself. */
+export const isPenaltyPurpose = (purpose: string): boolean =>
+  /^\s*(?:~[^~]*~\s*)*(?:оплата\s+за\s+)?191(?!\d)/iu.test(purpose) ||
+  /(?<!\p{L})(?:пен[яиюе]\p{L}*|penya|peni|jarima|штраф\p{L}*)(?!\p{L})/iu.test(purpose);
+
+/**
+ * The tax item of 1C for a payment: the kind's name, and for INPS the item that is a penalty or is not, as the payment is
+ * (the catalog has «Отчисления в ИНПС» and «191 ИНПС Пеня», and both are INPS).
+ */
+export const taxItemFor = (kind: TaxKind, name: string, purpose: string): boolean =>
+  taxNameIs(kind, name) && (kind !== "inps" || isPenaltyPurpose(purpose) === /пен/iu.test(name));
+
 /** Does the name of a tax in 1C ("Налог на доходы физических лиц", "Единый социальный платёж") stand for this kind? */
 export const taxNameIs = (kind: TaxKind, name: string): boolean =>
   KINDS.find((k) => k.kind === kind)?.name.test(name) ?? false;

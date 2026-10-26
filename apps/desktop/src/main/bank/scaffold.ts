@@ -71,7 +71,7 @@ export type Scaffolded =
 
 /** Payments whose operation and accounts are the company's own choice, not a supplier's or a buyer's payment. */
 const NOT_PLAIN =
-  /зарплат|заработн|ish\s*haq|oylik|аванс\p{L}*\s+(?:сотрудн|работник|по\s+зп)|комисси|komissiya|xizmat\s+haqi\s+bank|кредит|займ|ссуд|процент|foiz|qarz\s+(?:berish|qaytar)|дивиденд|dividend|подотч|hisobdor|командиров|алимент|штраф|jarima|конвертац|konvertats|собственн\p{L}*\s+сч[её]т|o['‘’ʻ`]z\s+hisob/iu;
+  /зарплат|заработн|ish\s*haq|oylik|аванс\p{L}*\s+(?:сотрудн|работник|по\s+зп)|комисси|komissiya|xizmat\s+haqi\s+bank|кредит|займ|ссуд|(?<!\d\s?)процент|foiz|qarz\s+(?:berish|qaytar)|дивиденд|dividend|подотч|hisobdor|командиров|алимент|штраф|jarima|конвертац|konvertats|собственн\p{L}*\s+сч[её]т|o['‘’ʻ`]z\s+hisob/iu;
 
 const rounded = (n: number) => Math.round(n * 1e12) / 1e12;
 

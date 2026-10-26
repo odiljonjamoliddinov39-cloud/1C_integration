@@ -107,13 +107,32 @@ export async function completePayment(
 
   const advanceRef = advanceColumn ? await refOfCode(advanceCode) : null;
   const settlementRef = settlementColumn ? await refOfCode(settlementCode) : null;
+  // A contract in a currency copied from a payment in soums carries the soum accounts (6010, 4310): 1C does not take them
+  // for a currency contract, so the account that is the plain one of the rule's code is replaced by the currency one.
+  const plain = new Map<string, string | null>();
+  if (inCurrency) {
+    const codes = [advanceCode, settlementCode].filter((c): c is string => Boolean(c));
+    for (const [code, ref] of await accountRefs(deps, sc, codes)) plain.set(code, ref);
+  }
+  const unfit = (value: unknown, code: string | undefined, ref: string | null) => {
+    const old = value && typeof value === "object" ? (value as { ref?: unknown }).ref : undefined;
+    return Boolean(inCurrency && code && ref && old && old === plain.get(code) && old !== ref);
+  };
   const filled = new Set<string>();
   for (const row of rows) {
-    if (advanceColumn && advanceRef && empty(row[advanceColumn.name])) {
+    if (
+      advanceColumn &&
+      advanceRef &&
+      (empty(row[advanceColumn.name]) || unfit(row[advanceColumn.name], advanceCode, advanceRef))
+    ) {
       row[advanceColumn.name] = { type: "ПланСчетов.Хозрасчетный", ref: advanceRef };
       filled.add(`the account of advances ${advanceCode}`);
     }
-    if (settlementColumn && settlementRef && empty(row[settlementColumn.name])) {
+    if (
+      settlementColumn &&
+      settlementRef &&
+      (empty(row[settlementColumn.name]) || unfit(row[settlementColumn.name], settlementCode, settlementRef))
+    ) {
       row[settlementColumn.name] = { type: "ПланСчетов.Хозрасчетный", ref: settlementRef };
       filled.add(`the settlement account ${settlementCode}`);
     }
@@ -126,9 +145,12 @@ export async function completePayment(
   const header = described.attributes.find(
     (a) => a.name === "СчетУчетаРасчетовСКонтрагентом" && a.types.some((t) => t.startsWith("ПланСчетов")),
   );
-  if (header && change.fields && empty(change.fields[header.name])) {
-    const ref = await refOfCode(settlementCode);
-    if (ref) {
+  if (header && change.fields) {
+    const ref = settlementRef ?? (await refOfCode(settlementCode));
+    if (
+      ref &&
+      (empty(change.fields[header.name]) || unfit(change.fields[header.name], settlementCode, ref))
+    ) {
       change.fields[header.name] = { type: "ПланСчетов.Хозрасчетный", ref };
       filled.add(`the settlement account ${settlementCode} in the header`);
     }

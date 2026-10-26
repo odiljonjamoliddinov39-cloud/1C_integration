@@ -3934,6 +3934,7 @@ export class AssistantService {
           gapsOf(
             results.map((r) => r.resolved),
             held,
+            moved.problems,
           ),
         );
         if (told) {
@@ -4054,6 +4055,17 @@ export class AssistantService {
       ...(madeNow.length > 0 ? { createdInThisRun: madeNow } : {}),
       ...(notCreated.length > 0 ? { notCreated } : {}),
       ...(problems.length > 0 ? { needsAttention: summarizeBankProblems(problems) } : {}),
+      ...(moved.problems.length > 0
+        ? {
+            transfersNotEntered: {
+              count: moved.problems.length,
+              problems: [...new Set(moved.problems.map((p) => p.message))].map((message) => ({
+                message,
+                rows: moved.problems.filter((p) => p.message === message).length,
+              })),
+            },
+          }
+        : {}),
       ...(notes.length > 0
         ? {
             notes: notes.slice(0, 20).map((n) => ({ rows: n.rows.slice(0, 20), message: n.message })),

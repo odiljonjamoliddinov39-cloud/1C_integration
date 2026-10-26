@@ -30,7 +30,7 @@ import {
   valueLike,
 } from "./scaffold.js";
 import type { BankPayment } from "./statement.js";
-import { TAX_ACCOUNT, type TaxKind, taxNameIs } from "./tax.js";
+import { TAX_ACCOUNT, type TaxKind, taxItemFor } from "./tax.js";
 
 export type BuildKind =
   | "fee"
@@ -315,7 +315,7 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     if (!taxAttribute) return refuse(`${kind.object} has no attribute for the tax (of ${TAX_CATALOG})`);
     const found = await taxItems(deps, cache);
     if (!found) return refuse("the taxes of 1C's catalog could not be read");
-    const named = found.filter((t) => taxNameIs(spec.tax?.kind ?? "vat", t.name));
+    const named = found.filter((t) => taxItemFor(spec.tax?.kind ?? "vat", t.name, spec.payment.purpose));
     const [only] = named;
     if (named.length !== 1 || !only)
       return refuse(
