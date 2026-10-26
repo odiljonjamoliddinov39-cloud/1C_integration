@@ -459,3 +459,10 @@ leg always goes with it. The statement's lines become enterable again. Only what
 - Each document of 1C is used up by the first row it matches: two equal rows of a statement need two documents.
 - The documents are read in windows of a quarter (5000 rows each); before, one read of 1000 rows hid the rest of a long period and the payments beyond it were entered a second time.
 - The same for the moves between own accounts. The assistant is told never to create a bank document by hand that 1C may already have.
+
+## The limit of a query, and the search for documents entered twice
+
+- **One query returns at most 1000 rows; the connector refuses a larger limit.** The reads of what 1C already has (payments, moves between own accounts, Didox sales) asked for 2000 and 5000: 1C refused, the program took that for "nothing there" and entered everything again. All of them now read a period through `query-window.ts`: a period that fills the limit is split in halves until every part fits, and none is hidden.
+- **Searching for duplicates** (`propose_bank_duplicates`, and by itself, with no model, for «икки марта киритган ҳужжатларингни ўчир», «takror», «дубли», «twice»): the attached statements are the truth. A bank account, a day, an amount and a direction that a statement lists n times are n documents in 1C, whatever the kind of each (a payment, a transfer, a conversion leg, a tax entered as a payment to a supplier). The extra ones are marked for deletion on one card, the later copy first; the document that carries the row's bank number stays, then a posted one, then the earliest.
+- What no row of the statements stands behind (a fee split off a payment, an entry of an account whose statement is not attached) is reported, never touched. The answer says how many rows and documents were checked, and how many were left alone and why.
+- The assistant is told never to say "no duplicates" from its own queries: it calls the tool and reports what it says.

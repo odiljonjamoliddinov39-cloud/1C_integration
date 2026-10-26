@@ -1827,6 +1827,90 @@ describe("assistant", () => {
       });
     });
 
+    it("«икки марта киритган ҳужжатларингни ўчир»: the program finds the copies against the statement, with no model, and marks the later one", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const first = crypto.randomUUID();
+      const second = crypto.randomUUID();
+      const { assistant, store, company, events, base, proxy } = setup([
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const made = (ref: string, number: string) =>
+        base.objects.set(ref, {
+          object: "Документ.СписаниеСРасчетногоСчета",
+          fields: { Номер: number, Дата: "2026-09-03T00:00:00", СуммаДокумента: 3000 },
+          posted: true,
+          deletionMark: false,
+          version: 1,
+        });
+      made(first, "0000-000001");
+      made(second, "0000-000099");
+      base.queryAnswers.unshift(
+        {
+          match:
+            /ПРЕДСТАВЛЕНИЕ\(Т\.ВидОперации\) КАК Вид, Т\.[^ ]+\.НомерСчета КАК Счет, Т\.НомерВходящегоДокумента/,
+          answer: (input) =>
+            /СписаниеСРасчетногоСчета/.test(input.query)
+              ? {
+                  columns: [],
+                  rows: [
+                    [
+                      ref("Документ.СписаниеСРасчетногоСчета", first, "1"),
+                      "0000-000001",
+                      "2026-09-03T00:00:00",
+                      3000,
+                      true,
+                      "Оплата поставщику",
+                      "20208000100438330001",
+                      "103",
+                      "ООО",
+                    ],
+                    [
+                      ref("Документ.СписаниеСРасчетногоСчета", second, "2"),
+                      "0000-000099",
+                      "2026-09-03T00:00:00",
+                      3000,
+                      true,
+                      "Прочее списание",
+                      "20208000100438330001",
+                      "",
+                      "ООО",
+                    ],
+                  ],
+                  truncated: false,
+                }
+              : { columns: [], rows: [], truncated: false },
+        },
+        { match: /Справочник\.БанковскиеСчета/, answer: () => ({ columns: [], rows: [], truncated: false }) },
+      );
+      store.setAiEnabled(company.id, true);
+      const statement = [
+        "Выписка по счёту 20208000100438330001",
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        "03.09.2026;103;ООО Ромашка;300000001;3000,00;;Оплата 3",
+      ].join("\n");
+      const attaching = assistant.send({
+        companyId: company.id,
+        text: "Vypiskani ko'rib chiq",
+        files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
+      });
+      await attaching;
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "икки марта киритган хужжатларингни учир",
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+      // Only the later copy is marked; the one that carries the bank number stays; the model took no part.
+      expect(base.objects.get(second)?.deletionMark).toBe(true);
+      expect(base.objects.get(first)?.deletionMark).toBe(false);
+      expect(proxy.requests).toHaveLength(1);
+      const said = events
+        .filter((e) => e.type === "text")
+        .map((e) => (e as { text: string }).text)
+        .join(" ");
+      expect(said).toContain("0000-000099");
+    });
+
     it("writes nothing for a line with no text: it goes to the accountant's list, the others are entered", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const ownAccount = crypto.randomUUID();

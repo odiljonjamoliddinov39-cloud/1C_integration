@@ -11,6 +11,7 @@ import type { ChangeInput } from "@platform/shared";
 
 import { type BankDeps, refTo, snapshot as bankSnapshot, writable } from "../bank/resolve.js";
 import type { Template } from "../bank/resolve.js";
+import { rowsOfPeriod } from "../query-window.js";
 import { type DidoxDocument, type DidoxLine, didoxKey } from "./document.js";
 import {
   type Candidate,
@@ -315,18 +316,17 @@ export async function resolveSales(
   const sold = new Set<string>();
   if (live.length > 0) {
     const dates = live.map((d) => d.date).sort();
-    const outcome = await deps.query({
-      query: `ВЫБРАТЬ Т.Контрагент.ИНН КАК ИНН, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${SALE} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      params: { начало: `${dates[0]}T00:00:00`, конец: `${dates.at(-1)}T23:59:59` },
-      limit: 2000,
-      refs: true,
-    });
-    if (outcome.ok)
-      for (const cells of (outcome.data as { rows?: unknown[][] }).rows ?? [])
-        if (typeof cells[2] === "number")
-          sold.add(
-            `${textOf(cells[0]) || String(cells[0])}|${day(String(cells[1]))}|${Math.round(cells[2] * 100)}`,
-          );
+    const salesRows = await rowsOfPeriod(
+      deps,
+      `ВЫБРАТЬ Т.Контрагент.ИНН КАК ИНН, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${SALE} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+      day(dates[0] ?? ""),
+      day(dates.at(-1) ?? ""),
+    );
+    for (const cells of salesRows ?? [])
+      if (typeof cells[2] === "number")
+        sold.add(
+          `${textOf(cells[0]) || String(cells[0])}|${day(String(cells[1]))}|${Math.round(cells[2] * 100)}`,
+        );
   }
   const values = live.length > 0 ? await vatValues(deps, cache) : null;
   // The default unit of each item, by its name: a sale line without one is refused by 1C's filling check.

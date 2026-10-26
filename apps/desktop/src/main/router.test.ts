@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { langOf, optionsText, postOptions, readChoice, readPostCommand, readUndoCommand } from "./router.js";
+import {
+  langOf,
+  optionsText,
+  postOptions,
+  readChoice,
+  readDuplicatesCommand,
+  readPostCommand,
+  readUndoCommand,
+} from "./router.js";
 
 describe("a bare command to post", () => {
   it.each([
@@ -97,4 +105,24 @@ describe("the command to take back what the program entered from a statement", (
     "hello",
     "",
   ])("%s is not one", (text) => expect(readUndoCommand(text)).toBe(false));
+});
+
+describe("the duplicates command", () => {
+  it.each([
+    "икки марта киритган хужжатларингни учир",
+    "takror kiritilgan hujjatlarni o'chir",
+    "дубли удали",
+    "найди дубликаты",
+    "find the duplicates",
+    "documents entered twice, remove them",
+    "takrorlar",
+  ])("%s", (text) => expect(readDuplicatesCommand(text)).toBe(true));
+  it.each([
+    "введи выписку",
+    "проведи",
+    "отмени",
+    "hello",
+    "",
+    "takror hisobot tayyorlab ber 2024 yil uchun barcha kontragentlar bo'yicha batafsil, va uni Excel ga yoz, shuningdek jadvalni sana bo'yicha saralab chiqar va yuborib qo'y",
+  ])("%s is not one", (text) => expect(readDuplicatesCommand(text)).toBe(false));
 });

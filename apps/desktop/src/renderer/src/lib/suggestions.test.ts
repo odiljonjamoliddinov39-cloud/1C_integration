@@ -74,3 +74,17 @@ describe("the reply an answer asks for", () => {
     expect(out[0]).toMatchObject({ id: "goOn", send: "Davom et" });
   });
 });
+
+describe("the duplicates button", () => {
+  it("is offered when the balances do not agree with the statement", () => {
+    expect(
+      suggest({
+        lang: "uz",
+        files: [],
+        typed: "",
+        lastAnswer: "Qoldiq farq qilyapti: 1C da manfiy.",
+        busy: false,
+      }).map((s) => s.id),
+    ).toContain("duplicates");
+  });
+});
