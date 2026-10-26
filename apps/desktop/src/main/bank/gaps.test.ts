@@ -22,7 +22,17 @@ describe("bank gaps", () => {
       counterparties: ["SAM ACTIVE GROUP (310495297)", "BOBUR"],
       contracts: ["№183 от 15.10.2026"],
       problems: [{ message: "No earlier payment to copy", rows: 6 }],
+      unclassified: [],
     });
+  });
+
+  it("lists the lines held back, by reason, apart from the unsettled ones", () => {
+    const gaps = gapsOf([], [{ why: "the purpose is empty" }, { why: "the purpose is empty" }, { why: "x" }]);
+    expect(gaps.unclassified).toEqual([
+      { why: "the purpose is empty", rows: 2 },
+      { why: "x", rows: 1 },
+    ]);
+    expect(gapsText("en", gaps)).toContain("not written");
   });
 
   it("says it in the language of the accountant", () => {
@@ -33,7 +43,9 @@ describe("bank gaps", () => {
   });
 
   it("says nothing when nothing is missing", () => {
-    expect(gapsText("uz", { ready: 5, counterparties: [], contracts: [], problems: [] })).toBe("");
+    expect(
+      gapsText("uz", { ready: 5, counterparties: [], contracts: [], problems: [], unclassified: [] }),
+    ).toBe("");
   });
 
   it("does not promise a card when only rows are unsettled", () => {
@@ -42,6 +54,7 @@ describe("bank gaps", () => {
       counterparties: [],
       contracts: [],
       problems: [{ message: "x", rows: 1 }],
+      unclassified: [],
     });
     expect(text).not.toContain("card");
   });

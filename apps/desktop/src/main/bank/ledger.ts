@@ -15,7 +15,7 @@
  *  - everything else is a payment to hand to the resolver, inside the period asked for.
  */
 import { parseAcquiring } from "./acquiring.js";
-import { findConversions, legKey } from "./conversion.js";
+import { findConversions, fxText, legKey } from "./conversion.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 /** ISO 4217 numeric currency codes as banks write them in an account number; "000" is the national currency. */
@@ -113,6 +113,15 @@ export interface LedgerPlan {
   fees: Map<string, Set<number>>;
   /** Transfers between the company's own accounts (or to itself from an account not attached). */
   transfers: Transfer[];
+  /** Conversions the bank's words name whose soums are not the foreign amount times the rate: not entered, for the accountant. */
+  mismatched: {
+    date: string;
+    currency: string;
+    fxAmount: number;
+    rate: number;
+    soums: number;
+    expected: number;
+  }[];
   /** Counts of what was left out, for the report. */
   outsidePeriod: number;
   inPassThrough: number;
@@ -183,6 +192,7 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     rows: new Map(),
     fees: new Map(),
     transfers: [],
+    mismatched: [],
     outsidePeriod: 0,
     inPassThrough: 0,
   };
@@ -193,6 +203,18 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
   // Purchases and sales of currency: the bank writes both legs with the same words, so they are paired by them. Each is one
   // transfer of two linked legs, and its rows are neither payments nor transfers between own accounts.
   const conversions = findConversions(statements);
+  for (const m of conversions.mismatched) {
+    const fx = fxText(m.soum.payment.purpose);
+    if (!fx || !inRange(m.soum.payment, options)) continue;
+    plan.mismatched.push({
+      date: m.soum.payment.date,
+      currency: fx.currency,
+      fxAmount: fx.amount,
+      rate: fx.rate,
+      soums: m.soum.payment.amount,
+      expected: m.expected,
+    });
+  }
   for (const c of conversions.conversions) {
     if (!inRange(c.soum.payment, options) || !inRange(c.foreign.payment, options)) continue;
     const paying = c.direction === "buy" ? c.soum : c.foreign;

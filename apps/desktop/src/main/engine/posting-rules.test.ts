@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { newOperation } from "./journal.js";
 import { GENERAL_RULES, choosePosting, companyRule, missingIn, pickHistory } from "./posting-rules.js";
 
-const chart = new Set(["2910", "4010", "5110", "6010", "6410", "9010", "9020", "9030", "9420"]);
+const chart = new Set(["2910", "4010", "5110", "6010", "6410", "9010", "9020", "9030", "9420", "9430"]);
 
 describe("choosing the accounts", () => {
   it("takes the plan's table first: purchase of goods is Dt 2900 Kt 6010", () => {
@@ -50,14 +50,14 @@ describe("choosing the accounts", () => {
 
   it("a rule is not used outside its dates", () => {
     const own = {
-      ...companyRule({ type: "bank_fee" }, { document: "d", debit: "9430", credit: "5110" }, "c2"),
+      ...companyRule({ type: "bank_fee" }, { document: "d", debit: "9420", credit: "5110" }, "c2"),
       validFrom: "2027-01-01",
     };
     expect(choosePosting({ type: "bank_fee", date: "2026-05-01" }, { companyRules: [own] }).debit).toBe(
-      "9420",
+      "9430",
     );
     expect(choosePosting({ type: "bank_fee", date: "2027-05-01" }, { companyRules: [own] }).debit).toBe(
-      "9430",
+      "9420",
     );
   });
 

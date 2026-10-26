@@ -11,6 +11,8 @@ import type { ChangeInput } from "@platform/shared";
 
 import { type QueryOutcome, lookup, refOf, textOf } from "../didox/resolve.js";
 import type { Context } from "../engine/posting-rules.js";
+import { contractFromDescription } from "./contract.js";
+import { ACCOUNT_OWNER_COLUMNS, type AccountCandidate, candidateOf, pickAccount } from "./accounts.js";
 import { type BuildKind, buildBankDocument } from "./build.js";
 import { type Transfer, currencyOfAccount } from "./ledger.js";
 import { CONVERSION_KIND, TRANSFER_KIND } from "./policy.js";
@@ -20,6 +22,7 @@ import {
   type BankDeps,
   CURRENCY_CODES,
   type CopyContext,
+  type MissingCounterparty,
   OBJECT,
   type Template,
   conversionFor,
@@ -30,6 +33,7 @@ import {
   sameCurrency,
   snapshot,
 } from "./resolve.js";
+import { newScaffoldCache, soumRef } from "./scaffold.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
 export interface TransferDoc {
@@ -48,6 +52,10 @@ export interface TransferProblem {
 }
 
 export interface TransfersResolved {
+  /** The banks of conversions that 1C lacks as counterparties: made on a card, then the legs are entered. */
+  missing: MissingCounterparty[];
+  /** Contracts the conversions need (the bank's «Прочее» per currency) and 1C lacks: made on a card, then the legs are entered. */
+  contractsToCreate: { rows: number[]; label: string; change: ChangeInput }[];
   ready: TransferDoc[];
   problems: TransferProblem[];
   notes: string[];
@@ -178,6 +186,10 @@ async function pickTemplate(
 interface BankParty {
   bank?: { counterparty: string | null; contract: string | null };
   message?: string;
+  /** The bank is not a counterparty of 1C: it is made on a card (its name is the one 1C's bank classifier has for the MFO). */
+  createBank?: { inn: string; name: string };
+  /** The bank's contract «Прочее» in the currency is not in 1C: it is made on a card, then the legs are entered. */
+  create?: { label: string; change: ChangeInput };
 }
 
 /** The bank's own ledger lines, which the program or an accountant may have made counterparties of: not the bank. */
@@ -195,9 +207,12 @@ const codeMatches = (code: string, currency: string) =>
  */
 async function bankFor(
   deps: BankDeps,
+  bankCache: BankCache,
   cache: Map<string, BankParty>,
   payment: BankPayment,
   currency: string,
+  organization: string | null,
+  firstDay: Map<string, string>,
 ): Promise<BankParty> {
   const inn = payment.inn;
   const key = `${inn || payment.counterparty}|${currency}`;
@@ -219,6 +234,19 @@ async function bankFor(
       return ref && !BANK_LINE.test(name) ? [{ ref, name }] : [];
     });
     const [only] = banks;
+    if (banks.length === 0) {
+      // The bank's name as 1C's own classifier of banks spells it (by the MFO the statement gives), never a guess.
+      const name = payment.mfo ? await bankNameOf(deps, payment.mfo) : null;
+      const why = `1C has no counterparty for the bank (INN ${inn}) apart from the bank's own ledger lines: a conversion is with the bank on both legs`;
+      return name
+        ? {
+            message: `${why}; it is made on a card (${name}), then this leg is entered`,
+            createBank: { inn, name },
+          }
+        : {
+            message: `${why}, so create the bank as a counterparty first (the statement does not give its name)`,
+          };
+    }
     if (banks.length !== 1 || !only) {
       return {
         message:
@@ -244,15 +272,48 @@ async function bankFor(
       .sort((a, b) => String(b.cells[4] ?? "").localeCompare(String(a.cells[4] ?? "")));
     const contract = refOf(other[0]?.cells[1]);
     if (!contract) {
-      return {
-        message: `${only.name} has no contract of kind «Прочее» in ${currency}: the conversion method needs one contract with the bank per currency (create it, the legs are made with it)`,
-      };
+      const sc = (bankCache.scaffold ??= newScaffoldCache());
+      const made = await contractFromDescription(deps, bankCache, {
+        owner: only.ref,
+        mention: { number: `FX-${currency}`, date: firstDay.get(currency) ?? day(payment.date) },
+        direction: "out",
+        currency,
+        currencyRef:
+          currency === "UZS"
+            ? (sc.soum ??= await soumRef(deps))
+            : await currencyRef(deps, bankCache, currency),
+        organization,
+        kind: "other",
+      });
+      const why = `${only.name} has no contract of kind «Прочее» in ${currency}: the conversion method needs one contract with the bank per currency`;
+      return made.ok
+        ? {
+            message: `${why}; it is made on a card, then this leg is entered`,
+            create: { label: `${only.name} · «Прочее» ${currency}`, change: made.change },
+          }
+        : { message: `${why}, and it cannot be made: ${made.message}` };
     }
     return { bank: { counterparty: only.ref, contract } };
   };
   const result = await answer();
   cache.set(key, result);
   return result;
+}
+
+/** The name of a bank in 1C's classifier of banks, by its MFO; null when the classifier has none or not exactly one. */
+async function bankNameOf(deps: BankDeps, mfo: string): Promise<string | null> {
+  const outcome = await deps.query({
+    query:
+      "ВЫБРАТЬ ПЕРВЫЕ 2 Т.Наименование КАК Наименование ИЗ Справочник.Банки КАК Т ГДЕ Т.Код = &код И НЕ Т.ПометкаУдаления",
+    params: { код: mfo },
+    limit: 2,
+    refs: true,
+  });
+  const names = outcome.ok
+    ? ((outcome.data as { rows?: unknown[][] }).rows ?? []).map((cells) => String(cells[0] ?? "").trim())
+    : [];
+  const [only] = names;
+  return names.length === 1 && only ? only : null;
 }
 
 /** One line for the accountant: the two legs of a conversion as they will be entered, and where the rates come from. */
@@ -291,7 +352,23 @@ export async function resolveTransfers(
   deps: BankDeps,
 ): Promise<TransfersResolved> {
   const cache: BankCache = options.cache ?? { lists: new Map(), snapshots: new Map() };
-  const result: TransfersResolved = { ready: [], problems: [], notes: [], alreadyIn1c: [] };
+  const result: TransfersResolved = {
+    missing: [],
+    contractsToCreate: [],
+    ready: [],
+    problems: [],
+    notes: [],
+    alreadyIn1c: [],
+  };
+  // The first day of a conversion in each currency: the date of the bank's contract made for it.
+  const firstDay = new Map<string, string>();
+  for (const t of transfers) {
+    if (!t.fx) continue;
+    for (const currency of [t.fx.currency, "UZS"]) {
+      const known = firstDay.get(currency);
+      if (!known || t.date < known) firstDay.set(currency, day(t.date));
+    }
+  }
   const bankCache = new Map<string, BankParty>();
   const key = (file: string, row: number) => `${file}#${row}`;
 
@@ -314,13 +391,13 @@ export async function resolveTransfers(
   const fail = (leg: Leg, message: string) =>
     result.problems.push({ file: leg.file, row: leg.row, side: leg.side, message });
 
-  // The company's bank accounts in 1C, by number.
+  // The company's bank accounts in 1C, by number: the organization's own (the company may be a counterparty of itself too).
   const numbers = [...new Set(legs.flatMap((l) => [l.own, l.other]).filter((n) => /^\d{20}$/.test(n)))];
   const rows = numbers.length
     ? await lookup(
         deps,
         (ph) =>
-          `ВЫБРАТЬ Т.НомерСчета КАК Номер, Т.Ссылка КАК Ссылка, Т.Владелец.ИНН КАК ИНН ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
+          `ВЫБРАТЬ Т.НомерСчета КАК Номер, Т.Ссылка КАК Ссылка, ${ACCOUNT_OWNER_COLUMNS} ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
         numbers,
       )
     : [];
@@ -329,13 +406,20 @@ export async function resolveTransfers(
     return result;
   }
   const accountRef = new Map<string, string>();
+  const accountWhy = new Map<string, string>();
+  const byNumber = new Map<string, AccountCandidate[]>();
   for (const { cells } of rows) {
     const ref = refOf(cells[1]);
-    const inn = textOf(cells[2]) || String(cells[2] ?? "");
-    if (!ref || (options.ownInn && inn && inn !== options.ownInn)) continue;
+    if (!ref) continue;
     const number = String(cells[0] ?? "").replace(/\D/g, "");
-    // Two accounts with one number cannot be told apart: neither is used.
-    accountRef.set(number, accountRef.has(number) ? "" : ref);
+    const list = byNumber.get(number) ?? [];
+    list.push(candidateOf(ref, cells, 2));
+    byNumber.set(number, list);
+  }
+  for (const number of numbers) {
+    const picked = pickAccount(number, byNumber.get(number) ?? [], options.ownInn);
+    if (picked.ok) accountRef.set(number, picked.ref);
+    else accountWhy.set(number, picked.why);
   }
 
   // Legs already in 1C: the same account, day and amount.
@@ -408,14 +492,14 @@ export async function resolveTransfers(
     const ownRef = accountRef.get(leg.own) || null;
     const otherRef = accountRef.get(leg.other) || null;
     if (!ownRef) {
-      fail(leg, `no bank account ${leg.own || "(none)"} of the company in 1C`);
+      fail(leg, accountWhy.get(leg.own) ?? `no bank account ${leg.own || "(none)"} of the company in 1C`);
       continue;
     }
     if (!otherRef && !leg.transfer.fx) {
       fail(
         leg,
         leg.other
-          ? `the other account ${leg.other} is not among the company's bank accounts in 1C (or two have its number)`
+          ? `the other account ${leg.other} cannot be used: ${accountWhy.get(leg.other) ?? "it is not among the company's bank accounts in 1C"}`
           : "the statement does not say the other account",
       );
       continue;
@@ -430,7 +514,19 @@ export async function resolveTransfers(
       const legCurrency = ownCurrency || "UZS";
       const foreignLeg = legCurrency !== "UZS";
       const official = foreignLeg ? await rateOn(deps, cache, fx.currency, day(payment.date)) : null;
-      const bank = await bankFor(deps, bankCache, payment, legCurrency);
+      const bank = await bankFor(
+        deps,
+        cache,
+        bankCache,
+        payment,
+        legCurrency,
+        options.organization ?? null,
+        firstDay,
+      );
+      if (bank.createBank && !result.missing.some((m) => m.key === bank.createBank?.inn))
+        result.missing.push({ ...bank.createBank, rows: [], key: bank.createBank.inn });
+      if (bank.create && !result.contractsToCreate.some((c) => c.label === bank.create?.label))
+        result.contractsToCreate.push({ rows: [], ...bank.create });
       if (bank.message) {
         fail(leg, bank.message);
         continue;

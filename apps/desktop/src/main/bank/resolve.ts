@@ -21,7 +21,9 @@ import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
 import { foreignContract } from "./swift.js";
 import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
-import { type TaxKind, taxKindOf, taxNameIs, taxPeriodFor } from "./tax.js";
+import { isEntrepreneur } from "./transit.js";
+import { ACCOUNT_OWNER_COLUMNS, candidateOf, pickAccount } from "./accounts.js";
+import { type TaxKind, periodBefore, taxKindOf, taxNameIs, taxPeriodFor, withoutVatClause } from "./tax.js";
 import { BLOCKING, type BankPayment, type BankStatement } from "./statement.js";
 
 export interface BankDeps extends ResolverDeps {
@@ -104,6 +106,8 @@ export interface BankCache {
   rates?: Map<string, number | null>;
   /** The currency items of 1C's catalog: "USD" → its ref, null when the catalog has none. */
   currencyRefs?: Map<string, string | null>;
+  /** The taxes of 1C's catalog (ref and name), read once; null when 1C could not say. */
+  taxItems?: { ref: string; name: string }[] | null;
   /** What a document made from 1C's own description needs (see scaffold.ts), read once. */
   scaffold?: ScaffoldCache;
   /** Which attribute of a document holds the company's own bank account, by object (see roles.ts). */
@@ -146,6 +150,10 @@ export const BANK_FEE_NAME = "Bank fee";
 /** What the bank writes in a payment for its own fees: not a counterparty to look up or create by name. */
 const BANK_FEE = /комисси|commission|komissiya/i;
 
+/** What the bank writes in a fee's purpose: a commission, a tariff, a charge "за документ №…", a service charge, iBank. */
+const BANK_FEE_PURPOSE =
+  /комисси|commission|komissiya|(?<!\p{L})тариф|tariff|за\s+документ\s+№|обслуживани\p{L}*\s+(?:пассивн|счет|счёт)|ibank|swift/iu;
+
 /** How a payment's counterparty is looked up in 1C: by INN, or by name when the bank wrote no INN (zeros). */
 export interface Who {
   key: string;
@@ -156,9 +164,13 @@ export interface Who {
 export function whoOf(p: BankPayment): Who | null {
   // An acquiring receipt is the terminal's, not a customer's: whatever the statement writes as its payer.
   if (p.direction === "in" && parseAcquiring(p.purpose, p.amount)) return null;
-  if (p.inn) return { key: p.inn, field: "ИНН", value: p.inn };
+  // A person's 14 digits (an individual entrepreneur) are not a tax number 1C keeps: such a payer is found by name.
+  if (p.inn && p.inn.length !== 14) return { key: p.inn, field: "ИНН", value: p.inn };
   const name = p.counterparty.trim();
-  if (p.innZero !== true || name === "" || BANK_FEE.test(p.purpose)) return null;
+  // The bank wrote no INN (zeros or a blank cell): the payer is found by the name it wrote, unless that is the bank's own
+  // ledger line or the bank's fee.
+  const named = p.innZero === true || p.inn.length === 14 || (p.inn === "" && !BANK_INTERNAL.test(name));
+  if (!named || name === "" || name === BANK_FEE_NAME || BANK_FEE.test(p.purpose)) return null;
   return { key: `name:${nameKey(name)}`, field: "Наименование", value: name };
 }
 
@@ -239,7 +251,7 @@ export function refTo(existing: unknown, ref: string, fallbackType: string): { t
 }
 
 /** Names under which a bank writes its own ledger lines in a statement: not counterparties of the company. */
-const BANK_INTERNAL =
+export const BANK_INTERNAL =
   /^(к\s+получению|к\s+оплате|депозит\p{L}*\s+до\s+востреб|срочн\p{L}*\s+депозит|транзитн\p{L}*\s+сч[её]т|сч[её]т\s+(по\s+учету|№)|головн\p{L}*\s+офис)/iu;
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);
@@ -348,10 +360,13 @@ const normalNumber = (n: string) =>
 export function isTaxPayment(payment: BankPayment): boolean {
   if (payment.direction !== "out") return false;
   const who =
-    /(?<!\p{L})(гнк|гни|дск|dsq|gnk)(?!\p{L})|moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
+    /(?<!\p{L})(гнк|гни|дск|дси|dsq|dsi|gnk)(?!\p{L})|moliya\s+vazirligi|iqtisodiyot|g['‘’ʻ`]aznachilik|казначейств|давлат\s+солиқ|davlat\s+soliq|налогов|soliq\s+qo['‘’ʻ`]mitasi|министерств\p{L}*\s+(экономики|финансов)/iu;
   const what =
     /(?<!\p{L})(солиқ\p{L}*|soliq\p{L}*|налог\p{L}*|инпс|inps|ндфл|жшдс|jshds|ндс|qqs|акциз\p{L}*|aksiz\p{L}*)(?!\p{L})/iu;
-  return who.test(payment.counterparty) || what.test(payment.purpose);
+  if (who.test(payment.counterparty)) return true;
+  // The bank's own fee names VAT too ("…Тариф-1 000,00 UZS.в том числе НДС", "комиссия … без НДС"): it is not a tax payment.
+  if (payment.counterparty === BANK_FEE_NAME || BANK_FEE_PURPOSE.test(payment.purpose)) return false;
+  return what.test(withoutVatClause(payment.purpose));
 }
 
 export interface CopyContext {
@@ -700,21 +715,19 @@ export async function resolvePayments(
     const rows = await lookup(
       deps,
       (ph) =>
-        `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
+        `ВЫБРАТЬ Т.Ссылка КАК Ссылка, Т.Наименование КАК Наименование, ${ACCOUNT_OWNER_COLUMNS} ИЗ Справочник.БанковскиеСчета КАК Т ГДЕ Т.НомерСчета В (${ph}) И НЕ Т.ПометкаУдаления`,
       [statement.account],
     );
     const found = (rows ?? []).flatMap(({ cells }) => {
       const ref = refOf(cells[0]);
-      return ref ? [ref] : [];
+      return ref ? [candidateOf(ref, cells, 2)] : [];
     });
-    const [only] = found;
-    if (found.length === 1 && only) ownAccount = only;
+    const picked = pickAccount(statement.account, found, options.companyInn);
+    if (picked.ok) ownAccount = picked.ref;
     else if (rows) {
       addNote(
         payments.map((p) => p.row),
-        found.length === 0
-          ? `no bank account ${statement.account} in 1C: each document keeps the account of the payment it was copied from`
-          : `${found.length} bank accounts have the number ${statement.account}: each document keeps the account of the payment it was copied from`,
+        `${picked.why}: each document keeps the account of the payment it was copied from`,
       );
     }
   }
@@ -794,13 +807,15 @@ export async function resolvePayments(
       } else if (
         options.createMissing &&
         p.counterparty.trim() !== "" &&
-        (who.field === "Наименование" || p.inn.length === 9)
+        // A person's 14 digits are not written; an entrepreneur ("YTT …", "ИП …") is created by name, as 1C keeps him.
+        ((who.field === "Наименование" && (p.inn.length !== 14 || isEntrepreneur(p.counterparty))) ||
+          p.inn.length === 9)
       ) {
         const known = missingByKey.get(who.key);
         if (known) known.rows.push(p.row);
         else
           missingByKey.set(who.key, {
-            inn: p.inn || "000000000",
+            inn: p.inn.length === 9 ? p.inn : "000000000",
             name: p.counterparty.trim(),
             rows: [p.row],
             key: who.key,
@@ -898,7 +913,10 @@ export async function resolvePayments(
     const asked = overrides.templates?.find((o) => o.row === payment.row);
     // A tax payment: the tax is named by the payment, and the template is the company's payment of that same tax.
     if (!asked && isTaxPayment(payment)) {
-      const made = await taxPayment(deps, cache, payment, ownAccount);
+      const made = await taxPayment(deps, cache, payment, ownAccount, {
+        organization: options.organization ?? null,
+        ...(options.posting ? { posting: options.posting } : {}),
+      });
       if (made.ok) {
         ready.push({ payment, change: made.change });
         addNote([payment.row], made.note);
@@ -1195,13 +1213,13 @@ export async function resolvePayments(
 const TAX_NEEDS =
   "a payment to the budget needs the «Уплата налога» operation, the tax, its period and the tax office. Answer with templates (a posted «Уплата налога» document of the company, for the same tax) or enter it with propose_changes";
 
-/** The company's posted tax payments, newest first, read once. */
+/** The company's tax payments (the posted ones first, then a sample not yet posted), newest first, read once. */
 async function loadTaxHistory(deps: BankDeps, cache: BankCache): Promise<TaxHistory[] | null> {
   if (cache.tax !== undefined) return cache.tax;
   const outcome = await deps.query({
     query:
       "ВЫБРАТЬ ПЕРВЫЕ 300 Т.Ссылка КАК Ссылка, Т.Дата КАК Дата, Т.НалоговыйПериод КАК Период, Т.Налог.Наименование КАК Налог, Т.НазначениеПлатежа КАК Назначение " +
-      `ИЗ ${OBJECT.out} КАК Т ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления И Т.Налог <> ЗНАЧЕНИЕ(Справочник.ВидыНалоговИПлатежейВБюджет.ПустаяСсылка) УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+      `ИЗ ${OBJECT.out} КАК Т ГДЕ НЕ Т.ПометкаУдаления И Т.Налог <> ЗНАЧЕНИЕ(Справочник.ВидыНалоговИПлатежейВБюджет.ПустаяСсылка) УПОРЯДОЧИТЬ ПО Т.Проведен УБЫВ, Т.Дата УБЫВ`,
     limit: 300,
     refs: true,
   });
@@ -1238,6 +1256,7 @@ async function taxPayment(
   cache: BankCache,
   payment: BankPayment,
   ownAccount: string | null,
+  options: { organization?: string | null; posting?: Context } = {},
 ): Promise<{ ok: true; change: ChangeInput; note: string } | { ok: false; message: string }> {
   const kind = taxKindOf(payment.purpose);
   if (!kind) {
@@ -1249,9 +1268,53 @@ async function taxPayment(
   const same = history.filter((h) => isKind(h, kind));
   const latest = same[0];
   if (!latest) {
+    // No payment of this tax in 1C to copy: the document is made from 1C's own description of it.
+    if (!ownAccount)
+      return {
+        ok: false,
+        message: `the company has no payment of this tax (${kind}) in 1C to copy, and its bank account is not in 1C: ${TAX_NEEDS}`,
+      };
+    const period =
+      taxPeriodFor(payment.purpose, day(payment.date), []) ??
+      ({ value: periodBefore(payment.date, 1), source: "habit", lag: 1 } as const);
+    const office = payment.inn
+      ? await lookup(
+          deps,
+          (ph) =>
+            `ВЫБРАТЬ Т.Ссылка КАК Ссылка ИЗ Справочник.Контрагенты КАК Т ГДЕ Т.ИНН В (${ph}) И НЕ Т.ПометкаУдаления`,
+          [payment.inn],
+        )
+      : null;
+    const offices = (office ?? []).flatMap(({ cells }) => {
+      const ref = refOf(cells[0]);
+      return ref ? [ref] : [];
+    });
+    const built = await buildBankDocument(deps, cache, {
+      kind: "tax",
+      payment,
+      organization: options.organization ?? null,
+      ownAccount,
+      currency: "UZS",
+      tax: { kind, period: period.value, office: offices.length === 1 ? (offices[0] ?? null) : null },
+      ...(options.posting ? { posting: options.posting } : {}),
+    });
+    if (!built.ok)
+      return {
+        ok: false,
+        message: `the company has no payment of this tax (${kind}) in 1C to copy, and ${built.message.replace(/^no earlier [^,]*, and one cannot be made from 1C's own description: /, "one cannot be made from 1C's description of the document: ")}`,
+      };
     return {
-      ok: false,
-      message: `the company has no posted payment of this tax (${kind}) in 1C to copy: ${TAX_NEEDS}`,
+      ok: true,
+      change: built.change,
+      note:
+        `${built.notes.join("; ")}; ` +
+        (period.source === "purpose"
+          ? `the tax period is ${period.value.slice(0, 7)}, as the purpose says`
+          : `the purpose names no period: ${period.value.slice(0, 7)}, the month before the payment, as taxes are usually paid`) +
+        (offices.length === 1
+          ? ""
+          : `; the tax office ${payment.inn ? `(INN ${payment.inn}) is not one counterparty of 1C` : "has no INN in the statement"}: the field is left empty`) +
+        "; check the tax, its period and the amount",
     };
   }
   const template = await snapshot(deps, cache, OBJECT.out, latest.ref);

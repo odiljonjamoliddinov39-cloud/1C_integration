@@ -268,6 +268,7 @@ describe("reflectOnImport", () => {
     checks: [],
     rows: new Map(),
     fees: new Map(),
+    mismatched: [],
     transfers: [],
     outsidePeriod: 0,
     inPassThrough: 0,

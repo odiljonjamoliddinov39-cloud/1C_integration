@@ -325,3 +325,80 @@ Rates are written to the currency's own item in 1C's catalog. On a cleared base 
 none, and the rate card failed with "В справочнике Валюты нет валюты с кодом 643 / RUB". The card now makes the item first
 (`currency/items.ts`: the numeric code the loader looks it up by, the short and full names, the spelling of the amount in
 words) and then writes the rates, as two lines of the same card.
+
+## Bank fees are not tax payments; the company's own account is the organization's
+
+A fee names VAT as a part of its sum ("…Тариф-1 000,00 UZS.в том числе НДС", "комиссия … без НДС"), and a supplier's payment
+often says "в т.ч. НДС 12%". That is VAT a price contains, not a payment of VAT, so such a row is never a tax payment: the
+bank's fees (iBank, «Тариф», «за документ №…», SWIFT, «Комиссия инобанка», conversion commission, passive-account service)
+go the fee way (with no counterparty, to the expense account of the company's rules), and a tax payment is a payment to the
+treasury or the tax office (or one whose purpose names the tax outside such a clause). On the real statements 202 of 257 rows
+the tax check took were fees.
+
+A bank account's number is looked up among the accounts the **organization** owns: a company is often a counterparty of itself
+too, with its own accounts written there, and one number is then in the catalog twice. When it still is not one account, the
+answer names the owners ("2 bank accounts of the company have the number … (owners …)", "the account … is in 1C only under
+another owner: …") instead of "not found".
+
+The bank's contract of kind «Прочее» per currency (the conversion method's rule) is made on a card when 1C lacks it, dated the
+first conversion's day, and the conversion's legs are entered after it.
+
+## Taxes with no earlier payment, payments through the bank's transit accounts, the conversion's bank
+
+**A payment to the budget with no earlier one of that tax** is made from 1C's own description of «Списание с расчетного счета»:
+the operation «Уплата налога», the tax of the catalog «Виды налогов и платежей в бюджет» (found by its name; two that could be
+it, or none, stop it and are named), the tax period (the purpose's month, else the month before the payment, said in the note),
+the tax office as the counterparty 1C has under the INN the statement gives (left empty when it has none), and the account the
+tax item itself names, else 6410 (NSBU), said in the note. An earlier payment of the tax, posted or only a sample not yet
+posted, is still copied first: the laptop's 1C is the model, the description only fills what it lacks.
+
+**A payment the statement writes to the bank's transit account is written to its real payee** (`bank/transit.ts`):
+
+- «транзитный счет для зач на ПК физ лиц …»: money to an individual's card; the person is in the text («… с Qodirov Farruh
+  Bozorovich на поставку …») and so is the contract. He is found among 1C's counterparties by his letters («ИП»/«YTT» in front
+  or not), else taken with his INN from his other rows, else offered for creation by name. A payer's 14 digits (an individual
+  entrepreneur's) are not an INN 1C keeps: he is found, and created, by name (only an entrepreneur, «YTT …»/«ИП …»).
+- «Транзитный счёт МУНИС …» / «таможенных пошлин»: the customs; written to the customs counterparty 1C already has (a
+  payment to a government body goes only to a counterparty in the base); when 1C has none, or several, it says so.
+
+**The bank of a conversion** that 1C lacks as a counterparty is offered on a card under the name 1C's own classifier of banks has
+for the MFO of the statement's row (never a guess; with no such name it asks for the bank). Its «Прочее» contract per currency
+is offered the same way, and the conversion's legs are entered after both.
+
+A payer with a blank INN cell (not zeros) is found by the name the bank wrote, like one with zeros; the bank's own ledger lines
+and its fees are not looked up.
+
+The general rule for a bank fee is 9430 (other operating expenses); the company's own rule or the account its history shows
+beats it.
+
+## Read first, write second: the classifier, the gate and the acceptance run (the technical design of 26 Oct)
+
+**Every line is classified before anything is written** (`bank/classify.ts`). The counterparty's account decides first (its
+first five digits, a table from the real statements: the bank's accounts carry the commission, conversion and SWIFT lines, so a
+keyword never outvotes them), then the text and the contract it names:
+
+| First five digits            | Kind                                                                                                                    | Written as                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| 16401, 16413                 | bank commission (the bank's transit accounts)                                                                           | the fee, to 9430                  |
+| 22613, 22614, 17101          | a leg of a conversion (blocked UZS, the bank's currency account)                                                        | the linked pair through 5730/5740 |
+| 16103                        | a SWIFT payment                                                                                                         | in the account's currency         |
+| 23402, 22628                 | a payment to the budget (the tax is read from the text's own codes: «Оплата за 46», the budget code 11110/14110/21216…) | «Уплата налога»                   |
+| 29801                        | customs duties                                                                                                          | to the customs counterparty       |
+| 23120                        | an individual's card top-up                                                                                             | to the person the text names      |
+| 202xx, 10101, 17409, 29896 … | a payment under a contract                                                                                              | by the contract the text names    |
+
+Each answer has a **confidence**: `high` (the account and the text agree), `medium` (an unknown account, or the text points to
+another kind than the account does), `low` (no text, or a foreign currency named on a soum account). **Only a high one is
+entered**; the rest are listed for the accountant with the reason (the gaps text, and `unclassified` in the tool's answer), and
+the model is told not to enter them on a guess. A statement that gives no counterparty account is read by the INN and the name
+(never a bank's own ledger line). Conversions are checked too: the soums must be the foreign amount times the rate; a pair that
+does not agree is not entered and is listed (`conversionsNotAgreeing`).
+
+Each entered line carries a note: what it was read as, by which rule, with what confidence; a conversion's documents carry its
+id in the comment. Nothing is written before the accountant confirms the card, as before.
+
+**The acceptance run** (read-only; nothing is written): `npx tsx apps/desktop/scripts/bank-acceptance.ts <folder> [INN]`.
+On the eight Texmash Import statements it reports: the main account's 720 lines agree with the statement's balances
+(→ 63 500 366.52); 365 commission lines, 34 607 027.67 (all to 9430); 85 budget lines, 71 773 370.40, of them 6 VAT,
+57 067 900.00; 37 conversions paired and agreeing with their rates; 22613 blocked 3 648 397 126.50 = sold + returned, ending at
+zero; 704 lines would be entered, 3 held (a treasury return and two payments through the treasury account that are no tax).

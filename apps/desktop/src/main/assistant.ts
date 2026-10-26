@@ -104,6 +104,7 @@ import {
   resolvePayments,
 } from "./bank/resolve.js";
 import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
+import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
@@ -133,6 +134,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
+import { type Classified, type Unclassified, gate } from "./bank/classify.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -3565,11 +3567,20 @@ export class AssistantService {
     // The accounts read together: what money only passes through, the bank's fees and the transfers between the
     // company's own accounts are the program's to sort out; the rest are payments.
     const plan = planLedger(statements, ledgerOptions);
+    // Every line is read before it is written: a line is entered only when its kind is known with confidence (the
+    // counterparty's account and the purpose agree); the rest go to a list for the accountant.
+    const own = new Set(statements.map((s) => s.account).filter(Boolean));
+    const held: Unclassified[] = [];
+    const classes = new Map<string, Map<number, Classified>>();
     const tasks = chosen.flatMap((statement) => {
       const wanted = input.rows && named ? new Set(input.rows) : null;
-      const rows = (plan.rows.get(statement.fileName) ?? []).filter(
+      const planned = (plan.rows.get(statement.fileName) ?? []).filter(
         (row) => (!wanted || wanted.has(row)) && !done.has(doneKey(statement.fileName, row)),
       );
+      const gated = gate(statement, planned, own);
+      held.push(...gated.held);
+      classes.set(statement.fileName, gated.classes);
+      const rows = gated.allowed;
       if (rows.length === 0) return [];
       const fees = plan.fees.get(statement.fileName) ?? new Set<number>();
       // The bank's fee has no counterparty: the row is cleared of the company's own name and INN.
@@ -3621,18 +3632,36 @@ export class AssistantService {
       beneficiaries.unknown.push(...matched.unknown);
       beneficiaries.ambiguous.push(...matched.ambiguous);
     }
+    // A payment the statement writes to one of the bank's transit accounts (money to an individual's card, the customs'
+    // payment system) is written to its real payee, named in the text.
+    const transit = {
+      people: 0,
+      peopleNotInOneC: [] as string[],
+      customs: 0,
+      customsProblems: [] as string[],
+    };
+    for (const task of tasks) {
+      const found = await matchTransit(bankDeps, task.prepared, statements);
+      task.prepared = found.statement;
+      transit.people += found.persons.rows;
+      transit.peopleNotInOneC.push(...found.persons.unknown);
+      transit.customs += found.customs.rows;
+      if (found.customs.problem) transit.customsProblems.push(found.customs.problem);
+    }
     // Money moved between the company's own accounts: a pair of documents copied from the company's own earlier ones.
     const organization = this.deps.store.organizationRef(chat.companyId);
     const posting = {
       companyRules: this.deps.store.postingRules(chat.companyId),
       chart: await this.chartCodes(chat),
     };
-    const moved = await resolveTransfers(
-      plan.transfers,
-      statements,
-      { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
-      bankDeps,
-    );
+    const moveOwn = () =>
+      resolveTransfers(
+        plan.transfers,
+        statements,
+        { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
+        bankDeps,
+      );
+    let moved = await moveOwn();
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
     const notEntered = {
       ...notEnteredOf(plan, chosen, moved),
@@ -3647,8 +3676,60 @@ export class AssistantService {
           }
         : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
+      ...(plan.mismatched.length > 0
+        ? {
+            conversionsNotAgreeing: {
+              count: plan.mismatched.length,
+              note: "NOT entered: the soums are not the foreign amount times the bank's rate. Tell the accountant; one of the two statements is misread or the bank's text is wrong.",
+              examples: plan.mismatched.slice(0, 10).map((m) => ({
+                date: m.date,
+                text: `${m.fxAmount} ${m.currency} × ${m.rate}`,
+                soumsInStatement: (m.soums / 100).toFixed(2),
+                expected: (m.expected / 100).toFixed(2),
+              })),
+            },
+          }
+        : {}),
+      ...(held.length > 0
+        ? {
+            unclassified: {
+              count: held.length,
+              note: "NOT written: the kind of these lines is not certain (the counterparty's account and the purpose do not agree, the account is unknown, or the purpose is empty). Tell the accountant; do not enter them with propose_changes on a guess.",
+              byReason: Object.fromEntries([
+                ...new Map(
+                  [...new Set(held.map((h) => h.why))].map((why) => [
+                    why,
+                    held.filter((h) => h.why === why).length,
+                  ]),
+                ),
+              ]),
+              examples: held.slice(0, 20),
+            },
+          }
+        : {}),
+      ...(transit.people + transit.customs > 0
+        ? {
+            throughBankTransitAccounts: {
+              ...(transit.people > 0
+                ? {
+                    toIndividuals: transit.people,
+                    note: "payments through the bank's transit account for cards are written to the person the text names (and the contract it names)",
+                    notInOneC: [...new Set(transit.peopleNotInOneC)],
+                  }
+                : {}),
+              ...(transit.customs > 0
+                ? { customsPayments: transit.customs, customsProblems: [...new Set(transit.customsProblems)] }
+                : {}),
+            },
+          }
+        : {}),
     };
-    if (tasks.length === 0 && moved.ready.length === 0) {
+    if (
+      tasks.length === 0 &&
+      moved.ready.length === 0 &&
+      moved.contractsToCreate.length === 0 &&
+      moved.missing.length === 0
+    ) {
       return {
         ok: true,
         data: {
@@ -3674,6 +3755,8 @@ export class AssistantService {
     // A counterparty the statements name and 1C lacks is created first (one card), then its contract (one card),
     // then the payments: each round is looked up again, with no step of the model between.
     for (let round = 0; ; round++) {
+      // What a round made (the bank's contract of a conversion) is looked up again by the transfers too.
+      if (round > 0) moved = await moveOwn();
       results = [];
       for (const task of tasks) {
         const counterparties = mine(task.statement, input.counterparties)?.map(({ row, ref }) => ({
@@ -3708,7 +3791,13 @@ export class AssistantService {
       }
       // The gaps are told at once, before the cards: the accountant need not wait for the model to find them.
       if (round === 0 && pass === 0) {
-        const told = gapsText(langOf(lastUserText(chat)), gapsOf(results.map((r) => r.resolved)));
+        const told = gapsText(
+          langOf(lastUserText(chat)),
+          gapsOf(
+            results.map((r) => r.resolved),
+            held,
+          ),
+        );
         if (told) {
           emit({ type: "text", text: told });
           toldGaps = true;
@@ -3716,7 +3805,9 @@ export class AssistantService {
       }
       if (round >= 3) break;
       const missing = [
-        ...new Map(results.flatMap((r) => r.resolved.missing).map((m) => [m.key, m])).values(),
+        ...new Map(
+          [...results.flatMap((r) => r.resolved.missing), ...moved.missing].map((m) => [m.key, m]),
+        ).values(),
       ];
       if (missing.length > 0) {
         const made = await this.proposeBatch(
@@ -3748,7 +3839,12 @@ export class AssistantService {
         continue;
       }
       const pending = [
-        ...new Map(results.flatMap((r) => r.resolved.contractsToCreate).map((c) => [c.label, c])).values(),
+        ...new Map(
+          [...results.flatMap((r) => r.resolved.contractsToCreate), ...moved.contractsToCreate].map((c) => [
+            c.label,
+            c,
+          ]),
+        ).values(),
       ];
       if (pending.length > 0) {
         const made = await this.proposeBatch(
@@ -3788,6 +3884,15 @@ export class AssistantService {
     const notes = results.flatMap(({ task, resolved }) =>
       resolved.notes.map((n) => ({ rows: n.rows, message: `${n.message}${where(task)}` })),
     );
+    // The record of each line: what it was read as and by which rule (the account, the text), so a wrong entry can be traced.
+    for (const item of ready) {
+      const c = classes.get(item.file)?.get(item.payment.row);
+      if (c)
+        notes.push({
+          rows: [item.payment.row],
+          message: `read as ${c.type}${c.tax ? ` (${c.tax})` : ""} by ${c.rule}, confidence ${c.confidence}${several ? ` [${item.file}]` : ""}`,
+        });
+    }
     const notCreated = results.flatMap(({ task, resolved }) => [
       ...resolved.missing.map(
         (m) =>
