@@ -134,6 +134,7 @@ import {
   parseDidoxDocument,
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
+import { type Classified, type Unclassified, gate } from "./bank/classify.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
 import {
@@ -3566,11 +3567,20 @@ export class AssistantService {
     // The accounts read together: what money only passes through, the bank's fees and the transfers between the
     // company's own accounts are the program's to sort out; the rest are payments.
     const plan = planLedger(statements, ledgerOptions);
+    // Every line is read before it is written: a line is entered only when its kind is known with confidence (the
+    // counterparty's account and the purpose agree); the rest go to a list for the accountant.
+    const own = new Set(statements.map((s) => s.account).filter(Boolean));
+    const held: Unclassified[] = [];
+    const classes = new Map<string, Map<number, Classified>>();
     const tasks = chosen.flatMap((statement) => {
       const wanted = input.rows && named ? new Set(input.rows) : null;
-      const rows = (plan.rows.get(statement.fileName) ?? []).filter(
+      const planned = (plan.rows.get(statement.fileName) ?? []).filter(
         (row) => (!wanted || wanted.has(row)) && !done.has(doneKey(statement.fileName, row)),
       );
+      const gated = gate(statement, planned, own);
+      held.push(...gated.held);
+      classes.set(statement.fileName, gated.classes);
+      const rows = gated.allowed;
       if (rows.length === 0) return [];
       const fees = plan.fees.get(statement.fileName) ?? new Set<number>();
       // The bank's fee has no counterparty: the row is cleared of the company's own name and INN.
@@ -3666,6 +3676,37 @@ export class AssistantService {
           }
         : {}),
       ...(reflections.length > 0 ? { reflections } : {}),
+      ...(plan.mismatched.length > 0
+        ? {
+            conversionsNotAgreeing: {
+              count: plan.mismatched.length,
+              note: "NOT entered: the soums are not the foreign amount times the bank's rate. Tell the accountant; one of the two statements is misread or the bank's text is wrong.",
+              examples: plan.mismatched.slice(0, 10).map((m) => ({
+                date: m.date,
+                text: `${m.fxAmount} ${m.currency} × ${m.rate}`,
+                soumsInStatement: (m.soums / 100).toFixed(2),
+                expected: (m.expected / 100).toFixed(2),
+              })),
+            },
+          }
+        : {}),
+      ...(held.length > 0
+        ? {
+            unclassified: {
+              count: held.length,
+              note: "NOT written: the kind of these lines is not certain (the counterparty's account and the purpose do not agree, the account is unknown, or the purpose is empty). Tell the accountant; do not enter them with propose_changes on a guess.",
+              byReason: Object.fromEntries([
+                ...new Map(
+                  [...new Set(held.map((h) => h.why))].map((why) => [
+                    why,
+                    held.filter((h) => h.why === why).length,
+                  ]),
+                ),
+              ]),
+              examples: held.slice(0, 20),
+            },
+          }
+        : {}),
       ...(transit.people + transit.customs > 0
         ? {
             throughBankTransitAccounts: {
@@ -3750,7 +3791,13 @@ export class AssistantService {
       }
       // The gaps are told at once, before the cards: the accountant need not wait for the model to find them.
       if (round === 0 && pass === 0) {
-        const told = gapsText(langOf(lastUserText(chat)), gapsOf(results.map((r) => r.resolved)));
+        const told = gapsText(
+          langOf(lastUserText(chat)),
+          gapsOf(
+            results.map((r) => r.resolved),
+            held,
+          ),
+        );
         if (told) {
           emit({ type: "text", text: told });
           toldGaps = true;
@@ -3837,6 +3884,15 @@ export class AssistantService {
     const notes = results.flatMap(({ task, resolved }) =>
       resolved.notes.map((n) => ({ rows: n.rows, message: `${n.message}${where(task)}` })),
     );
+    // The record of each line: what it was read as and by which rule (the account, the text), so a wrong entry can be traced.
+    for (const item of ready) {
+      const c = classes.get(item.file)?.get(item.payment.row);
+      if (c)
+        notes.push({
+          rows: [item.payment.row],
+          message: `read as ${c.type}${c.tax ? ` (${c.tax})` : ""} by ${c.rule}, confidence ${c.confidence}${several ? ` [${item.file}]` : ""}`,
+        });
+    }
     const notCreated = results.flatMap(({ task, resolved }) => [
       ...resolved.missing.map(
         (m) =>

@@ -251,7 +251,7 @@ export function refTo(existing: unknown, ref: string, fallbackType: string): { t
 }
 
 /** Names under which a bank writes its own ledger lines in a statement: not counterparties of the company. */
-const BANK_INTERNAL =
+export const BANK_INTERNAL =
   /^(к\s+получению|к\s+оплате|депозит\p{L}*\s+до\s+востреб|срочн\p{L}*\s+депозит|транзитн\p{L}*\s+сч[её]т|сч[её]т\s+(по\s+учету|№)|головн\p{L}*\s+офис)/iu;
 
 const parsePositive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number.NaN);

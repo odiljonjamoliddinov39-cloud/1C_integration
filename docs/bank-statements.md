@@ -370,3 +370,35 @@ and its fees are not looked up.
 
 The general rule for a bank fee is 9430 (other operating expenses); the company's own rule or the account its history shows
 beats it.
+
+## Read first, write second: the classifier, the gate and the acceptance run (the technical design of 26 Oct)
+
+**Every line is classified before anything is written** (`bank/classify.ts`). The counterparty's account decides first (its
+first five digits, a table from the real statements: the bank's accounts carry the commission, conversion and SWIFT lines, so a
+keyword never outvotes them), then the text and the contract it names:
+
+| First five digits            | Kind                                                                                                                    | Written as                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| 16401, 16413                 | bank commission (the bank's transit accounts)                                                                           | the fee, to 9430                  |
+| 22613, 22614, 17101          | a leg of a conversion (blocked UZS, the bank's currency account)                                                        | the linked pair through 5730/5740 |
+| 16103                        | a SWIFT payment                                                                                                         | in the account's currency         |
+| 23402, 22628                 | a payment to the budget (the tax is read from the text's own codes: «Оплата за 46», the budget code 11110/14110/21216…) | «Уплата налога»                   |
+| 29801                        | customs duties                                                                                                          | to the customs counterparty       |
+| 23120                        | an individual's card top-up                                                                                             | to the person the text names      |
+| 202xx, 10101, 17409, 29896 … | a payment under a contract                                                                                              | by the contract the text names    |
+
+Each answer has a **confidence**: `high` (the account and the text agree), `medium` (an unknown account, or the text points to
+another kind than the account does), `low` (no text, or a foreign currency named on a soum account). **Only a high one is
+entered**; the rest are listed for the accountant with the reason (the gaps text, and `unclassified` in the tool's answer), and
+the model is told not to enter them on a guess. A statement that gives no counterparty account is read by the INN and the name
+(never a bank's own ledger line). Conversions are checked too: the soums must be the foreign amount times the rate; a pair that
+does not agree is not entered and is listed (`conversionsNotAgreeing`).
+
+Each entered line carries a note: what it was read as, by which rule, with what confidence; a conversion's documents carry its
+id in the comment. Nothing is written before the accountant confirms the card, as before.
+
+**The acceptance run** (read-only; nothing is written): `npx tsx apps/desktop/scripts/bank-acceptance.ts <folder> [INN]`.
+On the eight Texmash Import statements it reports: the main account's 720 lines agree with the statement's balances
+(→ 63 500 366.52); 365 commission lines, 34 607 027.67 (all to 9430); 85 budget lines, 71 773 370.40, of them 6 VAT,
+57 067 900.00; 37 conversions paired and agreeing with their rates; 22613 blocked 3 648 397 126.50 = sold + returned, ending at
+zero; 704 lines would be entered, 3 held (a treasury return and two payments through the treasury account that are no tax).

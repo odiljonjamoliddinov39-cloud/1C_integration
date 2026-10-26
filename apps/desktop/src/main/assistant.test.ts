@@ -1827,6 +1827,110 @@ describe("assistant", () => {
       });
     });
 
+    it("writes nothing for a line with no text: it goes to the accountant's list, the others are entered", async () => {
+      const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
+      const ownAccount = crypto.randomUUID();
+      const earlierPayment = crypto.randomUUID();
+      const contract = crypto.randomUUID();
+      const { assistant, store, company, events, proxy, base } = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              { type: "tool_use", id: "b1", name: "propose_bank_payments", input: { title: "Vypiska: 5" } },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      const counterparty = base.counterparties[0]!;
+      base.objects.set(earlierPayment, {
+        object: "Документ.ПоступлениеНаРасчетныйСчет",
+        fields: {
+          Номер: "0000-000007",
+          Дата: "2026-08-01T00:00:00",
+          Проведен: true,
+          Контрагент: ref("Справочник.Контрагенты", counterparty.ref, counterparty.name),
+          БанковскийСчет: ref("Справочник.БанковскиеСчета", crypto.randomUUID(), "старый"),
+          СуммаДокумента: 1000,
+          НазначениеПлатежа: "старое",
+          НомерВходящегоДокумента: "55",
+        },
+        tables: {
+          РасшифровкаПлатежа: [
+            {
+              ДоговорКонтрагента: ref("Справочник.ДоговорыКонтрагентов", contract, "№17"),
+              СуммаПлатежа: 1000,
+              КурсВзаиморасчетов: 1,
+              СуммаВзаиморасчетов: 1000,
+            },
+          ],
+        },
+        posted: true,
+        deletionMark: false,
+        version: 1,
+      });
+      const values = (input: { params?: Record<string, unknown> }) => Object.values(input.params ?? {});
+      base.queryAnswers.unshift(
+        {
+          match: /Справочник\.БанковскиеСчета/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Справочник.БанковскиеСчета", ownAccount, "р/с")]],
+            truncated: false,
+          }),
+        },
+        {
+          match: /Справочник\.Контрагенты КАК Т ГДЕ Т\.ИНН В/,
+          answer: (input) => ({
+            columns: [],
+            rows: base.counterparties
+              .filter((c) => values(input).includes(c.inn))
+              .map((c) => [c.inn, ref("Справочник.Контрагенты", c.ref, c.name), c.name]),
+            truncated: false,
+          }),
+        },
+        {
+          match: /ПЕРВЫЕ 20 Т\.Ссылка/,
+          answer: () => ({
+            columns: [],
+            rows: [[ref("Документ.ПоступлениеНаРасчетныйСчет", earlierPayment, "старый"), "старое"]],
+            truncated: false,
+          }),
+        },
+        { match: /Т\.Дата МЕЖДУ/, answer: () => ({ columns: [], rows: [], truncated: false }) },
+      );
+      store.setAiEnabled(company.id, true);
+      const rows = [1, 2, 3].map(
+        (n) =>
+          `0${n}.09.2026;10${n};${counterparty.name};${counterparty.inn};;${n * 1000},00;${n === 2 ? "" : `Оплата ${n}`}`,
+      );
+      const statement = [
+        "Выписка по счёту 20208000100438330001",
+        "Дата;№ док;Наименование корреспондента;ИНН;Дебет;Кредит;Назначение платежа",
+        ...rows,
+      ].join("\n");
+
+      const sending = assistant.send({
+        companyId: company.id,
+        text: "Vypiskani ko'rib chiq",
+        files: [{ name: "vypiska.csv", data: new TextEncoder().encode(statement) }],
+      });
+      await answerCards(events, assistant, true);
+      await sending;
+
+      const made = [...base.objects.values()].filter(
+        (o) => o.object === "Документ.ПоступлениеНаРасчетныйСчет" && o.fields.НазначениеПлатежа !== "старое",
+      );
+      // Row 2 has no purpose: it is not written. The other two are.
+      expect(made.map((o) => o.fields.СуммаДокумента)).toEqual([1000, 3000]);
+      expect(resultOf(proxy.requests)).toMatchObject({
+        status: "done",
+        unclassified: { count: 1, examples: [{ row: expect.any(Number), confidence: "low" }] },
+      });
+    });
+
     it("enters the company's own Didox documents as sales copied from its last sale, on one card, unposted", async () => {
       const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
       const [contract, item, oldSale, unit] = [

@@ -15,7 +15,7 @@ const KINDS: { kind: TaxKind; purpose: RegExp; name: RegExp }[] = [
   {
     kind: "ndfl",
     purpose:
-      /(?<!\p{L})(ндфл|жшдс|jshds|подоходн\p{L}*|доход\p{L}*\s+физическ\p{L}*|daromad\s+solig\p{L}*|даромад\s+солиғ\p{L}*)(?!\p{L})/iu,
+      /(?<!\p{L})(ндфл|жшдс|jshds|подоходн\p{L}*|доход\p{L}*\s+(?:с\s+)?физическ\p{L}*|daromad\s+solig\p{L}*|даромад\p{L}*\s+(?:солиғ|соли\?)\p{L}*|жисмоний\s+шахслар\s+даромад\p{L}*)(?!\p{L})/iu,
     name: /ндфл|подоход|физическ|жшдс/iu,
   },
   {
@@ -25,7 +25,7 @@ const KINDS: { kind: TaxKind; purpose: RegExp; name: RegExp }[] = [
   },
   {
     kind: "inps",
-    purpose: /(?<!\p{L})(инпс|inps|накопительн\p{L}*)(?!\p{L})/iu,
+    purpose: /(?<!\p{L})(инпс|inps|накопительн\p{L}*|жам[?\p{L}]*ариб\s+бориладиган\s+пенсия)(?!\p{L})/iu,
     name: /инпс|накоп/iu,
   },
   {
@@ -93,8 +93,42 @@ export function withoutVatClause(purpose: string): string {
   );
 }
 
+/** The code the bank's payment text opens with: "Оплата за 46 …", "36 Ижтимоий …" (36 social, 46 personal income, 101 INPS, 191 INPS penalty, 32 profit, 100 turnover). */
+const NUMBER_KIND: Record<string, TaxKind> = {
+  "36": "social",
+  "46": "ndfl",
+  "101": "inps",
+  "191": "inps",
+  "32": "profit",
+  "100": "turnover",
+};
+
+/** The budget code inside the first "~…~" segment of the text: after the 16 digits of the receiver (11110 personal income, 14110 VAT…). */
+const BUDGET_KIND: Record<string, TaxKind> = {
+  "11110": "ndfl",
+  "21216": "social",
+  "14110": "vat",
+  "43090": "inps",
+  "11210": "profit",
+  "11252": "turnover",
+};
+
+/** The tax the text's own codes name: "Оплата за 46 …" and the budget code; null when it has none the program knows. */
+function taxKindByCode(purpose: string): TaxKind | null {
+  const budget = /~(\d{16})(\d{5})\d*~/.exec(purpose)?.[2];
+  const byBudget = budget ? (BUDGET_KIND[budget] ?? null) : null;
+  const opening = /^\s*(?:~[^~]*~\s*)*(?:оплата\s+за\s+)?(\d{2,3})(?=\s+\p{L})/iu.exec(purpose)?.[1];
+  const byNumber =
+    opening && /(?:оплата\s+за\s+\d|~)/iu.test(purpose.slice(0, 40)) ? (NUMBER_KIND[opening] ?? null) : null;
+  // Two codes that disagree name no tax.
+  if (byBudget && byNumber && byBudget !== byNumber) return null;
+  return byBudget ?? byNumber;
+}
+
 /** Which tax a payment is for, by its purpose; null when it names none (the model decides). */
 export function taxKindOf(purpose: string): TaxKind | null {
+  const coded = taxKindByCode(purpose);
+  if (coded) return coded;
   const text = withoutVatClause(purpose);
   // Order matters: "налог на доходы физических лиц" is ндфл before the general word "налог".
   const found = KINDS.filter((k) => k.purpose.test(text));

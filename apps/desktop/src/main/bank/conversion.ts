@@ -77,6 +77,8 @@ const same = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.005, Math.a
 
 export interface Conversions {
   conversions: FxConversion[];
+  /** Pairs the bank's words match but whose soums are not the foreign amount times the rate: not entered, flagged. */
+  mismatched: { soum: Leg; foreign: Leg; expected: number }[];
   /** "file#row" of every leg that belongs to a conversion. */
   consumed: Set<string>;
   /** Legs the bank wrote as a conversion whose other leg is not in the attached statements. */
@@ -100,6 +102,7 @@ export function findConversions(statements: BankStatement[]): Conversions {
     }
   }
   const conversions: FxConversion[] = [];
+  const mismatched: Conversions["mismatched"] = [];
   const consumed = new Set<string>();
   const taken = new Set<unknown>();
   for (const f of foreign.sort((a, b) => a.leg.payment.date.localeCompare(b.leg.payment.date))) {
@@ -114,6 +117,14 @@ export function findConversions(statements: BankStatement[]): Conversions {
       if (!same(f.leg.payment.amount / 100, f.fx.amount)) continue;
       const gap = days(s.leg.payment.date, f.leg.payment.date);
       if (gap > 3) continue;
+      // The soums must be the foreign amount times the rate (to the soum): a conversion whose sides do not agree is wrong
+      // or misread, and is flagged instead of written.
+      const expected = Math.round(f.fx.amount * f.fx.rate * 100);
+      if (Math.abs(s.leg.payment.amount - expected) > 100) {
+        if (!mismatched.some((m) => m.soum === s.leg && m.foreign === f.leg))
+          mismatched.push({ soum: s.leg, foreign: f.leg, expected });
+        continue;
+      }
       if (!best || gap < best.gap) best = { s, gap };
     }
     if (!best) continue;
@@ -135,5 +146,5 @@ export function findConversions(statements: BankStatement[]): Conversions {
   const alone = [...soum.map((x) => x.leg), ...foreign.map((x) => x.leg)].filter(
     (leg) => !consumed.has(legKey(leg.file, leg.row)),
   );
-  return { conversions, consumed, alone };
+  return { conversions, mismatched, consumed, alone };
 }

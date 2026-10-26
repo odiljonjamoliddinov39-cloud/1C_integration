@@ -1,4 +1,5 @@
 import type { Lang } from "../router.js";
+import type { Unclassified } from "./classify.js";
 import type { BankResolved } from "./resolve.js";
 
 /** What the first look at a statement found missing in 1C, in the words the accountant wrote in. */
@@ -9,6 +10,8 @@ export interface BankGaps {
   contracts: string[];
   /** Rows the program cannot settle: the reason and how many rows. */
   problems: { message: string; rows: number }[];
+  /** Lines that were not identified with certainty and are not written: the reason and how many lines. */
+  unclassified: { why: string; rows: number }[];
 }
 
 const SHOWN = 8;
@@ -19,6 +22,7 @@ const WORDS = {
     counterparties: "Контрагенты",
     contracts: "Договоры",
     problems: "Строки, которые программа не может разобрать",
+    unclassified: "Строки, тип которых не определён с уверенностью (не записываются, решает бухгалтер)",
     rows: (n: number) => `строк: ${n}`,
     more: (n: number) => `и ещё ${n}`,
     next: "Для недостающих контрагентов и договоров сейчас покажу карточку на создание.",
@@ -28,6 +32,7 @@ const WORDS = {
     counterparties: "Kontragentlar",
     contracts: "Shartnomalar",
     problems: "Dastur hal qila olmagan qatorlar",
+    unclassified: "Turi ishonch bilan aniqlanmagan qatorlar (yozilmaydi, buxgalter hal qiladi)",
     rows: (n: number) => `qator: ${n}`,
     more: (n: number) => `va yana ${n} ta`,
     next: "Yetishmayotgan kontragent va shartnomalar uchun hozir yaratish kartochkasini ko'rsataman.",
@@ -37,6 +42,7 @@ const WORDS = {
     counterparties: "Counterparties",
     contracts: "Contracts",
     problems: "Rows the program cannot settle",
+    unclassified: "Lines whose kind is not certain (not written; the accountant decides)",
     rows: (n: number) => `rows: ${n}`,
     more: (n: number) => `and ${n} more`,
     next: "I will now show a card to create the missing counterparties and contracts.",
@@ -45,6 +51,7 @@ const WORDS = {
 
 export function gapsOf(
   resolved: Pick<BankResolved, "missing" | "contractsToCreate" | "problems" | "ready">[],
+  held: Pick<Unclassified, "why">[] = [],
 ): BankGaps {
   const counterparties = new Map<string, string>();
   const contracts = new Map<string, string>();
@@ -57,8 +64,11 @@ export function gapsOf(
     for (const c of r.contractsToCreate) contracts.set(c.label, c.label);
     for (const p of r.problems) problems.set(p.message, (problems.get(p.message) ?? 0) + p.rows.length);
   }
+  const unclassified = new Map<string, number>();
+  for (const h of held) unclassified.set(h.why, (unclassified.get(h.why) ?? 0) + 1);
   return {
     ready,
+    unclassified: [...unclassified].map(([why, rows]) => ({ why, rows })),
     counterparties: [...counterparties.values()],
     contracts: [...contracts.values()],
     problems: [...problems].map(([message, rows]) => ({ message, rows })),
@@ -79,6 +89,11 @@ export function gapsText(lang: Lang, gaps: BankGaps): string {
     lines.push(`• ${w.problems} (${gaps.problems.reduce((n, p) => n + p.rows, 0)}):`);
     for (const p of gaps.problems.slice(0, SHOWN)) lines.push(`   – ${p.message} (${w.rows(p.rows)})`);
     if (gaps.problems.length > SHOWN) lines.push(`   – ${w.more(gaps.problems.length - SHOWN)}`);
+  }
+  if (gaps.unclassified.length > 0) {
+    lines.push(`• ${w.unclassified} (${gaps.unclassified.reduce((n, p) => n + p.rows, 0)}):`);
+    for (const u of gaps.unclassified.slice(0, SHOWN)) lines.push(`   – ${u.why} (${w.rows(u.rows)})`);
+    if (gaps.unclassified.length > SHOWN) lines.push(`   – ${w.more(gaps.unclassified.length - SHOWN)}`);
   }
   if (lines.length === 0) return "";
   const creates = gaps.counterparties.length > 0 || gaps.contracts.length > 0;
