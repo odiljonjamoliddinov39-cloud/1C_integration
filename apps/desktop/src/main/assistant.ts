@@ -39,6 +39,7 @@ import {
   type PostCreatedInput,
   type BankDuplicatesInput,
   type FixBankPostingsInput,
+  type GtdReadInput,
   type UndoBankInput,
   type DidoxDeleteDraftInput,
   type DidoxDocumentInput,
@@ -145,6 +146,8 @@ import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } fro
 import { findDuplicates, readBankDocs } from "./bank/duplicates.js";
 import { documentLedgerAttribute, ledgerAccounts, setBankLedgerAccount } from "./bank/ledger-account.js";
 import { findPostingFixes, reledgerChange } from "./bank/postings.js";
+import { readDeclaration } from "./gtd/run.js";
+import { gtdReport } from "./gtd/report.js";
 import { describeCached, newScaffoldCache } from "./bank/scaffold.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
 import { compactOlderTurns } from "./ai/history.js";
@@ -471,6 +474,10 @@ export class AssistantService {
     if (attached.tables.length > 0) chat.tables = [...(chat.tables ?? []), ...attached.tables];
     if (attached.didox.length > 0) chat.didox = mergeDidox(chat.didox ?? [], attached.didox);
     if (attached.bank.length > 0) chat.bank = mergeBank(chat.bank ?? [], attached.bank);
+    if (attached.gtd.length > 0) {
+      const names = new Set(attached.gtd.map((g) => g.fileName));
+      chat.gtd = [...(chat.gtd ?? []).filter((g) => !names.has(g.fileName)), ...attached.gtd];
+    }
     if (!chat.title) chat.title = question.replace(/\s+/g, " ").slice(0, 80);
     this.save(chat);
     if (rejectTemplate) void this.engine.reject(rejectTemplate);
@@ -1630,6 +1637,9 @@ export class AssistantService {
     }
     if (use.name === "bank_mapping") {
       return this.bankMapping(chat, input.data as BankMappingInput);
+    }
+    if (use.name === "gtd_declaration") {
+      return this.gtdDeclaration(chat, input.data as GtdReadInput, emit);
     }
     if (use.name === "stock_movement") {
       return this.stockMovement(chat, input.data as StockMovementInput, emit, signal);
@@ -4317,6 +4327,35 @@ export class AssistantService {
         note: "Unposted and marked for deletion (1C keeps them; the mark can be lifted). The statement's lines can be entered again.",
       },
     };
+  }
+
+  /**
+   * A customs declaration (GTD) the model has read from the form pages: the program merges it with the footers and the item
+   * texts of the PDF, decides the regime, judges every number (V1–V12) and proposes the postings (gtd/). Nothing is written.
+   */
+  private async gtdDeclaration(chat: StoredChat, input: GtdReadInput, emit: Emit): Promise<ToolResult> {
+    emit({ type: "tool", name: "gtd_declaration", detail: input.file ?? input.regime ?? "" });
+    const files = chat.gtd ?? [];
+    const wanted = input.file?.toLowerCase();
+    const file =
+      (wanted
+        ? files.find(
+            (f) => f.fileName.toLowerCase() === wanted || f.fileName.toLowerCase().endsWith(`/${wanted}`),
+          )
+        : null) ??
+      files.at(-1) ??
+      null;
+    const connection = this.deps.store.connection(chat.companyId);
+    const outcome = await readDeclaration(input, {
+      deps: { query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query) },
+      companyInn: this.deps.store.company(chat.companyId).inn || null,
+      registry: this.deps.store.gtdDeclarations(chat.companyId),
+      pages: file?.pages ?? null,
+      today: new Date().toISOString().slice(0, 10),
+    });
+    if (outcome.status === "proposal" && outcome.record)
+      this.deps.store.rememberGtd(chat.companyId, outcome.record);
+    return { ok: true, data: { ...outcome, report: gtdReport(outcome), file: file?.fileName ?? null } };
   }
 
   /**

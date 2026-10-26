@@ -24,6 +24,7 @@
     "i18next": "26.4.2",
     "jose": "6.2.12",
     "mammoth": "1.13.0",
+    "pdfjs-dist": "6.3.289",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-i18next": "17.0.15",

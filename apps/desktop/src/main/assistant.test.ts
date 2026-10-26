@@ -27,6 +27,8 @@ import { EImzoClient } from "./didox/eimzo.js";
 import { FakeEImzo } from "./didox/fake-eimzo.js";
 import { FakeDidox } from "./didox/fake.js";
 import { LocalStore, type SecretBox } from "./store.js";
+import { BASE, sampleInput, samplePages } from "./gtd/fixture.js";
+import { makePdf } from "./gtd/make-pdf.js";
 
 const secrets: SecretBox = { encrypt: (p) => `enc:${p}`, decrypt: (e) => e.slice(4) };
 
@@ -5412,6 +5414,84 @@ describe("the table of statement lines by counterparty account", () => {
     expect(added.store.bankMappings(added.company.id)).toMatchObject([
       { prefix: "29898", type: "terminal_receipt" },
     ]);
+  });
+});
+
+describe("a customs declaration (GTD)", () => {
+  const gtdCall = (input: Record<string, unknown>) =>
+    setup([
+      () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id: "g1", name: "gtd_declaration", input }],
+        },
+      ],
+      () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+    ]);
+  const base = (t: ReturnType<typeof setup>) => {
+    t.base.queryAnswers.unshift({
+      match: /Справочник\.ДоговорыКонтрагентов/,
+      answer: () => ({ columns: [], rows: BASE.contract, truncated: false }),
+    });
+    t.base.queryAnswers.unshift({
+      match: /РегистрБухгалтерии\.Хозрасчетный КАК Х/,
+      answer: () => ({ columns: [], rows: BASE.entries, truncated: false }),
+    });
+  };
+  const send = (t: ReturnType<typeof setup>) =>
+    t.assistant.send({
+      companyId: t.company.id,
+      text: "ГТД ни текшир",
+      files: [{ name: "gtd.pdf", data: makePdf(samplePages().map((p) => p.lines)) }],
+    });
+  /** What the tool answered the model: the parsed result of the first tool call. */
+  const told = (t: ReturnType<typeof setup>) => {
+    const last = t.proxy.requests[1]?.messages.at(-1)?.content as unknown as { content: string }[];
+    return JSON.parse(last[0]?.content ?? "{}") as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  };
+
+  it("reads the footers and the item names itself, checks the numbers the model read, and proposes the fee posting only", async () => {
+    // The company of the test base is the importer: the model reads its INN from graph 8.
+    const inn = setup([]).company.inn;
+    const input = sampleInput({ importer: { name: "OOO TEXMASH IMPORT", inn } });
+    const run = gtdCall(input);
+    run.store.setAiEnabled(run.company.id, true);
+    base(run);
+    await send(run);
+    const answer = told(run);
+    expect(answer.status).toBe("proposal");
+    expect(answer.file).toBe("gtd.pdf");
+    expect(answer.declaration.regime.kind).toBe("customs_warehouse");
+    expect(answer.declaration.items).toHaveLength(32);
+    expect(answer.proposal.entries[1].perItem[0]).toEqual({ no: 1, amount: "376568.00" });
+    expect(answer.proposal.entries[1].status).toBe("ready");
+    expect(answer.report).toContain("Checks V1–V12: all passed");
+    // The declaration is kept for a later release that names it.
+    expect(run.store.gtdDeclarations(run.company.id)).toMatchObject([
+      { declarationNo: "26003/04.11.2025/0090704", kind: "customs_warehouse", fee: "1030000.00" },
+    ]);
+  });
+
+  it("another company's declaration: the model is told it stops, and nothing is kept", async () => {
+    const t = gtdCall(sampleInput());
+    t.store.setAiEnabled(t.company.id, true);
+    base(t);
+    await send(t);
+    const answer = told(t);
+    expect(answer.status).toBe("needs_user");
+    expect(answer.message).toContain("another company");
+    expect(JSON.stringify(answer)).not.toContain("376568");
+    expect(t.store.gtdDeclarations(t.company.id)).toEqual([]);
+  });
+
+  it("an unsupported regime comes back as a question, before any amount", async () => {
+    const t = gtdCall(sampleInput({ regime: "IM 51" }));
+    t.store.setAiEnabled(t.company.id, true);
+    await send(t);
+    const answer = told(t);
+    expect(answer.status).toBe("unsupported_regime");
+    expect(JSON.stringify(answer)).not.toContain("1030000");
   });
 });
 

@@ -13,6 +13,7 @@ import type { ChatEntry } from "../shared/transcript.js";
 import type { SecretBox } from "./store.js";
 import type { DidoxDocument } from "./didox/document.js";
 import type { BankStatement } from "./bank/statement.js";
+import type { GtdFile } from "./gtd/pages.js";
 import type { PendingChoice } from "./router.js";
 import type { TableFile } from "./tables.js";
 
@@ -36,6 +37,8 @@ export interface StoredChat extends ChatSummary {
   bank?: BankStatement[];
   /** Payments already entered into 1C from this chat, as "file#row". */
   bankDone?: string[];
+  /** Customs declarations (GTD) found among the PDFs of this chat: the footers and item texts, for gtd_declaration. */
+  gtd?: GtdFile[];
   /** Invoices this chat made in Didox as drafts: "number|date|buyer INN" and the draft's id. */
   didoxDrafts?: { key: string; id: string }[];
   /** Documents this chat created in 1C and left unposted: what "post them" means. */

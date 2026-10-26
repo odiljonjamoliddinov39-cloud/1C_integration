@@ -5,6 +5,8 @@ import { crc32, deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import { AttachmentError, decodeText, dropPages, minifyXml, readAttachments } from "./attachments.js";
+import { makePdf } from "./gtd/make-pdf.js";
+import { samplePages } from "./gtd/fixture.js";
 import { readTable } from "./tables.js";
 
 const fixture = (name: string) => new Uint8Array(readFileSync(join(import.meta.dirname, "fixtures", name)));
@@ -487,5 +489,46 @@ describe("minifyXml", () => {
     expect(minifyXml(xml)).toBe(
       '<?xml version="1.0"?><Factura><No>12</No><Note>two  words\n  here</Note></Factura>',
     );
+  });
+});
+
+describe("a customs declaration among the PDFs", () => {
+  const declaration = () => makePdf(samplePages().map((p) => p.lines));
+
+  it("is told by its footer: the program keeps the sheets and the item texts, and the model is told so", async () => {
+    const read = await readAttachments([{ name: "gtd.pdf", data: declaration() }]);
+    expect(read.gtd).toHaveLength(1);
+    const pages = read.gtd[0]?.pages;
+    expect(pages?.footer?.declarationNo).toBe("26003/04.11.2025/0090704");
+    expect(pages?.present).toHaveLength(12);
+    expect(pages?.items).toHaveLength(32);
+    // The PDF itself still goes to the model (it reads the form pages), with a note after it.
+    expect(read.blocks).toHaveLength(2);
+    expect(read.blocks[0]).toMatchObject({ type: "document" });
+    expect(noteOf(read.blocks[1])).toMatch(
+      /customs declaration \(GTD\) 26003\/04\.11\.2025\/0090704: 12 of 12 sheets found/,
+    );
+    expect(noteOf(read.blocks[1])).toMatch(/gtd_declaration/);
+  });
+
+  it("a declaration with a sheet missing says which", async () => {
+    const read = await readAttachments([
+      { name: "gtd.pdf", data: makePdf(samplePages([7]).map((p) => p.lines)) },
+    ]);
+    expect(noteOf(read.blocks[1])).toMatch(/11 of 12 sheets found \(sheet 7 missing\)/);
+  });
+
+  it("is found inside an archive too", async () => {
+    const read = await readAttachments([
+      { name: "papers.zip", data: zip([{ name: "gtd.pdf", data: declaration() }]) },
+    ]);
+    expect(read.gtd).toHaveLength(1);
+    expect(read.gtd[0]?.fileName).toBe("papers.zip/gtd.pdf");
+  });
+
+  it("another PDF is not one", async () => {
+    const read = await readAttachments([{ name: "letter.pdf", data: makePdf([["Dear Sir", "Regards"]]) }]);
+    expect(read.gtd).toEqual([]);
+    expect(read.blocks).toHaveLength(1);
   });
 });
