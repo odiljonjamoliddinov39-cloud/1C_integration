@@ -98,6 +98,10 @@ interface World {
   noDescription?: boolean;
   /** Soums per dollar on the day, when 1C has a rate. */
   rate?: number;
+  /** The base has no «Прочее списание» / «Прочее поступление». */
+  noOther?: boolean;
+  /** What each operation posted in this company (the rows of the profile query), by direction. */
+  history?: { out?: unknown[][]; in?: unknown[][] };
 }
 
 function deps(world: World = {}) {
@@ -124,6 +128,10 @@ function deps(world: World = {}) {
       const object = q.includes("СписаниеСРасчетногоСчета")
         ? "Документ.СписаниеСРасчетногоСчета"
         : "Документ.ПоступлениеНаРасчетныйСчет";
+      if (q.includes("ВНУТРЕННЕЕ СОЕДИНЕНИЕ"))
+        return world.history
+          ? rows((object.includes("Списание") ? world.history.out : world.history.in) ?? [])
+          : { ok: false as const, code: "X", message: "none" };
       if (
         q.includes("Перечисление.ВидыОперацийСписаниеДенежныхСредств") &&
         !q.includes("СГРУППИРОВАТЬ") &&
@@ -138,7 +146,17 @@ function deps(world: World = {}) {
               "Перевод на другой счет организации",
             ),
           ],
-          [ref("Перечисление.ВидыОперацийСписаниеДенежныхСредств", "ПрочееСписание", "Прочее списание")],
+          ...(world.noOther
+            ? []
+            : [
+                [
+                  ref(
+                    "Перечисление.ВидыОперацийСписаниеДенежныхСредств",
+                    "ПрочееСписание",
+                    "Прочее списание",
+                  ),
+                ],
+              ]),
         ]);
       if (
         q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств") &&
@@ -153,13 +171,17 @@ function deps(world: World = {}) {
               "Перевод с другого счета организации",
             ),
           ],
-          [
-            ref(
-              "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
-              "ПрочееПоступление",
-              "Прочее поступление",
-            ),
-          ],
+          ...(world.noOther
+            ? []
+            : [
+                [
+                  ref(
+                    "Перечисление.ВидыОперацийПоступлениеДенежныхСредств",
+                    "ПрочееПоступление",
+                    "Прочее поступление",
+                  ),
+                ],
+              ]),
         ]);
       if (q.includes("ПланСчетов.Хозрасчетный") && q.includes("Код В"))
         return rows([["5710", ref("ПланСчетов.Хозрасчетный", A5710, "5710")]]);
@@ -463,5 +485,62 @@ describe("money moved between the company's own accounts", () => {
       expect(lone.ready).toEqual([]);
       expect(lone.problems[0]?.message).toContain("rate");
     });
+  });
+});
+
+describe("a base that has no «Прочее» operations: the company's own operation that does only this is copied", () => {
+  const OUT_ENUM = "Перечисление.ВидыОперацийСписаниеДенежныхСредств";
+  const IN_ENUM = "Перечисление.ВидыОперацийПоступлениеДенежныхСредств";
+  const op = (type: string, name: string) => ({ type, ref: name, name });
+  const history = {
+    out: [[op(OUT_ENUM, "ПереводНаДругойСчет"), "5530", "5110", 40]],
+    in: [[op(IN_ENUM, "ПереводСДругогоСчета"), "5110", "5530", 40]],
+  };
+
+  it("copies the earlier document of that operation and says why it was not made from the description", async () => {
+    const out = await run([move()], { noOther: true, history });
+    expect(out.problems).toEqual([]);
+    expect(out.ready).toHaveLength(2);
+    expect(out.notes.join(" ")).toContain(
+      "copied from the company's own earlier document of «ПереводНаДругойСчет»",
+    );
+    expect(out.notes.join(" ")).toContain("40 posted entries, all such moves");
+  });
+
+  it("with no books that show such an operation it says what is missing instead of guessing", async () => {
+    const out = await run([move()], { noOther: true });
+    expect(out.ready).toEqual([]);
+    expect(out.problems.length).toBeGreaterThan(0);
+    expect(out.problems[0]?.message).toContain("none of the operations of 1C is known to do this");
+  });
+
+  it("an operation seen posting wrong entries here is not copied either", async () => {
+    const deps2 = deps({ noOther: true, history });
+    const out = await resolveTransfers(
+      [move()],
+      statements,
+      {
+        ownInn: "300000001",
+        files: new Set(["a.xlsx", "b.xlsx"]),
+        cache: {
+          lists: new Map(),
+          snapshots: new Map(),
+          memory: {
+            choices: [],
+            verdicts: [
+              {
+                key: "Документ.СписаниеСРасчетногоСчета|transferOut|переводнадругойсчет",
+                case: "transferOut",
+                operation: "ПереводНаДругойСчет",
+                good: 0,
+                bad: 4,
+              },
+            ],
+          },
+        },
+      },
+      deps2.d,
+    );
+    expect(out.ready.filter((r) => r.side === "out")).toEqual([]);
   });
 });

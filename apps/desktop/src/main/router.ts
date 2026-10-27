@@ -239,6 +239,12 @@ const SAY = {
     cannot: "Не удалось прочитать список из 1С. Напишите, какие документы и за какой период провести.",
     pending: (n: number) => `Нашёл ${n} документов — готовлю карточку.`,
     more: (n: number) => `Ещё ${n} не вошли в эту карточку: скажите «проведи» ещё раз.`,
+    entryNone: "не провёл ни одной проводки",
+    entryPosted: "провёл",
+    entriesRight: (n: number, total: number) =>
+      `Проводки проверены: у ${n} из ${total} документов банка проводка такая, какая нужна по смыслу операции.`,
+    entriesWrong: (operation: string, kase: string, n: number, problem: string) =>
+      `Операция «${operation || "?"}» (${kase}): ${n} док. провелись неверно — ${problem}. Программа больше не будет использовать эту операцию для этого случая; напишите «исправь проводки».`,
   },
   uz: {
     askWhich: "Qaysi davr yoki qaysi hujjatlarni o'tkazish kerakligini yozing.",
@@ -256,6 +262,12 @@ const SAY = {
     cannot: "1C dan ro'yxatni o'qib bo'lmadi. Qaysi hujjatlar va qaysi davr ekanini yozing.",
     pending: (n: number) => `${n} ta hujjat topildi — kartochkani tayyorlayapman.`,
     more: (n: number) => `Yana ${n} ta hujjat bu kartochkaga sig'madi: yana bir marta «o'tkaz» deng.`,
+    entryNone: "hech qanday provodka qilmadi",
+    entryPosted: "provodka:",
+    entriesRight: (n: number, total: number) =>
+      `Provodkalar tekshirildi: bank hujjatlarining ${n} tasi (${total} tadan) operatsiya ma'nosiga mos provodka qildi.`,
+    entriesWrong: (operation: string, kase: string, n: number, problem: string) =>
+      `«${operation || "?"}» operatsiyasi (${kase}): ${n} ta hujjat noto'g'ri o'tdi — ${problem}. Dastur bu operatsiyani endi shu holat uchun ishlatmaydi; «provodkalarni tuzat» deb yozing.`,
   },
   en: {
     askWhich: "Tell me which period or which documents to post.",
@@ -272,6 +284,12 @@ const SAY = {
     cannot: "I could not read the list from 1C. Tell me which documents and which period to post.",
     pending: (n: number) => `Found ${n} documents — preparing the card.`,
     more: (n: number) => `${n} more did not fit this card: say “post” again.`,
+    entryNone: "it posted no entry",
+    entryPosted: "it posted",
+    entriesRight: (n: number, total: number) =>
+      `Entries checked: ${n} of ${total} bank documents made the entry their case needs.`,
+    entriesWrong: (operation: string, kase: string, n: number, problem: string) =>
+      `Operation «${operation || "?"}» (${kase}): ${n} document(s) went wrong — ${problem}. The program will not use this operation for this case again; say “fix the postings”.`,
   },
 } as const;
 

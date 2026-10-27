@@ -21,6 +21,7 @@ import { contractFromDescription } from "./contract.js";
 import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
 import { foreignContract } from "./swift.js";
+import type { OperationMemory, OperationProfile } from "./operations.js";
 import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
 import { cashOrderFor } from "./cash.js";
 import { isEntrepreneur } from "./transit.js";
@@ -124,6 +125,10 @@ export interface BankCache {
   roles?: Map<string, string>;
   /** The currency each contract is settled in (letters), by the contract's reference; null when 1C could not say. */
   contractCurrencies?: Map<string, string | null>;
+  /** What each operation of a bank document posted in this company, by object (see operations.ts); null when 1C could not say. */
+  profiles?: Map<string, OperationProfile[] | null>;
+  /** The accountant's decisions about operations and what checks found wrong (kept per company), for the choice of an operation. */
+  memory?: OperationMemory;
 }
 
 export interface TaxHistory {

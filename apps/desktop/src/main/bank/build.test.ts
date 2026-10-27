@@ -2,6 +2,7 @@ import type { RunQueryInput } from "@platform/shared";
 import { describe, expect, it } from "vitest";
 
 import { buildBankDocument } from "./build.js";
+import type { OperationMemory } from "./operations.js";
 import type { BankCache, BankDeps } from "./resolve.js";
 import { valueLike } from "./scaffold.js";
 import type { BankPayment } from "./statement.js";
@@ -76,12 +77,21 @@ const A6410 = "a6410000-0000-4000-8000-000000000000";
 const A6520 = "a6520000-0000-4000-8000-000000000000";
 
 const fake = (
-  options: { chart?: string[]; operations?: boolean; taxes?: [string, string][]; taxAccount?: boolean } = {},
+  options: {
+    chart?: string[];
+    operations?: boolean;
+    taxes?: [string, string][];
+    taxAccount?: boolean;
+    /** What each operation posted in this company: rows of the profile query, by direction. */
+    history?: { out?: unknown[][]; in?: unknown[][] };
+    memory?: OperationMemory;
+  } = {},
 ) => {
   const seen: RunQueryInput[] = [];
   const chart = new Set(options.chart ?? ["5710", "5730", "5740", "9420", "9430", "6410"]);
   const accounts: Record<string, string> = {
     "5710": A5710,
+    "5720": "a5720000-0000-4000-8000-000000000000",
     "5730": A5730,
     "5740": A5740,
     "9420": A9430,
@@ -97,6 +107,14 @@ const fake = (
       seen.push(input);
       const q = input.query;
       const rows = (list: unknown[][]) => ({ ok: true as const, data: { rows: list } });
+      if (q.includes("ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.СписаниеСРасчетногоСчета"))
+        return options.history?.out
+          ? rows(options.history.out)
+          : { ok: false as const, code: "X", message: "none" };
+      if (q.includes("ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.ПоступлениеНаРасчетныйСчет"))
+        return options.history?.in
+          ? rows(options.history.in)
+          : { ok: false as const, code: "X", message: "none" };
       if (q.includes("Перечисление.ВидыОперацийСписаниеДенежныхСредств"))
         return rows([
           [enumValue("ВидыОперацийСписаниеДенежныхСредств", "ОплатаПоставщику", "Оплата поставщику")],
@@ -160,7 +178,11 @@ const fake = (
         ? { ok: true, data: { fields: { СчетУчета: ref("ПланСчетов.Хозрасчетный", A6520, "6520") } } }
         : { ok: false, code: "X", message: "none" },
   };
-  const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+  const cache: BankCache = {
+    lists: new Map(),
+    snapshots: new Map(),
+    ...(options.memory ? { memory: options.memory } : {}),
+  };
   return { deps, cache, seen };
 };
 
@@ -526,5 +548,117 @@ describe("the operation named by a phrase", () => {
     expect(valueLike([values[0] as (typeof values)[0]], ["уплата налога"])?.ref).toBe(
       "УплатаНалогаЗаТретьихЛиц",
     );
+  });
+});
+
+describe("the operation and the account are worked out from the company's books, not fixed", () => {
+  const OUT_T = "Перечисление.ВидыОперацийСписаниеДенежныхСредств";
+  const row = (type: string, name: string, debit: string, credit: string, count: number) => [
+    { type, ref: name, name },
+    debit,
+    credit,
+    count,
+  ];
+  const transfer = () =>
+    payment({ purpose: "Перевод между своими счетами", counterparty: "", amount: 100_000_00 });
+  const build = (world: ReturnType<typeof fake>, kind: "transferOut" | "fee" = "transferOut") =>
+    buildBankDocument(world.deps, world.cache, {
+      kind,
+      payment: transfer(),
+      organization: ORG,
+      ownAccount: OWN,
+      otherAccount: OTHER,
+      currency: "UZS",
+    });
+
+  it("a company whose moves go through another transit account: that account is used, and the note says where it came from", async () => {
+    const world = fake({
+      chart: ["5710", "5720", "9430"],
+      history: {
+        out: [
+          row(OUT_T, "ПрочееСписание", "5720", "5110", 60),
+          row(OUT_T, "ПрочееСписание", "9430", "5110", 300),
+        ],
+      },
+    });
+    const out = await build(world);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(JSON.stringify(out.change.fields)).toContain("a5720");
+    expect(out.notes.join(" ")).toContain(
+      "the other side of the move is 5720, as the company's own documents of «Прочее списание» book it",
+    );
+    expect(out.notes.join(" ")).toContain("history");
+  });
+
+  it("when the company's own transit is the usual 5710 nothing is said about it", async () => {
+    const world = fake({ history: { out: [row(OUT_T, "ПрочееСписание", "5710", "5110", 60)] } });
+    const out = await build(world);
+    expect(out.ok && out.notes.join(" ")).not.toContain("as the company's own documents");
+    expect(out.ok && out.change.fields?.["ВидОперации"]).toBe("ПрочееСписание");
+  });
+
+  it("the form's «Перевод на другой счет» is not made from the description: its books show it posting between bank accounts", async () => {
+    const world = fake({
+      history: { out: [row(OUT_T, "ПереводНаДругойСчет", "5530", "5110", 80)] },
+    });
+    // «Прочее списание» is still there by its name and is what the move is made as.
+    const out = await build(world);
+    expect(out.ok && out.change.fields?.["ВидОперации"]).toBe("ПрочееСписание");
+  });
+
+  it("an operation seen posting wrong entries here is not used: the card says what 1C has and asks", async () => {
+    const world = fake({
+      memory: {
+        choices: [],
+        verdicts: [
+          {
+            key: "Документ.СписаниеСРасчетногоСчета|transferOut|прочее списание",
+            case: "transferOut",
+            operation: "Прочее списание",
+            good: 0,
+            bad: 5,
+            lastBad: "it posted Dt 4220 / Kt 5110",
+          },
+        ],
+      },
+    });
+    const out = await build(world);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.message).toContain("none of the operations of 1C is known to do this");
+    expect(out.message).toContain("set_operation");
+    // A fee is another case: the same operation is fine for it.
+    expect((await build(world, "fee")).ok).toBe(true);
+  });
+
+  it("the accountant's decision comes first", async () => {
+    const world = fake({
+      memory: {
+        choices: [{ case: "transferOut", operation: "Перевод на другой счет организации" }],
+        verdicts: [],
+      },
+    });
+    const out = await build(world);
+    expect(out.ok && out.change.fields?.["ВидОперации"]).toBe("ПереводНаДругойСчет");
+    expect(out.ok && out.notes.join(" ")).toContain("accountant");
+  });
+
+  it("the receiving leg of a purchase and of a sale of currency are not the same operation", async () => {
+    const world = fake({ chart: ["5710", "5730", "5740", "9430"] });
+    const leg = (direction: "buy" | "sell") =>
+      buildBankDocument(world.deps, world.cache, {
+        kind: "conversionIn",
+        payment: payment({ direction: "in", amount: 1_000_00 }),
+        organization: ORG,
+        ownAccount: OWN,
+        currency: "UZS",
+        conversion: { id: "c1", direction, leg: "in", bank: { counterparty: BANK, contract: CONTRACT } },
+      });
+    // This test base has the purchase operation, not a sale one: a sale falls back to the plain receipt by its name.
+    const buy = await leg("buy");
+    expect(buy.ok).toBe(true);
+    const sell = await leg("sell");
+    expect(sell.ok && sell.change.fields?.["ВидОперации"]).not.toBe("ПриобретениеИностраннойВалюты");
   });
 });

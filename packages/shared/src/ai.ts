@@ -745,6 +745,19 @@ export const BANK_LINE_TYPES = [
 ] as const;
 export type BankLineType = (typeof BANK_LINE_TYPES)[number];
 
+/** The cases a bank document is written as (bank/operations.ts); the operation of each is worked out, not fixed. */
+export const BANK_CASES = [
+  "fee",
+  "transferOut",
+  "transferIn",
+  "conversionOut",
+  "conversionIn",
+  "tax",
+  "cashIn",
+  "cashOut",
+  "capital",
+] as const;
+
 /**
  * The table that says what a line is by the first five digits of the counterparty's account (and, for a bank fee, the
  * account it is booked to). `list` shows it with what the accountant has confirmed; `confirm` records the table as it stands
@@ -752,7 +765,16 @@ export type BankLineType = (typeof BANK_LINE_TYPES)[number];
  * applied from then on and never asked again.
  */
 export const BankMappingInput = z.object({
-  action: z.enum(["list", "set", "confirm"]),
+  /**
+   * list/set/confirm: the table of lines by counterparty account. operations: what the program does for each kind of case and
+   * what it has seen 1C post. set_operation: the accountant names the operation of a bank document for a case (the program
+   * keeps it and uses it before anything it works out); clear_operation takes it back.
+   */
+  action: z.enum(["list", "set", "confirm", "operations", "set_operation", "clear_operation"]),
+  /** For set_operation / clear_operation: the case (transferOut = money paid to another account of the company…). */
+  case: z.enum(BANK_CASES).optional(),
+  /** For set_operation: the operation as 1C shows it («Прочее списание»). */
+  operation: z.string().trim().min(1).max(120).optional(),
   /** The first five digits of the counterparty's account. */
   prefix: z
     .string()
