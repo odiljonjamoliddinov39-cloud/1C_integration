@@ -8,3 +8,4 @@ export * from "./billing.js";
 export * from "./admin-billing.js";
 export * from "./seed-templates.js";
 export * from "./knowledge.js";
+export * from "./remote.js";

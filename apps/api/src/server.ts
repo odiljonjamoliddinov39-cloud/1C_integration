@@ -12,7 +12,8 @@ await runMigrations(db);
 await seedTemplates(db);
 // The Docker image puts the built admin dashboard next to the server (apps/api/Dockerfile).
 const adminUiDir = process.env.ADMIN_UI_DIR ?? fileURLToPath(new URL("../admin", import.meta.url));
-const app = await buildApp(db, config, { adminUiDir });
+const miniappDir = process.env.MINIAPP_DIR ?? fileURLToPath(new URL("../miniapp", import.meta.url));
+const app = await buildApp(db, config, { adminUiDir, miniappDir });
 
 const close = async () => {
   await app.close();
