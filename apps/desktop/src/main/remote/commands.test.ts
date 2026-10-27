@@ -502,6 +502,71 @@ describe("RemoteCommands: Prepare", () => {
   });
 });
 
+describe("RemoteCommands: a card waiting, and declining it", () => {
+  it("a new message while a card waits is told to answer the card, not that the assistant is busy", async () => {
+    const t = setup();
+    t.assistant.busy.add(A.id);
+    t.assistant.waiting = [{ companyId: A.id, id: "p1", proposal: batch(), shownAt: 1 }];
+    const out = await t.runner.run(
+      cmd({ command_type: "chat.message", class: "prepare", payload: { text: "hi" } }),
+      noop,
+    );
+    expect(out).toMatchObject({ ok: false, error: { code: "CARD_WAITING" } });
+    expect(t.assistant.sent).toHaveLength(0);
+  });
+
+  it("declining the card frees the assistant for the next message", async () => {
+    const t = setup();
+    t.assistant.busy.add(A.id);
+    t.assistant.waiting = [{ companyId: A.id, id: "p1", proposal: batch(), shownAt: 1 }];
+    // The turn that showed the card ends once the card is answered.
+    const decide = t.assistant.decide.bind(t.assistant);
+    t.assistant.decide = (companyId, id, approve) => {
+      decide(companyId, id, approve);
+      setTimeout(() => t.assistant.busy.delete(A.id), 50);
+    };
+    const out = await t.runner.run(
+      cmd({ command_type: "proposal.decline", class: "prepare", payload: { proposal_id: "p1" } }),
+      noop,
+    );
+    expect(out).toMatchObject({ ok: true, result: { declined: true } });
+    expect(t.assistant.decisions).toEqual([{ id: "p1", approve: false }]);
+    expect(t.assistant.isBusy(A.id)).toBe(false);
+    const next = await t.runner.run(
+      cmd({ command_type: "chat.message", class: "prepare", payload: { text: "again" } }),
+      noop,
+    );
+    expect(next).toMatchObject({ ok: true });
+  });
+
+  it("a card that is gone, or another company's, cannot be declined", async () => {
+    const t = setup();
+    t.assistant.waiting = [{ companyId: B.id, id: "p9", proposal: batch(), shownAt: 1 }];
+    expect(
+      await t.runner.run(
+        cmd({ command_type: "proposal.decline", class: "prepare", payload: { proposal_id: "p9" } }),
+        noop,
+      ),
+    ).toMatchObject({
+      error: { code: "PROPOSAL_GONE" },
+    });
+    expect(t.assistant.decisions).toEqual([]);
+  });
+
+  it("a phone that may only read cannot decline", async () => {
+    const t = setup();
+    t.state.setCeiling("read");
+    expect(
+      await t.runner.run(
+        cmd({ command_type: "proposal.decline", class: "prepare", payload: { proposal_id: "p1" } }),
+        noop,
+      ),
+    ).toMatchObject({
+      error: { code: "CEILING" },
+    });
+  });
+});
+
 describe("RemoteCommands: Apply", () => {
   const applyCmd = (id: string, hash: string, pin = "4321") =>
     cmd({ command_type: "proposal.apply", payload: { proposal_id: id, pin }, proposal_hash: hash });

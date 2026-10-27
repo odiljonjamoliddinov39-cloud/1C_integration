@@ -58,7 +58,13 @@ export function WaitingScreen() {
       {cards?.length === 0 && <p className="muted">{t("waiting.empty")}</p>}
       {!mayApply && cards && cards.length > 0 && <p className="muted">{t("waiting.needsApply")}</p>}
       {cards?.map((card) => (
-        <Card key={card.id} card={card} canApply={mayApply} onApply={() => setApplying(card)} />
+        <Card
+          key={card.id}
+          card={card}
+          canApply={mayApply}
+          onApply={() => setApplying(card)}
+          onDeclined={() => void load()}
+        />
       ))}
       {applying && (
         <ApplySheet
@@ -74,9 +80,43 @@ export function WaitingScreen() {
   );
 }
 
-function Card({ card, canApply, onApply }: { card: ProposalCard; canApply: boolean; onApply: () => void }) {
-  const { t } = useApp();
+function Card({
+  card,
+  canApply,
+  onApply,
+  onDeclined,
+}: {
+  card: ProposalCard;
+  canApply: boolean;
+  onApply: () => void;
+  onDeclined: () => void;
+}) {
+  const { t, lang, api, inn, device } = useApp();
   const [all, setAll] = useState(false);
+  const [declining, setDeclining] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // A card waiting on the PC keeps the assistant from taking new messages: it can be declined from here.
+  const mayDecline = device.ceiling !== "read" && (card.status === "waiting" || card.status === "refused");
+  async function decline() {
+    setDeclining(true);
+    setError(null);
+    try {
+      const view = await api.create({
+        type: "proposal.decline",
+        inn,
+        deviceId: device.device_id,
+        payload: { proposal_id: card.id },
+      });
+      const done = await follow(api, view.id, () => undefined);
+      if (done?.state === "done") onDeclined();
+      else setError(errorText(lang, done?.error?.code, done?.error?.message));
+    } catch (e) {
+      const err = e instanceof ApiError ? e : new ApiError("UNKNOWN", String(e));
+      setError(errorText(lang, err.code, err.message));
+    } finally {
+      setDeclining(false);
+    }
+  }
   const lines = all ? card.lines : card.lines.slice(0, SHOWN_LINES);
   return (
     <div className="card">
@@ -103,13 +143,19 @@ function Card({ card, canApply, onApply }: { card: ProposalCard; canApply: boole
           {all ? t("waiting.less") : t("waiting.more", { n: card.lines.length })}
         </button>
       )}
-      {card.status === "waiting" && canApply && (
-        <div style={{ marginTop: 10 }}>
+      {error && <div className="err">{error}</div>}
+      <div className="row" style={{ marginTop: 10, justifyContent: "flex-start" }}>
+        {card.status === "waiting" && canApply && (
           <button type="button" className="btn" onClick={onApply}>
             {t("waiting.apply")}
           </button>
-        </div>
-      )}
+        )}
+        {mayDecline && (
+          <button type="button" className="btn secondary" disabled={declining} onClick={() => void decline()}>
+            {t("waiting.decline")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

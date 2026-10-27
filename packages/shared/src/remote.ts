@@ -11,6 +11,7 @@ export const REMOTE_COMMAND_TYPES = [
   "chat.attach",
   "proposal.list",
   "proposal.apply",
+  "proposal.decline",
   "report.make",
   "status.get",
 ] as const;
@@ -43,6 +44,7 @@ export function classOf(type: RemoteCommandType, ceiling: RemoteCeiling): Remote
     case "report.make":
       return "read";
     case "chat.attach":
+    case "proposal.decline":
       return "prepare";
     case "proposal.apply":
       return "apply";
@@ -103,6 +105,8 @@ export const ProposalApplyPayload = z.object({
   /** The PIN set on the PC (Settings → Remote control); the PC refuses an Apply without it. */
   pin: z.string().min(4).max(32).optional(),
 });
+/** Declines a card waiting on the PC (nothing is written); the assistant is then free for the next message. */
+export const ProposalDeclinePayload = z.object({ proposal_id: z.string().min(1).max(100) });
 export const REPORT_KINDS = ["audit", "balance", "debts", "vat"] as const;
 export const ReportMakePayload = z.object({
   report: z.enum(REPORT_KINDS),
@@ -125,6 +129,7 @@ export const PAYLOADS = {
   "chat.attach": ChatAttachPayload,
   "proposal.list": EmptyPayload,
   "proposal.apply": ProposalApplyPayload,
+  "proposal.decline": ProposalDeclinePayload,
   "report.make": ReportMakePayload,
   "status.get": EmptyPayload,
 } as const satisfies Record<RemoteCommandType, z.ZodType>;
@@ -181,6 +186,7 @@ export const ProposalApplyResult = z.object({
   refused: z.number().int(),
   reasons: z.array(z.string()).max(50),
 });
+export const ProposalDeclineResult = z.object({ declined: z.literal(true) });
 export const ReportMakeResult = z.object({ summary: z.string() });
 export const StatusResult = z.object({
   online: z.literal(true),
@@ -194,6 +200,7 @@ export const RESULTS = {
   "chat.attach": ChatAttachResult,
   "proposal.list": ProposalListResult,
   "proposal.apply": ProposalApplyResult,
+  "proposal.decline": ProposalDeclineResult,
   "report.make": ReportMakeResult,
   "status.get": StatusResult,
 } as const satisfies Record<RemoteCommandType, z.ZodType>;

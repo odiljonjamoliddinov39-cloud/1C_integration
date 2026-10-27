@@ -298,6 +298,8 @@ export class RemoteCommands implements CommandRunner {
           command.proposal_hash ?? "",
           payload.pin === undefined ? undefined : String(payload.pin),
         );
+      case "proposal.decline":
+        return this.decline(company, String(payload.proposal_id));
       case "report.make":
         return this.report(command, company, payload, progress);
     }
@@ -336,7 +338,10 @@ export class RemoteCommands implements CommandRunner {
   ): Promise<RunOutcome & { summary?: string }> {
     const { assistant } = this.deps;
     if (assistant.isBusy(company.id))
-      return fail("BUSY", "The assistant is working on the PC: try again in a minute");
+      // A card nobody has answered keeps the assistant waiting: that is not "busy", the card has to be applied or declined.
+      return this.waiting(company).length > 0
+        ? fail("CARD_WAITING", "A proposal is waiting for an answer: apply or decline it first")
+        : fail("BUSY", "The assistant is working on the PC: try again in a minute");
     let reply = "";
     const notices: string[] = [];
     const cards: ProposalCard[] = [];
@@ -414,6 +419,19 @@ export class RemoteCommands implements CommandRunner {
     ]);
     if (!outcome.ok) return outcome;
     return ok({ summary: outcome.summary ?? "" });
+  }
+
+  // ---- Decline ----
+
+  /** The card is declined as if the user pressed "no" on the PC; the assistant's turn ends and it can take the next message. */
+  private async decline(company: RemoteCompanyInfo, proposalId: string): Promise<RunOutcome> {
+    const { assistant } = this.deps;
+    if (!this.waiting(company).some((p) => p.id === proposalId))
+      return fail("PROPOSAL_GONE", "The proposal is no longer waiting: it was applied, declined or closed");
+    assistant.decide(company.id, proposalId, false);
+    // The turn that showed the card still has to finish; the next message must not meet it as "busy".
+    for (let i = 0; i < 75 && assistant.isBusy(company.id); i++) await new Promise((r) => setTimeout(r, 200));
+    return ok({ declined: true });
   }
 
   // ---- Apply ----
@@ -614,6 +632,7 @@ const REFUSALS = new Set([
   "LICENSE_READ_ONLY",
   "COMPANY_READ_ONLY",
   "PROPOSAL_GONE",
+  "CARD_WAITING",
   "PROPOSAL_CHANGED",
   "NOT_FROM_PHONE",
   "PIN_NOT_SET",

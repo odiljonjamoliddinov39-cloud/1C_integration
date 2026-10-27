@@ -85,6 +85,7 @@ export class RemoteService {
           "chat.attach",
           "proposal.list",
           "proposal.apply",
+          "proposal.decline",
           "report.make",
           "status.get",
         ],
