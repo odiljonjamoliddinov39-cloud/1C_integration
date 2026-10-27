@@ -89,7 +89,8 @@ class FakeSocket implements Socket {
   }
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 40));
+// Delivery runs in the background after a request is made: a loaded CI runner needs more than a few milliseconds.
+const settle = () => new Promise((r) => setTimeout(r, 200));
 
 describe.skipIf(!available)("Telegram remote control", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
