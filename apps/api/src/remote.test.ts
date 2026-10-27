@@ -697,6 +697,39 @@ describe.skipIf(!available)("Telegram remote control", () => {
     expect((await db.db.select().from(remoteBlobs)).length).toBe(0);
   });
 
+  // ---- data minimization: the server does not keep what a finished request carried ----
+
+  it("a finished request no longer holds its content, and an answer is dropped after a week", async () => {
+    const t = await setup({ ceiling: "apply" });
+    // A request that is cancelled before delivery does not keep its content either.
+    const queued = json(await t.send("chat.message", { text: "another secret" }));
+    const cancelled = json(
+      await app.inject({ method: "POST", url: `/remote/commands/${queued.id}/cancel`, headers: t.tma() }),
+    );
+    expect(cancelled.state).toBe("cancelled");
+    const [gone] = await db.db.select().from(remoteCommands).where(eq(remoteCommands.id, queued.id));
+    expect(JSON.stringify(service.seal.openJson(gone!.payload))).toBe("{}");
+
+    await t.connect();
+    const sentCmd = json(await t.send("chat.message", { text: "secret question 5 000 000" }));
+    await settle();
+    t.socket.say({ type: "ack", id: sentCmd.id });
+    t.socket.say({ type: "result", id: sentCmd.id, ok: true, result: { reply: "ok", cards: [] }, blobs: [] });
+    await settle();
+    let [row] = await db.db.select().from(remoteCommands).where(eq(remoteCommands.id, sentCmd.id));
+    expect(row!.state).toBe("done");
+    // The message (it could hold a PIN) is gone from the row; the answer stays for the phone's history.
+    expect(JSON.stringify(service.seal.openJson(row!.payload))).toBe("{}");
+    expect(service.seal.openJson(row!.result)).toMatchObject({ reply: "ok" });
+    await db.db
+      .update(remoteCommands)
+      .set({ finishedAt: new Date(Date.now() - 8 * 86_400_000) })
+      .where(eq(remoteCommands.id, sentCmd.id));
+    expect(await service.scrubOld()).toBe(1);
+    [row] = await db.db.select().from(remoteCommands).where(eq(remoteCommands.id, sentCmd.id));
+    expect(row!.result).toBeNull();
+  });
+
   // ---- 11. idempotent create ----
 
   it("11. the same request id sent twice (a double tap) creates one command; another phone's request id is refused", async () => {

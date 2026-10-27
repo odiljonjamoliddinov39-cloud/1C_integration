@@ -6,6 +6,7 @@ name: Deploy server
 #   DEPLOY_SSH_KEY  a private SSH key whose public key is in the server's ~/.ssh/authorized_keys
 # Optional: DEPLOY_USER (default root), ANTHROPIC_API_KEY (the Claude API key for the AI assistant),
 # ADMIN_EMAIL and ADMIN_PASSWORD (the owner's sign-in for the admin dashboard at https://<site>/admin/).
+# TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME (the bot for remote control from a phone, docs/remote-control.md).
 # They are written to the server's .env on each deploy.
 on:
   workflow_dispatch:
@@ -15,6 +16,7 @@ on:
       [
         apps/api/**,
         apps/admin/**,
+        apps/miniapp/**,
         packages/shared/**,
         deploy/**,
         pnpm-lock.yaml,
@@ -74,6 +76,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_USERNAME: ${{ secrets.TELEGRAM_BOT_USERNAME }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
@@ -88,6 +92,9 @@ jobs:
           fi
           if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
             printf '%s\n%s\n' "$ADMIN_EMAIL" "$ADMIN_PASSWORD" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.admin-credentials"
+          fi
+          if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+            printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_USERNAME" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.telegram-credentials"
           fi
           # The registry token only lives for this job; it goes in on stdin, is used to pull, then logged out.
           printf '%s' "$GHCR_TOKEN" | ssh $ssh_opts "$target" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"

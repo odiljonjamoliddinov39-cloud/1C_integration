@@ -27,7 +27,7 @@ import {
   classOf,
   parsePayload,
 } from "@platform/shared";
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 
 import type { Billing } from "../billing/entitlements.js";
 import type { Config } from "../config.js";
@@ -48,6 +48,8 @@ export type LinkRow = typeof telegramLinks.$inferSelect;
 export type CommandRow = typeof remoteCommands.$inferSelect;
 
 const HOUR = 3_600_000;
+/** How long a finished command keeps its answer for the phone's history. */
+const RESULT_KEEP_DAYS = 7;
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /** What the service asks of the live connections to the PCs (hub.ts); a test hands in its own. */
@@ -519,7 +521,7 @@ export class RemoteService {
   async cancel(link: LinkRow, id: string): Promise<CommandView> {
     const [row] = await this.db
       .update(remoteCommands)
-      .set({ state: "cancelled", finishedAt: this.now() })
+      .set({ state: "cancelled", finishedAt: this.now(), payload: this.seal.sealJson({}) })
       .where(
         and(
           eq(remoteCommands.id, id),
@@ -554,7 +556,7 @@ export class RemoteService {
   private async cancelOpen(where: { deviceId?: string; linkId?: string }, reason: string): Promise<void> {
     const rows = await this.db
       .update(remoteCommands)
-      .set({ state: "cancelled", finishedAt: this.now() })
+      .set({ state: "cancelled", finishedAt: this.now(), payload: this.seal.sealJson({}) })
       .where(
         and(
           where.deviceId ? eq(remoteCommands.deviceId, where.deviceId) : undefined,
@@ -717,6 +719,8 @@ export class RemoteService {
       .set({
         state: ok ? "done" : "failed",
         finishedAt: finished,
+        // The request is over: its content (the message, a PIN) is not kept.
+        payload: this.seal.sealJson({}),
         result: ok ? this.seal.sealJson(result) : null,
         error: ok
           ? null
@@ -765,6 +769,7 @@ export class RemoteService {
         state: "failed",
         finishedAt: now,
         progress: null,
+        payload: this.seal.sealJson({}),
         error: this.seal.sealJson({
           code: "INTERRUPTED",
           message: "The link dropped while the PC was working: check what was made",
@@ -811,7 +816,7 @@ export class RemoteService {
   async expireDue(): Promise<number> {
     const rows = await this.db
       .update(remoteCommands)
-      .set({ state: "expired", finishedAt: this.now() })
+      .set({ state: "expired", finishedAt: this.now(), payload: this.seal.sealJson({}) })
       .where(and(eq(remoteCommands.state, "queued"), lt(remoteCommands.expiresAt, this.now())))
       .returning();
     for (const row of rows) {
@@ -827,6 +832,23 @@ export class RemoteService {
       });
       if (link) this.onEvent?.({ kind: "expired", command: row, link });
     }
+    await this.scrubOld();
+    return rows.length;
+  }
+
+  /** Answers and errors older than a week are dropped too: the phone's history is the last days, not an archive. */
+  async scrubOld(): Promise<number> {
+    const cutoff = new Date(this.now().getTime() - RESULT_KEEP_DAYS * 86_400_000);
+    const rows = await this.db
+      .update(remoteCommands)
+      .set({ result: null, error: null })
+      .where(
+        and(
+          lt(remoteCommands.finishedAt, cutoff),
+          or(isNotNull(remoteCommands.result), isNotNull(remoteCommands.error)),
+        ),
+      )
+      .returning({ id: remoteCommands.id });
     return rows.length;
   }
 

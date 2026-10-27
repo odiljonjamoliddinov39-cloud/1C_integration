@@ -49,6 +49,15 @@ services:
       # The admin dashboard's first owner (https://<site>/admin/); set from repository secrets.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Telegram remote control (docs/remote-control.md): off until the bot's token is in .env. The encryption key seals
+      # queued requests and files; keep it (server-setup.sh makes it once), a new one cannot read what the old one sealed.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      REMOTE_ENCRYPTION_KEY: ${REMOTE_ENCRYPTION_KEY:-}
+      MINIAPP_URL: https://${SITE_ADDRESS}/app/
+    volumes:
+      - remote_blobs:/var/lib/platform/remote-blobs
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,5 +107,6 @@ services:
 
 volumes:
   pgdata:
+  remote_blobs:
   caddy_data:
   caddy_config:

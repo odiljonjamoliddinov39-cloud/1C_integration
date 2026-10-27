@@ -71,6 +71,8 @@ export interface TelegramApi {
   /** The bytes of a file the user sent to the bot. */
   download(fileId: string): Promise<{ name: string; data: Uint8Array } | null>;
   setWebhook?(url: string, secret: string): Promise<void>;
+  /** The button beside the message box opens the Mini App. */
+  setMenuButton?(text: string, url: string): Promise<void>;
 }
 
 /** The Bot API over HTTPS. */
@@ -108,6 +110,13 @@ export function botApi(token: string, fetchImpl: typeof fetch = fetch): Telegram
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url, secret_token: secret, allowed_updates: ["message"] }),
+      });
+    },
+    async setMenuButton(text, url) {
+      await fetchImpl(`${base}/setChatMenuButton`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ menu_button: { type: "web_app", text, web_app: { url } } }),
       });
     },
   };

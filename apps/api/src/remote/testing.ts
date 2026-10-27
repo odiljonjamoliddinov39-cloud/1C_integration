@@ -44,7 +44,10 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-export async function startTestServer(name: string): Promise<TestServer> {
+export async function startTestServer(
+  name: string,
+  options: { miniappDir?: string } = {},
+): Promise<TestServer> {
   const admin = postgres(adminUrl(), { max: 1, onnotice: () => undefined });
   await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
   await admin.unsafe(`CREATE DATABASE ${name}`);
@@ -80,6 +83,7 @@ export async function startTestServer(name: string): Promise<TestServer> {
   let bot: Bot | undefined;
   const app = await buildApp(db.db, config, {
     telegram: api,
+    ...(options.miniappDir ? { miniappDir: options.miniappDir } : {}),
     onRemote: (parts) => {
       bot = parts.bot as Bot;
     },

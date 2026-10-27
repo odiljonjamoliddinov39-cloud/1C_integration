@@ -67,6 +67,23 @@ if [ -f .admin-credentials ]; then
   esac
 fi
 
+# Telegram remote control: the keys are made once and kept; the bot's token and name come from the TELEGRAM_BOT_TOKEN /
+# TELEGRAM_BOT_USERNAME repository secrets (docs/remote-control.md).
+umask 077
+for generated in REMOTE_ENCRYPTION_KEY TELEGRAM_WEBHOOK_SECRET; do
+  grep -q "^${generated}=" .env || echo "${generated}=$(openssl rand -base64 48 | tr -d '\n/+=' | cut -c1-48)" >> .env
+done
+if [ -f .telegram-credentials ]; then
+  telegram_token=$(sed -n 1p .telegram-credentials | tr -d '\r')
+  telegram_name=$(sed -n 2p .telegram-credentials | tr -d '\r')
+  rm -f .telegram-credentials
+  { grep -v -e '^TELEGRAM_BOT_TOKEN=' -e '^TELEGRAM_BOT_USERNAME=' .env || true
+    echo "TELEGRAM_BOT_TOKEN=${telegram_token}"
+    echo "TELEGRAM_BOT_USERNAME=${telegram_name}"; } > .env.new
+  mv .env.new .env
+  echo "Telegram bot updated."
+fi
+
 if [ -n "${API_IMAGE:-}" ]; then
   grep -q '^API_IMAGE=' .env && sed -i "s#^API_IMAGE=.*#API_IMAGE=${API_IMAGE}#" .env || echo "API_IMAGE=${API_IMAGE}" >> .env
 fi
