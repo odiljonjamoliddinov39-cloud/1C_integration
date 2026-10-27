@@ -195,6 +195,23 @@ export function compareWithBooks(statements: BankStatement[], docs: BankDoc[], o
   const extra: ExtraDoc[] = [];
   let unjudged = 0;
   const asked = new Set(wanted.map(({ l }) => keyOf(l.leg)));
+  // Rows of the statements the import does not enter on its own (the soum leg of a conversion whose currency statement is not
+  // attached, a row of a pass-through account): a document of 1C that stands for one of them is not extra.
+  const unmade = new Map<string, number>();
+  for (const s of statements) {
+    const account = digits(s.account);
+    if (!account) continue;
+    for (const p of s.payments) {
+      const key = keyOf({ account, direction: p.direction, day: day(p.date), cents: Math.round(p.amount) });
+      unmade.set(key, (unmade.get(key) ?? 0) + 1);
+    }
+  }
+  for (const { l } of wanted) {
+    if (l.mirror) continue;
+    const key = keyOf(l.leg);
+    unmade.set(key, (unmade.get(key) ?? 0) - 1);
+  }
+  const explained: BankDoc[] = [];
   for (const doc of docs) {
     if (used.has(doc)) continue;
     const account = digits(doc.account);
@@ -203,6 +220,12 @@ export function compareWithBooks(statements: BankStatement[], docs: BankDoc[], o
       continue;
     }
     const key = keyOf({ account, direction: doc.direction, day: doc.day, cents: doc.cents });
+    if ((unmade.get(key) ?? 0) > 0) {
+      unmade.set(key, (unmade.get(key) ?? 0) - 1);
+      explained.push(doc);
+      unjudged += 1;
+      continue;
+    }
     if (asked.has(key)) {
       extra.push({ doc, reason: "duplicate" });
       continue;
@@ -222,6 +245,7 @@ export function compareWithBooks(statements: BankStatement[], docs: BankDoc[], o
     return t;
   };
   for (const { l } of wanted) at(l.leg.account).statement[l.leg.direction] += l.leg.cents;
+  for (const doc of explained) at(digits(doc.account)).statement[doc.direction] += doc.cents;
   for (const doc of docs) {
     const account = digits(doc.account);
     if (expectedAccounts.has(account)) at(account).books[doc.direction] += doc.cents;

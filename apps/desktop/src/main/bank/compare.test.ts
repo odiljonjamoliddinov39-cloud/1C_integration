@@ -187,6 +187,42 @@ describe("compareWithBooks", () => {
     expect(result.accounts.every((a) => a.difference.in === 0 && a.difference.out === 0)).toBe(true);
   });
 
+  it("the soum leg of a conversion on the blocked account (its currency statement not attached) is not an extra document", () => {
+    const sale = pay(9, {
+      date: "2024-01-25",
+      number: "51392581",
+      direction: "out",
+      amount: 5_199_586_000,
+      counterparty: "840-Продажа иностр валюты",
+      inn: "207117389",
+      account: "17101000900001082944",
+      purpose: "Конвертация валютных средств 4165.0 'Доллар США' по курсу 12484.0",
+    });
+    // The money for the sale was blocked first: the blocked account takes in as much as it pays out, so it only passes money through.
+    const block3 = pay(12, { ...block1, row: 12, date: "2024-01-25", number: "7", amount: 5_199_586_000 });
+    const mate = pay(5, { ...block3, row: 5, direction: "in", account: MAIN });
+    const blockedWithSale = statement(BLOCK, [...blocked().payments, mate, sale], "blocked.xlsx");
+    const docs = [
+      ...moveDocs(block1),
+      ...moveDocs(back1),
+      ...moveDocs(back2),
+      ...moveDocs(block2),
+      ...moveDocs(block3),
+      doc(BLOCK, "out", "2024-01-25", 5_199_586_000, "51392581"),
+    ];
+    const result = compareWithBooks([statement(MAIN, [...rows, block3]), blockedWithSale], docs, OWN_INN);
+    expect(result.extra).toEqual([]);
+    expect(result.summary.unjudged).toBe(1);
+    expect(result.accounts.find((a) => a.account === BLOCK)?.difference).toEqual({ in: 0, out: 0 });
+    // Two documents of the same sum where the statement has one row: the second is still a duplicate.
+    const twice = compareWithBooks(
+      [statement(MAIN, [...rows, block3]), blockedWithSale],
+      [...docs, doc(BLOCK, "out", "2024-01-25", 5_199_586_000, "")],
+      OWN_INN,
+    );
+    expect(twice.extra).toHaveLength(1);
+  });
+
   it("a row entered twice is a duplicate, and only the second copy is extra", () => {
     const docs = [
       doc(MAIN, "out", "2024-01-18", 300_000_000, "5"),
