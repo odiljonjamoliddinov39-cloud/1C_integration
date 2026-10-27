@@ -45,6 +45,9 @@ Nothing outside this list is accepted. Posting, deletion and marking for deletio
 Cards that post, change existing documents or need the PC (Didox, removal of marked objects) are listed but cannot be
 applied from the phone.
 
+A card nobody has answered keeps the assistant waiting, so a new message meanwhile is refused with `CARD_WAITING`
+(apply or decline the card first; the Mini App has a Decline button). `BUSY` means the assistant is really working.
+
 A `chat.message` is a Prepare command when the link may prepare and a Read command when it may not; a Read message
 whose answer would be a proposal is declined on the PC (`PREPARE_NOT_ALLOWED`).
 

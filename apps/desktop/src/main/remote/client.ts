@@ -48,7 +48,7 @@ export interface RemoteStatus {
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
 
 /** Commands that only read the app's own state and may run beside a long one. */
-const LIGHT = new Set(["status.get", "proposal.list"]);
+const LIGHT = new Set(["status.get", "proposal.list", "proposal.decline"]);
 
 const toWs = (serverUrl: string) => `${serverUrl.replace(/\/+$/, "").replace(/^http/, "ws")}/remote/device`;
 
