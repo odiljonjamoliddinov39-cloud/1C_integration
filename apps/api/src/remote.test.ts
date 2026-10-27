@@ -759,6 +759,8 @@ describe.skipIf(!available)("Telegram remote control", () => {
     const cmd = json(await t.send("chat.message", { text: "maxfiy 311012912" }));
     await settle();
     t.socket.say({ type: "ack", id: cmd.id });
+    // The PC acknowledges long before it answers; sent in the same instant the two race on the server.
+    await settle();
     t.socket.say({ type: "result", id: cmd.id, ok: true, result: { reply: "maxfiy javob", cards: [] } });
     await settle();
     const rows = await db.db.select().from(remoteAudit).where(eq(remoteAudit.commandId, cmd.id));
