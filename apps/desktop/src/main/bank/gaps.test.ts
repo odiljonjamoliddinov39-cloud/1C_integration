@@ -27,6 +27,32 @@ describe("bank gaps", () => {
     });
   });
 
+  it("shows the rows that cannot be settled by their date, sum, name and words, so they can be found in the statement", () => {
+    const pay = (row: number, over: Record<string, unknown> = {}) => ({
+      row,
+      date: "2026-09-10T00:00:00",
+      direction: "in",
+      amount: 12_450_000_00,
+      counterparty: "ООО Ромашка",
+      purpose: "Наличность в   оборотной кассе",
+      ...over,
+    });
+    const gaps = gapsOf(
+      [resolved],
+      [],
+      [],
+      [[pay(9), pay(10, { direction: "out", amount: 5_00 }), pay(99)] as never],
+    );
+    expect(gaps.problems[0]?.examples).toEqual([
+      "2026-09-10 +12,450,000.00 ООО Ромашка — Наличность в оборотной кассе",
+      "2026-09-10 −5.00 ООО Ромашка — Наличность в оборотной кассе",
+    ]);
+    const text = gapsText("en", gaps);
+    expect(text).toContain("        · 2026-09-10 +12,450,000.00 ООО Ромашка — Наличность в оборотной кассе");
+    // no payments handed in: the list is as before
+    expect(gapsOf([resolved]).problems[0]).toEqual({ message: "No earlier payment to copy", rows: 3 });
+  });
+
   it("tells the moves between own accounts the program could not enter, with the reason", () => {
     const gaps = gapsOf(
       [],

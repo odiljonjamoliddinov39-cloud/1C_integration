@@ -20,6 +20,7 @@ import { ExistingPool, existingDocs } from "./existing.js";
 import { contractFromDescription } from "./contract.js";
 import { currencyFromText } from "./policy.js";
 import { THEIR_ACCOUNT_NAMES, ownAccountKey } from "./roles.js";
+import { documentCounts, pickMostUsed } from "./counterparty-activity.js";
 import { foreignContract } from "./swift.js";
 import type { OperationMemory, OperationProfile } from "./operations.js";
 import { type ScaffoldCache, newScaffoldCache, scaffoldTemplate, soumRef } from "./scaffold.js";
@@ -831,6 +832,7 @@ export async function resolvePayments(
 
   // A payment with no INN (acquiring, bank fees) is copied from a payment of the same kind: no counterparty is needed.
   const withCounterparty: { payment: BankPayment; counterparty: string | null }[] = [];
+  const twinCounts = new Map<string, Map<string, number> | null>();
   for (const p of payments) {
     const chosen = overrides.counterparties?.find((o) => o.row === p.row);
     if (chosen) {
@@ -859,8 +861,22 @@ export async function resolvePayments(
     const named =
       who.field === "Наименование" ? `the name "${who.value}" (no INN in the statement)` : `INN ${p.inn}`;
     const byName = matches.length > 1 && who.field === "ИНН" ? pickByName(matches, p.counterparty) : null;
+    // Twins the statement's name does not tell apart: the one the company's bank documents are written to (counterparty-activity.ts).
+    let byUse: ReturnType<typeof pickMostUsed> = null;
+    if (matches.length > 1 && !byName && who.field === "ИНН") {
+      const counts = (
+        twinCounts.has(p.inn) ? twinCounts : twinCounts.set(p.inn, await documentCounts(deps, p.inn))
+      ).get(p.inn);
+      byUse = counts ? pickMostUsed(matches, counts) : null;
+    }
     if (matches.length === 1 && only) withCounterparty.push({ payment: p, counterparty: only.ref });
-    else if (byName) {
+    else if (byUse) {
+      withCounterparty.push({ payment: p, counterparty: byUse.pick.ref });
+      addNote(
+        [p.row],
+        `${matches.length} counterparties have ${named}: «${byUse.pick.name}» was taken, the one the company's bank documents are written to (${byUse.own} against ${byUse.others}); the other is most likely a duplicate of it`,
+      );
+    } else if (byName) {
       withCounterparty.push({ payment: p, counterparty: byName.ref });
       addNote(
         [p.row],
