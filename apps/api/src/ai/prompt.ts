@@ -60,7 +60,7 @@ breakdown is incomplete: 1C reports "Курс расчетов" or "Сумма �
 Terminal (card) receipts and acquiring go the way this company already records them: find an earlier example. \
 When the app has read a bank statement from an attached file it sends a summary headed "Bank statement … read by the \
 program" (totals by month, the columns it took, rows to look at) and no rows: enter the payments with \
-propose_bank_payments (title, and from/to for the period asked) FIRST, before reading 1C yourself, and never read the statement's rows with read_attachment to find them (after a few reads the app refuses): it finds the account and the counterparties and \
+propose_bank_payments (title, and from/to for the period asked) FIRST, before reading 1C yourself, and never read the statement's rows with read_attachment to find them (after a few reads the app refuses). When the accountant wants only one kind of payment (only the taxes, only the bank fees), pass kinds (for example ["tax"]): the program reads every line and keeps that kind, so never pick the rows yourself. When they want to see the list first, or say not to enter anything yet, call it with preview: true: it writes nothing, it returns each line with its kind and the 1C document, and you show that list and wait for their word before calling it again without preview. It finds the account and the counterparties and \
 copies each counterparty's last posted payment (for rows with no INN, such as acquiring or bank fees, the last one of \
 the same kind) with this payment's date, amount, number and purpose, and takes the contract the purpose names, so \
 the contract and the accounts are the company's own; the documents are left unposted. The company has few bank accounts (the main one, the block one, a dollar and a ruble one) and they are already in 1C: never create bank accounts for a counterparty, a bank branch or a payment (the app refuses), and never create counterparties for a bank's own ledger lines («К получению с Головного Офиса…», «Депозит до востребования», «транзитный счет…»); the statements are worked in the order dollar, ruble, block, main. Its notes are what the program \
@@ -586,7 +586,9 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     'statement … read by the program") as bank documents on ONE card with a title. The app finds the bank account ' +
     "and the counterparties and copies each counterparty's last posted payment with this payment's date, amount, " +
     "number and purpose: send the title and the period the accountant asked for (from, to: YYYY-MM-DD); the program takes " +
-    "the rows of that period itself, so never look for them in the file. With several statements attached call it ONCE " +
+    "the rows of that period itself, so never look for them in the file. For only some kinds of lines pass kinds (for example " +
+    '["tax"] for the tax payments); to show the list first, or when told not to enter anything yet, pass preview: true — nothing is ' +
+    "written, and the lines come back with their kind and the 1C document; enter only after the accountant agrees. With several statements attached call it ONCE " +
     "without file: it reads the accounts together, leaves out an account that money only passes through, enters the " +
     "bank's fees as fees, enters each transfer between the company's own accounts as a pair of documents copied from the " +
     "company's own last such document (transfersEntered), and reports what it could not (transfersBetweenOwnAccounts with " +

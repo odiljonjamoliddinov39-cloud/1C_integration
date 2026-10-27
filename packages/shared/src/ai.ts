@@ -567,6 +567,24 @@ export type DidoxDraftInput = z.infer<typeof DidoxDraftInput>;
  * number and purpose). Only what it could not settle comes back, and the model answers with
  * references and sheet rows.
  */
+/** What a bank statement line can be (see apps/desktop/src/main/bank/classify.ts). */
+export const BANK_LINE_TYPES = [
+  "bank_fee",
+  "conversion",
+  "own_transfer",
+  "tax",
+  "customs",
+  "individual_card",
+  "swift",
+  "terminal_receipt",
+  "contract_payment",
+  "cash_deposit",
+  "cash_withdrawal",
+  "charter_capital",
+  "unknown",
+] as const;
+export type BankLineType = (typeof BANK_LINE_TYPES)[number];
+
 export const BankPaymentsInput = z.object({
   /** For the card's title, in the accountant's language, e.g. "Bank ko'chirmasi 01–15.09: 42 ta to'lov". */
   title: z.string().trim().min(1).max(200),
@@ -587,6 +605,16 @@ export const BankPaymentsInput = z.object({
     .optional(),
   /** Sheet rows to take (with `file`); absent: every payment of the period. */
   rows: z.array(z.number().int().min(1)).max(5000).optional(),
+  /**
+   * Only the lines of these kinds (["tax"] for "only the tax payments"); the program reads every line itself and keeps
+   * the ones it classified as such: never pick rows for a kind by hand. Absent: every kind.
+   */
+  kinds: z.array(z.enum(BANK_LINE_TYPES)).min(1).max(BANK_LINE_TYPES.length).optional(),
+  /**
+   * true: only LIST what would be entered (each line with its kind, the 1C document and the rule that read it) and write
+   * nothing to 1C. Use it whenever the accountant asks to see the list first, or says not to enter anything yet.
+   */
+  preview: z.boolean().optional(),
   /** The organization's own bank account (a reference), when the app could not find it by number. */
   ownAccount: Ref.optional(),
   counterparties: z
@@ -726,24 +754,6 @@ export const PostingRulesInput = z.object({
   currency: z.string().trim().min(1).max(10).optional(),
 });
 export type PostingRulesInput = z.infer<typeof PostingRulesInput>;
-
-/** What a bank statement line can be (see apps/desktop/src/main/bank/classify.ts). */
-export const BANK_LINE_TYPES = [
-  "bank_fee",
-  "conversion",
-  "own_transfer",
-  "tax",
-  "customs",
-  "individual_card",
-  "swift",
-  "terminal_receipt",
-  "contract_payment",
-  "cash_deposit",
-  "cash_withdrawal",
-  "charter_capital",
-  "unknown",
-] as const;
-export type BankLineType = (typeof BANK_LINE_TYPES)[number];
 
 /** The cases a bank document is written as (bank/operations.ts); the operation of each is worked out, not fixed. */
 export const BANK_CASES = [

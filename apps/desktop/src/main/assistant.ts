@@ -148,6 +148,7 @@ import {
 } from "./didox/document.js";
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
+import { previewOfBank, rowIsOfKind } from "./bank/preview.js";
 import { findDuplicates, readBankDocs } from "./bank/duplicates.js";
 import { documentLedgerAttribute, ledgerAccounts, setBankLedgerAccount } from "./bank/ledger-account.js";
 import { findPostingFixes, reledgerChange } from "./bank/postings.js";
@@ -3908,15 +3909,20 @@ export class AssistantService {
     const mappingConfirmed = new Set(stored.map((r) => r.prefix));
     const held: Unclassified[] = [];
     const classes = new Map<string, Map<number, Classified>>();
+    const kinds = input.kinds?.length ? new Set<string>(input.kinds) : null;
+    // With a kinds filter the moves between the company's own accounts and the conversions are left out unless asked for.
+    const transfersWanted = !kinds || kinds.has("own_transfer") || kinds.has("conversion");
     const tasks = chosen.flatMap((statement) => {
       const wanted = input.rows && named ? new Set(input.rows) : null;
       const planned = (plan.rows.get(statement.fileName) ?? []).filter(
         (row) => (!wanted || wanted.has(row)) && !done.has(doneKey(statement.fileName, row)),
       );
       const gated = gate(statement, planned, own, mapping);
-      held.push(...gated.held);
+      // Only the kinds asked for: the program has classified every line, and keeps those (rows are never picked by hand).
+      const isKind = (row: number) => rowIsOfKind(gated.classes, row, kinds);
+      held.push(...gated.held.filter((h) => !kinds || kinds.has(h.type)));
       classes.set(statement.fileName, gated.classes);
-      const rows = gated.allowed;
+      const rows = gated.allowed.filter(isKind);
       if (rows.length === 0) return [];
       const fees = plan.fees.get(statement.fileName) ?? new Set<number>();
       // The bank's fee has no counterparty: the row is cleared of the company's own name and INN.
@@ -3944,6 +3950,14 @@ export class AssistantService {
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
     const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
+
+    // A preview reads nothing from 1C and writes nothing: the lines, their kinds and the documents they would be.
+    if (input.preview) {
+      return {
+        ok: true,
+        data: previewOfBank(tasks, classes, held, transfersWanted ? plan.transfers.length : 0, kinds),
+      };
+    }
 
     // Payments in a currency need that currency's rates in 1C: loaded first, on a card of their own, when 1C lacks them.
     const ratesNote = pass === 0 ? await this.loadMissingRates(chat, tasks, input, emit, signal) : null;
@@ -3996,7 +4010,7 @@ export class AssistantService {
     };
     const moveOwn = () =>
       resolveTransfers(
-        plan.transfers,
+        transfersWanted ? plan.transfers : [],
         statements,
         { ownInn, cache, files: new Set(chosen.map((s) => s.fileName)), done, organization, posting },
         bankDeps,

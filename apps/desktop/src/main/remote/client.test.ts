@@ -85,7 +85,8 @@ function setup(
       return s;
     },
     backoffMs: [10],
-    settleMs: 5,
+    // Long enough that a slow runner has dropped the link before the answer counts as taken.
+    settleMs: 150,
   });
   return { state, sockets, ran, client };
 }
@@ -151,7 +152,7 @@ describe("RemoteClient", () => {
     expect(second.of("result").map((r) => r.id)).toEqual([ID(1)]);
     expect(ran).toEqual([ID(1)]);
     // The link stays up a while: the server has it, so it is not sent a third time.
-    await tick(30);
+    await tick(400);
     second.drop();
     await tick(30);
     const third = sockets[2] as FakeSocket;

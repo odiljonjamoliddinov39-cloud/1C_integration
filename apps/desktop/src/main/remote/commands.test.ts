@@ -502,6 +502,25 @@ describe("RemoteCommands: Prepare", () => {
   });
 });
 
+describe("RemoteCommands: a phone's own question", () => {
+  it("knows a phone's message is being answered while the card it makes appears, and not after", async () => {
+    const t = setup();
+    const during: boolean[] = [];
+    t.assistant.script = (_i, emit) =>
+      new Promise(() => {
+        during.push(t.runner.isAsking(A.id));
+        emit({ type: "confirm", id: "p1", proposal: batch() });
+      });
+    expect(t.runner.isAsking(A.id)).toBe(false);
+    await t.runner.run(
+      cmd({ command_type: "chat.message", class: "prepare", payload: { text: "enter it" } }),
+      noop,
+    );
+    expect(during).toEqual([true]);
+    expect(t.runner.isAsking(A.id)).toBe(false);
+  });
+});
+
 describe("RemoteCommands: a card waiting, and declining it", () => {
   it("a new message while a card waits is told to answer the card, not that the assistant is busy", async () => {
     const t = setup();
