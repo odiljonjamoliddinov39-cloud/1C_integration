@@ -4,6 +4,7 @@ import { createGunzip } from "node:zlib";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
+import websocket from "@fastify/websocket";
 import {
   AccountsQuery,
   ActivateDeviceInput,
@@ -60,6 +61,12 @@ import { ClickMerchant } from "./billing/click.js";
 import { PaymeMerchant } from "./billing/payme.js";
 import { registerBillingRoutes, registerSubscriptionRoutes } from "./billing/routes.js";
 import { BillingService } from "./billing/service.js";
+import { Blobs } from "./remote/blobs.js";
+import { DeviceHub } from "./remote/hub.js";
+import { registerRemoteRoutes } from "./remote/routes.js";
+import { Seal } from "./remote/seal.js";
+import { RemoteService } from "./remote/service.js";
+import { Bot, type TelegramApi, botApi } from "./remote/telegram.js";
 import { Service } from "./service.js";
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
@@ -73,6 +80,12 @@ export interface AppDeps {
   reasonDelayMs?: number;
   /** The built admin dashboard (apps/admin/dist), served at /admin/ when present. */
   adminUiDir?: string;
+  /** The built Mini App (apps/miniapp/dist), served at /app/ when present. */
+  miniappDir?: string;
+  /** Replaces the Bot API in tests. */
+  telegram?: TelegramApi;
+  /** Hands the remote channel's parts to a test. */
+  onRemote?: (parts: { service: RemoteService; hub: DeviceHub; blobs: Blobs; bot: Bot | null }) => void;
 }
 
 /** How often a running assistant step tells the app it is alive. */
@@ -472,6 +485,40 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       false,
     ),
   );
+
+  // Telegram remote control (docs/remote-control.md): the mailbox, the PCs' WebSockets, the bot and the Mini App's API.
+  const seal = new Seal(config.REMOTE_ENCRYPTION_KEY ?? config.JWT_SECRET);
+  const remote = new RemoteService(db, seal, entitlements, config);
+  const blobs = new Blobs(db, seal, config.REMOTE_BLOB_DIR);
+  const telegram = deps.telegram ?? (config.TELEGRAM_BOT_TOKEN ? botApi(config.TELEGRAM_BOT_TOKEN) : null);
+  const bot = telegram ? new Bot(remote, telegram, blobs, config) : null;
+  const hub = new DeviceHub(remote, bot);
+  await app.register(websocket, {
+    options: {
+      handleProtocols: (protocols: Set<string>) => (protocols.has("platform.v1") ? "platform.v1" : false),
+    },
+  });
+  await registerRemoteRoutes(app, { service: remote, hub, blobs, bot, config, account: auth });
+  deps.onRemote?.({ service: remote, hub, blobs, bot });
+  if (config.REMOTE_JOBS === "on") {
+    hub.start();
+    const sweep = setInterval(() => {
+      void remote.expireDue().catch((error) => app.log.error(error));
+      void blobs.purgeExpired().catch((error) => app.log.error(error));
+    }, 60_000);
+    sweep.unref();
+    app.addHook("onClose", async () => clearInterval(sweep));
+  }
+  app.addHook("onClose", async () => hub.stop());
+  if (deps.miniappDir && existsSync(deps.miniappDir)) {
+    await app.register(fastifyStatic, {
+      root: deps.miniappDir,
+      prefix: "/app/",
+      maxAge: "1h",
+      decorateReply: false,
+    });
+    app.get("/app", (_req, reply) => reply.redirect("/app/"));
+  }
 
   // The dashboard itself: static files, routed by the URL hash, so /admin/ is the only page.
   if (deps.adminUiDir && existsSync(deps.adminUiDir)) {

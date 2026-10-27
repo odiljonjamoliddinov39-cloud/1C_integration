@@ -29,7 +29,7 @@ const NEW_PLAN: PlanSaveInput = {
   importsPerMonth: null,
   auditsPerMonth: null,
   aiQuestionsPerMonth: 1500,
-  features: { excelExport: true, prioritySupport: true, support: "manager" },
+  features: { excelExport: true, prioritySupport: true, support: "manager", telegram: true },
   isPublic: false,
   sortOrder: 50,
 };
@@ -171,6 +171,17 @@ function PlanEditor({
             disabled={!owner}
             value={String(form.features.excelExport)}
             onChange={(e) => set("features", { ...form.features, excelExport: e.target.value === "true" })}
+          >
+            <option value="true">yes</option>
+            <option value="false">no</option>
+          </Select>,
+        )}
+        {field(
+          "Telegram remote control",
+          <Select
+            disabled={!owner}
+            value={String(form.features.telegram)}
+            onChange={(e) => set("features", { ...form.features, telegram: e.target.value === "true" })}
           >
             <option value="true">yes</option>
             <option value="false">no</option>

@@ -39,6 +39,7 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
       excelExport: p.features.excelExport ?? false,
       prioritySupport: p.features.prioritySupport ?? false,
       support: p.features.support ?? "docs",
+      telegram: p.features.telegram ?? false,
     },
     isPublic: p.isPublic,
     sortOrder: p.sortOrder,

@@ -23,6 +23,8 @@ import {
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
+import { RemoteService } from "./remote/service.js";
+import { RemoteState } from "./remote/state.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
 import { SessionService } from "./session.js";
 import { LocalStore, type SecretBox, StoreError } from "./store.js";
@@ -159,7 +161,30 @@ void app.whenReady().then(async () => {
     updater: await updater(),
     emit: (state) => broadcast(CHANNELS.updateChanged, state),
   });
+  const remote = new RemoteService({
+    state: new RemoteState(join(app.getPath("userData"), "remote.json"), secrets),
+    assistant,
+    deviceName: hostname(),
+    appVersion: app.getVersion(),
+    companies: () =>
+      store.listCompanies().map((c) => ({ id: c.id, inn: c.inn, name: c.name, lastSyncAt: c.lastSyncAt })),
+    authorized: async () => {
+      const { accessToken } = await session.authorized();
+      const signedIn = store.session;
+      if (!signedIn) throw new Error("Sign in again");
+      return { accessToken, serverUrl: signedIn.serverUrl };
+    },
+    onecReachable: async (companyId) => (await connector.check(store.connection(companyId))).status.ok,
+    licenseReadOnly: async () => (await session.view())?.license?.mode !== "active",
+    companyReadOnly: (inn) => billing.isReadOnly(inn),
+    licenseEnds: async () => (await session.view())?.license?.paidUntil ?? null,
+    journal: (companyId, operation) => store.addOperation(companyId, operation),
+    renderPdf,
+    onChange: (view) => broadcast(CHANNELS.remoteChanged, view),
+  });
+  if (store.session) remote.start();
   const handlers = createHandlers({
+    remote,
     store,
     session,
     billing,
@@ -208,12 +233,31 @@ void app.whenReady().then(async () => {
     },
   });
 
+  ipcMain.handle(CHANNELS.remoteState, () => handlers.remoteState());
+  ipcMain.handle(CHANNELS.remoteConnect, () => handlers.remoteConnect());
+  ipcMain.handle(CHANNELS.remoteLinks, () => handlers.remoteLinks());
+  ipcMain.handle(CHANNELS.remoteRevoke, (_e, id: unknown) => handlers.remoteRevoke(id));
+  ipcMain.handle(CHANNELS.remoteEnable, (_e, enabled: unknown) => handlers.remoteEnable(enabled));
+  ipcMain.handle(CHANNELS.remotePin, (_e, pin: unknown) => handlers.remotePin(pin));
+  ipcMain.handle(CHANNELS.remoteCeiling, (_e, ceiling: unknown) => handlers.remoteCeiling(ceiling));
+  ipcMain.handle(CHANNELS.remoteLog, () => handlers.remoteLog());
   ipcMain.handle(CHANNELS.appInfo, () => handlers.appInfo());
   ipcMain.handle(CHANNELS.session, () => handlers.session());
-  ipcMain.handle(CHANNELS.signIn, (_e, input: unknown) => handlers.signIn(input));
-  ipcMain.handle(CHANNELS.register, (_e, input: unknown) => handlers.register(input));
+  ipcMain.handle(CHANNELS.signIn, async (_e, input: unknown) => {
+    const result = await handlers.signIn(input);
+    if (result.ok) remote.start();
+    return result;
+  });
+  ipcMain.handle(CHANNELS.register, async (_e, input: unknown) => {
+    const result = await handlers.register(input);
+    if (result.ok) remote.start();
+    return result;
+  });
   ipcMain.handle(CHANNELS.refreshLicense, () => handlers.refreshLicense());
-  ipcMain.handle(CHANNELS.signOut, () => handlers.signOut());
+  ipcMain.handle(CHANNELS.signOut, async () => {
+    await remote.unpair();
+    return handlers.signOut();
+  });
   ipcMain.handle(CHANNELS.listCompanies, () => handlers.listCompanies());
   ipcMain.handle(CHANNELS.pickFolder, () => handlers.pickFolder());
   ipcMain.handle(CHANNELS.testConnection, (_e, input: unknown) => handlers.testConnection(input));

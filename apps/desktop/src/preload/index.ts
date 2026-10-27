@@ -1,7 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { CHANNELS } from "../shared/channels.js";
-import type { AssistantEvent, BillingView, PlatformBridge, UpdateState } from "../shared/ipc.js";
+import type {
+  AssistantEvent,
+  BillingView,
+  PlatformBridge,
+  RemoteStateView,
+  UpdateState,
+} from "../shared/ipc.js";
 
 const bridge: PlatformBridge = {
   app: { info: () => ipcRenderer.invoke(CHANNELS.appInfo) },
@@ -57,6 +63,21 @@ const bridge: PlatformBridge = {
       const handler = (_e: unknown, event: AssistantEvent) => listener(event);
       ipcRenderer.on(CHANNELS.assistantEvent, handler);
       return () => ipcRenderer.removeListener(CHANNELS.assistantEvent, handler);
+    },
+  },
+  remote: {
+    state: () => ipcRenderer.invoke(CHANNELS.remoteState),
+    connect: () => ipcRenderer.invoke(CHANNELS.remoteConnect),
+    links: () => ipcRenderer.invoke(CHANNELS.remoteLinks),
+    revoke: (linkId) => ipcRenderer.invoke(CHANNELS.remoteRevoke, linkId),
+    enable: (enabled) => ipcRenderer.invoke(CHANNELS.remoteEnable, enabled),
+    setPin: (pin) => ipcRenderer.invoke(CHANNELS.remotePin, pin),
+    setCeiling: (ceiling) => ipcRenderer.invoke(CHANNELS.remoteCeiling, ceiling),
+    log: () => ipcRenderer.invoke(CHANNELS.remoteLog),
+    onChange: (listener) => {
+      const handler = (_e: unknown, state: RemoteStateView) => listener(state);
+      ipcRenderer.on(CHANNELS.remoteChanged, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.remoteChanged, handler);
     },
   },
   update: {
