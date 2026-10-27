@@ -82,6 +82,10 @@ interface World {
   chart?: string[];
   /** The bank's name in 1C's classifier of banks, by its MFO. */
   bankName?: string;
+  /** Operations of a receipt besides «Прочее поступление». */
+  receiptOps?: string[];
+  /** What 1C says a contract is settled in, by the contract's ref (the presentation of the currency). */
+  contractCurrencies?: Record<string, string>;
 }
 
 const BANK_INN = "207117389";
@@ -136,6 +140,9 @@ function deps(world: World = {}): BankDeps {
       if (q.includes("Перечисление.ВидыОперацийПоступлениеДенежныхСредств"))
         return rows([
           [value("ВидыОперацийПоступлениеДенежныхСредств", "ПрочееПоступление", "Прочее поступление")],
+          ...(world.receiptOps ?? []).map((name) => [
+            value("ВидыОперацийПоступлениеДенежныхСредств", name.replace(/\s+/g, ""), name),
+          ]),
         ]);
       if (q.includes("ПланСчетов.Хозрасчетный"))
         return rows(
@@ -148,8 +155,11 @@ function deps(world: World = {}): BankDeps {
     async describe(objects) {
       return { ok: true, data: objects.map((o) => DESCRIBE[o]).filter(Boolean) };
     },
-    async getObject() {
-      return { ok: false, code: "X", message: "none" };
+    async getObject(_object: string, id: string) {
+      const settled = world.contractCurrencies?.[id];
+      return settled
+        ? { ok: true, data: { fields: { ВалютаВзаиморасчетов: ref("Справочник.Валюты", "v", settled) } } }
+        : { ok: false, code: "X", message: "none" };
     },
   };
 }
@@ -290,5 +300,20 @@ describe("a currency purchase, entered by the program with no earlier document t
     });
     expect(out.ready).toEqual([]);
     expect(out.problems[0]?.message).toContain("2 counterparties could be the conversion's bank");
+  });
+
+  it("takes the currency in as «Приобретение иностранной валюты» whenever 1C has that operation, whatever the company's habits", async () => {
+    const out = await run({ receiptOps: ["Приобретение иностранной валюты"] });
+    expect(out.problems).toEqual([]);
+    const [paying, taking] = out.ready;
+    expect(taking?.change.fields).toMatchObject({ ВидОперации: "Приобретениеиностраннойвалюты" });
+    // the soum leg is not a purchase of currency: it stays as it was
+    expect(paying?.change.fields).toMatchObject({ ВидОперации: "ПрочееСписание" });
+  });
+
+  it("never writes a leg whose contract is settled in another currency than the leg's", async () => {
+    const out = await run({ contractCurrencies: { [CONTRACT_USD]: "Российский рубль (RUB)" } });
+    expect(out.ready.map((r) => r.side)).toEqual(["out"]);
+    expect(out.problems[0]?.message).toContain("is settled in RUB");
   });
 });

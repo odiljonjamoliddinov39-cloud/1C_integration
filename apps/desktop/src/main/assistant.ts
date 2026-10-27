@@ -112,6 +112,7 @@ import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
 import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
+import { foreignStatements } from "./bank/owner.js";
 import { MIRROR, type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
   type PostOption,
@@ -3760,6 +3761,21 @@ export class AssistantService {
     const done = new Set(chat.bankDone ?? []);
     const doneKey = (file: string, row: number) => `${file}#${row}`;
     const ownInn = this.deps.store.company(chat.companyId).inn;
+    // Another company's statement is stopped before anything is read: the selected company decides nothing about it.
+    const foreign = foreignStatements(statements, ownInn).filter((m) =>
+      chosen.some((s) => s.fileName === m.file),
+    );
+    if (foreign.length > 0) {
+      return {
+        ok: false,
+        code: "STATEMENT_OF_ANOTHER_COMPANY",
+        message: `The selected company has INN ${ownInn}, but ${foreign
+          .map((m) => `${m.file} says INN ${m.statementInn} (${m.lines} lines to the company's own accounts)`)
+          .join(
+            "; ",
+          )}. Nothing was entered. Select the company that owns the statement, or attach the right statement.`,
+      };
+    }
     const ledgerOptions = { from: input.from, to: input.to, ownInn };
     // The accounts read together: what money only passes through, the bank's fees and the transfers between the
     // company's own accounts are the program's to sort out; the rest are payments.
