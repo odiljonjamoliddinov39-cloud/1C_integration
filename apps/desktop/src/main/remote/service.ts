@@ -52,6 +52,7 @@ const NOTIFY_EVERY_MS = 60_000;
 
 export class RemoteService {
   private readonly client: RemoteClient;
+  private readonly commands: RemoteCommands;
   private readonly http: typeof fetch;
   private readonly lastWaiting = new Map<string, number>();
   private stopObserving: (() => void) | null = null;
@@ -59,7 +60,7 @@ export class RemoteService {
 
   constructor(private readonly deps: RemoteServiceDeps) {
     this.http = deps.fetch ?? fetch;
-    const commands = new RemoteCommands({
+    const commands = (this.commands = new RemoteCommands({
       state: deps.state,
       assistant: deps.assistant,
       companies: deps.companies,
@@ -73,7 +74,7 @@ export class RemoteService {
       },
       journal: deps.journal,
       ...(deps.renderPdf ? { renderPdf: deps.renderPdf } : {}),
-    });
+    }));
     this.client = new RemoteClient({
       state: deps.state,
       runner: commands,
@@ -143,6 +144,8 @@ export class RemoteService {
     const inn = this.deps.companies().find((c) => c.id === event.companyId)?.inn;
     if (!inn) return;
     if (event.type === "confirm") {
+      // The phone that asked gets the card in the answer to its own message: no ping for that.
+      if (this.commands.isAsking(event.companyId)) return;
       const last = this.lastWaiting.get(event.companyId) ?? 0;
       if (Date.now() - last < NOTIFY_EVERY_MS) return;
       this.lastWaiting.set(event.companyId, Date.now());

@@ -27,6 +27,8 @@ import { EImzoClient } from "./didox/eimzo.js";
 import { FakeEImzo } from "./didox/fake-eimzo.js";
 import { FakeDidox } from "./didox/fake.js";
 import { LocalStore, type SecretBox } from "./store.js";
+import { RemoteCommands } from "./remote/commands.js";
+import { RemoteState } from "./remote/state.js";
 import { BASE, sampleInput, samplePages } from "./gtd/fixture.js";
 import { makePdf } from "./gtd/make-pdf.js";
 
@@ -1172,6 +1174,63 @@ describe("assistant", () => {
         expect.objectContaining({ source: "manual", supplierNumber: "45", posted: false }),
       ]);
       expect(base.documents[0]!.externalId).toMatch(/^chat-/);
+    });
+
+    it("a phone's message that makes a card leaves it waiting on the PC, listed, and declining it frees the assistant", async () => {
+      const create = { action: "create", object: "Документ.ПоступлениеТоваровУслуг", fields: { Номер: "9" } };
+      const { assistant, store, company, dir } = setup(proposeThenAnswer("propose_change", create));
+      store.setAiEnabled(company.id, true);
+      const runner = new RemoteCommands({
+        state: new RemoteState(join(dir, "remote.json"), secrets),
+        assistant,
+        companies: () =>
+          store.listCompanies().map((c) => ({ id: c.id, inn: c.inn, name: c.name, lastSyncAt: null })),
+        onecReachable: async () => true,
+        licenseReadOnly: async () => false,
+        companyReadOnly: () => false,
+        appVersion: "t",
+        files: {
+          download: async () => ({ data: new Uint8Array(), sha256: "" }),
+          upload: async () => ({ id: "", name: "", size: 0, sha256: "" }),
+        },
+        journal: () => undefined,
+      });
+      const ask = (
+        type: "chat.message" | "proposal.list" | "proposal.decline",
+        payload: unknown,
+        klass = "prepare",
+      ) =>
+        runner.run(
+          {
+            type: "command",
+            id: crypto.randomUUID(),
+            command_type: type,
+            class: type === "proposal.list" ? "read" : (klass as "prepare"),
+            company_inn: company.inn,
+            payload,
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            ceiling: "apply",
+            telegram_user: "@t",
+          },
+          () => undefined,
+        );
+      const first = await ask("chat.message", { text: "введи документ" });
+      expect(first).toMatchObject({ ok: true });
+      const cards = (first.result as { cards: { id: string }[] }).cards;
+      expect(cards).toHaveLength(1);
+      // The card is really waiting in the assistant, the phone can list it, and the assistant is held by it.
+      expect(assistant.pendingProposals().map((p) => p.id)).toEqual([cards[0]!.id]);
+      expect(assistant.isBusy(company.id)).toBe(true);
+      const listed = await ask("proposal.list", {});
+      expect((listed.result as { cards: { id: string }[] }).cards.map((c) => c.id)).toEqual([cards[0]!.id]);
+      expect(await ask("chat.message", { text: "ещё" })).toMatchObject({
+        ok: false,
+        error: { code: "CARD_WAITING" },
+      });
+      // Declining answers the card and the turn ends.
+      expect(await ask("proposal.decline", { proposal_id: cards[0]!.id })).toMatchObject({ ok: true });
+      expect(assistant.pendingProposals()).toEqual([]);
+      expect(assistant.isBusy(company.id)).toBe(false);
     });
 
     it("saves what it creates from attached files unposted, unless the question asks to post", async () => {
