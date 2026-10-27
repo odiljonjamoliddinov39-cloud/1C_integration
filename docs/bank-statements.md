@@ -576,4 +576,6 @@ the direction of a conversion cannot be read from the books of a company alike.
 The answer lists, per kind, how many rows and the first eight examples; the extra documents with the likeliest reason (**duplicate**: more documents than rows;
 **wrong place**: a document the statements want for the same day and amount is on another account or in the other direction, the
 expected one is named; **no row**: nothing in the statements stands behind it); and, per account, the turnover of 1C against the
-statements (a doubled amount shows here first). A document on an account none of the statements is about is not judged.
+statements (a doubled amount shows here first). A document on an account none of the statements is about is not judged. Nor is a document that
+stands for a row of the statements the import does not enter on its own (the soum leg of a conversion on the blocked account whose currency
+statement is not attached): it is counted as not judged, and its amount is added to the statement side of the turnover, so it does not show as a difference.
