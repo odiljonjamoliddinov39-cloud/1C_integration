@@ -126,6 +126,7 @@ import {
   readChoice,
   readPostCommand,
   asksForDuplicates,
+  readCompareCommand,
   readDuplicatesCommand,
   readPostingsFixCommand,
   readUndoCommand,
@@ -149,6 +150,7 @@ import {
 import { fetchDidoxDocuments } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { previewOfBank, rowIsOfKind } from "./bank/preview.js";
+import { compareText, compareWithBooks } from "./bank/compare.js";
 import { findDuplicates, readBankDocs } from "./bank/duplicates.js";
 import { documentLedgerAttribute, ledgerAccounts, setBankLedgerAccount } from "./bank/ledger-account.js";
 import { findPostingFixes, reledgerChange } from "./bank/postings.js";
@@ -824,6 +826,15 @@ export class AssistantService {
       return this.reply(
         chat,
         result.ok ? postingsText(result.data, lang) : failureText(result.message, lang),
+        emit,
+      );
+    }
+    // "ko'chirmani 1C bilan solishtir": every row of the statements against the documents of 1C, nothing written.
+    if (readCompareCommand(question) && (chat.bank ?? []).length > 0) {
+      const result = await this.compareBank(chat, signal);
+      return this.reply(
+        chat,
+        result.ok ? compareText(result.data, lang) : failureText(result.message, lang),
         emit,
       );
     }
@@ -4641,6 +4652,40 @@ export class AssistantService {
         reledgered: reledger.filter((_, i) => applied.has(fixes.retire.length + i)).length,
         reentered,
       },
+    };
+  }
+
+  /** The attached statements against the bank documents of 1C (bank/compare.ts); reads only. */
+  private async compareBank(
+    chat: StoredChat,
+    signal: AbortSignal,
+  ): Promise<Result<ReturnType<typeof compareWithBooks>>> {
+    const statements = chat.bank ?? [];
+    const dates = statements.flatMap((s) => s.payments.map((p) => p.date.slice(0, 10))).sort();
+    const from = dates[0];
+    const to = dates.at(-1);
+    if (!from || !to)
+      return { ok: false, code: "NO_BANK_STATEMENT", message: "The attached statements have no rows." };
+    const connection = this.deps.store.connection(chat.companyId);
+    const run = (name: "run_query" | "describe_objects" | "get_object", args: unknown) =>
+      this.deps.connector.tool(connection, name, args);
+    const deps = {
+      query: (query: RunQueryInput) => run("run_query", query),
+      describe: (objects: string[]) => run("describe_objects", { objects }),
+      getObject: (object: string, ref: string) => run("get_object", { object, ref }),
+    };
+    const cache: BankCache = {
+      lists: new Map(),
+      snapshots: new Map(),
+      memory: this.deps.store.operationMemory(chat.companyId),
+    };
+    const docs = await readBankDocs(deps, cache, from, to);
+    if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    if (!docs)
+      return { ok: false, code: "ONEC_READ", message: "1C could not be asked for its bank documents." };
+    return {
+      ok: true,
+      data: compareWithBooks(statements, docs, this.deps.store.company(chat.companyId).inn),
     };
   }
 

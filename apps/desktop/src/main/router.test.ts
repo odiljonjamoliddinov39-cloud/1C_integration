@@ -6,6 +6,7 @@ import {
   postOptions,
   readChoice,
   asksForDuplicates,
+  readCompareCommand,
   readDuplicatesCommand,
   readPostingsFixCommand,
   readPostCommand,
@@ -159,4 +160,24 @@ describe("a long request that also asks for the duplicates", () => {
     expect(asksForDuplicates("введи выписку за 2026 год")).toBe(false);
     expect(asksForDuplicates("банк выпискасини киритиб бер")).toBe(false);
   });
+});
+
+describe("the command to compare the statements with 1C", () => {
+  it.each([
+    "ko'chirmani 1C bilan solishtir",
+    "выписку сверь с 1С",
+    "сверка выписки с 1с",
+    "compare the statement with 1C",
+    "Кўчирмани 1С билан солиштириб бер",
+  ])("%s", (text) => expect(readCompareCommand(text)).toBe(true));
+
+  it.each([
+    "enter the statement into 1C",
+    "найди дубли в банковских документах",
+    "compare",
+    "ko'chirmani kirit",
+    "акт сверки с 1С по контрагенту 311620354",
+    "Akt Siverka tashab ber 311620354 (1C dan)",
+    "сверь выписку с 1С и после этого введи все платежи, проведи их, а также удали дубликаты и объясни каждый документ подробно, потому что бухгалтер просит полный отчёт по каждому счёту за весь год, с разбивкой по месяцам и контрагентам, включая налоги, комиссии, конвертации и переводы между счетами компании",
+  ])("%s is not one", (text) => expect(readCompareCommand(text)).toBe(false));
 });
