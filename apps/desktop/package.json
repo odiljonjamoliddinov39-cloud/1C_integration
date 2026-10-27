@@ -25,6 +25,7 @@
     "jose": "6.2.12",
     "mammoth": "1.13.0",
     "pdfjs-dist": "6.3.289",
+    "qrcode": "1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-i18next": "17.0.15",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "5.2.0",

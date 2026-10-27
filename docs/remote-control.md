@@ -107,7 +107,7 @@ commands only. A remote message uses the same AI question quota as one typed on 
    one sealed (queued requests and files, which live a day at most).
 2. On start the server registers the webhook (`https://<site>/telegram/webhook`) and the bot's menu button (opens
    `https://<site>/app/`). Without a token the whole remote channel answers `TELEGRAM_OFF`.
-3. In the desktop app: **Remote control → Set a PIN → Connect Telegram**, open the link on the phone.
+3. In the desktop app: **Remote control → Set a PIN → Connect Telegram**. The screen shows a QR code of the link (and the code and link as text): scan it with the phone's camera, Telegram opens and connects the PC.
 
 Environment (apps/api): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME`, `MINIAPP_URL`,
 `REMOTE_ENCRYPTION_KEY`, `REMOTE_BLOB_DIR` (a volume in `deploy/docker-compose.yml`), `REMOTE_JOBS` (`off` in tests:

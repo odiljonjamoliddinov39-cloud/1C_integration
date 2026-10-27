@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -10,6 +11,28 @@ import { Input, Label } from "@/components/ui/input";
 import { formatTime } from "@/lib/format";
 
 const CEILINGS = ["read", "prepare", "apply"] as const;
+
+/** The pairing link as a QR code: the phone's camera opens it in Telegram, which connects the bot at once. */
+function PairingQr({ link }: { link: string }) {
+  const { t } = useTranslation();
+  const [image, setImage] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    QRCode.toDataURL(link, { width: 220, margin: 2, errorCorrectionLevel: "M" })
+      .then((url) => current && setImage(url))
+      .catch(() => current && setImage(null));
+    return () => {
+      current = false;
+    };
+  }, [link]);
+  if (!image) return null;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <img src={image} alt={t("remote.qrAlt")} width={220} height={220} className="rounded-lg bg-white" />
+      <p className="max-w-56 text-center text-xs text-muted-foreground">{t("remote.scan")}</p>
+    </div>
+  );
+}
 
 /** Settings → Remote control: connect a phone, see and disconnect phones, the kill switch, the PIN, the log. */
 export function RemoteScreen() {
@@ -142,22 +165,25 @@ export function RemoteScreen() {
           </Button>
         </div>
         {pairing && (
-          <div className="space-y-3 rounded-xl bg-muted p-4">
-            <div>
-              <Label>{t("remote.code")}</Label>
-              <div className="font-mono text-2xl font-bold tracking-widest">{pairing.code}</div>
-            </div>
-            {pairing.link && (
+          <div className="flex flex-wrap items-start gap-6 rounded-xl bg-muted p-4">
+            {pairing.link && <PairingQr link={pairing.link} />}
+            <div className="min-w-0 flex-1 space-y-3">
               <div>
-                <Label>{t("remote.link")}</Label>
-                <div className="flex items-center gap-3">
-                  <code className="min-w-0 flex-1 break-all text-sm">{pairing.link}</code>
-                  <Button size="sm" variant="outline" onClick={() => void copy(pairing.link)}>
-                    {copied ? t("remote.copied") : t("remote.copy")}
-                  </Button>
-                </div>
+                <Label>{t("remote.code")}</Label>
+                <div className="font-mono text-2xl font-bold tracking-widest">{pairing.code}</div>
               </div>
-            )}
+              {pairing.link && (
+                <div>
+                  <Label>{t("remote.link")}</Label>
+                  <div className="flex items-center gap-3">
+                    <code className="min-w-0 flex-1 break-all text-sm">{pairing.link}</code>
+                    <Button size="sm" variant="outline" onClick={() => void copy(pairing.link)}>
+                      {copied ? t("remote.copied") : t("remote.copy")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Card>
