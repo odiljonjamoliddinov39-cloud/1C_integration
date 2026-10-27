@@ -141,6 +141,31 @@ function passKind(s: BankStatement, own: Set<string>): PassKind {
   return "other";
 }
 
+/** Days a bank may post the two sides of one move apart (a block is taken on one day and shown on the next). */
+const PAIR_DAYS = 3;
+
+/**
+ * The other side of a move between two own accounts on the other account's statement: the same amount, the other way, naming
+ * this account; the same day first, else the nearest day within a few. Left unpaired, one move would be read from both
+ * statements as two moves and entered twice.
+ */
+function otherLeg(
+  other: BankStatement,
+  p: BankPayment,
+  account: string,
+  used: Set<string>,
+): BankPayment | undefined {
+  const days = (q: BankPayment) => Math.abs(Date.parse(q.date) - Date.parse(p.date)) / 86_400_000;
+  let best: BankPayment | undefined;
+  for (const q of other.payments) {
+    if (used.has(legKey(other.fileName, q.row))) continue;
+    if (q.amount !== p.amount || q.direction === p.direction || q.account !== account) continue;
+    if (days(q) > PAIR_DAYS) continue;
+    if (!best || days(q) < days(best)) best = q;
+  }
+  return best;
+}
+
 const inRange = (p: BankPayment, o: LedgerOptions) =>
   (!o.from || p.date >= o.from) && (!o.to || p.date <= o.to);
 
@@ -303,14 +328,7 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
       used.add(key(s.fileName, p.row));
       // The other leg: the same day and amount, the other way, on the statement of the other account.
       const other = toOwn ? byAccount.get(p.account) : undefined;
-      const leg = other?.payments.find(
-        (q) =>
-          !used.has(key(other.fileName, q.row)) &&
-          q.date === p.date &&
-          q.amount === p.amount &&
-          q.direction !== p.direction &&
-          q.account === s.account,
-      );
+      const leg = other ? otherLeg(other, p, s.account, used) : undefined;
       if (other && leg) used.add(key(other.fileName, leg.row));
       const here = { file: s.fileName, row: p.row };
       const there = other && leg ? { file: other.fileName, row: leg.row } : null;

@@ -220,6 +220,23 @@ describe("the accounts of one company read together", () => {
     ]);
   });
 
+  it("pairs a move whose two sides the bank posted on different days, so it is one move and not two", () => {
+    const main = [["08.01.2024", "1", "OWN LLC", COMPANY, SPECIAL, "400000", "", "Блокировка средств"]];
+    const special = [["09.01.2024", "1", "OWN LLC", COMPANY, MAIN, "", "400000", "Блокировка средств"]];
+    const p = planLedger([read(MAIN, main), read(SPECIAL, special)], { ownInn: COMPANY });
+    expect(p.transfers).toHaveLength(1);
+    expect(p.transfers[0]).toMatchObject({ amount: 40_000_000 });
+    expect(p.transfers[0]?.out).not.toBeNull();
+    expect(p.transfers[0]?.in).not.toBeNull();
+  });
+
+  it("does not pair sides that are far apart in time", () => {
+    const main = [["08.01.2024", "1", "OWN LLC", COMPANY, SPECIAL, "400000", "", "Блокировка средств"]];
+    const special = [["20.01.2024", "1", "OWN LLC", COMPANY, MAIN, "", "400000", "Блокировка средств"]];
+    const p = planLedger([read(MAIN, main), read(SPECIAL, special)], { ownInn: COMPANY });
+    expect(p.transfers.every((t) => !t.out || !t.in)).toBe(true);
+  });
+
   it("takes only the period asked for, from every statement", () => {
     const inJanuary = plan("2024-01-01", "2024-01-31");
     const main = statements()[0]!;
