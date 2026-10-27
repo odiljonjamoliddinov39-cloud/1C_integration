@@ -544,3 +544,13 @@ Account families are by the group of the code (`familyOf`): 50 cash, 51/52/55 ba
 
 Not changed: the conversion transit accounts (5730 purchase, 5740 sale) are still the program's prior, checked against the chart;
 the direction of a conversion cannot be read from the books of a company alike.
+
+## Twin counterparties, unsettled rows named, duplicates in the same request
+
+- **One INN, two counterparties** (`bank/counterparty-activity.ts`). When the statement's name does not tell the twins apart, the one
+  the company's bank documents are written to is taken (at least three documents and at least three times the others' together),
+  and the note names the other as a likely duplicate. Two twins both in use, or none with a history, are still the accountant's choice.
+- **Rows the program cannot settle are shown** with their date, sum, name and the words of the purpose (three examples per reason),
+  so a row can be found in the statement and decided on.
+- **"…and delete what is in 1C twice" in the same request** as the statement (`asksForDuplicates`): the statement is entered first, then
+  the duplicates are looked for against the statements and offered on one card.

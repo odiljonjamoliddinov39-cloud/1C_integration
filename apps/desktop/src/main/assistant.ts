@@ -125,6 +125,7 @@ import {
   postOptions,
   readChoice,
   readPostCommand,
+  asksForDuplicates,
   readDuplicatesCommand,
   readPostingsFixCommand,
   readUndoCommand,
@@ -667,6 +668,28 @@ export class AssistantService {
           emit,
           signal,
         );
+        // "...and delete what is in 1C twice": the same request, so the duplicates are looked for after the entry.
+        if (result.ok && asksForDuplicates(question) && (chat.bank ?? []).length > 0) {
+          const dup = await this.proposeBankDuplicates(
+            chat,
+            {
+              title:
+                lang === "ru"
+                  ? "Банковские документы, введённые дважды"
+                  : lang === "en"
+                    ? "Bank documents entered twice"
+                    : "Ikki marta kiritilgan bank hujjatlari",
+            },
+            emit,
+            signal,
+          );
+          return done(result, (data) =>
+            [
+              batchText(data, lang),
+              dup.ok ? duplicatesText(dup.data, lang) : failureText(dup.message, lang),
+            ].join("\n\n"),
+          );
+        }
         return done(result, (data) => batchText(data, lang));
       }
       case "didox_in":
@@ -4123,6 +4146,7 @@ export class AssistantService {
             results.map((r) => r.resolved),
             held,
             moved.problems,
+            results.map((r) => r.task.prepared.payments),
           ),
         );
         if (told) {

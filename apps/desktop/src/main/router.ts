@@ -113,6 +113,18 @@ const DUPLICATE_WORD =
 const DUPLICATE_VERB =
   /(ўчир|учир|o'chir|ochir|удал|убер|delete|remove|топ\b|топиб|topib|найд|find|текшир|tekshir|провер|check|тозала|tozala|олиб\s*таш|olib\s*tash)/u;
 
+/**
+ * A long request that asks for the duplicates as one of its parts ("enter the statements … and delete what is in 1C twice"):
+ * no limit on the length, the words alone. The statement is entered first and the duplicates are looked for after it.
+ */
+export function asksForDuplicates(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[‘’`ʻʼ]/g, "'");
+  return DUPLICATE_WORD.test(t) && DUPLICATE_VERB.test(t);
+}
+
 export function readDuplicatesCommand(text: string): boolean {
   const t = text
     .toLowerCase()
