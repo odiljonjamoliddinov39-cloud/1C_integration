@@ -40,7 +40,15 @@ export function WaitingScreen() {
     const controller = new AbortController();
     abort.current = controller;
     void load();
-    return () => controller.abort();
+    // Coming back to the app (from the notification, from another app) shows what is waiting now.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const mayApply = device.ceiling === "apply";

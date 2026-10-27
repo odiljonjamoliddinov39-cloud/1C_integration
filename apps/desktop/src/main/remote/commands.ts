@@ -194,7 +194,15 @@ export function cardOf(
 const today = () => new Date().toISOString().slice(0, 10);
 
 export class RemoteCommands implements CommandRunner {
+  /** Companies whose assistant is answering a phone's message right now (the phone gets the card in the answer). */
+  private readonly asking = new Map<string, number>();
+
   constructor(private readonly deps: CommandDeps) {}
+
+  /** True while a phone's own message is being answered for the company: a card made then needs no notification. */
+  isAsking(companyId: string): boolean {
+    return (this.asking.get(companyId) ?? 0) > 0;
+  }
 
   private now(): number {
     return (this.deps.now ?? Date.now)();
@@ -371,13 +379,18 @@ export class RemoteCommands implements CommandRunner {
           break;
       }
     });
+    this.asking.set(company.id, (this.asking.get(company.id) ?? 0) + 1);
     const sent = assistant.send({ companyId: company.id, text, ...(files.length ? { files } : {}) });
     // The question goes on after a card is shown (it waits for the answer): the phone gets the card now.
     void sent.then(
       () => off(),
       () => off(),
     );
-    const first = await Promise.race([sent.then((r) => ({ done: r })), carded.then(() => null)]);
+    const first = await Promise.race([sent.then((r) => ({ done: r })), carded.then(() => null)]).finally(
+      () => {
+        this.asking.set(company.id, Math.max(0, (this.asking.get(company.id) ?? 1) - 1));
+      },
+    );
     const words = [reply.trim(), ...notices].filter(Boolean).join("\n\n");
     if (first === null) {
       if (readOnly && cardId) {
