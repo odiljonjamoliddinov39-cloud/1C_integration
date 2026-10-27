@@ -100,11 +100,15 @@ export const EmptyPayload = z.object({}).strict();
 export const ProposalApplyPayload = z.object({
   /** The card the user confirmed, as proposal.list gave it. */
   proposal_id: z.string().min(1).max(100),
+  /** The PIN set on the PC (Settings → Remote control); the PC refuses an Apply without it. */
+  pin: z.string().min(4).max(32).optional(),
 });
 export const REPORT_KINDS = ["audit", "balance", "debts", "vat"] as const;
 export const ReportMakePayload = z.object({
   report: z.enum(REPORT_KINDS),
   format: z.enum(["xlsx", "pdf"]),
+  /** The language of the report's words (the phone's); Russian when absent. */
+  lang: z.enum(["uz", "ru", "en"]).optional(),
   /** YYYY-MM-DD; a report of a period. */
   from: z
     .string()

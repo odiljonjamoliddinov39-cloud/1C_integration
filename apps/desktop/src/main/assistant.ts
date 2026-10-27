@@ -361,7 +361,12 @@ export class AssistantService {
   private readonly policies = new PolicyMemory();
   private readonly running = new Map<string, AbortController>();
   /** Per company: the card waiting for the user's answer. */
-  private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
+  private readonly waiting = new Map<
+    string,
+    { id: string; proposal: Proposal; shownAt: number; answer: (approve: boolean) => void }
+  >();
+  /** Who also wants every event (the remote control); the window gets them through deps.emit. */
+  private readonly observers = new Set<(event: AssistantEvent) => void>();
   /**
    * Per chat: changes already sent back once for 1C's filling-check warnings. The same change sent
    * again unchanged could not be fixed, and is shown with its warnings.
@@ -401,7 +406,7 @@ export class AssistantService {
     skipFree,
     rejectTemplate,
   }: AssistantInput): Promise<Result<null>> {
-    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+    const notify: Emit = (event) => this.publish({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
@@ -1238,7 +1243,7 @@ export class AssistantService {
    * the model writes the report, and the accountant can ask about it or have problems fixed.
    */
   async audit({ companyId, chatId, from, to, language }: AuditInput): Promise<Result<null>> {
-    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+    const notify: Emit = (event) => this.publish({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
@@ -1497,6 +1502,38 @@ export class AssistantService {
 
   stop(companyId: string): void {
     this.running.get(companyId)?.abort();
+  }
+
+  private publish(event: AssistantEvent): void {
+    this.deps.emit(event);
+    for (const observer of this.observers) {
+      try {
+        observer(event);
+      } catch {
+        // An observer's failure never reaches the assistant's work.
+      }
+    }
+  }
+
+  /** Every event the assistant emits, as the window gets it; returns the way to stop listening. */
+  observe(listener: (event: AssistantEvent) => void): () => void {
+    this.observers.add(listener);
+    return () => this.observers.delete(listener);
+  }
+
+  /** True while the company's question or audit is running. */
+  isBusy(companyId: string): boolean {
+    return this.running.has(companyId);
+  }
+
+  /** The cards waiting for an answer, by company: what the phone's "Waiting for me" lists. */
+  pendingProposals(): { companyId: string; id: string; proposal: Proposal; shownAt: number }[] {
+    return [...this.waiting].map(([companyId, { id, proposal, shownAt }]) => ({
+      companyId,
+      id,
+      proposal,
+      shownAt,
+    }));
   }
 
   /** The user's answer to the card on screen; an answer to an older card is ignored. */
@@ -1880,7 +1917,7 @@ export class AssistantService {
         resolve(approve);
       };
       const onAbort = () => answer(false);
-      this.waiting.set(companyId, { id, answer });
+      this.waiting.set(companyId, { id, proposal, shownAt, answer });
       if (signal.aborted) answer(false);
       else signal.addEventListener("abort", onAbort);
     });

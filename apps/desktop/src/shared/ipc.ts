@@ -454,6 +454,38 @@ export type UpdateState =
 
 export type Result<T> = { ok: true; data: T } | { ok: false; code: string; message: string };
 
+/** Telegram remote control as the settings screen shows it. */
+export interface RemoteStateView {
+  /** This PC has been registered with the server. */
+  paired: boolean;
+  /** The channel to the server is open right now. */
+  connected: boolean;
+  /** The kill switch: off, nothing from the phone runs. */
+  enabled: boolean;
+  /** The most a phone may do on this PC: read, prepare proposals, or apply them (with the PIN). */
+  ceiling: "read" | "prepare" | "apply";
+  hasPin: boolean;
+}
+
+export interface RemoteLinkView {
+  id: string;
+  username: string | null;
+  ceiling: "read" | "prepare" | "apply";
+  created_at: string;
+}
+
+/** One command that came from a phone: who asked, what, how it ended. No content. */
+export interface RemoteLogRow {
+  at: string;
+  id: string;
+  type: string;
+  class: "read" | "prepare" | "apply";
+  companyInn: string;
+  telegramUser: string;
+  status: "done" | "failed" | "refused" | "expired";
+  code?: string;
+}
+
 export interface PlatformBridge {
   app: { info(): Promise<AppInfo> };
   auth: {
@@ -524,6 +556,20 @@ export interface PlatformBridge {
     run(input: ReportRunInput): Promise<Result<ReportView>>;
     /** Saves a table as a CSV file that Excel opens; false when the user cancelled. */
     exportCsv(defaultName: string, content: string): Promise<Result<{ saved: boolean }>>;
+  };
+  remote: {
+    state(): Promise<RemoteStateView>;
+    /** A one-time code (10 minutes) and the link that connects a phone. */
+    connect(): Promise<Result<{ code: string; link: string; expires_at: string }>>;
+    links(): Promise<Result<RemoteLinkView[]>>;
+    revoke(linkId: string): Promise<Result<null>>;
+    /** The kill switch. */
+    enable(enabled: boolean): Promise<Result<RemoteStateView>>;
+    /** Sets the PIN a phone must send to apply a proposal; null removes it. */
+    setPin(pin: string | null): Promise<Result<RemoteStateView>>;
+    setCeiling(ceiling: "read" | "prepare" | "apply"): Promise<Result<RemoteStateView>>;
+    log(): Promise<RemoteLogRow[]>;
+    onChange(listener: (state: RemoteStateView) => void): () => void;
   };
   update: {
     state(): Promise<UpdateState>;
