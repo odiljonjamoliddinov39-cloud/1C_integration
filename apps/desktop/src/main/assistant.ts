@@ -105,9 +105,12 @@ import {
   type BankResolved,
   BANK_FEE_NAME,
   CURRENCY_CODES,
+  OBJECT,
   rateOn,
   resolvePayments,
 } from "./bank/resolve.js";
+import { describeVerdicts, toMemory, verifyPosted, type WrittenDoc } from "./bank/verify.js";
+import { BANK_OPERATION_CASES, describeOperations } from "./bank/operations-report.js";
 import { type PayeeMatch, matchPayees } from "./bank/foreign-payees.js";
 import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
@@ -122,6 +125,7 @@ import {
   postOptions,
   readChoice,
   readPostCommand,
+  asksForDuplicates,
   readDuplicatesCommand,
   readPostingsFixCommand,
   readUndoCommand,
@@ -359,7 +363,12 @@ export class AssistantService {
   private readonly policies = new PolicyMemory();
   private readonly running = new Map<string, AbortController>();
   /** Per company: the card waiting for the user's answer. */
-  private readonly waiting = new Map<string, { id: string; answer: (approve: boolean) => void }>();
+  private readonly waiting = new Map<
+    string,
+    { id: string; proposal: Proposal; shownAt: number; answer: (approve: boolean) => void }
+  >();
+  /** Who also wants every event (the remote control); the window gets them through deps.emit. */
+  private readonly observers = new Set<(event: AssistantEvent) => void>();
   /**
    * Per chat: changes already sent back once for 1C's filling-check warnings. The same change sent
    * again unchanged could not be fixed, and is shown with its warnings.
@@ -399,7 +408,7 @@ export class AssistantService {
     skipFree,
     rejectTemplate,
   }: AssistantInput): Promise<Result<null>> {
-    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+    const notify: Emit = (event) => this.publish({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
@@ -660,6 +669,28 @@ export class AssistantService {
           emit,
           signal,
         );
+        // "...and delete what is in 1C twice": the same request, so the duplicates are looked for after the entry.
+        if (result.ok && asksForDuplicates(question) && (chat.bank ?? []).length > 0) {
+          const dup = await this.proposeBankDuplicates(
+            chat,
+            {
+              title:
+                lang === "ru"
+                  ? "Банковские документы, введённые дважды"
+                  : lang === "en"
+                    ? "Bank documents entered twice"
+                    : "Ikki marta kiritilgan bank hujjatlari",
+            },
+            emit,
+            signal,
+          );
+          return done(result, (data) =>
+            [
+              batchText(data, lang),
+              dup.ok ? duplicatesText(dup.data, lang) : failureText(dup.message, lang),
+            ].join("\n\n"),
+          );
+        }
         return done(result, (data) => batchText(data, lang));
       }
       case "didox_in":
@@ -943,7 +974,31 @@ export class AssistantService {
     };
     if (data.status !== "done") return result.ok ? JSON.stringify(data.status ?? "") : "";
     const posted = (data.applied ?? []).filter((a) => a.object?.posted).length;
-    return say(lang).done(posted, (data.failed?.length ?? 0) + ((data.applied?.length ?? 0) - posted));
+    const text = say(lang).done(posted, (data.failed?.length ?? 0) + ((data.applied?.length ?? 0) - posted));
+    const check = (
+      data as {
+        entriesCheck?: {
+          total: number;
+          wrong: number;
+          wrongOperations: { operation: string; case: string; count: number; problem: string }[];
+        };
+      }
+    ).entriesCheck;
+    if (!check) return text;
+    return [
+      text,
+      say(lang).entriesRight(check.total - check.wrong, check.total),
+      ...check.wrongOperations.map((w) =>
+        say(lang).entriesWrong(
+          w.operation,
+          w.case,
+          w.count,
+          w.problem === "it posted no entry"
+            ? say(lang).entryNone
+            : w.problem.replace(/^it posted/, say(lang).entryPosted),
+        ),
+      ),
+    ].join("\n");
   }
 
   /** An answer of the program's own, kept in the chat like the model's. */
@@ -1212,7 +1267,7 @@ export class AssistantService {
    * the model writes the report, and the accountant can ask about it or have problems fixed.
    */
   async audit({ companyId, chatId, from, to, language }: AuditInput): Promise<Result<null>> {
-    const notify: Emit = (event) => this.deps.emit({ companyId, ...event } as AssistantEvent);
+    const notify: Emit = (event) => this.publish({ companyId, ...event } as AssistantEvent);
     const company = this.deps.store.company(companyId);
     if (!company.aiEnabled)
       return this.fail(notify, "AI_DISABLED", "Turn the assistant on for this company first");
@@ -1471,6 +1526,38 @@ export class AssistantService {
 
   stop(companyId: string): void {
     this.running.get(companyId)?.abort();
+  }
+
+  private publish(event: AssistantEvent): void {
+    this.deps.emit(event);
+    for (const observer of this.observers) {
+      try {
+        observer(event);
+      } catch {
+        // An observer's failure never reaches the assistant's work.
+      }
+    }
+  }
+
+  /** Every event the assistant emits, as the window gets it; returns the way to stop listening. */
+  observe(listener: (event: AssistantEvent) => void): () => void {
+    this.observers.add(listener);
+    return () => this.observers.delete(listener);
+  }
+
+  /** True while the company's question or audit is running. */
+  isBusy(companyId: string): boolean {
+    return this.running.has(companyId);
+  }
+
+  /** The cards waiting for an answer, by company: what the phone's "Waiting for me" lists. */
+  pendingProposals(): { companyId: string; id: string; proposal: Proposal; shownAt: number }[] {
+    return [...this.waiting].map(([companyId, { id, proposal, shownAt }]) => ({
+      companyId,
+      id,
+      proposal,
+      shownAt,
+    }));
   }
 
   /** The user's answer to the card on screen; an answer to an older card is ignored. */
@@ -1854,7 +1941,7 @@ export class AssistantService {
         resolve(approve);
       };
       const onAbort = () => answer(false);
-      this.waiting.set(companyId, { id, answer });
+      this.waiting.set(companyId, { id, proposal, shownAt, answer });
       if (signal.aborted) answer(false);
       else signal.addEventListener("abort", onAbort);
     });
@@ -2090,7 +2177,11 @@ export class AssistantService {
       describe: (objects: string[]) => run("describe_objects", { objects }),
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
-    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const cache: BankCache = {
+      lists: new Map(),
+      snapshots: new Map(),
+      memory: this.deps.store.operationMemory(chat.companyId),
+    };
     const findings: Revaluation[] = [];
     const noRate = new Set<string>();
     for (const date of dates) {
@@ -2247,6 +2338,35 @@ export class AssistantService {
       return { table: rows, allConfirmed: rows.every((r) => r.confirmed) };
     };
     if (input.action === "list") return { ok: true, data: view() };
+    if (input.action === "operations") {
+      const memory = this.deps.store.operationMemory(chat.companyId);
+      return { ok: true, data: { cases: BANK_OPERATION_CASES, ...describeOperations(memory) } };
+    }
+    if (input.action === "set_operation" || input.action === "clear_operation") {
+      if (!input.case)
+        return {
+          ok: false,
+          code: "VALIDATION",
+          message: `${input.action} needs the case (${BANK_OPERATION_CASES.map((c) => c.case).join(", ")})`,
+        };
+      if (input.action === "set_operation" && !input.operation)
+        return { ok: false, code: "VALIDATION", message: "set_operation needs the operation as 1C shows it" };
+      this.deps.store.setOperationChoice(
+        chat.companyId,
+        input.case,
+        input.action === "set_operation" ? (input.operation ?? null) : null,
+      );
+      return {
+        ok: true,
+        data: {
+          ...describeOperations(this.deps.store.operationMemory(chat.companyId)),
+          note:
+            input.action === "set_operation"
+              ? `From now on «${input.operation}» is what ${input.case} is written as in this company, before anything the program works out.`
+              : `The decision for ${input.case} is taken back: the program works it out again.`,
+        },
+      };
+    }
     const chart = await this.chartCodes(chat);
     const saveFeeRule = (account: string) => {
       const facts = { type: "bank_fee" as const };
@@ -3851,7 +3971,11 @@ export class AssistantService {
       describe: (objects: string[]) => run("describe_objects", { objects }),
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
-    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const cache: BankCache = {
+      lists: new Map(),
+      snapshots: new Map(),
+      memory: this.deps.store.operationMemory(chat.companyId),
+    };
     // A currency account's SWIFT payments are written to their real beneficiaries (in the text), not to the bank's own line.
     const beneficiaries = { found: 0, unknown: [] as string[], ambiguous: [] as PayeeMatch["ambiguous"] };
     for (const task of tasks) {
@@ -4036,6 +4160,7 @@ export class AssistantService {
             results.map((r) => r.resolved),
             held,
             moved.problems,
+            results.map((r) => r.task.prepared.payments),
           ),
         );
         if (told) {
@@ -4274,6 +4399,9 @@ export class AssistantService {
         seq: ++seq,
         file: item.file,
         row: item.row,
+        ...(caseOfWrite(object.object, item.move, !!conversion, read?.type)
+          ? { case: caseOfWrite(object.object, item.move, !!conversion, read?.type) }
+          : {}),
         rule: conversion
           ? "conversion"
           : item.move
@@ -4420,7 +4548,11 @@ export class AssistantService {
       describe: (objects: string[]) => run("describe_objects", { objects }),
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
-    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const cache: BankCache = {
+      lists: new Map(),
+      snapshots: new Map(),
+      memory: this.deps.store.operationMemory(chat.companyId),
+    };
     const sc = (cache.scaffold ??= newScaffoldCache());
     const attributes = new Map<string, string>();
     for (const object of ["Документ.СписаниеСРасчетногоСчета", "Документ.ПоступлениеНаРасчетныйСчет"]) {
@@ -4550,7 +4682,11 @@ export class AssistantService {
       describe: (objects: string[]) => run("describe_objects", { objects }),
       getObject: (object: string, ref: string) => run("get_object", { object, ref }),
     };
-    const cache: BankCache = { lists: new Map(), snapshots: new Map() };
+    const cache: BankCache = {
+      lists: new Map(),
+      snapshots: new Map(),
+      memory: this.deps.store.operationMemory(chat.companyId),
+    };
     const docs = await readBankDocs(deps, cache, from, to);
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
     if (!docs)
@@ -4669,8 +4805,66 @@ export class AssistantService {
       );
       chat.created = (chat.created ?? []).filter((d) => !posted.has(d.ref));
       this.save(chat);
+      // What 1C posted is read back and judged against what each case needs: an operation that posts the wrong entries from
+      // here is remembered as wrong for the case, and the accountant is told which documents to correct.
+      const checked = await this.verifyPostedWrites(
+        chat,
+        [...posted].filter((r): r is string => !!r),
+      );
+      if (checked)
+        return {
+          ok: true,
+          data: { ...data, notPostedYet: (chat.created ?? []).length, entriesCheck: checked },
+        };
     }
     return { ok: true, data: { ...(data ?? {}), notPostedYet: (chat.created ?? []).length } };
+  }
+
+  /** Reads back the entries of posted documents the program wrote from bank statements and judges them (bank/verify.ts). */
+  private async verifyPostedWrites(
+    chat: StoredChat,
+    refs: string[],
+  ): Promise<{
+    lines: string[];
+    total: number;
+    wrong: number;
+    wrongOperations: { operation: string; case: string; count: number; problem: string }[];
+  } | null> {
+    const taken = new Set(refs);
+    const writes = this.deps.store
+      .bankWrites(chat.companyId)
+      .filter((w) => taken.has(w.ref) && !w.reversedAt && w.case);
+    const docs: WrittenDoc[] = writes.flatMap((w) => {
+      const m = /(\d{2})\.(\d{2})\.(\d{4})/.exec(w.presentation);
+      return m && w.case
+        ? [{ ref: w.ref, object: w.object, case: w.case, day: `${m[3]}-${m[2]}-${m[1]}` }]
+        : [];
+    });
+    if (docs.length === 0) return null;
+    const connection = this.deps.store.connection(chat.companyId);
+    const deps = {
+      query: (query: RunQueryInput) => this.deps.connector.tool(connection, "run_query", query),
+      describe: (objects: string[]) => this.deps.connector.tool(connection, "describe_objects", { objects }),
+      getObject: (object: string, ref: string) =>
+        this.deps.connector.tool(connection, "get_object", { object, ref }),
+    };
+    const verdicts = await verifyPosted(deps, docs);
+    if (!verdicts || verdicts.length === 0) return null;
+    this.deps.store.recordVerdicts(chat.companyId, toMemory(verdicts));
+    const wrong = verdicts.filter((v) => !v.ok);
+    const groups = new Map<string, { operation: string; case: string; count: number; problem: string }>();
+    for (const v of wrong) {
+      const key = `${v.case}|${v.operation}`;
+      const known = groups.get(key);
+      if (known) known.count += 1;
+      else groups.set(key, { operation: v.operation, case: v.case, count: 1, problem: v.problem ?? "" });
+    }
+    return {
+      lines: describeVerdicts(verdicts),
+      total: verdicts.length,
+      wrong: wrong.length,
+      wrongOperations: [...groups.values()],
+    };
   }
 
   /** A document created from files is saved unposted (the accountant posts it after checking), not as the model asked. */
@@ -5306,4 +5500,13 @@ function foreignNeeds(
     });
   }
   return needs;
+}
+
+/** The case a bank document was written as (bank/operations.ts), from its object and what the line was read as. */
+function caseOfWrite(object: string, move: boolean, conversion: boolean, type?: string): string | undefined {
+  const out = object === OBJECT.out;
+  if (conversion) return out ? "conversionOut" : "conversionIn";
+  if (move) return out ? "transferOut" : "transferIn";
+  if (type === "bank_fee") return "fee";
+  return undefined;
 }

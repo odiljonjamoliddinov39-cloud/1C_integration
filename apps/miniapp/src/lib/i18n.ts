@@ -1,0 +1,396 @@
+/** The Mini App's words in Uzbek, Russian and English. Every language has every key (i18n.test.ts checks it). */
+export type Lang = "uz" | "ru" | "en";
+export const LANGS: Lang[] = ["uz", "ru", "en"];
+export const LANG_NAMES: Record<Lang, string> = { uz: "Oʻzbekcha", ru: "Русский", en: "English" };
+
+const en = {
+  appName: "AI Accounting Assistant",
+  tabs: { chat: "Chat", waiting: "Waiting", files: "Files", status: "Status" },
+  pc: { online: "PC online", offline: "PC offline: requests wait", lastSeen: "last seen {{time}}" },
+  company: "Company",
+  noCompanies: "The PC has not told which companies it has yet. Open the desktop app.",
+  notTelegram: "Open this app from Telegram.",
+  notLinked:
+    "This Telegram account is not connected to a PC. In the desktop app: Remote control → Connect Telegram.",
+  loading: "Loading…",
+  retry: "Try again",
+  chat: {
+    placeholder: "Ask or tell the assistant…",
+    send: "Send",
+    attach: "Attach a file",
+    empty: "Write a question, or send a bank statement, a customs declaration or an invoice.",
+    fromOther: "(sent from another device)",
+    fileSent: "File: {{name}}",
+    cards: "{{n}} proposals are waiting for you",
+    openWaiting: "Open “Waiting”",
+    onlyAsks: "This phone may only ask questions.",
+  },
+  state: {
+    queued: "Waiting for the PC to come online",
+    delivered: "The PC took it",
+    running: "The PC is working",
+    done: "Done",
+    failed: "Failed",
+    expired: "Expired: the PC was off too long",
+    cancelled: "Cancelled",
+  },
+  cancel: "Cancel",
+  waiting: {
+    title: "Waiting for me",
+    empty: "Nothing is waiting. Proposals the assistant prepares appear here.",
+    refresh: "Refresh",
+    apply: "Apply",
+    decline: "Decline",
+    applyTitle: "Create these documents?",
+    applyHelp: "They are created unposted. Enter the PIN you set on the PC.",
+    pin: "PIN",
+    confirm: "Create",
+    close: "Close",
+    more: "Show all {{n}} lines",
+    less: "Show less",
+    status: {
+      waiting: "Waiting",
+      applied: "Applied",
+      skipped: "Skipped",
+      refused: "Open on the PC",
+      changed: "Changed on the PC",
+    },
+    result: "Created {{created}}, skipped {{skipped}}, refused {{refused}}",
+    needsApply: "This phone may not apply proposals.",
+  },
+  files: {
+    title: "Files and reports",
+    report: "Report",
+    reports: { balance: "Balance", debts: "Debts (receivables, payables)", vat: "VAT", audit: "Audit" },
+    format: "Format",
+    from: "From",
+    to: "To",
+    make: "Make the report",
+    download: "Download",
+    expired: "The file has expired (files live 24 hours).",
+    recent: "Recent files",
+    none: "No files yet.",
+    sharing: "Preparing the file…",
+  },
+  status: {
+    title: "Status",
+    check: "Check the PC",
+    onec: "1C",
+    reachable: "answers",
+    unreachable: "does not answer",
+    version: "App version",
+    lastImport: "Last import",
+    never: "no import yet",
+    language: "Language",
+    recent: "Recent requests",
+    none: "No requests yet.",
+  },
+  errors: {
+    PROPOSAL_CHANGED: "The proposal changed on the PC after you saw it. It was refreshed: look again.",
+    PROPOSAL_GONE: "This proposal is no longer waiting: it was applied, declined or closed.",
+    PIN_WRONG: "The PIN is wrong.",
+    PIN_NOT_SET: "Set a PIN on the PC first (Remote control → PIN).",
+    PIN_LOCKED: "Too many wrong PINs: try again in 15 minutes.",
+    NOT_FROM_PHONE: "This proposal cannot be applied from the phone: open it on the PC.",
+    INTERRUPTED: "The link dropped while the PC was working. Check what was made, then decide.",
+    BUSY: "The assistant is busy on the PC. Try again in a minute.",
+    CARD_WAITING:
+      "A proposal is waiting for your answer. Open “Waiting”: apply or decline it, then write again.",
+    EXPIRED: "The request waited too long and was not run.",
+    LICENSE_READ_ONLY: "The license is read-only: the phone can only read.",
+    COMPANY_READ_ONLY: "This company is over the plan's limit: it can only be read.",
+    CEILING: "This phone may not do this on that PC.",
+    PREPARE_NOT_ALLOWED: "This phone may only ask questions; the assistant wanted to make a proposal.",
+    FILE_LOST: "The file is gone from the server. Send it again.",
+    FILE_TOO_LARGE: "The file is too large (the limit is 20 MB).",
+    FILE_TYPE: "This type of file is not accepted.",
+    CHECKSUM: "The file arrived damaged. Send it again.",
+    COMPANY_NOT_FOUND: "This company is not connected on the PC.",
+    DISABLED: "Remote control is switched off on the PC.",
+    DEVICE_DISABLED: "Remote control is switched off on the PC.",
+    RATE_LIMIT: "Too many requests. Wait a minute.",
+    NOT_LINKED: "This Telegram account is not connected to a PC.",
+    LINK_REVOKED: "This connection was removed on the PC.",
+    FEATURE_NOT_IN_PLAN: "Remote control is not part of this plan.",
+    READ_ONLY: "The plan is read-only: the phone can only read.",
+    BAD_INIT_DATA: "Open this app from Telegram again.",
+    NETWORK: "No connection. Check the internet.",
+    AI_DISABLED: "Turn the assistant on for this company in the desktop app.",
+    UNKNOWN: "Something went wrong.",
+  },
+};
+
+const ru: typeof en = {
+  appName: "ИИ-ассистент бухгалтера",
+  tabs: { chat: "Чат", waiting: "Ждёт меня", files: "Файлы", status: "Статус" },
+  pc: { online: "ПК на связи", offline: "ПК выключен: запросы ждут", lastSeen: "был в сети {{time}}" },
+  company: "Компания",
+  noCompanies: "ПК ещё не сообщил, какие у него компании. Откройте приложение на компьютере.",
+  notTelegram: "Откройте приложение из Telegram.",
+  notLinked:
+    "Этот аккаунт Telegram не подключён к ПК. В приложении на компьютере: Удалённое управление → Подключить Telegram.",
+  loading: "Загрузка…",
+  retry: "Повторить",
+  chat: {
+    placeholder: "Спросите или поручите ассистенту…",
+    send: "Отправить",
+    attach: "Прикрепить файл",
+    empty: "Напишите вопрос или отправьте банковскую выписку, ГТД или счёт-фактуру.",
+    fromOther: "(отправлено с другого устройства)",
+    fileSent: "Файл: {{name}}",
+    cards: "Предложений ждёт вас: {{n}}",
+    openWaiting: "Открыть «Ждёт меня»",
+    onlyAsks: "С этого телефона можно только задавать вопросы.",
+  },
+  state: {
+    queued: "Ждёт, пока ПК выйдет на связь",
+    delivered: "ПК принял запрос",
+    running: "ПК работает",
+    done: "Готово",
+    failed: "Ошибка",
+    expired: "Просрочено: ПК слишком долго был выключен",
+    cancelled: "Отменено",
+  },
+  cancel: "Отменить",
+  waiting: {
+    title: "Ждёт меня",
+    empty: "Ничего не ждёт. Предложения ассистента появятся здесь.",
+    refresh: "Обновить",
+    apply: "Применить",
+    decline: "Отклонить",
+    applyTitle: "Создать эти документы?",
+    applyHelp: "Они создаются непроведёнными. Введите PIN, заданный на компьютере.",
+    pin: "PIN",
+    confirm: "Создать",
+    close: "Закрыть",
+    more: "Показать все строки: {{n}}",
+    less: "Свернуть",
+    status: {
+      waiting: "Ждёт",
+      applied: "Применено",
+      skipped: "Пропущено",
+      refused: "Откройте на ПК",
+      changed: "Изменилось на ПК",
+    },
+    result: "Создано {{created}}, пропущено {{skipped}}, отклонено {{refused}}",
+    needsApply: "С этого телефона нельзя применять предложения.",
+  },
+  files: {
+    title: "Файлы и отчёты",
+    report: "Отчёт",
+    reports: { balance: "Баланс", debts: "Долги (дебиторка, кредиторка)", vat: "НДС", audit: "Аудит" },
+    format: "Формат",
+    from: "С",
+    to: "По",
+    make: "Сформировать отчёт",
+    download: "Скачать",
+    expired: "Файл устарел (файлы хранятся 24 часа).",
+    recent: "Последние файлы",
+    none: "Файлов пока нет.",
+    sharing: "Готовим файл…",
+  },
+  status: {
+    title: "Статус",
+    check: "Проверить ПК",
+    onec: "1С",
+    reachable: "отвечает",
+    unreachable: "не отвечает",
+    version: "Версия приложения",
+    lastImport: "Последний импорт",
+    never: "импорта ещё не было",
+    language: "Язык",
+    recent: "Последние запросы",
+    none: "Запросов пока нет.",
+  },
+  errors: {
+    PROPOSAL_CHANGED:
+      "Предложение изменилось на ПК после того, как вы его увидели. Оно обновлено: посмотрите ещё раз.",
+    PROPOSAL_GONE: "Это предложение больше не ждёт: оно применено, отклонено или закрыто.",
+    PIN_WRONG: "PIN неверный.",
+    PIN_NOT_SET: "Сначала задайте PIN на компьютере (Удалённое управление → PIN).",
+    PIN_LOCKED: "Слишком много неверных PIN: повторите через 15 минут.",
+    NOT_FROM_PHONE: "Это предложение нельзя применить с телефона: откройте его на ПК.",
+    INTERRUPTED: "Связь оборвалась, пока ПК работал. Проверьте, что создано, и решите дальше.",
+    BUSY: "Ассистент занят на ПК. Повторите через минуту.",
+    CARD_WAITING:
+      "Предложение ждёт вашего ответа. Откройте «Ждёт меня»: примените или отклоните его, потом пишите снова.",
+    EXPIRED: "Запрос ждал слишком долго и не выполнялся.",
+    LICENSE_READ_ONLY: "Лицензия только для чтения: с телефона можно только смотреть.",
+    COMPANY_READ_ONLY: "Компания сверх лимита тарифа: её можно только читать.",
+    CEILING: "Этому телефону на том ПК это не разрешено.",
+    PREPARE_NOT_ALLOWED: "С этого телефона можно только спрашивать; ассистент хотел сделать предложение.",
+    FILE_LOST: "Файла уже нет на сервере. Отправьте ещё раз.",
+    FILE_TOO_LARGE: "Файл слишком большой (лимит 20 МБ).",
+    FILE_TYPE: "Такой тип файла не принимается.",
+    CHECKSUM: "Файл дошёл повреждённым. Отправьте ещё раз.",
+    COMPANY_NOT_FOUND: "Эта компания не подключена на ПК.",
+    DISABLED: "Удалённое управление выключено на ПК.",
+    DEVICE_DISABLED: "Удалённое управление выключено на ПК.",
+    RATE_LIMIT: "Слишком много запросов. Подождите минуту.",
+    NOT_LINKED: "Этот аккаунт Telegram не подключён к ПК.",
+    LINK_REVOKED: "Это подключение удалено на ПК.",
+    FEATURE_NOT_IN_PLAN: "Удалённое управление не входит в этот тариф.",
+    READ_ONLY: "Тариф только для чтения: с телефона можно только смотреть.",
+    BAD_INIT_DATA: "Откройте приложение из Telegram ещё раз.",
+    NETWORK: "Нет связи. Проверьте интернет.",
+    AI_DISABLED: "Включите ассистента для этой компании в приложении на компьютере.",
+    UNKNOWN: "Что-то пошло не так.",
+  },
+};
+
+const uz: typeof en = {
+  appName: "Buxgalterning AI yordamchisi",
+  tabs: { chat: "Chat", waiting: "Kutmoqda", files: "Fayllar", status: "Holat" },
+  pc: {
+    online: "Kompyuter ulangan",
+    offline: "Kompyuter oʻchiq: soʻrovlar kutadi",
+    lastSeen: "oxirgi marta {{time}}",
+  },
+  company: "Kompaniya",
+  noCompanies: "Kompyuter hali qaysi kompaniyalari borligini aytmadi. Kompyuterda ilovani oching.",
+  notTelegram: "Ilovani Telegramdan oching.",
+  notLinked:
+    "Bu Telegram akkaunti kompyuterga ulanmagan. Kompyuterdagi ilovada: Masofadan boshqarish → Telegramni ulash.",
+  loading: "Yuklanmoqda…",
+  retry: "Qayta urinish",
+  chat: {
+    placeholder: "Yordamchiga savol bering yoki topshiriq yozing…",
+    send: "Yuborish",
+    attach: "Fayl biriktirish",
+    empty: "Savol yozing yoki bank koʻchirmasi, YuXD yoki hisob-fakturani yuboring.",
+    fromOther: "(boshqa qurilmadan yuborilgan)",
+    fileSent: "Fayl: {{name}}",
+    cards: "{{n}} ta taklif sizni kutyapti",
+    openWaiting: "«Kutmoqda»ni ochish",
+    onlyAsks: "Bu telefondan faqat savol berish mumkin.",
+  },
+  state: {
+    queued: "Kompyuter ulanishini kutmoqda",
+    delivered: "Kompyuter qabul qildi",
+    running: "Kompyuter ishlayapti",
+    done: "Tayyor",
+    failed: "Xato",
+    expired: "Muddati oʻtdi: kompyuter juda uzoq oʻchiq turdi",
+    cancelled: "Bekor qilindi",
+  },
+  cancel: "Bekor qilish",
+  waiting: {
+    title: "Meni kutmoqda",
+    empty: "Hech narsa kutmayapti. Yordamchi tayyorlagan takliflar shu yerda chiqadi.",
+    refresh: "Yangilash",
+    apply: "Qoʻllash",
+    decline: "Rad etish",
+    applyTitle: "Bu hujjatlar yaratilsinmi?",
+    applyHelp: "Ular oʻtkazilmagan holda yaratiladi. Kompyuterda oʻrnatgan PINni kiriting.",
+    pin: "PIN",
+    confirm: "Yaratish",
+    close: "Yopish",
+    more: "Hamma {{n}} qatorni koʻrsatish",
+    less: "Yigʻish",
+    status: {
+      waiting: "Kutmoqda",
+      applied: "Qoʻllandi",
+      skipped: "Oʻtkazib yuborildi",
+      refused: "Kompyuterda oching",
+      changed: "Kompyuterda oʻzgardi",
+    },
+    result: "Yaratildi {{created}}, oʻtkazildi {{skipped}}, rad etildi {{refused}}",
+    needsApply: "Bu telefondan takliflarni qoʻllab boʻlmaydi.",
+  },
+  files: {
+    title: "Fayllar va hisobotlar",
+    report: "Hisobot",
+    reports: { balance: "Balans", debts: "Qarzlar (debitor, kreditor)", vat: "QQS", audit: "Audit" },
+    format: "Format",
+    from: "Dan",
+    to: "Gacha",
+    make: "Hisobotni tayyorlash",
+    download: "Yuklab olish",
+    expired: "Fayl muddati tugadi (fayllar 24 soat saqlanadi).",
+    recent: "Oxirgi fayllar",
+    none: "Hozircha fayl yoʻq.",
+    sharing: "Fayl tayyorlanmoqda…",
+  },
+  status: {
+    title: "Holat",
+    check: "Kompyuterni tekshirish",
+    onec: "1C",
+    reachable: "javob beryapti",
+    unreachable: "javob bermayapti",
+    version: "Ilova versiyasi",
+    lastImport: "Oxirgi import",
+    never: "import hali boʻlmagan",
+    language: "Til",
+    recent: "Oxirgi soʻrovlar",
+    none: "Hozircha soʻrov yoʻq.",
+  },
+  errors: {
+    PROPOSAL_CHANGED: "Taklif siz koʻrgandan keyin kompyuterda oʻzgardi. U yangilandi: qayta koʻring.",
+    PROPOSAL_GONE: "Bu taklif endi kutmayapti: u qoʻllangan, rad etilgan yoki yopilgan.",
+    PIN_WRONG: "PIN notoʻgʻri.",
+    PIN_NOT_SET: "Avval kompyuterda PIN oʻrnating (Masofadan boshqarish → PIN).",
+    PIN_LOCKED: "Notoʻgʻri PIN juda koʻp: 15 daqiqadan keyin urining.",
+    NOT_FROM_PHONE: "Bu taklifni telefondan qoʻllab boʻlmaydi: kompyuterda oching.",
+    INTERRUPTED: "Kompyuter ishlayotganda aloqa uzildi. Nima yaratilganini tekshiring va qaror qiling.",
+    BUSY: "Yordamchi kompyuterda band. Bir daqiqadan keyin urining.",
+    CARD_WAITING:
+      "Taklif javobingizni kutyapti. «Kutmoqda»ni oching: uni qoʻllang yoki rad eting, keyin qayta yozing.",
+    EXPIRED: "Soʻrov juda uzoq kutdi va bajarilmadi.",
+    LICENSE_READ_ONLY: "Litsenziya faqat oʻqish uchun: telefondan faqat koʻrish mumkin.",
+    COMPANY_READ_ONLY: "Kompaniya tarif chegarasidan oshgan: uni faqat oʻqish mumkin.",
+    CEILING: "Bu telefonga u kompyuterda bunga ruxsat yoʻq.",
+    PREPARE_NOT_ALLOWED: "Bu telefondan faqat savol berish mumkin; yordamchi taklif tayyorlamoqchi edi.",
+    FILE_LOST: "Fayl serverda yoʻq. Qayta yuboring.",
+    FILE_TOO_LARGE: "Fayl juda katta (chegara 20 MB).",
+    FILE_TYPE: "Bunday turdagi fayl qabul qilinmaydi.",
+    CHECKSUM: "Fayl shikastlangan holda keldi. Qayta yuboring.",
+    COMPANY_NOT_FOUND: "Bu kompaniya kompyuterda ulanmagan.",
+    DISABLED: "Masofadan boshqarish kompyuterda oʻchirilgan.",
+    DEVICE_DISABLED: "Masofadan boshqarish kompyuterda oʻchirilgan.",
+    RATE_LIMIT: "Soʻrovlar juda koʻp. Bir daqiqa kuting.",
+    NOT_LINKED: "Bu Telegram akkaunti kompyuterga ulanmagan.",
+    LINK_REVOKED: "Bu ulanish kompyuterda olib tashlangan.",
+    FEATURE_NOT_IN_PLAN: "Masofadan boshqarish bu tarifga kirmaydi.",
+    READ_ONLY: "Tarif faqat oʻqish uchun: telefondan faqat koʻrish mumkin.",
+    BAD_INIT_DATA: "Ilovani Telegramdan qayta oching.",
+    NETWORK: "Aloqa yoʻq. Internetni tekshiring.",
+    AI_DISABLED: "Kompyuterdagi ilovada bu kompaniya uchun yordamchini yoqing.",
+    UNKNOWN: "Nimadir xato ketdi.",
+  },
+};
+
+export const DICTIONARIES: Record<Lang, typeof en> = { en, ru, uz };
+
+type Flatten<T, P extends string = ""> = {
+  [K in keyof T & string]: T[K] extends string ? `${P}${K}` : Flatten<T[K], `${P}${K}.`>;
+}[keyof T & string];
+export type Key = Flatten<typeof en>;
+
+/** `t("tabs.chat")`, with `{{name}}` filled from `vars`. */
+export type Translate = (key: Key, vars?: Record<string, string | number>) => string;
+
+export function translator(lang: Lang): Translate {
+  const dictionary = DICTIONARIES[lang];
+  return (key, vars) => {
+    const found = key
+      .split(".")
+      .reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], dictionary);
+    const text = typeof found === "string" ? found : key;
+    return vars ? text.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(vars[name] ?? "")) : text;
+  };
+}
+
+/** The error text for a code from the server or the PC; the message it came with when the code is not known. */
+export function errorText(lang: Lang, code: string | undefined, message?: string): string {
+  const known = (DICTIONARIES[lang].errors as Record<string, string>)[code ?? ""];
+  return known ?? (message || DICTIONARIES[lang].errors.UNKNOWN);
+}
+
+/** The language to start in: the saved choice, else Telegram's, else Russian. */
+export function pickLanguage(saved: string | null, telegram: string | null | undefined): Lang {
+  for (const candidate of [saved, telegram]) {
+    const two = candidate?.slice(0, 2);
+    if (two === "uz" || two === "ru" || two === "en") return two;
+  }
+  return "ru";
+}

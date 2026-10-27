@@ -35,6 +35,7 @@ import {
   sameCurrency,
   snapshot,
 } from "./resolve.js";
+import { EMPTY_MEMORY, type OperationProfile, operationProfiles, specificOperation } from "./operations.js";
 import { newScaffoldCache, soumRef } from "./scaffold.js";
 import type { BankPayment, BankStatement } from "./statement.js";
 
@@ -183,6 +184,28 @@ async function pickTemplate(
     if (fits) sameAccount ??= template;
   }
   return sameAccount ?? inCurrency ?? newest;
+}
+
+/** The newest posted document of an operation (the company's own), to copy. */
+async function sampleOf(
+  deps: BankDeps,
+  cache: BankCache,
+  object: string,
+  operation: OperationProfile,
+): Promise<Template | null> {
+  if (!operation.type) return null;
+  const list = await deps.query({
+    query: `ВЫБРАТЬ ПЕРВЫЕ 8 Т.Ссылка КАК Ссылка ИЗ ${object} КАК Т ГДЕ Т.Проведен И НЕ Т.ПометкаУдаления И Т.ВидОперации = ЗНАЧЕНИЕ(${operation.type}.${operation.ref}) УПОРЯДОЧИТЬ ПО Т.Дата УБЫВ`,
+    limit: 8,
+    refs: true,
+  });
+  if (!list.ok) return null;
+  for (const cells of (list.data as { rows?: unknown[][] }).rows ?? []) {
+    const ref = refOf(cells[0]);
+    const template = ref ? await snapshot(deps, cache, object, ref) : null;
+    if (template) return template;
+  }
+  return null;
 }
 
 interface BankParty {
@@ -618,10 +641,11 @@ export async function resolveTransfers(
       : leg.transfer.kind === "conversion"
         ? "conversion"
         : "own";
-    // A move between two accounts of one currency is made by the program from 1C's description (see build.ts), never copied:
-    // a document of the operation «Перевод на другой счет», written without the form, posts to the wrong account or not at all, and
-    // an earlier one of the kind that the program or a person wrote that way would be copied again.
-    const template = cross
+    // A move between two accounts of one currency is first made by the program from 1C's description (see build.ts and
+    // operations.ts: the operation and the account the company's own books show). A document of a form's operation («Перевод на
+    // другой счет») written without the form posts to the wrong account or not at all, so it is not copied while the move can
+    // be made another way; only when it cannot, the company's own operation that does nothing but this is copied.
+    let template = cross
       ? await pickTemplate(deps, cache, object, kindName, ownRef, otherRef, ownCurrency)
       : null;
     if (!template) {
@@ -663,14 +687,27 @@ export async function resolveTransfers(
         });
         continue;
       }
-      fail(
-        leg,
-        built.message +
-          (cross
-            ? `. Between accounts of two currencies 1C refuses «Перевод на другой счёт»: the paying leg is «Прочее списание» and the receiving one «Перевод с другого счёта»`
-            : ""),
-      );
-      continue;
+      if (!cross) {
+        const profiles = await operationProfiles(deps, cache, object);
+        const own = specificOperation(buildKind, object, profiles, cache.memory ?? EMPTY_MEMORY);
+        if (own) {
+          template = await sampleOf(deps, cache, object, own);
+          if (template) {
+            const note = `the move is copied from the company's own earlier document of «${own.operation}» (${own.total} posted entries, all such moves): it could not be made from 1C's description (${built.message})`;
+            if (!result.notes.includes(note)) result.notes.push(note);
+          }
+        }
+      }
+      if (!template) {
+        fail(
+          leg,
+          built.message +
+            (cross
+              ? `. Between accounts of two currencies 1C refuses «Перевод на другой счёт»: the paying leg is «Прочее списание» and the receiving one «Перевод с другого счёта»`
+              : ""),
+        );
+        continue;
+      }
     }
     const otherKey = otherAccountKey(template);
     if (!otherKey && kindName !== "writeOff") {

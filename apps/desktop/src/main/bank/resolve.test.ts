@@ -1445,3 +1445,61 @@ describe("one INN, two counterparties", () => {
     expect(pickByName([plain, { ref: "r3", name: "Kapitalbank" }], "Kapitalbank")).toBeNull();
   });
 });
+
+describe("one INN, two counterparties: the one the company deals with", () => {
+  const twins = (counts: [string, number][]) =>
+    deps({
+      counterparties: [
+        ["201607534", NAVRUZ, "NAVRO'Z-PTK"],
+        ["201607534", HYDRO, "NAVRUZ dublikat"],
+      ],
+      extra: (input) =>
+        // Only the receipts are answered: the payments of the twins are none.
+        input.query.includes("СГРУППИРОВАТЬ ПО Т.Контрагент")
+          ? input.query.includes("Документ.СписаниеСРасчетногоСчета")
+            ? []
+            : counts.map(([id, n]) => [ref("Справочник.Контрагенты", id, "x"), n])
+          : undefined,
+    });
+
+  it("is taken when its bank documents outnumber the twin's three to one, and the note says the other is a likely duplicate", async () => {
+    const world = twins([
+      [NAVRUZ, 40],
+      [HYDRO, 1],
+    ]);
+    const out = await resolvePayments(statement([payment({ counterparty: "Boshqa nom" })]), {}, world.d);
+    expect(out.problems).toEqual([]);
+    expect(out.ready[0]?.change.fields?.Контрагент).toMatchObject({ ref: NAVRUZ });
+    expect(out.notes.map((n) => n.message).join(" ")).toContain(
+      "«NAVRO'Z-PTK» was taken, the one the company's bank documents are written to (40 against 1)",
+    );
+  });
+
+  it("is still the accountant's choice when both are in use, or neither has a history", async () => {
+    for (const counts of [
+      [[NAVRUZ, 10] as [string, number], [HYDRO, 8] as [string, number]],
+      [[NAVRUZ, 2] as [string, number]],
+      [],
+    ]) {
+      const out = await resolvePayments(
+        statement([payment({ counterparty: "Boshqa nom" })]),
+        {},
+        twins(counts).d,
+      );
+      expect(out.problems[0]).toMatchObject({ code: "COUNTERPARTY_AMBIGUOUS" });
+    }
+  });
+
+  it("asks 1C once per INN, not once per row", async () => {
+    const world = twins([[NAVRUZ, 40]]);
+    await resolvePayments(
+      statement([
+        payment({ row: 1, counterparty: "Boshqa nom" }),
+        payment({ row: 2, number: "2", counterparty: "Boshqa nom" }),
+      ]),
+      {},
+      world.d,
+    );
+    expect(world.seen.filter((q) => q.query.includes("СГРУППИРОВАТЬ ПО Т.Контрагент"))).toHaveLength(2);
+  });
+});

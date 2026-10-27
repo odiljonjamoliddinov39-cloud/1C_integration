@@ -5,6 +5,7 @@ import {
   optionsText,
   postOptions,
   readChoice,
+  asksForDuplicates,
   readDuplicatesCommand,
   readPostingsFixCommand,
   readPostCommand,
@@ -142,4 +143,20 @@ describe("the postings command", () => {
   it.each(["проведи", "введи выписку", "provodka qil", "отмени", ""])("%s is not one", (text) =>
     expect(readPostingsFixCommand(text)).toBe(false),
   );
+});
+
+describe("a long request that also asks for the duplicates", () => {
+  it.each([
+    "мана санга банк выпискалари шуларни тугирлаб киритиб бер 1с да буса киритма агар 1 с да булмаса кирит агар 1 с да икки марта киритилган булса уни учириб таша",
+    "Enter the statements, skip what 1C already has, and delete the documents entered twice",
+    "введи выписки и удали дубли",
+  ])("%s", (text) => {
+    expect(asksForDuplicates(text)).toBe(true);
+    // The short command is not this: it has its own route, with a limit on length.
+    expect(asksForDuplicates("hello world")).toBe(false);
+  });
+  it("a statement entry that does not speak of duplicates is not one", () => {
+    expect(asksForDuplicates("введи выписку за 2026 год")).toBe(false);
+    expect(asksForDuplicates("банк выпискасини киритиб бер")).toBe(false);
+  });
 });

@@ -1,6 +1,7 @@
 import type { Lang } from "../router.js";
 import type { Unclassified } from "./classify.js";
 import type { BankResolved } from "./resolve.js";
+import type { BankPayment } from "./statement.js";
 
 /** What the first look at a statement found missing in 1C, in the words the accountant wrote in. */
 export interface BankGaps {
@@ -9,7 +10,7 @@ export interface BankGaps {
   counterparties: string[];
   contracts: string[];
   /** Rows the program cannot settle: the reason and how many rows. */
-  problems: { message: string; rows: number }[];
+  problems: { message: string; rows: number; examples?: string[] }[];
   /** Lines that were not identified with certainty and are not written: the reason and how many lines. */
   unclassified: { why: string; rows: number }[];
   /** Moves between the company's own accounts (and conversions) the program could not make: the reason and how many legs. */
@@ -17,6 +18,11 @@ export interface BankGaps {
 }
 
 const SHOWN = 8;
+/** How many lines of a kind are shown by their date, sum, name and words, so the accountant can find them in the statement. */
+const EXAMPLES = 3;
+
+const exampleOf = (p: BankPayment): string =>
+  `${p.date.slice(0, 10)} ${p.direction === "in" ? "+" : "−"}${(p.amount / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${p.counterparty.trim().slice(0, 40)} — ${p.purpose.replace(/\s+/g, " ").trim().slice(0, 90)}`;
 
 const WORDS = {
   ru: {
@@ -58,17 +64,27 @@ export function gapsOf(
   resolved: Pick<BankResolved, "missing" | "contractsToCreate" | "problems" | "ready">[],
   held: Pick<Unclassified, "why">[] = [],
   transferProblems: { message: string }[] = [],
+  /** The payments each of `resolved` was made from (the same order): the problem rows are shown by what they say. */
+  payments: BankPayment[][] = [],
 ): BankGaps {
   const counterparties = new Map<string, string>();
   const contracts = new Map<string, string>();
-  const problems = new Map<string, number>();
+  const problems = new Map<string, { rows: number; examples: string[] }>();
   let ready = 0;
-  for (const r of resolved) {
+  for (const [i, r] of resolved.entries()) {
     ready += r.ready.length;
     for (const m of r.missing)
       counterparties.set(m.key, m.key.startsWith("name:") ? m.name : `${m.name} (${m.inn})`);
     for (const c of r.contractsToCreate) contracts.set(c.label, c.label);
-    for (const p of r.problems) problems.set(p.message, (problems.get(p.message) ?? 0) + p.rows.length);
+    for (const p of r.problems) {
+      const known = problems.get(p.message) ?? { rows: 0, examples: [] };
+      known.rows += p.rows.length;
+      for (const row of p.rows) {
+        const payment = payments[i]?.find((x) => x.row === row);
+        if (payment && known.examples.length < EXAMPLES) known.examples.push(exampleOf(payment));
+      }
+      problems.set(p.message, known);
+    }
   }
   const unclassified = new Map<string, number>();
   for (const h of held) unclassified.set(h.why, (unclassified.get(h.why) ?? 0) + 1);
@@ -80,7 +96,11 @@ export function gapsOf(
     transfers: [...transfers].map(([message, rows]) => ({ message, rows })),
     counterparties: [...counterparties.values()],
     contracts: [...contracts.values()],
-    problems: [...problems].map(([message, rows]) => ({ message, rows })),
+    problems: [...problems].map(([message, v]) => ({
+      message,
+      rows: v.rows,
+      ...(v.examples.length > 0 ? { examples: v.examples } : {}),
+    })),
   };
 }
 
@@ -96,7 +116,10 @@ export function gapsText(lang: Lang, gaps: BankGaps): string {
     lines.push(`• ${w.contracts} (${gaps.contracts.length}): ${list(gaps.contracts)}`);
   if (gaps.problems.length > 0) {
     lines.push(`• ${w.problems} (${gaps.problems.reduce((n, p) => n + p.rows, 0)}):`);
-    for (const p of gaps.problems.slice(0, SHOWN)) lines.push(`   – ${p.message} (${w.rows(p.rows)})`);
+    for (const p of gaps.problems.slice(0, SHOWN)) {
+      lines.push(`   – ${p.message} (${w.rows(p.rows)})`);
+      for (const e of p.examples ?? []) lines.push(`        · ${e}`);
+    }
     if (gaps.problems.length > SHOWN) lines.push(`   – ${w.more(gaps.problems.length - SHOWN)}`);
   }
   if (gaps.transfers.length > 0) {

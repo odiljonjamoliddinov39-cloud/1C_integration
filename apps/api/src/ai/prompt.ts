@@ -460,7 +460,17 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "type?, account?}); a confirmed row is applied from then on and never asked again. Never ask about a row that is confirmed. Payments to the " +
     "budget that name no tax (customs prepayments held as «tax/medium»): when the accountant says to book them as a payment to " +
     "the supplier, set {prefix: '23402', type: 'contract_payment', untaxed: true}: only the unnamed ones change, named taxes " +
-    "stay taxes.",
+    "stay taxes. " +
+    "OPERATIONS of the bank documents are not fixed phrases: for each case (fee, transferOut/transferIn = money to/from another " +
+    "account of the company, conversionOut/conversionIn = the legs of a currency conversion, tax, cashIn, cashOut, capital) the " +
+    "program takes the accountant's decision, else the operation whose entries the company's own posted documents show doing " +
+    "that case, else the meaning of the operation's name, and the note beside each document says which. An operation it has " +
+    "seen post the wrong entries after «проведи» is not used again for that case. action operations shows the cases, the decisions " +
+    "and what was seen posted; when a row is refused with «Name the operation to use», show the accountant the operations 1C has " +
+    "(the message lists them with what each posted) and ask ONCE which one, then call action set_operation {case, operation} " +
+    "(operation exactly as 1C shows it): it is kept for this company and used from then on; clear_operation takes it back. After " +
+    "posting, read entriesCheck of the posting result: tell the accountant how many documents made the entry their case needs and " +
+    "which operation went wrong with the entry it made, and offer «исправь проводки».",
   revaluation_check:
     "What the month-end revaluation of currency balances has to produce, worked out by the app (from, to: YYYY-MM-DD, the months " +
     "in between, at most 36): for each month's end, the currency accounts and the currency settlement accounts (an advance in " +

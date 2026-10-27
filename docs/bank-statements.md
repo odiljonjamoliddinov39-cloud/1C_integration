@@ -508,3 +508,49 @@ the program, not a habit learned from one company's earlier documents:
 
 Not changed, and still the accountant's decision: the VAT rate row (12%, amount 0) that stays on a purchase document, and
 whether the document's rate is the Central Bank's or the bank's (the payment text carries the bank's).
+
+## The operation of a bank document is worked out, not fixed (`bank/operations.ts`, `bank/verify.ts`)
+
+Earlier the program wrote a fixed operation for each kind of line («Прочее списание» for a move, «Уплата налога» for a tax…) and
+fixed transit accounts. That held for one company's way of booking and broke for another's. Now a line is a **case** (`fee`,
+`transferOut`/`transferIn`, `conversionOut`/`conversionIn`, `tax`, `cashIn`/`cashOut`, `capital`) and what 1C is told is worked out,
+in this order, with the source named in the note beside each document:
+
+1. **The accountant's decision** for the case (`bank_mapping` action `set_operation {case, operation}`; kept per company;
+   `clear_operation` takes it back; `operations` lists the cases, the decisions and what was seen posted).
+2. **The company's own books.** `operationProfiles` reads what each operation of the bank documents has posted in the last two
+   years (the pairs of accounts, grouped by operation). An operation fits a case when its entries are the entries the case needs:
+   the company's bank account (group 51/52/55) on one side and the right kind of account on the other (transit 57 for a move or a
+   conversion, an expense account for a fee…, `familyOf`/`EXPECTED`). The most used fitting operation wins, and the account the
+   other side is booked to is the one its own documents use (a company whose moves go through 5720 gets 5720, not the prior 5710).
+3. **The meaning of the name** among the values 1C has, in Russian, Uzbek (Latin and Cyrillic): «Прочее списание» for a move,
+   «Приобретение иностранной валюты» for the receiving leg of a purchase of currency and not for a sale (`variant`). It also
+   breaks ties between operations that both fit.
+4. **Nothing fits.** No document is made; the card lists the operations 1C has with what each posted, and the accountant names
+   one (the model asks once, `set_operation`). Before that, for a move that cannot be made from the description, the company's own
+   operation that does only this (nine entries in ten are such a move) is copied from its newest posted document, and the note says so.
+
+An operation of a form («Перевод на другой счет») is not made from the description unless the books show it posting through the
+transit: made from the description it posts to the wrong account, or not at all.
+
+**What 1C posted is read back.** After «проведи», the entries of the posted documents the program wrote (fee, moves, conversion
+legs) are read from the register and judged against their case (`verifyPosted`). The answer says how many documents made the entry
+their case needs and, for each operation that went wrong, how many and the entry it made («Dt 4220 / Kt 5110»). The operation is
+remembered as wrong for that case in this company (`operationVerdicts`; more wrong than right) and is not chosen again; «исправь
+проводки» corrects the documents already written. Budget payments, cash and capital are not judged (they have many right shapes).
+
+Account families are by the group of the code (`familyOf`): 50 cash, 51/52/55 bank, 57 transit, 40 customers, 60 suppliers,
+44/64/65 taxes, 83 capital, 9x expenses.
+
+Not changed: the conversion transit accounts (5730 purchase, 5740 sale) are still the program's prior, checked against the chart;
+the direction of a conversion cannot be read from the books of a company alike.
+
+## Twin counterparties, unsettled rows named, duplicates in the same request
+
+- **One INN, two counterparties** (`bank/counterparty-activity.ts`). When the statement's name does not tell the twins apart, the one
+  the company's bank documents are written to is taken (at least three documents and at least three times the others' together),
+  and the note names the other as a likely duplicate. Two twins both in use, or none with a history, are still the accountant's choice.
+- **Rows the program cannot settle are shown** with their date, sum, name and the words of the purpose (three examples per reason),
+  so a row can be found in the statement and decided on.
+- **"…and delete what is in 1C twice" in the same request** as the statement (`asksForDuplicates`): the statement is entered first, then
+  the duplicates are looked for against the statements and offered on one card.

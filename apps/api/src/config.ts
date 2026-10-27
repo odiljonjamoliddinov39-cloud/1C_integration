@@ -128,6 +128,36 @@ const Env = z.object({
     .optional()
     .transform((v) => v || undefined),
   ADMIN_TOKEN_HOURS: z.coerce.number().positive().default(12),
+  /**
+   * Telegram remote control (docs/remote-control.md). Off until the bot token is set. The webhook secret is the header Telegram sends
+   * with every update; the bot's username builds the pairing link; the Mini App is served by the proxy at /app.
+   */
+  TELEGRAM_BOT_TOKEN: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  TELEGRAM_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  TELEGRAM_BOT_USERNAME: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().replace(/^@/, "") || undefined),
+  /** The Mini App's address (https://…/app); the bot's "Open" button and the output links point at it. */
+  MINIAPP_URL: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
+  /** Key that seals what waits in the mailbox (payloads, results, files). Empty: derived from JWT_SECRET. */
+  REMOTE_ENCRYPTION_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  /** Where uploaded files and generated outputs wait (sealed, deleted after delivery or 24 hours). */
+  REMOTE_BLOB_DIR: z.string().default("/var/lib/platform/remote-blobs"),
+  /** The scheduled jobs of the remote channel (expire old commands, delete old files): "off" in tests. */
+  REMOTE_JOBS: z.enum(["on", "off"]).default("on"),
 });
 
 export type Config = z.infer<typeof Env>;

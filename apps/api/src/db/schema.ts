@@ -86,6 +86,9 @@ export interface PlanFeatures {
   maxDevicesPerSeat?: number;
   excelExport?: boolean;
   prioritySupport?: boolean;
+  /** The Telegram remote control (docs/remote-control.md) is part of the plan; telegramPriority: its AI replies are served first. */
+  telegram?: boolean;
+  telegramPriority?: boolean;
   /** "docs" | "telegram" | "telegram-priority" | "manager": shown on the pricing page. */
   support?: string;
 }
@@ -612,4 +615,161 @@ export const aiQuestionCharges = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("ai_question_charges_key_idx").on(t.accountId, t.questionKey, t.createdAt)],
+);
+
+// ---- Telegram remote control (docs/remote-control.md): the mailbox between a phone and the office PC ----
+
+/** One row per desktop installation that connected to the remote channel. `enabled` is the kill switch as the server sees it. */
+export const remoteDevices = pgTable(
+  "remote_devices",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** sha256 of the device token (the token itself is shown once and kept on the PC with safeStorage). */
+    tokenHash: text("token_hash").notNull(),
+    appVersion: text("app_version").notNull().default(""),
+    enabled: boolean("enabled").notNull().default(true),
+    /** The companies the PC said it has in its last hello (INN and name): the phone chooses among them. */
+    companies: jsonb("companies").$type<{ inn: string; name: string }[]>().notNull().default([]),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("remote_devices_token_key").on(t.tokenHash),
+    index("remote_devices_account_idx").on(t.accountId),
+  ],
+);
+
+/** Who may send commands to which device, and the most they may do. */
+export const telegramLinks = pgTable(
+  "telegram_links",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => remoteDevices.id, { onDelete: "cascade" }),
+    telegramUserId: text("telegram_user_id").notNull(),
+    username: text("username"),
+    ceiling: text("ceiling", { enum: ["read", "prepare", "apply"] })
+      .notNull()
+      .default("prepare"),
+    /** The company a message written in the bot chat goes to (chosen in the Mini App or the only one the PC has). */
+    activeCompanyInn: text("active_company_inn"),
+    /** The language of the bot's replies (the Telegram user's own). */
+    language: text("language", { enum: ["uz", "ru", "en"] })
+      .notNull()
+      .default("ru"),
+    createdAt: createdAt(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("telegram_links_user_idx").on(t.telegramUserId)],
+);
+
+/** A one-time pairing code (10 minutes): shown on the desktop, redeemed once from the bot. Only its hash is kept. */
+export const telegramPairings = pgTable(
+  "telegram_pairings",
+  {
+    id: id(),
+    codeHash: text("code_hash").notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => remoteDevices.id, { onDelete: "cascade" }),
+    ceiling: text("ceiling", { enum: ["read", "prepare", "apply"] })
+      .notNull()
+      .default("prepare"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("telegram_pairings_code_key").on(t.codeHash)],
+);
+
+/** The mailbox: one row per request. `id` is the client's request id, so the same request sent twice is one command. */
+export const remoteCommands = pgTable(
+  "remote_commands",
+  {
+    id: uuid("id").primaryKey(),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => remoteDevices.id, { onDelete: "cascade" }),
+    linkId: uuid("link_id")
+      .notNull()
+      .references(() => telegramLinks.id, { onDelete: "cascade" }),
+    companyInn: text("company_inn").notNull(),
+    type: text("type").notNull(),
+    class: text("class", { enum: ["read", "prepare", "apply"] }).notNull(),
+    /** Sealed (AES-GCM with the server's key): the server can hold it while the PC is off, and does not keep it afterwards. */
+    payload: text("payload").notNull(),
+    proposalHash: text("proposal_hash"),
+    state: text("state", {
+      enum: ["queued", "delivered", "running", "done", "failed", "expired", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** Sealed result and error. */
+    result: text("result"),
+    error: text("error"),
+    progress: text("progress"),
+  },
+  (t) => [
+    index("remote_commands_device_state_idx").on(t.deviceId, t.state, t.createdAt),
+    index("remote_commands_link_idx").on(t.linkId, t.createdAt),
+  ],
+);
+
+/** Uploaded files and generated outputs; the bytes are sealed on disk, named by `storageKey`. */
+export const remoteBlobs = pgTable(
+  "remote_blobs",
+  {
+    id: id(),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => remoteDevices.id, { onDelete: "cascade" }),
+    commandId: uuid("command_id").references(() => remoteCommands.id, { onDelete: "cascade" }),
+    direction: text("direction", { enum: ["in", "out"] }).notNull(),
+    name: text("name").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    storageKey: text("storage_key").notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("remote_blobs_command_idx").on(t.commandId),
+    index("remote_blobs_expires_idx").on(t.expiresAt),
+  ],
+);
+
+/** The server's audit of every command: who, what, when and how it ended, with no content. */
+export const remoteAudit = pgTable(
+  "remote_audit",
+  {
+    id: id(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    accountId: uuid("account_id").notNull(),
+    deviceId: uuid("device_id"),
+    linkId: uuid("link_id"),
+    telegramUserId: text("telegram_user_id"),
+    commandId: uuid("command_id"),
+    type: text("type").notNull(),
+    class: text("class"),
+    /** created, delivered, running, done, failed, expired, cancelled, refused, paired, unlinked, disabled… */
+    event: text("event").notNull(),
+    /** An error code or a reason, never a message from the books. */
+    detail: text("detail"),
+  },
+  (t) => [index("remote_audit_account_idx").on(t.accountId, t.at)],
 );

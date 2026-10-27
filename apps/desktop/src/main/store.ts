@@ -5,6 +5,7 @@
  * i.e. Windows DPAPI).
  */
 import { MAX_CORRECTIONS, MAX_OPERATIONS, type Correction, type Operation } from "./engine/journal.js";
+import type { OperationMemory } from "./bank/operations.js";
 import type { PostingRule } from "./engine/posting-rules.js";
 import { type GtdRecord, remember } from "./gtd/registry.js";
 import type { TaxProfile } from "./engine/tax-tables.js";
@@ -78,6 +79,8 @@ export interface BankWrite {
   row: number;
   /** What the line was read as and by which rule (see bank/classify.ts). */
   rule: string;
+  /** The case the line was written as (bank/operations.ts): a transfer paid out, a bank fee… */
+  case?: string;
   /** The conversion a document is a leg of: all its legs go together. */
   conversionId?: string;
   createdAt: string;
@@ -91,6 +94,17 @@ export interface EngineData {
   postingRules?: PostingRule[];
   /** The accountant's confirmed rows of the table of statement lines by counterparty account (see bank/classify.ts). */
   bankMappings?: BankMapping[];
+  /** The accountant's decisions: which operation of a bank document a kind of case is written as (see bank/operations.ts). */
+  operationChoices?: { case: string; operation: string }[];
+  /** What was seen posted for the operations the program wrote: right or wrong entries, by object, case and operation. */
+  operationVerdicts?: {
+    key: string;
+    case: string;
+    operation: string;
+    good: number;
+    bad: number;
+    lastBad?: string;
+  }[];
   operations?: Operation[];
   corrections?: Correction[];
   /** The cost method of the company's stock (the accountant's decision; the program never chooses it). */
@@ -280,6 +294,36 @@ export class LocalStore {
         taken.has(w.ref) && !w.reversedAt ? { ...w, reversedAt: now.toISOString() } : w,
       ),
     };
+    this.save();
+  }
+
+  /** What the program knows about the company's bank operations: the accountant's decisions and what checks found. */
+  operationMemory(id: string): OperationMemory {
+    const e = this.find(id).engine;
+    return structuredClone({ choices: e?.operationChoices ?? [], verdicts: e?.operationVerdicts ?? [] });
+  }
+
+  setOperationChoice(id: string, kase: string, operation: string | null): void {
+    const c = this.find(id);
+    const held = (c.engine?.operationChoices ?? []).filter((x) => x.case !== kase);
+    c.engine = { ...c.engine, operationChoices: operation ? [...held, { case: kase, operation }] : held };
+    this.save();
+  }
+
+  /** Adds what a check found (counts add up; the last wrong pair is kept). */
+  recordVerdicts(id: string, found: OperationMemory["verdicts"]): void {
+    const c = this.find(id);
+    const held = new Map((c.engine?.operationVerdicts ?? []).map((v) => [v.key, v]));
+    for (const f of found) {
+      const known = held.get(f.key);
+      held.set(f.key, {
+        ...f,
+        good: (known?.good ?? 0) + f.good,
+        bad: (known?.bad ?? 0) + f.bad,
+        ...((f.lastBad ?? known?.lastBad) ? { lastBad: f.lastBad ?? known?.lastBad } : {}),
+      });
+    }
+    c.engine = { ...c.engine, operationVerdicts: [...held.values()].slice(-200) };
     this.save();
   }
 

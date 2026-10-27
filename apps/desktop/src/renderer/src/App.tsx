@@ -13,10 +13,11 @@ import { useBilling } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 import { AssistantScreen } from "@/screens/Assistant";
 import { CompaniesScreen } from "@/screens/Companies";
+import { RemoteScreen } from "@/screens/Remote";
 import { ReportsScreen } from "@/screens/Reports";
 import { SignInScreen } from "@/screens/SignIn";
 
-const SCREENS = ["companies", "assistant", "reports"] as const;
+const SCREENS = ["companies", "assistant", "reports", "remote"] as const;
 type Screen = (typeof SCREENS)[number];
 
 const icons: Record<Screen, ReactNode> = {
@@ -49,6 +50,21 @@ const icons: Record<Screen, ReactNode> = {
       aria-hidden="true"
     >
       <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  ),
+  remote: (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
     </svg>
   ),
   assistant: (
@@ -171,6 +187,8 @@ export function App() {
               <AssistantScreen initialCompanyId={assistantFor} />
             ) : screen === "reports" ? (
               <ReportsScreen />
+            ) : screen === "remote" ? (
+              <RemoteScreen />
             ) : (
               <CompaniesScreen
                 onOpenAssistant={(companyId) => {

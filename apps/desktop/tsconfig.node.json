@@ -3,5 +3,7 @@
   "compilerOptions": {
     "types": ["node", "electron-vite/node"]
   },
-  "include": ["electron.vite.config.ts", "src/main", "src/preload", "src/shared"]
+  "include": ["electron.vite.config.ts", "src/main", "src/preload", "src/shared"],
+  // Runs the real server beside the desktop client; the server's own packages are not the desktop's to type-check.
+  "exclude": ["src/main/remote/e2e.test.ts"]
 }

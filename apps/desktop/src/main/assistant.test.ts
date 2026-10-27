@@ -3074,6 +3074,213 @@ describe("assistant", () => {
       expect(JSON.stringify(proxy.requests.at(-1)?.messages.at(-1))).toContain("nothing_to_post");
     });
 
+    it("reads back what 1C posted for the bank documents the program wrote, tells which went wrong and remembers the operation", async () => {
+      const call = (id: string, name: string, input: unknown) => () => [
+        {
+          type: "message" as const,
+          stopReason: "tool_use",
+          content: [{ type: "tool_use", id, name, input }],
+        },
+      ];
+      let told: unknown;
+      const refs: string[] = [];
+      const ctx = {} as { store?: ReturnType<typeof setup>["store"]; companyId?: string };
+      const t = setup([
+        call("c1", "propose_changes", {
+          title: "2 ta o'tkazma",
+          defaults: { action: "create", object: "Документ.СписаниеСРасчетногоСчета", post: false },
+          changes: [
+            { fields: { Номер: "A1", СуммаДокумента: 100 } },
+            { fields: { Номер: "A2", СуммаДокумента: 200 } },
+          ],
+        }),
+        () => {
+          // What the program's own write log holds for them: both written as an outgoing own-account move.
+          const made = [...t.base.objects.entries()].filter(
+            ([, o]) => o.object === "Документ.СписаниеСРасчетногоСчета",
+          );
+          refs.push(...made.map(([id]) => id));
+          ctx.store?.addBankWrites(
+            ctx.companyId ?? "",
+            made.map(([id, o], i) => ({
+              ref: id,
+              object: o.object,
+              presentation: `Списание с расчетного счета A${i + 1} от 10.03.2025 0:00:00`,
+              runId: "r1",
+              seq: i + 1,
+              file: "a.xlsx",
+              row: i + 1,
+              rule: "transfer between the company's own accounts",
+              case: "transferOut",
+              createdAt: "2025-03-10T00:00:00Z",
+            })),
+          );
+          return call("c2", "propose_post_created", { title: "o'tkazish" })();
+        },
+        (input) => {
+          told = input.messages.at(-1);
+          return [
+            { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] },
+          ];
+        },
+      ]);
+      ctx.store = t.store;
+      ctx.companyId = t.company.id;
+      t.store.setAiEnabled(t.company.id, true);
+      // 1C: the first document posted the right entry, the second posted to a receivable.
+      const reg = (id: string) => ({ type: "Документ.СписаниеСРасчетногоСчета", ref: id, name: "док" });
+      t.base.queryAnswers.unshift({
+        match: /РегистрБухгалтерии\.Хозрасчетный КАК Т ГДЕ Т\.Период МЕЖДУ/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            [reg(refs[0] ?? ""), "5710", "5110"],
+            [reg(refs[1] ?? ""), "4220", "5110"],
+          ],
+          truncated: false,
+        }),
+      });
+      t.base.queryAnswers.unshift({
+        match: /Д\.ВидОперации КАК Вид ИЗ Документ\.СписаниеСРасчетногоСчета КАК Д/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            [reg(refs[0] ?? ""), { type: "Перечисление.X", ref: "ПрочееСписание", name: "Прочее списание" }],
+            [
+              reg(refs[1] ?? ""),
+              {
+                type: "Перечисление.X",
+                ref: "ПереводНаДругойСчет",
+                name: "Перевод на другой счет организации",
+              },
+            ],
+          ],
+          truncated: false,
+        }),
+      });
+      const sending = t.assistant.send({ companyId: t.company.id, text: "Kirit va o'tkaz" });
+      const answered = new Set<string>();
+      const timer = setInterval(() => {
+        for (const e of t.events) {
+          if (e.type === "confirm" && !answered.has(e.id)) {
+            answered.add(e.id);
+            t.assistant.decide(e.companyId, e.id, true);
+          }
+        }
+      }, 1);
+      await sending;
+      clearInterval(timer);
+      const check = JSON.parse(
+        ((told as { content: { content: string }[] }).content[0] as { content: string }).content,
+      ).entriesCheck as { lines: string[]; wrong: number };
+      expect(check.wrong).toBe(1);
+      expect(check.lines[0]).toBe("1 of 2 posted documents made the entry their case needs");
+      expect(check.lines[1]).toContain(
+        "«Перевод на другой счет организации» as transferOut: 1 document(s) went wrong, it posted Dt 4220 / Kt 5110",
+      );
+      expect(t.store.operationMemory(t.company.id).verdicts).toMatchObject([
+        { case: "transferOut", operation: "Прочее списание", good: 1, bad: 0 },
+        {
+          case: "transferOut",
+          operation: "Перевод на другой счет организации",
+          good: 0,
+          bad: 1,
+          lastBad: "it posted Dt 4220 / Kt 5110",
+        },
+      ]);
+    });
+
+    it("a bare «проведи» tells the accountant what the check found, in the accountant's language", async () => {
+      const t = setup([
+        () => [
+          {
+            type: "message" as const,
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "c1",
+                name: "propose_changes",
+                input: {
+                  title: "o'tkazma",
+                  defaults: { action: "create", object: "Документ.СписаниеСРасчетногоСчета", post: false },
+                  changes: [{ fields: { Номер: "A1", СуммаДокумента: 100 } }],
+                },
+              },
+            ],
+          },
+        ],
+        () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+      ]);
+      t.store.setAiEnabled(t.company.id, true);
+      const answerCards = () => {
+        const answered = new Set<string>();
+        return setInterval(() => {
+          for (const e of t.events) {
+            if (e.type === "confirm" && !answered.has(e.id)) {
+              answered.add(e.id);
+              t.assistant.decide(e.companyId, e.id, true);
+            }
+          }
+        }, 1);
+      };
+      let timer = answerCards();
+      await t.assistant.send({ companyId: t.company.id, text: "Kirit" });
+      clearInterval(timer);
+      const found = [...t.base.objects.entries()].find(
+        ([, o]) => o.object === "Документ.СписаниеСРасчетногоСчета",
+      );
+      if (!found) throw new Error("no document was made");
+      const [id, made] = found;
+      t.store.addBankWrites(t.company.id, [
+        {
+          ref: id,
+          object: made.object,
+          presentation: "Списание с расчетного счета A1 от 10.03.2025 0:00:00",
+          runId: "r1",
+          seq: 1,
+          file: "a.xlsx",
+          row: 1,
+          rule: "transfer between the company's own accounts",
+          case: "transferOut",
+          createdAt: "2025-03-10T00:00:00Z",
+        },
+      ]);
+      const cell = { type: "Документ.СписаниеСРасчетногоСчета", ref: id, name: "док" };
+      t.base.queryAnswers.unshift({
+        match: /РегистрБухгалтерии\.Хозрасчетный КАК Т ГДЕ Т\.Период МЕЖДУ/,
+        answer: () => ({ columns: [], rows: [[cell, "4220", "5110"]], truncated: false }),
+      });
+      t.base.queryAnswers.unshift({
+        match: /Д\.ВидОперации КАК Вид ИЗ Документ\.СписаниеСРасчетногоСчета КАК Д/,
+        answer: () => ({
+          columns: [],
+          rows: [
+            [
+              cell,
+              {
+                type: "Перечисление.X",
+                ref: "ПереводНаДругойСчет",
+                name: "Перевод на другой счет организации",
+              },
+            ],
+          ],
+          truncated: false,
+        }),
+      });
+      timer = answerCards();
+      await t.assistant.send({ companyId: t.company.id, text: "проведи" });
+      clearInterval(timer);
+      const texts = t.events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text);
+      const last = texts.at(-1) ?? "";
+      expect(last).toContain("Готово: проведено 1");
+      expect(last).toContain("Проводки проверены: у 0 из 1 документов банка");
+      expect(last).toContain(
+        "Операция «Перевод на другой счет организации» (transferOut): 1 док. провелись неверно — провёл Dt 4220 / Kt 5110",
+      );
+      expect(last).toContain("исправь проводки");
+    });
+
     it("a bare 'проведи' posts what the chat made, with no model step and no search", async () => {
       const { assistant, store, company, events, proxy, base } = setup([
         () => [
@@ -5389,6 +5596,61 @@ describe("the table of statement lines by counterparty account", () => {
       { id: "c-bank_fee", debit: "9430", credit: "5110" },
     ]);
     expect(told(t)).toContain("not to be asked about again");
+  });
+
+  it("keeps the accountant's decision about which operation a case is written as, and takes it back", async () => {
+    const t = call({ action: "set_operation", case: "transferOut", operation: "Boshqa chiqim" });
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "x" });
+    expect(t.store.operationMemory(t.company.id).choices).toEqual([
+      { case: "transferOut", operation: "Boshqa chiqim" },
+    ]);
+    expect(told(t)).toContain("is what transferOut is written as in this company");
+    // The same case again replaces the earlier decision.
+    t.store.setOperationChoice(t.company.id, "transferOut", "Прочее списание");
+    expect(t.store.operationMemory(t.company.id).choices).toEqual([
+      { case: "transferOut", operation: "Прочее списание" },
+    ]);
+    t.store.setOperationChoice(t.company.id, "transferOut", null);
+    expect(t.store.operationMemory(t.company.id).choices).toEqual([]);
+  });
+
+  it("refuses set_operation without a case or an operation, and lists what it has seen 1C post", async () => {
+    const t = call({ action: "set_operation", operation: "X" });
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "x" });
+    expect(told(t)).toContain("needs the case");
+    const listed = call({ action: "operations" });
+    listed.store.setAiEnabled(listed.company.id, true);
+    listed.store.recordVerdicts(listed.company.id, [
+      {
+        key: "k",
+        case: "transferOut",
+        operation: "Перевод на другой счет",
+        good: 0,
+        bad: 3,
+        lastBad: "it posted Dt 4220 / Kt 5110",
+      },
+    ]);
+    await listed.assistant.send({ companyId: listed.company.id, text: "x" });
+    expect(told(listed)).toContain("it posted Dt 4220 / Kt 5110");
+    expect(told(listed)).toContain("no (it posted wrong entries from here)");
+    expect(told(listed)).toContain("money paid to another account of the company");
+  });
+
+  it("adds what checks found: counts add up, the last wrong entry is kept", () => {
+    const t = call({ action: "list" });
+    const verdict = (good: number, bad: number, lastBad?: string) => ({
+      key: "k",
+      case: "fee",
+      operation: "Прочее списание",
+      good,
+      bad,
+      ...(lastBad ? { lastBad } : {}),
+    });
+    t.store.recordVerdicts(t.company.id, [verdict(2, 1, "it posted no entry")]);
+    t.store.recordVerdicts(t.company.id, [verdict(3, 0)]);
+    expect(t.store.operationMemory(t.company.id).verdicts).toEqual([verdict(5, 1, "it posted no entry")]);
   });
 
   it("changes one row, refuses an account the chart lacks, and adds a prefix the program does not know", async () => {

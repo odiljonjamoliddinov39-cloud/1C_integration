@@ -18,6 +18,7 @@ import type { PostingOperation } from "@platform/shared";
 
 import { type Context, choosePosting } from "../engine/posting-rules.js";
 import type { BankCache, BankDeps } from "./resolve.js";
+import { EMPTY_MEMORY, chooseOperation, counterAccountFrom, operationProfiles } from "./operations.js";
 import { ownAccountOf } from "./roles.js";
 import {
   type Described,
@@ -62,7 +63,6 @@ const KINDS: Record<
   BuildKind,
   {
     object: string;
-    phrases: string[];
     what: string;
     correspondence: "expense" | "transit" | "conversion" | "tax" | "rule";
     other: boolean;
@@ -72,7 +72,6 @@ const KINDS: Record<
 > = {
   fee: {
     object: OBJECT.out,
-    phrases: ["прочее списание", "прочеесписание"],
     what: "bank fee",
     correspondence: "expense",
     other: false,
@@ -83,35 +82,30 @@ const KINDS: Record<
   // the form posted to the wrong account, or not at all.
   transferOut: {
     object: OBJECT.out,
-    phrases: ["прочее списание", "прочеесписание"],
     what: "transfer to another account of the company",
     correspondence: "transit",
     other: false,
   },
   transferIn: {
     object: OBJECT.in,
-    phrases: ["прочее поступление", "прочеепоступление"],
     what: "transfer from another account of the company",
     correspondence: "transit",
     other: false,
   },
   conversionOut: {
     object: OBJECT.out,
-    phrases: ["прочее списание", "прочеесписание"],
     what: "conversion, the paying leg",
     correspondence: "conversion",
     other: false,
   },
   tax: {
     object: OBJECT.out,
-    phrases: ["уплата налога", "уплатыналога"],
     what: "payment to the budget",
     correspondence: "tax",
     other: false,
   },
   cashIn: {
     object: OBJECT.in,
-    phrases: ["взнос наличными", "взнос наличных", "внесение наличных", "поступление наличных"],
     what: "cash paid into the account",
     correspondence: "rule",
     other: false,
@@ -119,7 +113,6 @@ const KINDS: Record<
   },
   cashOut: {
     object: OBJECT.out,
-    phrases: ["снятие наличных", "получение наличных", "выдача наличных"],
     what: "cash taken out of the account",
     correspondence: "rule",
     other: false,
@@ -127,13 +120,6 @@ const KINDS: Record<
   },
   capital: {
     object: OBJECT.in,
-    phrases: [
-      "взнос учредителя",
-      "вклад учредителя",
-      "взнос в уставный",
-      "вклад в уставный",
-      "прочее поступление",
-    ],
     what: "a founder's contribution to the charter capital",
     correspondence: "rule",
     other: false,
@@ -141,19 +127,11 @@ const KINDS: Record<
   },
   conversionIn: {
     object: OBJECT.in,
-    phrases: ["прочее поступление", "прочеепоступление", "перевод с другого счета", "переводсдругогосчета"],
     what: "conversion, the receiving leg",
     correspondence: "conversion",
     other: false,
   },
 };
-
-/** The operation of the receiving leg of a currency purchase (the accountant's rule, the same for every company). */
-const CURRENCY_PURCHASE_PHRASES = [
-  "приобретение иностранной валюты",
-  "приобретениеиностраннойвалюты",
-  "приобретение валюты",
-];
 
 export interface BuildSpec {
   kind: BuildKind;
@@ -274,20 +252,22 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     ?.types.find((t) => t.startsWith("Перечисление"));
   const values: EnumValue[] | null = operationType ? await enumValues(deps, sc, operationType) : null;
   if (!values) return refuse("the operations of the document could not be read from 1C");
-  // The first phrase 1C has a value for (the usual name before the alternative one).
-  // A payment to the budget is «Уплата налога» itself, never the one «за третьих лиц» (another payer, a contract, 6010).
-  const usable = kind.correspondence === "tax" ? values.filter((v) => !/третьих/iu.test(v.name)) : values;
-  // The currency taken in by a purchase is «Приобретение иностранной валюты» in every company, whatever its earlier documents
-  // say (a «Прочее поступление» there was the first run's mistake); a base that has no such value keeps the usual phrases.
-  const phrases =
-    spec.kind === "conversionIn" && spec.conversion?.direction === "buy"
-      ? [...CURRENCY_PURCHASE_PHRASES, ...kind.phrases]
-      : kind.phrases;
-  const operation = phrases.map((p) => valueLike(usable, [p])).find((v) => v !== undefined);
-  if (!operation)
+  // What 1C is told to do is worked out, not fixed (operations.ts): the accountant's decision, then what the company's own
+  // posted documents show such a case to be, then the meaning of the operation's name; the answer is named in the note.
+  const profiles = await operationProfiles(deps, cache, kind.object);
+  const choice = chooseOperation({
+    kind: spec.kind,
+    variant: spec.conversion?.direction,
+    object: kind.object,
+    values,
+    profiles,
+    memory: cache.memory ?? EMPTY_MEMORY,
+  });
+  if (!choice.ok)
     return refuse(
-      `1C has no operation like «${phrases[0]}» (it has ${values.map((v) => v.name).join(", ")})`,
+      `${choice.why}. 1C has: ${choice.known.join("; ") || "no operations"}. Name the operation to use for this (set_operation of bank_mapping); the program keeps the answer`,
     );
+  const operation = choice.value;
 
   const notes: string[] = [];
   // The account the other side of the entry is booked to.
@@ -304,7 +284,15 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     const decision = choosePosting({ type: kind.rule.op, date: spec.payment.date }, spec.posting);
     code = (kind.rule.side === "credit" ? decision.credit : decision.debit) ?? "";
     if (decision.source !== "rule" || decision.needsApproval) notes.push(`accounts: ${decision.reason}`);
-  } else code = TRANSIT_ACCOUNT;
+  } else {
+    // A move through the transit account: the account the company's own documents of this operation use for it, else the prior.
+    const fromBooks = counterAccountFrom(spec.kind, choice.pairs);
+    code = fromBooks ?? TRANSIT_ACCOUNT;
+    if (fromBooks && fromBooks !== TRANSIT_ACCOUNT)
+      notes.push(
+        `the other side of the move is ${fromBooks}, as the company's own documents of «${operation.name}» book it`,
+      );
+  }
   const refs = await accountRefs(deps, sc, code ? [code] : []);
   const accountRef = code ? (refs.get(code) ?? null) : null;
 
@@ -439,7 +427,7 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
     }
   }
   notes.push(
-    `no earlier ${short} in 1C: the ${kind.what} is made from 1C's own description of the document. Operation «${operation.name}»${code ? `, account ${code}` : ""}; check the first documents`,
+    `no earlier ${short} in 1C: the ${kind.what} is made from 1C's own description of the document. Operation «${operation.name}» (${choice.source}: ${choice.why})${code ? `, account ${code}` : ""}; check the first documents`,
   );
   return {
     ok: true,
