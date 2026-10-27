@@ -120,6 +120,20 @@
       "when": 1791974712555,
       "tag": "0016_ai_usage_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793085733145,
+      "tag": "0017_remote_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793085985227,
+      "tag": "0018_remote_plan_features",
+      "breakpoints": true
     }
   ]
 }

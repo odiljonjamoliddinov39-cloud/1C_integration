@@ -17,6 +17,7 @@ export const PlanSaveInput = z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),
     support: z.string().trim().max(40),
+    telegram: z.boolean().default(false),
   }),
   isPublic: z.boolean(),
   sortOrder: z.number().int().min(0).max(1000),

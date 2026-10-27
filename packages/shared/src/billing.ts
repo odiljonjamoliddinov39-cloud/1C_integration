@@ -71,6 +71,8 @@ export const PlanView = z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),
     support: z.string(),
+    /** Telegram remote control (docs/remote-control.md). */
+    telegram: z.boolean().default(false),
   }),
   isPublic: z.boolean(),
   sortOrder: z.number(),

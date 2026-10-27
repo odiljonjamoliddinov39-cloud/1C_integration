@@ -23,6 +23,9 @@ import {
   RegisterAccountInput,
   ReportRunInput,
   type ReportView,
+  type RemoteLinkView,
+  type RemoteLogRow,
+  type RemoteStateView,
   type Result,
   type Session,
   SignInInput,
@@ -32,6 +35,7 @@ import type { BillingState } from "./billing.js";
 import { EImzoClient, EImzoError } from "./didox/eimzo.js";
 import { listKeys, runDidoxTest } from "./didox/test-run.js";
 import type { ConnectorRunner } from "./connector.js";
+import type { RemoteService } from "./remote/service.js";
 import type { SessionService } from "./session.js";
 import { type LocalStore, StoreError } from "./store.js";
 
@@ -51,6 +55,8 @@ export interface HandlerDeps {
   registerComConnector: () => Promise<Result<{ version: string; dll: string }>>;
   /** E-IMZO and the network for the Didox test; the real ones unless a test hands in fakes. */
   didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
+  /** Telegram remote control; absent in tests that do not cover it. */
+  remote?: RemoteService;
 }
 
 /** Chats are files named by these ids: anything but a UUID is refused before it reaches the disk. */
@@ -72,7 +78,9 @@ export function createHandlers({
   installExtension,
   registerComConnector,
   didox,
+  remote,
 }: HandlerDeps) {
+  const noRemote = { ok: false, code: "UNAVAILABLE", message: "Remote control is not available" } as const;
   return {
     appInfo: async (): Promise<AppInfo> => info,
 
@@ -277,6 +285,32 @@ export function createHandlers({
     assistantReset: async (id: unknown): Promise<void> => assistant.reset(String(id)),
     assistantDecide: async (id: unknown, proposalId: unknown, approve: unknown): Promise<void> =>
       assistant.decide(String(id), String(proposalId), approve === true),
+
+    remoteState: async (): Promise<RemoteStateView> =>
+      remote?.view() ?? { paired: false, connected: false, enabled: false, ceiling: "apply", hasPin: false },
+    remoteConnect: async (): Promise<Result<{ code: string; link: string; expires_at: string }>> =>
+      remote ? remote.connectTelegram() : noRemote,
+    remoteLinks: async (): Promise<Result<RemoteLinkView[]>> => (remote ? remote.links() : noRemote),
+    remoteRevoke: async (id: unknown): Promise<Result<null>> =>
+      remote && z.uuid().safeParse(id).success
+        ? remote.revokeLink(String(id))
+        : { ok: false, code: "VALIDATION", message: "Which connection?" },
+    remoteEnable: async (enabled: unknown): Promise<Result<RemoteStateView>> =>
+      remote ? remote.setEnabled(enabled === true) : noRemote,
+    remotePin: async (pin: unknown): Promise<Result<RemoteStateView>> =>
+      !remote
+        ? noRemote
+        : pin === null || typeof pin === "string"
+          ? remote.setPin(pin)
+          : { ok: false, code: "VALIDATION", message: "A PIN is 4 to 12 digits" },
+    remoteCeiling: async (ceiling: unknown): Promise<Result<RemoteStateView>> => {
+      const parsed = z.enum(["read", "prepare", "apply"]).safeParse(ceiling);
+      if (!remote) return noRemote;
+      return parsed.success
+        ? remote.setCeiling(parsed.data)
+        : { ok: false, code: "VALIDATION", message: "Read, prepare or apply" };
+    },
+    remoteLog: async (): Promise<RemoteLogRow[]> => remote?.log() ?? [],
 
     assistantChats: async (id: unknown): Promise<ChatSummary[]> =>
       z.uuid().safeParse(id).success ? assistant.chats(String(id)) : [],
