@@ -489,3 +489,22 @@ What the program does now:
   (taken back, then entered again from the statement the new way). One card lists the deletions and the changes; nothing is
   touched before it is accepted. Rows of the retired documents are free again for the entry (`bank/postings.ts`).
 - The button «Fix the postings» is offered next to «Find the duplicates» when the answer speaks of a mismatch or a negative balance.
+
+## Rules that must not depend on which company is selected (27.10)
+
+The real run on the eight statements (867 documents) needed three corrections by the accountant. Each is now a rule of
+the program, not a habit learned from one company's earlier documents:
+
+- **A currency purchase takes the currency in as «Приобретение иностранной валюты»** (the receiving leg, `build.ts`). The
+  first run wrote «Прочее поступление». A base that has no such operation falls back to the old phrases and says so in the
+  note. A sale of currency is not changed: the operation of its legs is still to be confirmed by the accountant.
+- **A leg's contract is settled in the leg's own currency** (`transfer.ts`). When the contract found for a dollar leg is
+  settled in another currency, the leg is not written and the reason is on the card (the first run put a ruble contract on
+  dollar receipts).
+- **A statement of another company is not read** (`bank/owner.ts`). The company's own accounts are counterparties in each
+  other's statements and those lines carry its INN; if that INN is not the selected company's, `propose_bank_payments`
+  stops with `STATEMENT_OF_ANOTHER_COMPANY` before anything is entered. With no line to an own account there is nothing to
+  judge by and the import goes on as before.
+
+Not changed, and still the accountant's decision: the VAT rate row (12%, amount 0) that stays on a purchase document, and
+whether the document's rate is the Central Bank's or the bank's (the payment text carries the bank's).

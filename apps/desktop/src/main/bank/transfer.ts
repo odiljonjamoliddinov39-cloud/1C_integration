@@ -26,6 +26,7 @@ import {
   type MissingCounterparty,
   OBJECT,
   type Template,
+  contractCurrency,
   conversionFor,
   copyTemplate,
   currencyRef,
@@ -567,6 +568,18 @@ export async function resolveTransfers(
       if (bank.message) {
         fail(leg, bank.message);
         continue;
+      }
+      // The contract of a leg is settled in the leg's own currency: a document with a ruble contract on a dollar account is
+      // never written, in any company (when 1C cannot say the contract's currency, the lookup's own filter stands).
+      if (bank.bank?.contract) {
+        const settled = await contractCurrency(deps, cache, bank.bank.contract);
+        if (settled && settled !== legCurrency) {
+          fail(
+            leg,
+            `the contract chosen for this ${legCurrency} leg is settled in ${settled}: it is not written; the accountant says which contract the bank's ${legCurrency} conversions go under`,
+          );
+          continue;
+        }
       }
       const built = await buildBankDocument(deps, cache, {
         kind: leg.side === "out" ? "conversionOut" : "conversionIn",

@@ -148,6 +148,13 @@ const KINDS: Record<
   },
 };
 
+/** The operation of the receiving leg of a currency purchase (the accountant's rule, the same for every company). */
+const CURRENCY_PURCHASE_PHRASES = [
+  "приобретение иностранной валюты",
+  "приобретениеиностраннойвалюты",
+  "приобретение валюты",
+];
+
 export interface BuildSpec {
   kind: BuildKind;
   /** The founder, for a contribution to the charter capital (a counterparty of 1C). */
@@ -270,10 +277,16 @@ export async function buildBankDocument(deps: BankDeps, cache: BankCache, spec: 
   // The first phrase 1C has a value for (the usual name before the alternative one).
   // A payment to the budget is «Уплата налога» itself, never the one «за третьих лиц» (another payer, a contract, 6010).
   const usable = kind.correspondence === "tax" ? values.filter((v) => !/третьих/iu.test(v.name)) : values;
-  const operation = kind.phrases.map((p) => valueLike(usable, [p])).find((v) => v !== undefined);
+  // The currency taken in by a purchase is «Приобретение иностранной валюты» in every company, whatever its earlier documents
+  // say (a «Прочее поступление» there was the first run's mistake); a base that has no such value keeps the usual phrases.
+  const phrases =
+    spec.kind === "conversionIn" && spec.conversion?.direction === "buy"
+      ? [...CURRENCY_PURCHASE_PHRASES, ...kind.phrases]
+      : kind.phrases;
+  const operation = phrases.map((p) => valueLike(usable, [p])).find((v) => v !== undefined);
   if (!operation)
     return refuse(
-      `1C has no operation like «${kind.phrases[0]}» (it has ${values.map((v) => v.name).join(", ")})`,
+      `1C has no operation like «${phrases[0]}» (it has ${values.map((v) => v.name).join(", ")})`,
     );
 
   const notes: string[] = [];
