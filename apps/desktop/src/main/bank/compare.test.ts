@@ -71,6 +71,23 @@ const block2 = pay(11, {
   purpose: "Блокировка средств",
 });
 const rows = [block1, exchange, back1, back2, block2];
+/** The statement of the blocked account: the other side of each move, the way the bank lists it. */
+const blocked = () =>
+  statement(
+    BLOCK,
+    [block1, back1, back2, block2].map((p, i) =>
+      pay(i + 1, {
+        date: p.date,
+        number: p.number,
+        direction: p.direction === "out" ? "in" : "out",
+        amount: p.amount,
+        account: MAIN,
+        purpose: p.purpose,
+      }),
+    ),
+    "blocked.xlsx",
+  );
+const both = () => [statement(MAIN, rows), blocked()];
 
 let n = 0;
 const doc = (account: string, direction: "in" | "out", d: string, cents: number, incoming = ""): BankDoc => ({
@@ -96,19 +113,21 @@ const moveDocs = (p: BankPayment): BankDoc[] => {
 };
 
 describe("compareWithBooks", () => {
-  it("a move between the own accounts is two documents, one on each account, and that agrees", () => {
+  it("a move between the own accounts is one operation of two documents, one on each account, and that agrees", () => {
     const docs = [...moveDocs(block1), ...moveDocs(back1), ...moveDocs(back2), ...moveDocs(block2)];
-    const result = compareWithBooks([statement(MAIN, rows)], docs, OWN_INN);
-    const verdict = (row: number) => result.rows.find((r) => r.row === row);
+    const result = compareWithBooks(both(), docs, OWN_INN);
+    const verdict = (row: number) => result.rows.find((r) => r.file === "main.xlsx" && r.row === row);
     for (const row of [7, 9, 10, 11]) {
       expect(verdict(row)?.status).toBe("ok");
       expect(verdict(row)?.kind).toBe("own_move");
-      expect(verdict(row)?.legs).toHaveLength(2);
     }
+    // Each move is two rows (one in each statement), each with its own document: two documents, not four.
+    expect(result.rows.filter((r) => r.kind === "own_move")).toHaveLength(8);
+    expect(result.summary.rows).toBe(9);
     // The 3 000 000 payment to another company is not among the documents: it is the one thing missing.
     expect(verdict(8)).toMatchObject({ status: "missing", kind: "payment" });
     expect(result.extra).toEqual([]);
-    expect(result.summary).toMatchObject({ rows: 5, ok: 4, missing: 1, partial: 0, extra: 0 });
+    expect(result.summary).toMatchObject({ ok: 8, missing: 1, partial: 0, extra: 0 });
     // The turnover of the main account lacks exactly that payment; the blocked account agrees.
     const main = result.accounts.find((a) => a.account === MAIN);
     expect(main?.difference).toEqual({ in: 0, out: -300_000_000 });
@@ -123,8 +142,8 @@ describe("compareWithBooks", () => {
       ...moveDocs(back2),
       ...moveDocs(block2),
     ];
-    const result = compareWithBooks([statement(MAIN, rows)], docs, OWN_INN);
-    expect(result.summary).toMatchObject({ ok: 5, missing: 0, partial: 0, extra: 0 });
+    const result = compareWithBooks(both(), docs, OWN_INN);
+    expect(result.summary).toMatchObject({ ok: 9, missing: 0, partial: 0, extra: 0 });
     expect(result.accounts.every((a) => a.difference.in === 0 && a.difference.out === 0)).toBe(true);
     expect(compareText(result, "en")).toContain("Everything agrees");
   });
@@ -134,9 +153,9 @@ describe("compareWithBooks", () => {
       doc(MAIN, "out", "2024-01-08", 12_446_000_000, "1"),
       doc(MAIN, "in", "2024-01-08", 12_446_000_000),
     ];
-    const result = compareWithBooks([statement(MAIN, [block1])], docs, OWN_INN);
-    expect(result.rows[0]).toMatchObject({ status: "partial" });
-    expect(result.rows[0]?.legs.filter((l) => !l.doc).map((l) => l.leg.account)).toEqual([BLOCK]);
+    const result = compareWithBooks([statement(MAIN, [block1]), blocked()], docs, OWN_INN);
+    expect(result.rows.find((r) => r.account === MAIN && r.row === 7)).toMatchObject({ status: "ok" });
+    expect(result.rows.find((r) => r.account === BLOCK && r.row === 1)).toMatchObject({ status: "missing" });
     expect(result.extra).toHaveLength(1);
     expect(result.extra[0]).toMatchObject({
       reason: "wrong_place",
@@ -149,6 +168,23 @@ describe("compareWithBooks", () => {
     const text = compareText(result, "ru");
     expect(text).toContain("на другом счёте");
     expect(text).toContain(BLOCK);
+  });
+
+  it("a move whose other account is not attached is the one document the import makes, and a bank fee to a transit account is one document too", () => {
+    const TRANSIT = "16401000105733821001";
+    const fee = pay(20, {
+      date: "2024-01-16",
+      number: "4",
+      direction: "out",
+      amount: 112_000,
+      account: TRANSIT,
+      purpose: "За iBank-24-1120.00 документ №4",
+    });
+    const docs = [doc(MAIN, "out", "2024-01-16", 112_000, "4")];
+    const result = compareWithBooks([statement(MAIN, [fee])], docs, OWN_INN);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ status: "ok", legs: [{ mirror: false }] });
+    expect(result.accounts.every((a) => a.difference.in === 0 && a.difference.out === 0)).toBe(true);
   });
 
   it("a row entered twice is a duplicate, and only the second copy is extra", () => {

@@ -2,10 +2,11 @@
  * The statements against the bank documents of 1C, row by row (no AI, whole tiyin). The statements are the truth about what the
  * bank did; each row says which documents 1C must have for it:
  *
- *  - an ordinary row (a payment, a fee, a tax) is one document on the statement's account, in its direction;
- *  - a row that moves money between two of the company's own accounts is two documents, one on each account (a write-off on
- *    the account the money left, a receipt on the account it reached), even though the statement of one account lists it once.
- *    When the statement of the other account is attached too and lists the same move, the two rows are one move, not two.
+ *  - a payment, a tax or a bank fee (also a fee paid to the bank's transit account) is one document on the statement's account;
+ *  - a move between two of the company's own accounts (a block of money for a conversion, and its return) is one operation of two
+ *    documents, a write-off where the money left and a receipt where it came, one on each account, never more;
+ *  - the rows of a pass-through account are the other legs of payments in the other statements, not payments of their own.
+ *    What each row is comes from the same reading the import uses (ledger.ts).
  *
  * The expected documents are laid against the documents 1C has (the same account, direction, day and amount; the bank's number
  * breaks a tie). What does not meet is reported with the likeliest reason: a document missing (the row was never entered, or
@@ -14,7 +15,8 @@
  * amount shows first.
  */
 import type { BankDoc } from "./duplicates.js";
-import type { BankStatement } from "./statement.js";
+import { currencyOfAccount, planLedger } from "./ledger.js";
+import type { BankPayment, BankStatement } from "./statement.js";
 
 const day = (iso: string) => iso.slice(0, 10);
 const digits = (s: string) => s.replace(/\D/g, "");
@@ -86,75 +88,73 @@ const keyOf = (l: Leg) => `${l.account}|${l.direction}|${l.day}|${l.cents}`;
 
 interface Draft {
   verdict: RowVerdict;
-  /** The own account the money moved to or from, when the row is a move between the company's accounts. */
-  counter: string | null;
-  paired: boolean;
 }
 
-/** Compares the statements with the bank documents of 1C. `ownInn` is the company's INN: a row to or from itself is a move. */
+/**
+ * Compares the statements with the bank documents of 1C. `ownInn` is the company's INN. What each row is comes from the same
+ * reading the import uses (ledger.ts), so the comparison asks of 1C what the import would have entered: a payment, a tax or
+ * a bank fee (also a fee to the bank's transit account) is one document; a move between two of the company's accounts is one
+ * document on each; the rows of a pass-through account are the other legs of payments in the other statements.
+ */
 export function compareWithBooks(statements: BankStatement[], docs: BankDoc[], ownInn: string): Comparison {
-  const own = digits(ownInn);
+  const plan = planLedger(statements, { ownInn });
   const accounts = new Set(statements.map((s) => digits(s.account)).filter(Boolean));
   const drafts: Draft[] = [];
-  for (const s of statements) {
+  const draft = (s: BankStatement, p: BankPayment, kind: RowVerdict["kind"]): Draft => {
     const account = digits(s.account);
-    if (!account) continue;
-    for (const p of s.payments) {
-      const counter = digits(p.account);
-      const isMove = own !== "" && digits(p.inn) === own && /^\d{20}$/.test(counter) && counter !== account;
-      const leg: Leg = { account, direction: p.direction, day: day(p.date), cents: Math.round(p.amount) };
-      drafts.push({
-        counter: isMove ? counter : null,
-        paired: false,
-        verdict: {
-          file: s.fileName,
-          row: p.row,
-          account,
-          day: leg.day,
-          direction: p.direction,
-          cents: leg.cents,
-          number: p.number.trim(),
-          counterparty: p.counterparty,
-          purpose: p.purpose,
-          kind: isMove ? "own_move" : "payment",
-          legs: [{ leg, mirror: false, doc: null }],
-          status: "missing",
-        },
-      });
-    }
-  }
-  // A move listed in the statements of both accounts is one move: the two rows are paired, and each is the leg of its own account.
-  const moves = drafts.filter((d) => d.counter);
-  for (const a of moves) {
-    if (a.paired) continue;
-    const mate = moves.find(
-      (b) =>
-        b !== a &&
-        !b.paired &&
-        b.verdict.account === a.counter &&
-        b.counter === a.verdict.account &&
-        b.verdict.day === a.verdict.day &&
-        b.verdict.cents === a.verdict.cents &&
-        b.verdict.direction !== a.verdict.direction,
-    );
-    if (mate) {
-      a.paired = true;
-      mate.paired = true;
-    }
-  }
-  // An unpaired move needs the other account's leg too: it is not in any statement, so 1C must have it from this row.
-  for (const d of moves) {
-    if (d.paired || !d.counter) continue;
-    d.verdict.legs.push({
-      leg: {
-        account: d.counter,
-        direction: d.verdict.direction === "out" ? "in" : "out",
-        day: d.verdict.day,
-        cents: d.verdict.cents,
+    const leg: Leg = { account, direction: p.direction, day: day(p.date), cents: Math.round(p.amount) };
+    const d: Draft = {
+      verdict: {
+        file: s.fileName,
+        row: p.row,
+        account,
+        day: leg.day,
+        direction: p.direction,
+        cents: leg.cents,
+        number: p.number.trim(),
+        counterparty: p.counterparty,
+        purpose: p.purpose,
+        kind,
+        legs: [{ leg, mirror: false, doc: null }],
+        status: "missing",
       },
-      mirror: true,
-      doc: null,
-    });
+    };
+    drafts.push(d);
+    return d;
+  };
+  const byFile = new Map(statements.map((s) => [s.fileName, s]));
+  for (const s of statements) {
+    if (!digits(s.account)) continue;
+    const wanted = new Set(plan.rows.get(s.fileName) ?? []);
+    for (const p of s.payments) if (wanted.has(p.row)) draft(s, p, "payment");
+  }
+  for (const t of plan.transfers) {
+    const sides = [
+      { side: "out" as const, at: t.out },
+      { side: "in" as const, at: t.in },
+    ];
+    const present = sides.filter((x) => x.at);
+    for (const { side, at } of present) {
+      const s = at ? byFile.get(at.file) : undefined;
+      const p = s?.payments.find((x) => x.row === at?.row);
+      if (!s || !p) continue;
+      const d = draft(s, p, "own_move");
+      // One side only, a plain soum move: the import makes the other side from this row (transfer.ts); an own account whose
+      // statement is not attached, and a conversion, are not completed.
+      const soums = currencyOfAccount(t.fromAccount) === "UZS" && currencyOfAccount(t.toAccount) === "UZS";
+      if (present.length === 1 && !t.fx && t.kind !== "unattached_own" && soums) {
+        d.verdict.legs.push({
+          leg: {
+            account: digits(side === "out" ? t.toAccount : t.fromAccount),
+            direction: side === "out" ? "in" : "out",
+            day: d.verdict.day,
+            cents: d.verdict.cents,
+          },
+          mirror: true,
+          doc: null,
+        });
+      }
+    }
   }
 
   // The documents of 1C, by what they stand for.
@@ -263,7 +263,7 @@ const WORDS = {
     partial: "Введено не полностью",
     extra: "Лишние документы 1С",
     accounts: "Обороты по счетам (1С − выписка)",
-    move: "перевод между своими счетами: нужно 2 документа",
+    move: "перевод между своими счетами",
     leg: (a: string, dir: string) => `${dir === "in" ? "поступление" : "списание"} на счёте ${a}`,
     why: {
       duplicate: "введён повторно",
@@ -281,7 +281,7 @@ const WORDS = {
     partial: "To'liq kiritilmagan",
     extra: "1C dagi ortiqcha hujjatlar",
     accounts: "Hisoblar bo'yicha aylanma (1C − ko'chirma)",
-    move: "o'z hisoblari orasidagi o'tkazma: 2 ta hujjat kerak",
+    move: "o'z hisoblari orasidagi o'tkazma",
     leg: (a: string, dir: string) => `${a} hisobida ${dir === "in" ? "kirim" : "chiqim"}`,
     why: {
       duplicate: "ikki marta kiritilgan",
@@ -299,7 +299,7 @@ const WORDS = {
     partial: "Entered in part",
     extra: "Extra documents in 1C",
     accounts: "Turnover by account (1C − statement)",
-    move: "a move between the company's own accounts: 2 documents are needed",
+    move: "a move between the company's own accounts",
     leg: (a: string, dir: string) => `${dir === "in" ? "receipt" : "write-off"} on account ${a}`,
     why: {
       duplicate: "entered twice",
@@ -320,25 +320,33 @@ export function compareText(c: Comparison, lang: Lang): string {
     c.summary.extra === 0 &&
     c.accounts.every((a) => a.difference.in === 0 && a.difference.out === 0);
   if (clean) return [...lines, w.allOk].join("\n");
-  const problems = c.rows.filter((r) => r.status !== "ok");
-  if (problems.length > 0) {
-    lines.push("");
-    for (const r of problems) {
-      const head = `${r.status === "partial" ? w.partial : w.missing}: ${dmy(r.day)} ${r.direction === "in" ? "+" : "−"}${money(r.cents)} №${r.number || "—"} (${r.file}, ${r.row})`;
+  // At most a few examples of each kind: a long list is not a report.
+  const SHOWN = 8;
+  for (const [status, label] of [
+    ["missing", w.missing],
+    ["partial", w.partial],
+  ] as const) {
+    const bad = c.rows.filter((r) => r.status === status);
+    if (bad.length === 0) continue;
+    lines.push("", `${label}: ${bad.length}`);
+    for (const r of bad.slice(0, SHOWN)) {
       const miss = r.legs
         .filter((l) => !l.doc)
         .map((l) => w.leg(l.leg.account, l.leg.direction))
         .join("; ");
-      lines.push(`• ${head}${r.kind === "own_move" ? ` — ${w.move}` : ""}${miss ? `; ${miss}` : ""}`);
+      lines.push(
+        `• ${dmy(r.day)} ${r.direction === "in" ? "+" : "−"}${money(r.cents)} №${r.number || "—"} (${r.file}, ${r.row})${r.kind === "own_move" ? ` — ${w.move}` : ""}${miss ? `; ${miss}` : ""}`,
+      );
     }
+    if (bad.length > SHOWN) lines.push(`… +${bad.length - SHOWN}`);
   }
   if (c.extra.length > 0) {
     lines.push("", `${w.extra}:`);
-    for (const e of c.extra.slice(0, 40))
+    for (const e of c.extra.slice(0, 15))
       lines.push(
         `• ${dmy(e.doc.day)} ${e.doc.direction === "in" ? "+" : "−"}${money(e.doc.cents)} №${e.doc.number} ${e.doc.kind ? `(${e.doc.kind}) ` : ""}[${e.doc.account || "?"}] — ${w.why[e.reason]}${e.meant ? `; ${w.meant(e.meant)}` : ""}`,
       );
-    if (c.extra.length > 40) lines.push(`… +${c.extra.length - 40}`);
+    if (c.extra.length > 15) lines.push(`… +${c.extra.length - 15}`);
   }
   const off = c.accounts.filter((a) => a.difference.in !== 0 || a.difference.out !== 0);
   if (off.length > 0) {
