@@ -125,6 +125,22 @@ export function asksForDuplicates(text: string): boolean {
   return DUPLICATE_WORD.test(t) && DUPLICATE_VERB.test(t);
 }
 
+/** "ko'chirmani 1C bilan solishtir", "сверь выписку с 1С", "compare the statement with 1C": the statements against the bank documents of 1C. */
+const COMPARE_VERB =
+  /(солиштир|solishtir|сверь|сверк|сравни|сопостав|compare|reconcile|match\b|mos\s*kel|мос\s*кел)/u;
+const COMPARE_OBJECT = /(выписк|ko'chirma|кўчирма|кучирма|statement|1\s*[cс]\b|1с|банк|bank)/u;
+
+export function readCompareCommand(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[‘’`ʻʼ]/g, "'");
+  if (t.trim().length > 200) return false;
+  // "акт сверки" is the reconciliation act with a counterparty, not this.
+  if (/(^|\s)(акт|akt|act)(\s|$)/u.test(t)) return false;
+  return COMPARE_VERB.test(t) && COMPARE_OBJECT.test(t);
+}
+
 export function readDuplicatesCommand(text: string): boolean {
   const t = text
     .toLowerCase()

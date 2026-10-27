@@ -554,3 +554,24 @@ the direction of a conversion cannot be read from the books of a company alike.
   so a row can be found in the statement and decided on.
 - **"…and delete what is in 1C twice" in the same request** as the statement (`asksForDuplicates`): the statement is entered first, then
   the duplicates are looked for against the statements and offered on one card.
+
+## Comparing the statements with 1C row by row
+
+"Ko'chirmani 1C bilan solishtir" / "сверь выписку с 1С" / "compare the statement with 1C" (a no-model command, reads only; code in
+`bank/compare.ts`). Each row of the statements says which bank documents 1C must have, and they are laid against the documents 1C has:
+
+- an ordinary row (payment, fee, tax) is **one** document on the statement's account, in its direction;
+- a row that moves money between two accounts of the company (the counterparty is the company's own INN and one of its accounts,
+  e.g. the account for money blocked for a conversion) is **two** documents: a write-off on the account the money left and a receipt
+  on the account it reached; together they are **one** operation. A block: the main account −, the blocked account +; its return:
+  the blocked account −, the main account +. If the statement of the other account is attached too and lists the same move, the two
+  rows are one move, not two.
+- **The two sides of a move are paired up to 3 days apart** (`ledger.ts`, `otherLeg`): the same amount, the other direction, naming
+  this account, the same day first, else the nearest day. The bank may post a block on one day and show it on the next; with the
+  exact-day rule alone each side stayed alone, was read as a move of its own and was completed with a mirror leg, so one block became
+  two moves, four documents.
+
+The answer lists, per row, what is missing; the extra documents with the likeliest reason (**duplicate**: more documents than rows;
+**wrong place**: a document the statements want for the same day and amount is on another account or in the other direction, the
+expected one is named; **no row**: nothing in the statements stands behind it); and, per account, the turnover of 1C against the
+statements (a doubled amount shows here first). A document on an account none of the statements is about is not judged.
