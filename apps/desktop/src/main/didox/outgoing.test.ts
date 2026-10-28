@@ -182,6 +182,15 @@ describe("free-form document draft", () => {
     });
   });
 
+  it("does not take an all-zero INN for a buyer", () => {
+    for (const buyerTin of ["000000000", "00000000000000"]) {
+      const result = buildInvoiceDraft({ ...input, buyerTin }, seller, null, measures);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.problems.map((p) => p.code)).toEqual(["BAD_TIN"]);
+    }
+  });
+
   it("names what is wrong and makes nothing", () => {
     const result = buildDocumentDraft({ ...letter, number: "", buyerTin: "1" }, seller, null, "");
     expect(result).toMatchObject({ ok: false });
