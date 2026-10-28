@@ -116,6 +116,7 @@ import { matchTransit } from "./bank/transit.js";
 import { currencyItem } from "./currency/items.js";
 import { type LedgerPlan, describeLedger, planLedger } from "./bank/ledger.js";
 import { foreignStatements } from "./bank/owner.js";
+import { describeRepeats, rereadStatements } from "./bank/reread.js";
 import { MIRROR, type TransfersResolved, resolveTransfers } from "./bank/transfer.js";
 import {
   type PostOption,
@@ -3873,7 +3874,9 @@ export class AssistantService {
     signal: AbortSignal,
     pass = 0,
   ): Promise<ToolResult> {
-    const statements = chat.bank ?? [];
+    // Rows met a second time in overlapping statements of one account are the same row: read, and entered, once.
+    const reread = rereadStatements(chat.bank ?? []);
+    const statements = reread.statements;
     const named = input.file
       ? statements.find((s) => s.fileName.toLowerCase() === input.file?.toLowerCase())
       : undefined;
@@ -3957,7 +3960,9 @@ export class AssistantService {
     const rank = (currency: string) =>
       ({ USD: 0, EUR: 1, RUB: 2 })[currency] ?? (currency && currency !== "UZS" ? 3 : 4);
     tasks.sort((a, b) => rank(a.currency) - rank(b.currency));
-    const ledger = describeLedger(plan, ledgerOptions);
+    const ledger = [describeLedger(plan, ledgerOptions), describeRepeats(reread.repeats)]
+      .filter(Boolean)
+      .join("\n");
     // The accounts and the transfers set against how this company's 1C works (the policy is in the model's context).
     const learned = await this.policyOf(chat.companyId);
     const reflections = learned.policy ? reflectOnImport(learned.policy, plan) : [];
@@ -4539,7 +4544,7 @@ export class AssistantService {
     signal: AbortSignal,
   ): Promise<ToolResult> {
     emit({ type: "tool", name: "propose_fix_bank_postings", detail: input.title });
-    const statements = chat.bank ?? [];
+    const statements = rereadStatements(chat.bank ?? []).statements;
     if (statements.length === 0)
       return {
         ok: false,
@@ -4660,7 +4665,7 @@ export class AssistantService {
     chat: StoredChat,
     signal: AbortSignal,
   ): Promise<Result<ReturnType<typeof compareWithBooks>>> {
-    const statements = chat.bank ?? [];
+    const statements = rereadStatements(chat.bank ?? []).statements;
     const dates = statements.flatMap((s) => s.payments.map((p) => p.date.slice(0, 10))).sort();
     const from = dates[0];
     const to = dates.at(-1);
@@ -4700,7 +4705,7 @@ export class AssistantService {
     signal: AbortSignal,
   ): Promise<ToolResult> {
     emit({ type: "tool", name: "propose_bank_duplicates", detail: input.title });
-    const statements = chat.bank ?? [];
+    const statements = rereadStatements(chat.bank ?? []).statements;
     if (statements.length === 0)
       return {
         ok: false,

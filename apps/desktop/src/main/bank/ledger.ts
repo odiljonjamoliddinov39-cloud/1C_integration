@@ -125,6 +125,8 @@ export interface LedgerPlan {
   /** Counts of what was left out, for the report. */
   outsidePeriod: number;
   inPassThrough: number;
+  /** Moves whose two statements agree on the amount but not on the day (the bank posted the sides on different days). */
+  shifted: number;
 }
 
 const FEE_WORDS = /комисси|тариф|commission|tariff|swift|ibank|за\s+документ/i;
@@ -227,6 +229,7 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
     mismatched: [],
     outsidePeriod: 0,
     inPassThrough: 0,
+    shifted: 0,
   };
   // A leg already matched with its other leg.
   const used = new Set<string>();
@@ -352,7 +355,10 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
           }
         }
       }
-      if (other && leg) used.add(key(other.fileName, leg.row));
+      if (other && leg) {
+        used.add(key(other.fileName, leg.row));
+        if (leg.date !== p.date) plan.shifted += 1;
+      }
       const counter = other && leg ? other.account : p.account;
       const here = { file: s.fileName, row: p.row };
       const there = other && leg ? { file: other.fileName, row: leg.row } : null;
@@ -404,6 +410,9 @@ export function describeLedger(plan: LedgerPlan, options: LedgerOptions = {}): s
         (unpaired > 0
           ? `, ${unpaired} with no other leg in the attached statements`
           : ", each matched with its other leg") +
+        (plan.shifted > 0
+          ? ` (${plan.shifted} of them posted on different days in the two statements: the same amount, so one move, entered once)`
+          : "") +
         ". They are not payments to a counterparty: propose_bank_payments enters each as a pair of documents (one on each account) copied from the company's own earlier transfers, and says what it could not.",
     );
   }

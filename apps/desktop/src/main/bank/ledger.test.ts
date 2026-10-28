@@ -228,6 +228,8 @@ describe("the accounts of one company read together", () => {
     expect(p.transfers[0]).toMatchObject({ amount: 40_000_000 });
     expect(p.transfers[0]?.out).not.toBeNull();
     expect(p.transfers[0]?.in).not.toBeNull();
+    expect(p.shifted).toBe(1);
+    expect(describeLedger(p, { ownInn: COMPANY })).toContain("different days");
   });
 
   it("pairs the two sides of a move however the bank names the other account, and whichever file is read first", () => {

@@ -566,6 +566,12 @@ three places:
   there) the second.
 - **The order of the files does not matter**: a row that names an account that is not attached is looked for in every other statement,
   so a statement read first does not claim its row and leave the main account's row alone.
+- **A row met a second time is the same row** (`reread.ts`): statements of the same account that overlap (a file given twice, a longer one
+  that holds a shorter one) are read against each other before anything else. The first file keeps a row; the later file's copy is left
+  out and told in the answer ("b.xlsx row 3 = a.xlsx row 7"). Two equal rows inside one file are twins and stay; a later file takes away
+  at most as many copies as the earlier files hold. The same reading is used by the import, the comparison and the search for duplicates.
+- **The two statements are checked against each other**: a move read from both is told with how many were posted on different days, and
+  the sides that have no other leg in the attached statements are counted (`describeLedger`).
 - **One run enters a side once** (`transfer.ts`): a side made from the other side's row is dropped when a real row of the statements
   already stands for the same account, direction and amount (within 3 days) in the run.
 
