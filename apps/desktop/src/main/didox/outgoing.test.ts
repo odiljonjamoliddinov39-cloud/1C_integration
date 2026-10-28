@@ -52,6 +52,46 @@ describe("units", () => {
     expect(findMeasure({ data: measures }, "кг")).toBe("2");
     expect(findMeasure(measures, "litr")).toBeNull();
   });
+
+  it("are found whatever shape Didox's entries have: names inside objects, numbers as ids, several languages", () => {
+    const nested = {
+      data: [
+        { measureId: 796, name: { uz: "dona", ru: "штука", en: "piece" }, shortName: { uz: "dona" } },
+        { measureId: 166, name: { uz: "kilogramm", ru: "килограмм" } },
+      ],
+    };
+    expect(findMeasure(nested, "дона")).toBe("796");
+    expect(findMeasure(nested, "шт")).toBe("796");
+    expect(findMeasure(nested, "Штука (дона)")).toBe("796");
+    expect(findMeasure(nested, "dona")).toBe("796");
+    expect(findMeasure(nested, "кг")).toBeNull();
+    expect(findMeasure(nested, "килограмм")).toBe("166");
+  });
+
+  it("a piece is found by any spelling of it, but another unit is never mistaken for it", () => {
+    const list = [
+      { id: "10", name: "Штука (дона)" },
+      { id: "20", name: "Метр" },
+    ];
+    for (const spelling of ["шт", "штука", "дона", "dona", "pcs", "ШТ."])
+      expect(findMeasure(list, spelling)).toBe("10");
+    expect(findMeasure(list, "метр")).toBe("20");
+    expect(findMeasure(list, "литр")).toBeNull();
+  });
+
+  it("says which units Didox has when a name is not among them", () => {
+    const result = buildInvoiceDraft(
+      { ...input, lines: [{ ...input.lines[0]!, unit: "ящик", measureId: undefined }] },
+      seller,
+      buyer,
+      [
+        { id: "1", name: "шт" },
+        { id: "2", name: "кг" },
+      ],
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problems[0]?.message).toContain("its units are: шт, кг");
+  });
 });
 
 describe("invoice draft", () => {

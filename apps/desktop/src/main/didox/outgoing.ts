@@ -122,32 +122,84 @@ export function partyFromProfile(tin: string, profile: unknown, vat?: unknown): 
 const validTin = (tin: string) => /^\d{9}$/.test(tin) || /^\d{14}$/.test(tin);
 const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date));
 
-/** A unit name for comparing: case, dots and spaces do not tell units apart. */
-const unitKey = (name: string) => name.toLowerCase().replace(/[.\s]/g, "");
+/** A unit name for comparing: case, dots, brackets, slashes and spaces do not tell units apart. */
+const unitKey = (name: string) => name.toLowerCase().replace(/[.\s()/,\-–]/g, "");
 
-/**
- * Didox's code for a unit by its name, from the answer of `/v1/measures/all` (a list, or an object holding
- * one; each entry has an id and a name in some language). Null when no entry has that name.
- */
-export function findMeasure(measures: unknown, unit: string): string | null {
+/** The ways a piece is written in Uzbek, Russian and English: any of them stands for any other. */
+const PIECE = ["шт", "штук", "штука", "дона", "dona", "pcs", "pc", "piece", "pieces", "unit", "units"].map(
+  unitKey,
+);
+
+/** The words of one unit's entry in the answer of Didox, however deep: its names in each language, short and long. */
+function namesOf(value: unknown, into: string[] = [], depth = 0): string[] {
+  if (depth > 4) return into;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) {
+      into.push(unitKey(trimmed));
+      // "Штука (дона)" is the unit "штука" and the unit "дона".
+      for (const part of trimmed.split(/[()/,;]/))
+        if (part.trim() && part.trim() !== trimmed) into.push(unitKey(part));
+    }
+  } else if (Array.isArray(value)) {
+    for (const item of value) namesOf(item, into, depth + 1);
+  } else if (value && typeof value === "object") {
+    for (const [key, inner] of Object.entries(value)) {
+      if (/^(id|code|measureid|measure_id|ikpu|order|ord)$/i.test(key)) continue;
+      namesOf(inner, into, depth + 1);
+    }
+  }
+  return into;
+}
+
+function measureList(measures: unknown): unknown[] {
   const top = record(measures);
-  const list: unknown[] = Array.isArray(measures)
+  return Array.isArray(measures)
     ? measures
     : ((["data", "items", "measures", "result"].map((key) => top[key]).find(Array.isArray) ??
         Object.values(top).find(Array.isArray) ??
         []) as unknown[]);
+}
+
+/**
+ * Didox's code for a unit by its name, from the answer of `/v1/measures/all` (a list, or an object holding
+ * one; each entry has an id and a name in some language, plain or inside an object). A piece is found by any of its
+ * spellings («шт», «штука», «дона», «dona»…). Null when no entry has that name.
+ */
+export function findMeasure(measures: unknown, unit: string): string | null {
   const wanted = unitKey(unit);
   if (!wanted) return null;
-  for (const entry of list) {
+  // The asked name and its parts: «Штука (дона)» is «штука» and «дона».
+  const asked = new Set([
+    wanted,
+    ...unit
+      .split(/[()/,;]/)
+      .map(unitKey)
+      .filter(Boolean),
+  ]);
+  const accepted = [...asked].some((name) => PIECE.includes(name)) ? new Set([...asked, ...PIECE]) : asked;
+  for (const entry of measureList(measures)) {
     const e = record(entry);
-    const id = pick(e, ["id", "code", "measureId"]);
+    const id = pick(e, ["id", "code", "measureId", "measure_id"]);
     if (!id) continue;
-    const names = Object.entries(e)
-      .filter(([key, value]) => key.toLowerCase() !== "id" && typeof value === "string")
-      .map(([, value]) => unitKey(String(value)));
-    if (names.includes(wanted)) return id;
+    if (namesOf(e).some((name) => accepted.has(name))) return id;
   }
   return null;
+}
+
+/** The units Didox has, for the message that says a name is not among them (a few, so the person can pick the right one). */
+export function measureNames(measures: unknown, limit = 25): string[] {
+  const shown: string[] = [];
+  for (const entry of measureList(measures)) {
+    const e = record(entry);
+    const name = Object.entries(e)
+      .filter(([key, value]) => !/^(id|code|measureid|measure_id)$/i.test(key) && typeof value === "string")
+      .map(([, value]) => String(value).trim())
+      .find(Boolean);
+    if (name && !shown.includes(name)) shown.push(name);
+    if (shown.length >= limit) break;
+  }
+  return shown;
 }
 
 /** A party as Didox's documents carry it (`Seller`, `Buyer`). */
@@ -211,7 +263,17 @@ export function buildInvoiceDraft(
       return;
     }
     const measureId = line.measureId || findMeasure(measures, line.unit);
-    if (!measureId) add("NO_UNIT", n, `Didox has no unit named "${line.unit}"`);
+    if (!measureId) {
+      const have = measureNames(measures);
+      add(
+        "NO_UNIT",
+        n,
+        `Didox has no unit named "${line.unit}"` +
+          (have.length > 0
+            ? `; its units are: ${have.join(", ")}`
+            : "; its list of units was empty or unreadable"),
+      );
+    }
     const amount = Math.round(line.qty * line.price * 100);
     const vat = Math.round((amount * line.vatRate) / 100);
     amountTotal += amount;
