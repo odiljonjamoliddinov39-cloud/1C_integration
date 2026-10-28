@@ -92,7 +92,8 @@ docker compose pull --quiet api postgres caddy backup 2>/dev/null || docker comp
 docker compose up -d --remove-orphans
 docker image prune -f >/dev/null
 
-site=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2)
+# SITE_ADDRESS may list several names ("api.example.com, 1-2-3-4.sslip.io"): check the first one.
+site=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- | cut -d, -f1 | tr -d ' \r')
 echo "Waiting for https://${site}/health ..."
 for _ in $(seq 1 60); do
   if curl -fsS "https://${site}/health" >/dev/null 2>&1; then
