@@ -205,3 +205,34 @@ The manual describes the Uzbek 1C:Бухгалтерия 8 configuration («VENK
 - Pairing the two legs of a conversion between a soum and a currency account (different amounts, a rate) to enter it as a conversion document: it is reported with the reason.
 - Verified only against a fake 1C: the defaults of 0.7.7 and `ПроверитьЗаполнение` need the first real run.
 - Everything that copies the company's earlier documents (transfers, conversions in soums, sales, currency payments) was verified against a fake 1C: the attribute names of the real configuration decide the first real run.
+
+## Knowledge completion (Technical Design "Accounting engine - knowledge completion")
+
+The design fills the engine from six books in phases A–G, each ending on a gate. What is built, and what waits:
+
+**Built (phase C, with the schemas it needs)**
+
+- `packages/shared/src/entry-catalog.ts`: the schemas (`AccountSpec`, `EntryLine`, `EntryRule`, ten families, the status `parsed | checked | wired | company`),
+  `knownPair` (a pair is known at four digits, `near` at three, or unknown) and `mayDecide` (only `checked` and above decide an account).
+- `packages/shared/src/entry-rules.ts`: the curated rules. The 16 operations of the decision centre, each with its row in the book B1 (page and number as the
+  design gives them), cash from the bank in both variants (through 5710, and direct, p120 #18: the one rule with no book row, a recorded exception), and the
+  rows of the families the engine has no rule for yet (cost of sales, materials, fixed assets, depreciation, loans, dividends, production, payroll, other
+  taxes) as `parsed`: known pairs for the entry check, never used to decide.
+- `engine/posting-rules.ts`, the ladder: the company's own rule; then the company's history when one way of booking dominates (3 times and 80%) **and its pair is
+  a known pair of the catalog**; then the general rule; then the AI; then the accountant. A habit the book never uses is not followed silently: the general
+  rule is proposed with the difference shown and `needsApproval`. A history that books the same way as the rule leaves the rule standing. An account the
+  company's chart lacks is never used silently. The existing tests pass unchanged.
+- C1 fixed in the knowledge base: the VAT of a sale is Дт 4010 Кт 6410 (it said Дт 9020 Кт 6410).
+- Checks K2–K6 as tests (`entry-catalog.test.ts`, `posting-ladder.test.ts`): schema, every rule has a book row or a recorded reason, the 16 general rules are
+  covered by the catalog, the knowledge text agrees with the rules, the ladder, no number in the data.
+
+**Waiting**
+
+- Phase A (K1, the parse proof of the 3000-entries book B1, the 487 rows not recovered, `scripts/import-b1.py`, `entries-b1.json`, `chart-nsbu.json`):
+  needs the book itself, which is not in the repository. Until it is read, the catalog holds only the rows the design cites.
+- C3 (budget accounts from the company's chart and earlier tax documents, 6410 only as the last default): waits for open decision 4 (does the engine ask
+  when the chart has several 64xx accounts and there is no history?). `TAX_ACCOUNT` in `bank/tax.ts` is unchanged.
+- Phase B (read the chart and the operation-type enumeration from a test base), E and F (conversion split fixtures, production, depreciation) need a 1C base
+  the engine may write to (open decision 5).
+- Phase D (payroll, alimony, loans, dividends, accountable persons) and G (the entry check over a period): each is a workflow with its own rule and fixture;
+  `NOT_PLAIN` in `bank/scaffold.ts` stays until then.

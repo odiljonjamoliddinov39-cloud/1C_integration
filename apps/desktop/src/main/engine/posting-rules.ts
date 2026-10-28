@@ -9,7 +9,7 @@
  * Account codes are checked against the company's chart in 1C: an account the chart lacks is never used silently.
  */
 
-import type { PostingOperation } from "@platform/shared";
+import { KNOWN_ENTRY_RULES, type PostingOperation, knownPair } from "@platform/shared";
 
 export type OperationType = PostingOperation;
 
@@ -285,37 +285,60 @@ export function pickHistory(f: OperationFacts, history: HistoryPattern[] | undef
   return top && top.count >= 3 && top.count / total >= 0.8 ? top : null;
 }
 
+function ruleDecision(rule: PostingRule, ctx: Context, note?: string): Decision {
+  const missing = missingIn(ctx.chart, [rule.debit, rule.credit]);
+  return {
+    source: "rule",
+    document: rule.document,
+    debit: rule.debit,
+    credit: rule.credit,
+    rule: rule.id,
+    needsApproval: missing.length > 0 || note !== undefined,
+    missingAccounts: missing,
+    reason:
+      missing.length > 0
+        ? `rule ${rule.id}, but the company's chart has no ${missing.join(", ")}`
+        : `rule ${rule.id} (${rule.scope})${note ? `; ${note}` : ""}`,
+  };
+}
+
+function historyDecision(seen: HistoryPattern, ctx: Context): Decision {
+  const missing = missingIn(ctx.chart, [seen.debit, seen.credit]);
+  return {
+    source: "history",
+    document: seen.document,
+    debit: seen.debit,
+    credit: seen.credit,
+    needsApproval: missing.length > 0,
+    missingAccounts: missing,
+    reason: `the company booked this ${seen.count} times the same way`,
+  };
+}
+
+/**
+ * The ladder (TD §4): the company's own rule, then the company's history when one way of booking dominates and its pair is a
+ * known pair of the catalog (a habit the book never uses is not followed silently: the general rule is proposed and the
+ * difference is shown), then the general rule, then the AI, then the accountant. An account the company's chart lacks is
+ * never used silently at any step.
+ */
 export function choosePosting(f: OperationFacts, ctx: Context = {}): Decision {
-  const rule = pickRule(f, ctx);
-  if (rule) {
-    const missing = missingIn(ctx.chart, [rule.debit, rule.credit]);
-    return {
-      source: "rule",
-      document: rule.document,
-      debit: rule.debit,
-      credit: rule.credit,
-      rule: rule.id,
-      needsApproval: missing.length > 0,
-      missingAccounts: missing,
-      reason:
-        missing.length > 0
-          ? `rule ${rule.id}, but the company's chart has no ${missing.join(", ")}`
-          : `rule ${rule.id} (${rule.scope})`,
-    };
-  }
+  const own = pickRule(f, { ...ctx, generalRules: [] });
+  if (own) return ruleDecision(own, ctx);
+  const general = pickRule(f, ctx);
   const seen = pickHistory(f, ctx.history);
   if (seen) {
-    const missing = missingIn(ctx.chart, [seen.debit, seen.credit]);
-    return {
-      source: "history",
-      document: seen.document,
-      debit: seen.debit,
-      credit: seen.credit,
-      needsApproval: missing.length > 0,
-      missingAccounts: missing,
-      reason: `the company booked this ${seen.count} times the same way`,
-    };
+    // The same way as the rule books it: the rule stands, and says so.
+    if (general && general.debit === seen.debit && general.credit === seen.credit)
+      return ruleDecision(general, ctx);
+    if (!general || knownPair(KNOWN_ENTRY_RULES, seen.debit, seen.credit) !== null)
+      return historyDecision(seen, ctx);
+    return ruleDecision(
+      general,
+      ctx,
+      `the company books this ${seen.count} times Дт ${seen.debit} Кт ${seen.credit}, a pair the book does not use: confirm which applies`,
+    );
   }
+  if (general) return ruleDecision(general, ctx);
   // Step 3 (a small model) has nothing yet; the AI is next, and the accountant has the last word.
   return {
     source: "ai",

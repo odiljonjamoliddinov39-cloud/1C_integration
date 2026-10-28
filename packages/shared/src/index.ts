@@ -9,3 +9,5 @@ export * from "./admin-billing.js";
 export * from "./seed-templates.js";
 export * from "./knowledge.js";
 export * from "./remote.js";
+export * from "./entry-catalog.js";
+export * from "./entry-rules.js";
