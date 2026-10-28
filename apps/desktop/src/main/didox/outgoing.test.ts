@@ -68,6 +68,18 @@ describe("units", () => {
     expect(findMeasure(nested, "килограмм")).toBe("166");
   });
 
+  it("prefers the unit named exactly over one that only holds the name", () => {
+    const list = [
+      { id: "10", name: "dona (paket)" },
+      { id: "11", name: "rulon=2 dona (qadoq)" },
+      { id: "12", name: "dona" },
+    ];
+    expect(findMeasure(list, "dona")).toBe("12");
+    expect(findMeasure(list, "шт")).toBe("12");
+    expect(findMeasure(list, "dona (paket)")).toBe("10");
+    expect(findMeasure(list.slice(0, 2), "шт")).toBe("10");
+  });
+
   it("a piece is found by any spelling of it, but another unit is never mistaken for it", () => {
     const list = [
       { id: "10", name: "Штука (дона)" },

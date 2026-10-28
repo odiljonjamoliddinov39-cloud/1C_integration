@@ -131,22 +131,23 @@ const PIECE = ["шт", "штук", "штука", "дона", "dona", "pcs", "pc"
 );
 
 /** The words of one unit's entry in the answer of Didox, however deep: its names in each language, short and long. */
-function namesOf(value: unknown, into: string[] = [], depth = 0): string[] {
+function namesOf(value: unknown, into: string[] = [], depth = 0, parts = true): string[] {
   if (depth > 4) return into;
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed) {
       into.push(unitKey(trimmed));
       // "Штука (дона)" is the unit "штука" and the unit "дона".
-      for (const part of trimmed.split(/[()/,;]/))
-        if (part.trim() && part.trim() !== trimmed) into.push(unitKey(part));
+      if (parts)
+        for (const part of trimmed.split(/[()/,;]/))
+          if (part.trim() && part.trim() !== trimmed) into.push(unitKey(part));
     }
   } else if (Array.isArray(value)) {
-    for (const item of value) namesOf(item, into, depth + 1);
+    for (const item of value) namesOf(item, into, depth + 1, parts);
   } else if (value && typeof value === "object") {
     for (const [key, inner] of Object.entries(value)) {
       if (/^(id|code|measureid|measure_id|ikpu|order|ord)$/i.test(key)) continue;
-      namesOf(inner, into, depth + 1);
+      namesOf(inner, into, depth + 1, parts);
     }
   }
   return into;
@@ -178,9 +179,15 @@ export function findMeasure(measures: unknown, unit: string): string | null {
       .filter(Boolean),
   ]);
   const accepted = [...asked].some((name) => PIECE.includes(name)) ? new Set([...asked, ...PIECE]) : asked;
-  for (const entry of measureList(measures)) {
-    const e = record(entry);
-    const id = pick(e, ["id", "code", "measureId", "measure_id"]);
+  const entries = measureList(measures).map(record);
+  const idOf = (e: Record<string, unknown>) => pick(e, ["id", "code", "measureId", "measure_id"]);
+  // An entry whose whole name is the asked one («dona») wins over one that only holds it («dona (paket)»).
+  for (const e of entries) {
+    const id = idOf(e);
+    if (id && namesOf(e, [], 0, false).some((name) => accepted.has(name))) return id;
+  }
+  for (const e of entries) {
+    const id = idOf(e);
     if (!id) continue;
     if (namesOf(e).some((name) => accepted.has(name))) return id;
   }
