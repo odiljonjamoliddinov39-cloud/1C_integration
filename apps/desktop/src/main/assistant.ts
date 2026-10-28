@@ -136,6 +136,7 @@ import {
 import { type SalesCache, resolveSales } from "./didox/sales.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
+import { fillFromSale, tinsByName } from "./didox/enrich.js";
 import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
 import type { BankPayment, BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
@@ -3082,6 +3083,61 @@ export class AssistantService {
     if ("error" in checked) return { early: checked.error };
     if (checked.problems.length > 0)
       return { early: { ok: true, data: { status: "needs_attention", problems: checked.problems } } };
+    // What 1C lacks is looked for in the company's own records first: a buyer's INN in its Didox documents, the IKPU code and
+    // unit of a line with no item in the buyer's last sale. Nothing is invented; what is found is shown on the card.
+    const goodTin = /^(\d{9}|\d{14})$/.test(input.buyerInn) && !/^0+$/.test(input.buyerInn);
+    let lines = input.lines;
+    let notes: string[] = [];
+    if (!goodTin && input.buyerName) {
+      const found = await fetchDidoxDocuments(client, {
+        direction: "both",
+        from: new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10),
+        limit: 150,
+      }).catch(() => null);
+      const tins = found ? tinsByName(found.documents, input.buyerName) : [];
+      if (tins.length > 0)
+        return {
+          early: {
+            ok: true,
+            data: {
+              status: "needs_attention",
+              problems: [
+                {
+                  code: "BAD_TIN",
+                  message:
+                    `1C has no valid INN for "${input.buyerName}". The company's Didox documents name: ` +
+                    `${tins.map((t) => `${t.tin} (${t.name})`).join("; ")}. Show the accountant, and repeat with ` +
+                    `the confirmed INN, which is also to be corrected in 1C.`,
+                },
+              ],
+            },
+          },
+        };
+    }
+    if (goodTin && lines.some((line) => !line.catalogCode)) {
+      const sold = await this.deps.connector
+        .tool(this.deps.store.connection(chat.companyId), "run_query", {
+          query:
+            "ВЫБРАТЬ ПЕРВЫЕ 30 Т.Номенклатура.КодИзКлассификатора КАК ИКПУ, Т.Номенклатура.Наименование КАК Тов, " +
+            "Т.ЕдиницаИзмерения.Наименование КАК Ед, Т.Сумма КАК Сумма ИЗ Документ.РеализацияТоваровУслуг.Товары КАК Т " +
+            "ГДЕ Т.Ссылка.Проведен И Т.Ссылка.Контрагент.ИНН = &инн УПОРЯДОЧИТЬ ПО Т.Ссылка.Дата УБЫВ",
+          params: { инн: input.buyerInn },
+          limit: 30,
+        })
+        .catch(() => null);
+      const rows = sold?.ok ? ((sold.data as { rows?: unknown[][] }).rows ?? []) : [];
+      const filled = fillFromSale(
+        lines,
+        rows.map((cells) => ({
+          ikpu: String(cells[0] ?? ""),
+          name: String(cells[1] ?? ""),
+          unit: String(cells[2] ?? ""),
+          sum: Number(cells[3]) || 0,
+        })),
+      );
+      lines = filled.lines;
+      notes = filled.notes;
+    }
     let prepared: Awaited<ReturnType<typeof prepareDraft>>;
     try {
       prepared = await prepareDraft(
@@ -3091,7 +3147,7 @@ export class AssistantService {
           date: input.date,
           buyerTin: input.buyerInn,
           contract: input.contract,
-          lines: input.lines,
+          lines,
         },
         this.deps.store.company(chat.companyId).inn,
       );
@@ -3100,7 +3156,8 @@ export class AssistantService {
     }
     if (!prepared.ok)
       return { early: { ok: true, data: { status: "needs_attention", problems: prepared.problems } } };
-    const { body, preview } = prepared;
+    const { body } = prepared;
+    const preview = notes.length > 0 ? { ...prepared.preview, notes } : prepared.preview;
     return {
       proposal: { kind: "didox_draft", draft: preview },
       create: async () => {

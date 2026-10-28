@@ -300,8 +300,12 @@ export interface DidoxDraftPreview {
     vatRate: number;
     vat: string;
     total: string;
+    /** The IKPU code the line carries, when it has one. */
+    catalogCode?: string;
   }[];
   totals: { amount: string; vat: string; total: string };
+  /** What the program filled in on its own (the IKPU of a line, its unit) and where it took it from. */
+  notes?: string[];
 }
 
 /** Debit and credit of the company ("owner") and of the counterparty, as sums "1234.50". */

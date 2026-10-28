@@ -532,8 +532,10 @@ export const DidoxDraftInput = z.object({
   number: z.string().trim().min(1).max(80),
   /** YYYY-MM-DD. */
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  /** The buyer's INN (9 digits) or PINFL (14). */
-  buyerInn: z.string().regex(/^(\d{9}|\d{14})$/),
+  /** The buyer's INN (9 digits) or PINFL (14) as 1C holds it; an empty or zero one is answered with what Didox shows. */
+  buyerInn: z.string().trim().max(14),
+  /** The buyer as 1C names it: the app looks its INN up in the company's Didox documents when 1C has none. */
+  buyerName: z.string().trim().max(300).optional(),
   contract: z
     .object({ number: z.string().trim().min(1).max(80), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
     .optional(),

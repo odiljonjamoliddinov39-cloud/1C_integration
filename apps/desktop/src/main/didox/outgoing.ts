@@ -289,6 +289,7 @@ export function buildInvoiceDraft(
       vatRate: line.vatRate,
       vat: sum(vat),
       total: sum(withVat),
+      ...(line.catalogCode ? { catalogCode: line.catalogCode } : {}),
     });
     products.push({
       OrdNo: n,
