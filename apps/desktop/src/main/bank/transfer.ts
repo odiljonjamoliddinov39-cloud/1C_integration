@@ -445,6 +445,26 @@ export async function resolveTransfers(
       mirror: true,
     });
   }
+  // A side made from the other side's row is dropped when a real row of the statements already stands for it in this run (the
+  // same account, direction and amount within a few days): the same move read twice must be entered once.
+  const dayOf = (leg: Leg): number => {
+    const file = statements.find((s) => s.fileName === leg.file);
+    const row = leg.mirror ? leg.row - MIRROR : leg.row;
+    return Date.parse(day(file?.payments.find((p) => p.row === row)?.date ?? leg.transfer.date));
+  };
+  for (let i = legs.length - 1; i >= 0; i--) {
+    const mirror = legs[i];
+    if (!mirror?.mirror) continue;
+    const real = legs.some(
+      (l) =>
+        !l.mirror &&
+        l.own === mirror.own &&
+        l.side === mirror.side &&
+        l.transfer.amount === mirror.transfer.amount &&
+        Math.abs(dayOf(l) - dayOf(mirror)) <= 3 * 86_400_000,
+    );
+    if (real) legs.splice(i, 1);
+  }
   if (legs.length === 0) return result;
   const fail = (leg: Leg, message: string) =>
     result.problems.push({ file: leg.file, row: leg.row, side: leg.side, message });

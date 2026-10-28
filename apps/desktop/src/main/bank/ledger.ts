@@ -146,24 +146,31 @@ const PAIR_DAYS = 3;
 
 /**
  * The other side of a move between two own accounts on the other account's statement: the same amount, the other way, naming
- * this account; the same day first, else the nearest day within a few. Left unpaired, one move would be read from both
- * statements as two moves and entered twice.
+ * this account; the same day first, else the nearest day within a few. A row of the company's own INN that names no attached
+ * account of the company (the bank writes its own transit account there) is the second choice. Left unpaired, one move would
+ * be read from both statements as two moves and entered twice.
  */
 function otherLeg(
   other: BankStatement,
   p: BankPayment,
   account: string,
   used: Set<string>,
+  ownInn: string | undefined,
+  own: Set<string>,
 ): BankPayment | undefined {
   const days = (q: BankPayment) => Math.abs(Date.parse(q.date) - Date.parse(p.date)) / 86_400_000;
   let best: BankPayment | undefined;
+  let weak: BankPayment | undefined;
   for (const q of other.payments) {
     if (used.has(legKey(other.fileName, q.row))) continue;
-    if (q.amount !== p.amount || q.direction === p.direction || q.account !== account) continue;
-    if (days(q) > PAIR_DAYS) continue;
-    if (!best || days(q) < days(best)) best = q;
+    if (q.amount !== p.amount || q.direction === p.direction || days(q) > PAIR_DAYS) continue;
+    if (q.account === account) {
+      if (!best || days(q) < days(best)) best = q;
+    } else if (ownInn !== undefined && q.inn === ownInn && !own.has(q.account)) {
+      if (!weak || days(q) < days(weak)) weak = q;
+    }
   }
-  return best;
+  return best ?? weak;
 }
 
 const inRange = (p: BankPayment, o: LedgerOptions) =>
@@ -326,22 +333,40 @@ export function planLedger(statements: BankStatement[], options: LedgerOptions =
       view.transfers += 1;
       if (used.has(key(s.fileName, p.row))) continue;
       used.add(key(s.fileName, p.row));
-      // The other leg: the same day and amount, the other way, on the statement of the other account.
-      const other = toOwn ? byAccount.get(p.account) : undefined;
-      const leg = other ? otherLeg(other, p, s.account, used) : undefined;
+      // The other leg: the same day and amount, the other way, on the statement of the other account. A row that names an
+      // account that is not attached (the bank's own) is looked for in every other statement, so that the order the files are
+      // read in does not decide whether a move is one or two.
+      let other: BankStatement | undefined;
+      let leg: BankPayment | undefined;
+      if (toOwn) {
+        other = byAccount.get(p.account);
+        leg = other ? otherLeg(other, p, s.account, used, options.ownInn, own) : undefined;
+      } else {
+        for (const x of statements) {
+          if (x === s || !x.account) continue;
+          const q = otherLeg(x, p, s.account, used, undefined, own);
+          if (q) {
+            other = x;
+            leg = q;
+            break;
+          }
+        }
+      }
       if (other && leg) used.add(key(other.fileName, leg.row));
+      const counter = other && leg ? other.account : p.account;
       const here = { file: s.fileName, row: p.row };
       const there = other && leg ? { file: other.fileName, row: leg.row } : null;
       plan.transfers.push({
-        kind: !toOwn
-          ? "unattached_own"
-          : passKinds.get(p.account) === "conversion"
-            ? "conversion"
-            : "own_account",
+        kind:
+          !toOwn && !there
+            ? "unattached_own"
+            : passKinds.get(counter) === "conversion"
+              ? "conversion"
+              : "own_account",
         date: p.date,
         amount: p.amount,
-        fromAccount: p.direction === "out" ? s.account : p.account,
-        toAccount: p.direction === "out" ? p.account : s.account,
+        fromAccount: p.direction === "out" ? s.account : counter,
+        toAccount: p.direction === "out" ? counter : s.account,
         purpose: p.purpose,
         out: p.direction === "out" ? here : there,
         in: p.direction === "out" ? there : here,

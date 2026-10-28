@@ -555,6 +555,20 @@ the direction of a conversion cannot be read from the books of a company alike.
 - **"…and delete what is in 1C twice" in the same request** as the statement (`asksForDuplicates`): the statement is entered first, then
   the duplicates are looked for against the statements and offered on one card.
 
+## One move read from two statements is one move
+
+The same move between the main account and the blocked account is a row in each statement (the main account's write-off, the
+blocked account's receipt). Read as two moves, each side was completed with a mirror leg and 1C got four documents for one. Fixed in
+three places:
+
+- **Pairing** (`ledger.ts`, `otherLeg`): the other side is found by amount and direction within 3 days; the row naming this account is
+  the first choice, a row of the company's own INN that names an account that is not attached (the bank writes its own transit account
+  there) the second.
+- **The order of the files does not matter**: a row that names an account that is not attached is looked for in every other statement,
+  so a statement read first does not claim its row and leave the main account's row alone.
+- **One run enters a side once** (`transfer.ts`): a side made from the other side's row is dropped when a real row of the statements
+  already stands for the same account, direction and amount (within 3 days) in the run.
+
 ## Comparing the statements with 1C row by row
 
 "Ko'chirmani 1C bilan solishtir" / "сверь выписку с 1С" / "compare the statement with 1C" (a no-model command, reads only; code in
