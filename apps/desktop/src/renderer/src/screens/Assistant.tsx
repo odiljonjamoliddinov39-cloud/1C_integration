@@ -1535,7 +1535,12 @@ function DidoxDraftBody({ draft }: { draft: Extract<Proposal, { kind: "didox_dra
         <tbody>
           {draft.lines.map((line) => (
             <tr key={line.n} className="border-t border-border">
-              <td className="py-1 pr-2">{line.name}</td>
+              <td className="py-1 pr-2">
+                {line.name}
+                {line.catalogCode && (
+                  <div className="text-[11px] text-muted-foreground">IKPU {line.catalogCode}</div>
+                )}
+              </td>
               <td className="py-1 text-right">
                 {line.qty} {line.unit}
               </td>
@@ -1554,6 +1559,11 @@ function DidoxDraftBody({ draft }: { draft: Extract<Proposal, { kind: "didox_dra
           </tr>
         </tbody>
       </table>
+      {draft.notes?.map((note) => (
+        <div key={note} className="text-xs text-muted-foreground">
+          {note}
+        </div>
+      ))}
     </>
   );
 }
