@@ -118,7 +118,9 @@ class FakeAssistant implements RemoteAssistant {
   }
 }
 
-function setup(over: { license?: boolean; readOnlyCompany?: boolean } = {}) {
+function setup(
+  over: { license?: boolean; readOnlyCompany?: boolean; busyWaitMs?: number; pollMs?: number } = {},
+) {
   const state = new RemoteState(join(mkdtempSync(join(tmpdir(), "remote-cmd-")), "r.json"), secrets);
   state.setPin("4321");
   const assistant = new FakeAssistant();
@@ -151,6 +153,8 @@ function setup(over: { license?: boolean; readOnlyCompany?: boolean } = {}) {
     },
     journal: (company, op) => journal.push({ company, op }),
     renderPdf: async () => new Uint8Array([37, 80, 68, 70]),
+    pollMs: over.pollMs ?? 10,
+    ...(over.busyWaitMs !== undefined ? { busyWaitMs: over.busyWaitMs } : {}),
   });
   return { state, assistant, runner, journal, uploads, downloads };
 }
@@ -438,8 +442,22 @@ describe("RemoteCommands: Prepare", () => {
     expect(t.assistant.decisions).toEqual([{ id: "p1", approve: false }]);
   });
 
-  it("does not interrupt a question the person is asking on the PC", async () => {
+  it("waits for a question the person is asking on the PC, then runs: the phone is never told the assistant is busy", async () => {
     const t = setup();
+    t.assistant.busy.add(A.id);
+    setTimeout(() => t.assistant.busy.delete(A.id), 60);
+    const progress: string[] = [];
+    const out = await t.runner.run(
+      cmd({ command_type: "chat.message", class: "prepare", payload: { text: "hi" } }),
+      (text) => progress.push(text),
+    );
+    expect(out).toMatchObject({ ok: true });
+    expect(t.assistant.sent).toHaveLength(1);
+    expect(progress).toContain("waiting");
+  });
+
+  it("gives up only after a long wait, with an error that says to send it again", async () => {
+    const t = setup({ busyWaitMs: 80 });
     t.assistant.busy.add(A.id);
     const out = await t.runner.run(
       cmd({ command_type: "chat.message", class: "prepare", payload: { text: "hi" } }),
@@ -522,16 +540,23 @@ describe("RemoteCommands: a phone's own question", () => {
 });
 
 describe("RemoteCommands: a card waiting, and declining it", () => {
-  it("a new message while a card waits is told to answer the card, not that the assistant is busy", async () => {
+  it("a new message while a card waits sets the card aside and goes on, and the reply says so", async () => {
     const t = setup();
     t.assistant.busy.add(A.id);
     t.assistant.waiting = [{ companyId: A.id, id: "p1", proposal: batch(), shownAt: 1 }];
+    // The turn that showed the card ends once the card is answered.
+    const decide = t.assistant.decide.bind(t.assistant);
+    t.assistant.decide = (companyId, id, approve) => {
+      decide(companyId, id, approve);
+      setTimeout(() => t.assistant.busy.delete(A.id), 30);
+    };
     const out = await t.runner.run(
       cmd({ command_type: "chat.message", class: "prepare", payload: { text: "hi" } }),
       noop,
     );
-    expect(out).toMatchObject({ ok: false, error: { code: "CARD_WAITING" } });
-    expect(t.assistant.sent).toHaveLength(0);
+    expect(out).toMatchObject({ ok: true, result: { set_aside: 1 } });
+    expect(t.assistant.decisions).toEqual([{ id: "p1", approve: false }]);
+    expect(t.assistant.sent).toHaveLength(1);
   });
 
   it("declining the card frees the assistant for the next message", async () => {

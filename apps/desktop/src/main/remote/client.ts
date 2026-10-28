@@ -37,6 +37,8 @@ export interface RemoteClientDeps {
   backoffMs?: readonly number[];
   /** How long an answer sent stays "maybe lost" if the socket drops (ms). */
   settleMs?: number;
+  /** Silence after which the connection is taken for dead (ms); the server's own limit by default. */
+  deadAfterMs?: number;
 }
 
 export interface RemoteStatus {
@@ -59,6 +61,8 @@ export class RemoteClient {
   private attempt = 0;
   private stopped = true;
   private connected = false;
+  /** When the server last said anything on this connection: a silent link is dead, whatever the socket believes. */
+  private lastHeard = 0;
   /** The heavy commands (chat, files, reports, writes) run one after another. */
   private chain: Promise<void> = Promise.resolve();
 
@@ -138,12 +142,22 @@ export class RemoteClient {
       });
       // Answers the server may not have; the ones it already has are ignored there.
       for (const result of this.deps.state.undelivered()) this.sendResult(ws, result);
-      this.ping = setInterval(() => this.send(ws, { type: "ping" }), REMOTE_LIMITS.pingSeconds * 1000);
+      this.lastHeard = Date.now();
+      this.ping = setInterval(() => {
+        // A laptop that slept or changed network keeps a socket that never closes and never answers: it is dropped here
+        // and dialled again, instead of waiting for a close event that does not come.
+        if (Date.now() - this.lastHeard > this.deadAfterMs()) {
+          this.linkDied(ws);
+          return;
+        }
+        this.send(ws, { type: "ping" });
+      }, REMOTE_LIMITS.pingSeconds * 1000);
       this.ping.unref?.();
       this.emitStatus();
     };
     ws.onmessage = (event) => {
       if (this.ws !== ws) return;
+      this.lastHeard = Date.now();
       void this.receive(ws, event.data).catch(() => undefined);
     };
     ws.onerror = () => undefined;
@@ -170,6 +184,33 @@ export class RemoteClient {
       if (!this.stopped && this.deps.state.enabled) this.connect();
     }, wait);
     this.timer.unref?.();
+  }
+
+  private deadAfterMs(): number {
+    return this.deps.deadAfterMs ?? REMOTE_LIMITS.offlineAfterSeconds * 1000;
+  }
+
+  /** The connection is silent past the limit: it is closed and dialled again at once. */
+  private linkDied(ws: WsLike): void {
+    if (this.ws !== ws) return;
+    this.drop();
+    this.emitStatus();
+    this.attempt = 0;
+    this.retry();
+  }
+
+  /**
+   * Dial again now, whatever the state of the old connection: the laptop woke up, the network changed, the user asked. A
+   * command that was delivered and not answered is handled by the server's reconnect rules; nothing runs twice (remote_inbox).
+   */
+  reconnectNow(): void {
+    if (this.stopped || !this.deps.state.enabled || !this.deps.state.device()) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.drop();
+    this.attempt = 0;
+    this.emitStatus();
+    this.connect();
   }
 
   private send(ws: WsLike, message: WsToServer): void {

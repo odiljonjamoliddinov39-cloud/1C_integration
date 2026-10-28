@@ -22,6 +22,8 @@ const en = {
     fromOther: "(sent from another device)",
     fileSent: "File: {{name}}",
     cards: "{{n}} proposals are waiting for you",
+    setAside:
+      "{{n}} earlier proposal(s) nobody had answered were set aside because you wrote again. Ask again to get them back.",
     openWaiting: "Open “Waiting”",
     onlyAsks: "This phone may only ask questions.",
   },
@@ -139,6 +141,8 @@ const ru: typeof en = {
     fromOther: "(отправлено с другого устройства)",
     fileSent: "Файл: {{name}}",
     cards: "Предложений ждёт вас: {{n}}",
+    setAside:
+      "Предложений без ответа отложено: {{n}}, потому что вы написали снова. Попросите ещё раз, чтобы получить их обратно.",
     openWaiting: "Открыть «Ждёт меня»",
     onlyAsks: "С этого телефона можно только задавать вопросы.",
   },
@@ -261,6 +265,8 @@ const uz: typeof en = {
     fromOther: "(boshqa qurilmadan yuborilgan)",
     fileSent: "Fayl: {{name}}",
     cards: "{{n}} ta taklif sizni kutyapti",
+    setAside:
+      "Javobsiz {{n}} ta oldingi taklif chetga surildi, chunki siz yana yozdingiz. Qaytarish uchun yana so'rang.",
     openWaiting: "«Kutmoqda»ni ochish",
     onlyAsks: "Bu telefondan faqat savol berish mumkin.",
   },

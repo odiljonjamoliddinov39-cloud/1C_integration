@@ -177,7 +177,12 @@ export const ProposalCard = z.object({
 });
 export type ProposalCard = z.infer<typeof ProposalCard>;
 
-export const ChatMessageResult = z.object({ reply: z.string(), cards: z.array(ProposalCard).default([]) });
+export const ChatMessageResult = z.object({
+  reply: z.string(),
+  cards: z.array(ProposalCard).default([]),
+  /** Proposals nobody had answered that this message set aside (declined) so that the assistant could take it. */
+  set_aside: z.number().int().optional(),
+});
 export const ChatAttachResult = z.object({ summary: z.string() });
 export const ProposalListResult = z.object({ cards: z.array(ProposalCard) });
 export const ProposalApplyResult = z.object({

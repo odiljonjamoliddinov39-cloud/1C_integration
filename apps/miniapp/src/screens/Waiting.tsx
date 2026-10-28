@@ -2,39 +2,71 @@ import type { CommandView, ProposalCard } from "@platform/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useApp } from "../context.js";
-import { ApiError } from "../lib/api.js";
+import { ApiError, type DeviceInfo } from "../lib/api.js";
 import { follow, isApplyResult, isCardsResult } from "../lib/commands.js";
 import { errorText } from "../lib/i18n.js";
 import { haptic } from "../lib/telegram.js";
 
 const SHOWN_LINES = 8;
 
+/** A company the phone may ask on its PC, with the PC it lives on. */
+interface Target {
+  inn: string;
+  name: string;
+  device: DeviceInfo;
+}
+interface Item {
+  card: ProposalCard;
+  target: Target;
+}
+
 export function WaitingScreen() {
-  const { api, t, lang, inn, device, setWaitingCount } = useApp();
-  const [cards, setCards] = useState<ProposalCard[] | null>(null);
+  const { api, t, lang, me, device, setWaitingCount } = useApp();
+  const [items, setItems] = useState<Item[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [applying, setApplying] = useState<ProposalCard | null>(null);
+  const [applying, setApplying] = useState<Item | null>(null);
   const abort = useRef(new AbortController());
+
+  // Every company on every PC that is online, not only the one chosen at the top: a notification names no company, so what is
+  // waiting is looked for in all of them.
+  const targets: Target[] = me.devices.flatMap((d) =>
+    d.online ? d.companies.map((c) => ({ inn: c.inn, name: c.name, device: d })) : [],
+  );
+  const key = targets.map((x) => `${x.device.device_id}:${x.inn}`).join(",");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const view = await api.create({ type: "proposal.list", inn, deviceId: device.device_id, payload: {} });
-      const done = await follow(api, view.id, () => undefined, abort.current.signal);
-      if (!done) return;
-      if (done.state === "done" && isCardsResult(done.result)) {
-        setCards(done.result.cards);
-        setWaitingCount(done.result.cards.filter((c) => c.status === "waiting").length);
-      } else setError(errorText(lang, done.error?.code, done.error?.message));
+      const found = await Promise.all(
+        targets.map(async (target) => {
+          const view = await api.create({
+            type: "proposal.list",
+            inn: target.inn,
+            deviceId: target.device.device_id,
+            payload: {},
+          });
+          const done = await follow(api, view.id, () => undefined, abort.current.signal);
+          if (!done) return { items: [] as Item[], error: null };
+          if (done.state === "done" && isCardsResult(done.result))
+            return { items: done.result.cards.map((card) => ({ card, target })), error: null };
+          return { items: [] as Item[], error: errorText(lang, done.error?.code, done.error?.message) };
+        }),
+      );
+      const all = found.flatMap((f) => f.items);
+      setItems(all);
+      setWaitingCount(all.filter((i) => i.card.status === "waiting").length);
+      const firstError = found.find((f) => f.error)?.error;
+      if (firstError) setError(firstError);
     } catch (e) {
       const err = e instanceof ApiError ? e : new ApiError("UNKNOWN", String(e));
       setError(errorText(lang, err.code, err.message));
     } finally {
       setLoading(false);
     }
-  }, [api, inn, device.device_id, lang, setWaitingCount]);
+    // `key` stands for the list of targets: a new PC or company is looked at again.
+  }, [api, key, lang, setWaitingCount]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -51,7 +83,8 @@ export function WaitingScreen() {
     };
   }, [load]);
 
-  const mayApply = device.ceiling === "apply";
+  const cards = items;
+  const severalCompanies = targets.length > 1;
 
   return (
     <>
@@ -61,22 +94,27 @@ export function WaitingScreen() {
           {loading ? t("loading") : t("waiting.refresh")}
         </button>
       </div>
-      {!device.online && cards === null && <p className="muted">{t("pc.offline")}</p>}
+      {targets.length === 0 && !device.online && <p className="muted">{t("pc.offline")}</p>}
       {error && <div className="err">{error}</div>}
       {cards?.length === 0 && <p className="muted">{t("waiting.empty")}</p>}
-      {!mayApply && cards && cards.length > 0 && <p className="muted">{t("waiting.needsApply")}</p>}
-      {cards?.map((card) => (
+      {cards && cards.some((i) => i.target.device.ceiling !== "apply") && (
+        <p className="muted">{t("waiting.needsApply")}</p>
+      )}
+      {cards?.map((item) => (
         <Card
-          key={card.id}
-          card={card}
-          canApply={mayApply}
-          onApply={() => setApplying(card)}
+          key={`${item.target.inn}-${item.card.id}`}
+          card={item.card}
+          target={item.target}
+          heading={severalCompanies ? item.target.name : null}
+          canApply={item.target.device.ceiling === "apply"}
+          onApply={() => setApplying(item)}
           onDeclined={() => void load()}
         />
       ))}
       {applying && (
         <ApplySheet
-          card={applying}
+          card={applying.card}
+          target={applying.target}
           onClose={() => setApplying(null)}
           onFinished={(refresh) => {
             setApplying(null);
@@ -90,16 +128,22 @@ export function WaitingScreen() {
 
 function Card({
   card,
+  target,
+  heading,
   canApply,
   onApply,
   onDeclined,
 }: {
   card: ProposalCard;
+  target: Target;
+  /** The company's name above the card when the phone has several. */
+  heading: string | null;
   canApply: boolean;
   onApply: () => void;
   onDeclined: () => void;
 }) {
-  const { t, lang, api, inn, device } = useApp();
+  const { t, lang, api } = useApp();
+  const { inn, device } = target;
   const [all, setAll] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +172,7 @@ function Card({
   const lines = all ? card.lines : card.lines.slice(0, SHOWN_LINES);
   return (
     <div className="card">
+      {heading && <div className="muted">{heading}</div>}
       <div className="row">
         <strong>{card.title}</strong>
         <span
@@ -170,14 +215,17 @@ function Card({
 
 function ApplySheet({
   card,
+  target,
   onClose,
   onFinished,
 }: {
   card: ProposalCard;
+  target: Target;
   onClose: () => void;
   onFinished: (refresh: boolean) => void;
 }) {
-  const { api, t, lang, inn, device } = useApp();
+  const { api, t, lang } = useApp();
+  const { inn, device } = target;
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

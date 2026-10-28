@@ -1223,14 +1223,17 @@ describe("assistant", () => {
       expect(assistant.isBusy(company.id)).toBe(true);
       const listed = await ask("proposal.list", {});
       expect((listed.result as { cards: { id: string }[] }).cards.map((c) => c.id)).toEqual([cards[0]!.id]);
-      expect(await ask("chat.message", { text: "ещё" })).toMatchObject({
-        ok: false,
-        error: { code: "CARD_WAITING" },
-      });
-      // Declining answers the card and the turn ends.
-      expect(await ask("proposal.decline", { proposal_id: cards[0]!.id })).toMatchObject({ ok: true });
-      expect(assistant.pendingProposals()).toEqual([]);
+      // A new message from the phone sets the waiting card aside and goes on: it is never answered "busy" or "answer the card first".
+      const again = await ask("chat.message", { text: "ещё" });
+      expect(again.error?.code).not.toBe("BUSY");
+      expect(again.error?.code).not.toBe("CARD_WAITING");
+      expect(assistant.pendingProposals().map((p) => p.id)).not.toContain(cards[0]!.id);
       expect(assistant.isBusy(company.id)).toBe(false);
+      // Declining a card that is already gone is told plainly.
+      expect(await ask("proposal.decline", { proposal_id: cards[0]!.id })).toMatchObject({
+        ok: false,
+        error: { code: "PROPOSAL_GONE" },
+      });
     });
 
     it("saves what it creates from attached files unposted, unless the question asks to post", async () => {

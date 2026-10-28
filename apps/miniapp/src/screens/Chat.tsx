@@ -184,8 +184,10 @@ function Reply({
         ? view.result.summary
         : "";
     const cards = isChatResult(view.result) ? view.result.cards.length : 0;
+    const setAside = isChatResult(view.result) ? (view.result.set_aside ?? 0) : 0;
     return (
       <>
+        {setAside > 0 && <div className="muted">{t("chat.setAside", { n: setAside })}</div>}
         {reply && <div className="bubble bot">{reply}</div>}
         {cards > 0 && (
           <div className="bubble bot">
