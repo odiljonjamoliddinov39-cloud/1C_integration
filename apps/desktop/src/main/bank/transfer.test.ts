@@ -347,6 +347,15 @@ describe("money moved between the company's own accounts", () => {
     expect(other.ready.map((r) => r.side)).toEqual(["in"]);
   });
 
+  it("the same move read from both statements as two unpaired sides is entered once on each account, not mirrored again", async () => {
+    const out = await run([move({ in: null }), move({ out: null })], {}, ["a.xlsx", "b.xlsx"]);
+    expect(out.problems).toEqual([]);
+    expect(out.ready.map((r) => [r.side, r.row])).toEqual([
+      ["out", 5],
+      ["in", 9],
+    ]);
+  });
+
   it("leaves out a leg 1C already has: the same account, day and amount", async () => {
     const out = await run([move()], { existing: [[REF_A, "2026-09-10T00:00:00", "out", 250_000]] });
     expect(out.alreadyIn1c).toEqual([{ file: "a.xlsx", row: 5 }]);

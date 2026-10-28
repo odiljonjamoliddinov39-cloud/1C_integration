@@ -272,6 +272,7 @@ describe("reflectOnImport", () => {
     transfers: [],
     outsidePeriod: 0,
     inPassThrough: 0,
+    shifted: 0,
     ...over,
   });
   const view = (account: string, role: LedgerPlan["accounts"][number]["role"] = "settlement") => ({

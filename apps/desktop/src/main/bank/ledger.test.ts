@@ -228,6 +228,29 @@ describe("the accounts of one company read together", () => {
     expect(p.transfers[0]).toMatchObject({ amount: 40_000_000 });
     expect(p.transfers[0]?.out).not.toBeNull();
     expect(p.transfers[0]?.in).not.toBeNull();
+    expect(p.shifted).toBe(1);
+    expect(describeLedger(p, { ownInn: COMPANY })).toContain("different days");
+  });
+
+  it("pairs the two sides of a move however the bank names the other account, and whichever file is read first", () => {
+    const BANK_TRANSIT = "29896000100001082432";
+    const main = [["08.01.2024", "1", "OWN LLC", COMPANY, SPECIAL, "400000", "", "Блокировка средств"]];
+    // The blocked account's own statement writes the bank's account where the main account's number would be.
+    const special = [
+      ["08.01.2024", "1", "OWN LLC", COMPANY, BANK_TRANSIT, "", "400000", "Блокировка средств"],
+    ];
+    const mainFile = read(MAIN, main);
+    // Not closed at zero: the blocked account is not a pass-through one, so its row is read as a move of its own too.
+    const specialFile = read(SPECIAL, special, ["0", "400000"]);
+    for (const order of [
+      [mainFile, specialFile],
+      [specialFile, mainFile],
+    ]) {
+      const p = planLedger(order, { ownInn: COMPANY });
+      expect(p.transfers).toHaveLength(1);
+      expect(p.transfers[0]?.out).not.toBeNull();
+      expect(p.transfers[0]?.in).not.toBeNull();
+    }
   });
 
   it("does not pair sides that are far apart in time", () => {
