@@ -540,7 +540,14 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "quantity, price WITHOUT VAT, VAT rate, and the IKPU code when 1C has it) and pass it as it stands: the app takes " +
     "the seller and the buyer from Didox and works every sum out itself. It creates a draft only: nothing is signed or " +
     "sent; the accountant checks and signs it in Didox. Never pass an invoice that is not posted or has a " +
-    "placeholder number: tell the accountant to post it and fix the number first. If Didox is not connected for " +
+    "placeholder number: tell the accountant to post it and fix the number first. A buyer whose INN in 1C is empty or " +
+    "all zeros: before asking, look for the buyer's real INN yourself (the same buyer in Didox documents, other 1C " +
+    "documents or the bank statement purposes), show what you found for confirmation, and ask only when nothing is " +
+    "found; leave only that invoice out and go on with the others. A line with no item (an advance: " +
+    "«Аванс по договору…») has no unit and no IKPU in 1C: take them from the same company's earlier Didox invoice " +
+    "or the IKPU of the item the buyer was last sold, say so on the card, and ask ONE question for the whole batch, " +
+    "never one per invoice and never an invented code. Invoices made in 1C in one batch get consecutive numbers from " +
+    "the app: do not renumber them by hand. If Didox is not connected for " +
     "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_undo_bank:
     "Take back what the program entered from bank statements, on ONE card with a title (scope last: the newest card's " +

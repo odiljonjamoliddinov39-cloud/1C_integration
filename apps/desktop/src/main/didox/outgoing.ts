@@ -119,7 +119,7 @@ export function partyFromProfile(tin: string, profile: unknown, vat?: unknown): 
   };
 }
 
-const validTin = (tin: string) => /^\d{9}$/.test(tin) || /^\d{14}$/.test(tin);
+const validTin = (tin: string) => (/^\d{9}$/.test(tin) || /^\d{14}$/.test(tin)) && !/^0+$/.test(tin);
 const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date));
 
 /** A unit name for comparing: case, dots, brackets, slashes and spaces do not tell units apart. */
@@ -245,7 +245,7 @@ export function buildInvoiceDraft(
   if (!input.number.trim()) add("NO_NUMBER", null, "The invoice has no number");
   if (!validDate(input.date)) add("BAD_DATE", null, `The invoice date "${input.date}" is not YYYY-MM-DD`);
   if (!validTin(input.buyerTin))
-    add("BAD_TIN", null, `The buyer's INN "${input.buyerTin}" is not 9 or 14 digits`);
+    add("BAD_TIN", null, `The buyer's INN "${input.buyerTin}" is not 9 or 14 digits (or is all zeros)`);
   if (!seller) add("NO_SELLER_DATA", null, "Didox gave no profile for our own company");
   if (!buyer && validTin(input.buyerTin))
     add("NO_PARTY", null, `Didox has no company with INN ${input.buyerTin}`);
