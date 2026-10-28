@@ -96,7 +96,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     title: "Sale of goods",
     lines: [
       "Revenue: Дт 4010 (buyer) Кт 9020 (revenue from goods; 9010 finished products, 9030 works and services).",
-      "VAT charged: Дт 9020 Кт 6410 (VAT payable; revenue is shown net).",
+      "VAT charged: Дт 4010 Кт 6410 (VAT payable; the buyer owes the revenue net plus this VAT, and revenue 9020 is shown net).",
       "Cost of sales: Дт 9120 (cost of goods; 9110 finished products, 9130 services) Кт 2910.",
       "Receipt: Дт 5110 Кт 4010. Advance received: Дт 5110 Кт 6310; offset: Дт 6310 Кт 4010.",
       "The issued invoice (счёт-фактура) is made from the sale; check its VAT rate and total against the sale.",
