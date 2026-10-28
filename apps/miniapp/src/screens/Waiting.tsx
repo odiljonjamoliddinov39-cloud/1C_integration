@@ -1,6 +1,7 @@
 import type { CommandView, ProposalCard } from "@platform/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Icon } from "../components/Icon.js";
 import { useApp } from "../context.js";
 import { ApiError, type DeviceInfo } from "../lib/api.js";
 import { follow, isApplyResult, isCardsResult } from "../lib/commands.js";
@@ -96,7 +97,20 @@ export function WaitingScreen() {
       </div>
       {targets.length === 0 && !device.online && <p className="muted">{t("pc.offline")}</p>}
       {error && <div className="err">{error}</div>}
-      {cards?.length === 0 && <p className="muted">{t("waiting.empty")}</p>}
+      {cards === null && loading && (
+        <>
+          <div className="skeleton" />
+          <div className="skeleton" />
+        </>
+      )}
+      {cards?.length === 0 && (
+        <div className="empty">
+          <span className="art">
+            <Icon name="inbox" size={30} />
+          </span>
+          <p>{t("waiting.empty")}</p>
+        </div>
+      )}
       {cards && cards.some((i) => i.target.device.ceiling !== "apply") && (
         <p className="muted">{t("waiting.needsApply")}</p>
       )}

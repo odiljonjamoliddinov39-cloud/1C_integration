@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "../context.js";
 import { ApiError } from "../lib/api.js";
 import { follow, isStatus } from "../lib/commands.js";
-import { LANGS, LANG_NAMES, errorText } from "../lib/i18n.js";
+import { type Key, LANGS, LANG_NAMES, errorText } from "../lib/i18n.js";
+
+/** The dictionary key of a request type ("chat.message" is "status.types.chat_message": a dot would split the key). */
+const typeKey = (type: string) => `status.types.${type.replace(".", "_")}` as Key;
 
 export function StatusScreen() {
   const { api, t, lang, setLang, inn, device, me, companyName } = useApp();
@@ -99,9 +102,10 @@ export function StatusScreen() {
       {recent.length === 0 && <p className="muted">{t("status.none")}</p>}
       {recent.map((c) => (
         <div className="row card" key={c.id}>
-          <span>
-            {c.type} <span className="muted">{new Date(c.created_at).toLocaleString(lang)}</span>
-          </span>
+          <div>
+            <div>{t(typeKey(c.type))}</div>
+            <div className="muted">{new Date(c.created_at).toLocaleString(lang)}</div>
+          </div>
           <span
             className={`chip ${c.state === "done" ? "ok" : c.state === "failed" || c.state === "expired" ? "bad" : "warn"}`}
           >

@@ -15,7 +15,7 @@ const en = {
   loading: "Loading…",
   retry: "Try again",
   chat: {
-    placeholder: "Ask or tell the assistant…",
+    placeholder: "Ask or give a task…",
     send: "Send",
     attach: "Attach a file",
     empty: "Write a question, or send a bank statement, a customs declaration or an invoice.",
@@ -85,6 +85,15 @@ const en = {
     never: "no import yet",
     language: "Language",
     recent: "Recent requests",
+    types: {
+      chat_message: "Message",
+      chat_attach: "File sent",
+      proposal_list: "Waiting list",
+      proposal_apply: "Applied a proposal",
+      proposal_decline: "Declined a proposal",
+      report_make: "Report",
+      status_get: "Status check",
+    },
     none: "No requests yet.",
   },
   errors: {
@@ -134,7 +143,7 @@ const ru: typeof en = {
   loading: "Загрузка…",
   retry: "Повторить",
   chat: {
-    placeholder: "Спросите или поручите ассистенту…",
+    placeholder: "Вопрос или задание…",
     send: "Отправить",
     attach: "Прикрепить файл",
     empty: "Напишите вопрос или отправьте банковскую выписку, ГТД или счёт-фактуру.",
@@ -204,6 +213,15 @@ const ru: typeof en = {
     never: "импорта ещё не было",
     language: "Язык",
     recent: "Последние запросы",
+    types: {
+      chat_message: "Сообщение",
+      chat_attach: "Отправка файла",
+      proposal_list: "Список «Ждёт меня»",
+      proposal_apply: "Применение предложения",
+      proposal_decline: "Отклонение предложения",
+      report_make: "Отчёт",
+      status_get: "Проверка связи",
+    },
     none: "Запросов пока нет.",
   },
   errors: {
@@ -258,7 +276,7 @@ const uz: typeof en = {
   loading: "Yuklanmoqda…",
   retry: "Qayta urinish",
   chat: {
-    placeholder: "Yordamchiga savol bering yoki topshiriq yozing…",
+    placeholder: "Savol yoki topshiriq…",
     send: "Yuborish",
     attach: "Fayl biriktirish",
     empty: "Savol yozing yoki bank koʻchirmasi, YuXD yoki hisob-fakturani yuboring.",
@@ -328,6 +346,15 @@ const uz: typeof en = {
     never: "import hali boʻlmagan",
     language: "Til",
     recent: "Oxirgi soʻrovlar",
+    types: {
+      chat_message: "Xabar",
+      chat_attach: "Fayl yuborildi",
+      proposal_list: "Kutayotganlar ro'yxati",
+      proposal_apply: "Taklif qo'llandi",
+      proposal_decline: "Taklif rad etildi",
+      report_make: "Hisobot",
+      status_get: "Aloqa tekshiruvi",
+    },
     none: "Hozircha soʻrov yoʻq.",
   },
   errors: {

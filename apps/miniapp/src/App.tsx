@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Icon, type IconName } from "./components/Icon.js";
 import { Ctx } from "./context.js";
 import { Api, ApiError, type Me } from "./lib/api.js";
 import { type Lang, errorText, pickLanguage, translator } from "./lib/i18n.js";
@@ -11,6 +12,12 @@ import { WaitingScreen } from "./screens/Waiting.js";
 
 type Tab = "chat" | "waiting" | "files" | "status";
 const TABS: Tab[] = ["chat", "waiting", "files", "status"];
+const TAB_ICONS: Record<Tab, IconName> = {
+  chat: "chat",
+  waiting: "waiting",
+  files: "files",
+  status: "status",
+};
 
 const read = (key: string): string | null => {
   try {
@@ -134,6 +141,9 @@ export function App() {
               aria-current={tab === name ? "page" : undefined}
               onClick={() => setTab(name)}
             >
+              <span className="pill">
+                <Icon name={TAB_ICONS[name]} />
+              </span>
               {t(`tabs.${name}`)}
               {name === "waiting" && waitingCount > 0 && <span className="badge">{waitingCount}</span>}
             </button>
