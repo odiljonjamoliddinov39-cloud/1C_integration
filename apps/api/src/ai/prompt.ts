@@ -541,11 +541,11 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "the seller and the buyer from Didox and works every sum out itself. It creates a draft only: nothing is signed or " +
     "sent; the accountant checks and signs it in Didox. Never pass an invoice that is not posted or has a " +
     "placeholder number: tell the accountant to post it and fix the number first. A buyer whose INN in 1C is empty or " +
-    "all zeros: before asking, look for the buyer's real INN yourself (the same buyer in Didox documents, other 1C " +
-    "documents or the bank statement purposes), show what you found for confirmation, and ask only when nothing is " +
-    "found; leave only that invoice out and go on with the others. A line with no item (an advance: " +
-    "«Аванс по договору…») has no unit and no IKPU in 1C: take them from the same company's earlier Didox invoice " +
-    "or the IKPU of the item the buyer was last sold, say so on the card, and ask ONE question for the whole batch, " +
+    "all zeros: pass the buyer's name as buyerName and the INN as it is; the app looks the name up in the company's " +
+    "Didox documents and returns the INN it finds for the accountant to confirm; ask only when it finds none, and " +
+    "leave only that invoice out and go on with the others. A line with no item (an advance: " +
+    "«Аванс по договору…») has no IKPU in 1C: leave catalogCode out, the app fills the IKPU and unit from the buyer's " +
+    "last coded sale and shows it on the card; when it cannot, ask ONE question for the whole batch, " +
     "never one per invoice and never an invented code. Invoices made in 1C in one batch get consecutive numbers from " +
     "the app: do not renumber them by hand. If Didox is not connected for " +
     "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
