@@ -80,6 +80,9 @@ export interface CommandDeps {
   /** Prints an HTML page to a PDF (Electron); absent in tests that make no PDF. */
   renderPdf?: (html: string) => Promise<Uint8Array>;
   now?: () => number;
+  /** How long a command waits for the assistant to become free, and how often it looks (ms); tests shorten them. */
+  busyWaitMs?: number;
+  pollMs?: number;
 }
 
 const fail = (code: string, message: string): RunOutcome => ({
@@ -334,6 +337,39 @@ export class RemoteCommands implements CommandRunner {
     return ok({ cards: this.waiting(company).map((p) => cardOf(p.id, p.proposal)) });
   }
 
+  // ---- the assistant is free for the phone ----
+
+  /**
+   * The phone is never told "the assistant is busy". A message that comes while the assistant answers something else waits its
+   * turn (the desktop user's own question, a report); a card nobody answered keeps the assistant waiting for a click, so a new
+   * message from the phone sets it aside (declines it) and goes on, and the reply says so. The wait is long (the command lives
+   * for hours) but not endless: past it the command fails with BUSY and can be sent again.
+   */
+  private async freeAssistant(
+    company: RemoteCompanyInfo,
+    progress: (text: string) => void,
+  ): Promise<{ ok: true; setAside: number } | { ok: false }> {
+    const { assistant } = this.deps;
+    let setAside = 0;
+    const deadline = this.now() + (this.deps.busyWaitMs ?? 10 * 60_000);
+    let told = false;
+    while (assistant.isBusy(company.id)) {
+      const cards = this.waiting(company);
+      if (cards.length > 0) {
+        for (const card of cards) {
+          assistant.decide(company.id, card.id, false);
+          setAside += 1;
+        }
+      } else if (!told) {
+        progress("waiting");
+        told = true;
+      }
+      if (this.now() > deadline) return { ok: false };
+      await new Promise((r) => setTimeout(r, this.deps.pollMs ?? 200));
+    }
+    return { ok: true, setAside };
+  }
+
   // ---- Prepare ----
 
   /** One message (or a file) through the assistant, as if typed on the PC; ends at its answer or at its first card. */
@@ -345,11 +381,9 @@ export class RemoteCommands implements CommandRunner {
     files: AssistantInput["files"] = [],
   ): Promise<RunOutcome & { summary?: string }> {
     const { assistant } = this.deps;
-    if (assistant.isBusy(company.id))
-      // A card nobody has answered keeps the assistant waiting: that is not "busy", the card has to be applied or declined.
-      return this.waiting(company).length > 0
-        ? fail("CARD_WAITING", "A proposal is waiting for an answer: apply or decline it first")
-        : fail("BUSY", "The assistant is working on the PC: try again in a minute");
+    const freed = await this.freeAssistant(company, progress);
+    if (!freed.ok) return fail("BUSY", "The assistant on the PC did not become free: send the message again");
+    const setAside = freed.setAside;
     let reply = "";
     const notices: string[] = [];
     const cards: ProposalCard[] = [];
@@ -403,11 +437,17 @@ export class RemoteCommands implements CommandRunner {
         );
       }
       void sent.catch(() => undefined);
-      return { ...ok({ reply: words, cards }), summary: words };
+      return {
+        ...ok({ reply: words, cards, ...(setAside > 0 ? { set_aside: setAside } : {}) }),
+        summary: words,
+      };
     }
     const result = first.done;
     if (!result.ok) return fail(result.code, result.message);
-    return { ...ok({ reply: words, cards }), summary: words };
+    return {
+      ...ok({ reply: words, cards, ...(setAside > 0 ? { set_aside: setAside } : {}) }),
+      summary: words,
+    };
   }
 
   private async attach(
@@ -564,11 +604,12 @@ export class RemoteCommands implements CommandRunner {
     lang: "uz" | "ru" | "en",
   ): Promise<{ ok: true; lines: string[] } | { ok: false; code: string; message: string }> {
     const { assistant } = this.deps;
-    if (assistant.isBusy(company.id))
+    const freed = await this.freeAssistant(company, () => undefined);
+    if (!freed.ok)
       return {
         ok: false,
         code: "BUSY",
-        message: "The assistant is working on the PC: try again in a minute",
+        message: "The assistant on the PC did not become free: ask for the report again",
       };
     let last: AuditView | null = null;
     const off = assistant.observe((event) => {

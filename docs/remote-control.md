@@ -153,3 +153,17 @@ needs the PC with real 1C.
 
 Voice messages, photos of paper documents (OCR), charts as images, a scheduled digest, posting from the phone,
 roles, end-to-end encryption, Wake-on-LAN.
+
+## Reliability: no "busy", and a link that comes back by itself
+
+- **The phone is never told the assistant is busy.** A message (or a report) that comes while the assistant answers something else on the PC waits
+  its turn (`freeAssistant` in `commands.ts`, up to 10 minutes, then `BUSY` with "send it again"). A card nobody has answered keeps the assistant
+  waiting for a click; a new message from the phone **sets it aside** (declines it) and goes on, and the reply says how many were set aside
+  (`set_aside`, shown in the Mini App). The `CARD_WAITING` error is no longer produced; the Mini App still knows the text for older PCs.
+- **A dead link is found and dialled again.** The PC watches the silence on its WebSocket: when the server says nothing (no pong, no command) for
+  longer than the server's own limit (60 s), the connection is dropped and dialled again at once (`client.ts`). A laptop that slept or changed network
+  keeps a socket that never closes and never answers; before, it waited for a close event that did not come and the phone saw "the PC is off". The
+  desktop also dials again when the laptop resumes or the screen unlocks (`powerMonitor` in `index.ts`, `RemoteService.reconnect`). A command that was
+  delivered and not answered is handled by the usual reconnect rules; nothing runs twice (`remote_inbox`).
+- **"Waiting" looks in every company.** A notification names no company, so the Mini App's "Waiting" lists the cards of every company on every PC that is
+  online (with the company's name above each card when there are several), not only the one chosen at the top.

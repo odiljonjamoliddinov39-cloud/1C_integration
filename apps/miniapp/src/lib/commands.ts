@@ -53,7 +53,9 @@ export function resultOf<T>(view: CommandView | undefined, guard: (value: unknow
   return view?.state === "done" && guard(view.result) ? view.result : null;
 }
 
-export const isChatResult = (v: unknown): v is { reply: string; cards: { id: string }[] } =>
+export const isChatResult = (
+  v: unknown,
+): v is { reply: string; cards: { id: string }[]; set_aside?: number } =>
   typeof v === "object" && v !== null && typeof (v as { reply?: unknown }).reply === "string";
 export const isCardsResult = (v: unknown): v is { cards: ProposalCard[] } =>
   typeof v === "object" && v !== null && Array.isArray((v as { cards?: unknown }).cards);

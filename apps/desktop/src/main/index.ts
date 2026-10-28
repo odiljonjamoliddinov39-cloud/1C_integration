@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LICENSE_CHECK_HOURS } from "@platform/shared";
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, safeStorage, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, powerMonitor, safeStorage, shell } from "electron";
 
 import onecWorkerPath from "./onec-worker?modulePath";
 import { CHANNELS } from "../shared/ipc.js";
@@ -183,6 +183,9 @@ void app.whenReady().then(async () => {
     onChange: (view) => broadcast(CHANNELS.remoteChanged, view),
   });
   if (store.session) remote.start();
+  // A laptop that slept or came back to a different network keeps a connection that is dead: the channel is dialled again at once.
+  powerMonitor.on("resume", () => remote.reconnect());
+  powerMonitor.on("unlock-screen", () => remote.reconnect());
   const handlers = createHandlers({
     remote,
     store,

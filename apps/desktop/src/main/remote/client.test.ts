@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { WsCommand } from "@platform/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SecretBox } from "../store.js";
 import { RemoteClient, type CommandRunner, type RunOutcome, type WsLike } from "./client.js";
@@ -60,6 +60,7 @@ const command = (n: number, over: Partial<WsCommand> = {}): WsCommand => ({
 
 function setup(
   run: (cmd: WsCommand) => Promise<RunOutcome> | RunOutcome = () => ({ ok: true, result: {}, blobs: [] }),
+  options: { deadAfterMs?: number } = {},
 ) {
   const state = new RemoteState(join(mkdtempSync(join(tmpdir(), "remote-client-")), "r.json"), secrets);
   state.setDevice({ id: "dev", token: "secret-token", serverUrl: "https://api.example.com" });
@@ -87,6 +88,7 @@ function setup(
     backoffMs: [10],
     // Long enough that a slow runner has dropped the link before the answer counts as taken.
     settleMs: 150,
+    ...options,
   });
   return { state, sockets, ran, client };
 }
@@ -272,5 +274,45 @@ describe("RemoteClient", () => {
     expect(ran).toEqual([]);
     expect(ws.of("ack")).toHaveLength(0);
     client.stop();
+  });
+
+  it("a connection that goes silent is taken for dead and dialled again, without waiting for a close event", () => {
+    vi.useFakeTimers();
+    try {
+      const { client, sockets } = setup();
+      client.start();
+      const first = sockets[0];
+      first?.open();
+      expect(client.status().connected).toBe(true);
+      // The server answers the pings for a while…
+      vi.advanceTimersByTime(25_000);
+      first?.push({ type: "pong" });
+      vi.advanceTimersByTime(25_000);
+      first?.push({ type: "pong" });
+      expect(sockets).toHaveLength(1);
+      // …then nothing comes (the laptop slept, the network changed): past the limit the link is dropped and dialled again.
+      vi.advanceTimersByTime(25_000 * 4);
+      expect(client.status().connected).toBe(false);
+      vi.advanceTimersByTime(50);
+      expect(sockets.length).toBeGreaterThanOrEqual(2);
+      client.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconnectNow closes the old connection and dials a new one at once, and a stopped client stays stopped", () => {
+    const { client, sockets } = setup();
+    client.start();
+    const first = sockets[0];
+    first?.open();
+    client.reconnectNow();
+    expect(first?.closed).not.toBeNull();
+    expect(sockets).toHaveLength(2);
+    sockets[1]?.open();
+    expect(sockets[1]?.of("hello")).toHaveLength(1);
+    client.stop();
+    client.reconnectNow();
+    expect(sockets).toHaveLength(2);
   });
 });

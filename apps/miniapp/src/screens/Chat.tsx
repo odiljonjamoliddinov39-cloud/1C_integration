@@ -1,6 +1,7 @@
 import type { CommandView } from "@platform/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Icon } from "../components/Icon.js";
 import { useApp } from "../context.js";
 import { ApiError } from "../lib/api.js";
 import { follow, isChatResult, isSummary, isTerminal } from "../lib/commands.js";
@@ -126,7 +127,14 @@ export function ChatScreen() {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <div style={{ flex: 1 }}>
-        {items.length === 0 && <p className="muted">{t("chat.empty")}</p>}
+        {items.length === 0 && (
+          <div className="empty">
+            <span className="art">
+              <Icon name="spark" size={30} />
+            </span>
+            <p>{t("chat.empty")}</p>
+          </div>
+        )}
         {items.map((c) => (
           <div key={c.id}>
             <div className="bubble me">{sent[c.id] ?? t("chat.fromOther")}</div>
@@ -136,16 +144,16 @@ export function ChatScreen() {
         <div ref={bottom} />
       </div>
       {error && <div className="err">{error}</div>}
-      <div className="composer" style={{ position: "sticky", bottom: -16, background: "var(--bg)" }}>
+      <div className="composer" style={{ position: "sticky", bottom: -18, background: "var(--page)" }}>
         <input ref={picker} type="file" hidden onChange={(e) => void attach(e.target.files?.[0])} />
         <button
           type="button"
-          className="btn secondary"
+          className="btn secondary round"
           aria-label={t("chat.attach")}
           disabled={busy}
           onClick={() => picker.current?.click()}
         >
-          📎
+          <Icon name="clip" size={20} />
         </button>
         <textarea
           rows={1}
@@ -159,8 +167,14 @@ export function ChatScreen() {
             }
           }}
         />
-        <button type="button" className="btn" disabled={busy || !text.trim()} onClick={() => void send()}>
-          {t("chat.send")}
+        <button
+          type="button"
+          className="btn round"
+          aria-label={t("chat.send")}
+          disabled={busy || !text.trim()}
+          onClick={() => void send()}
+        >
+          <Icon name="send" size={22} />
         </button>
       </div>
     </div>
@@ -184,8 +198,10 @@ function Reply({
         ? view.result.summary
         : "";
     const cards = isChatResult(view.result) ? view.result.cards.length : 0;
+    const setAside = isChatResult(view.result) ? (view.result.set_aside ?? 0) : 0;
     return (
       <>
+        {setAside > 0 && <div className="muted">{t("chat.setAside", { n: setAside })}</div>}
         {reply && <div className="bubble bot">{reply}</div>}
         {cards > 0 && (
           <div className="bubble bot">
@@ -202,11 +218,18 @@ function Reply({
     return <div className="bubble bot err">{errorText(lang, view.error?.code, view.error?.message)}</div>;
   const tone = view.state === "expired" || view.state === "cancelled" ? "bad" : "warn";
   return (
-    <div className="muted" style={{ margin: "2px 0 8px" }}>
+    <div className="muted progress">
       <span className={`chip ${tone}`}>{t(`state.${view.state}`)}</span>
-      {view.progress && <span> · {view.progress}</span>}
+      {(view.state === "running" || view.state === "delivered") && (
+        <span className="working" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      )}
+      {view.progress && <span>{view.progress}</span>}
       {view.state === "queued" && (
-        <button type="button" className="btn small secondary" style={{ marginLeft: 8 }} onClick={onCancel}>
+        <button type="button" className="btn small secondary" onClick={onCancel}>
           {t("cancel")}
         </button>
       )}

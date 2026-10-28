@@ -39,6 +39,7 @@ export interface RemoteServiceDeps {
   onChange?: (view: RemoteStateView) => void;
   backoffMs?: readonly number[];
   settleMs?: number;
+  deadAfterMs?: number;
 }
 
 const fail = (code: string, message: string): { ok: false; code: string; message: string } => ({
@@ -94,6 +95,7 @@ export class RemoteService {
       ...(deps.ws ? { ws: deps.ws } : {}),
       ...(deps.backoffMs ? { backoffMs: deps.backoffMs } : {}),
       ...(deps.settleMs !== undefined ? { settleMs: deps.settleMs } : {}),
+      ...(deps.deadAfterMs !== undefined ? { deadAfterMs: deps.deadAfterMs } : {}),
       onStatus: () => deps.onChange?.(this.view()),
     });
   }
@@ -127,6 +129,11 @@ export class RemoteService {
       this.licenseTimer = setInterval(() => void this.checkLicense(), 24 * 3_600_000);
       this.licenseTimer.unref?.();
     }
+  }
+
+  /** The laptop woke up or the network changed: the channel is dialled again at once instead of waiting for the old one to time out. */
+  reconnect(): void {
+    this.client.reconnectNow();
   }
 
   /** At sign-out and at quit: the channel closes. */
