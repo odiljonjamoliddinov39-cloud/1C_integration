@@ -88,17 +88,34 @@ if [ -n "${API_IMAGE:-}" ]; then
   grep -q '^API_IMAGE=' .env && sed -i "s#^API_IMAGE=.*#API_IMAGE=${API_IMAGE}#" .env || echo "API_IMAGE=${API_IMAGE}" >> .env
 fi
 
+# SITE_ADDRESS may hold several addresses ("api.example.com, 1-2-3-4.sslip.io"). The Mini App's link and the Telegram webhook
+# need ONE host: PUBLIC_HOST, the first address that answers over HTTPS (set again below once one is known to answer).
+sites=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- | tr ',' ' ' | sed -e 's#https\?://##g' -e 's#/*\( \|$\)#\1#g')
+set_public_host() {
+  ( umask 077; { grep -v '^PUBLIC_HOST=' .env || true; echo "PUBLIC_HOST=$1"; } > .env.new )
+  mv .env.new .env
+}
+if ! grep -q '^PUBLIC_HOST=.' .env; then
+  set_public_host "$(echo $sites | awk '{print $1}')"
+fi
+
 docker compose pull --quiet api postgres caddy backup 2>/dev/null || docker compose pull api postgres caddy backup
 docker compose up -d --remove-orphans
 docker image prune -f >/dev/null
 
-site=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2)
-echo "Waiting for https://${site}/health ..."
+echo "Waiting for the control system at: $sites ..."
 for _ in $(seq 1 60); do
-  if curl -fsS "https://${site}/health" >/dev/null 2>&1; then
-    echo "OK: the control system answers at https://${site}"
-    exit 0
-  fi
+  for site in $sites; do
+    if curl -fsS --max-time 10 "https://${site}/health" >/dev/null 2>&1; then
+      echo "OK: the control system answers at https://${site}"
+      # The API was started with the host chosen before; if another one is the one that answers, use that.
+      if [ "$site" != "$(grep '^PUBLIC_HOST=' .env | cut -d= -f2-)" ]; then
+        set_public_host "$site"
+        docker compose up -d
+      fi
+      exit 0
+    fi
+  done
   sleep 5
 done
 echo "The API did not answer over HTTPS yet. Check: docker compose -f $APP_DIR/docker-compose.yml logs --tail 50"

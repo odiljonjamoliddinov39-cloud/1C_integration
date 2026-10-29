@@ -55,7 +55,8 @@ services:
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       REMOTE_ENCRYPTION_KEY: ${REMOTE_ENCRYPTION_KEY:-}
-      MINIAPP_URL: https://${SITE_ADDRESS}/app/
+      # One host: SITE_ADDRESS may list several (server-setup.sh sets PUBLIC_HOST to the first that answers).
+      MINIAPP_URL: https://${PUBLIC_HOST:-${SITE_ADDRESS}}/app/
     volumes:
       - remote_blobs:/var/lib/platform/remote-blobs
     depends_on:
