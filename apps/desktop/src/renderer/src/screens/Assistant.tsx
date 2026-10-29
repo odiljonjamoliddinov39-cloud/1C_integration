@@ -65,9 +65,9 @@ function kindOf(name: string): AttachmentKind {
   const extension = name.toLowerCase().slice(name.lastIndexOf("."));
   if (extension === ".pdf") return "pdf";
   if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension)) return "image";
-  if (extension === ".xlsx") return "spreadsheet";
+  if ([".xlsx", ".xlsm", ".xltx"].includes(extension)) return "spreadsheet";
   if (extension === ".docx") return "document";
-  if (extension === ".zip") return "archive";
+  if (extension === ".zip" || extension === ".rar") return "archive";
   return "text";
 }
 
