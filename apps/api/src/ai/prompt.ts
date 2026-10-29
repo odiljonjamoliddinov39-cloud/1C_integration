@@ -550,7 +550,8 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "accountant (the app takes it from Didox's list and the company's own documents; if NO_UNIT lists Didox's units, " +
     "pick the one that means the same, e.g. a piece, and call again); invoices you made in this chat that share a " +
     "number you renumber at once (the next free numbers, update, post) and then go on to Didox; an invoice that " +
-    "still lacks a usable INN is left out and listed once at the end while the others continue. New issued invoices get consecutive numbers " +
+    "still lacks a usable INN is left out and listed once at the end while the others continue. The origin of the goods defaults to bought in Uzbekistan (a trading company resells); set origin 1 only for goods the company made itself and 3 for imported goods. " +
+    "New issued invoices get consecutive numbers " +
     "from the app when they are created; only older ones that share a number are renumbered by hand. If Didox is not connected for " +
     "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
   propose_undo_bank:

@@ -556,6 +556,8 @@ export const DidoxDraftInput = z.object({
         catalogCode: z.string().trim().max(40).optional(),
         catalogName: z.string().trim().max(500).optional(),
         barcode: z.string().trim().max(60).optional(),
+        /** 1 made by the company, 2 bought in Uzbekistan (the default), 3 imported. */
+        origin: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
       }),
     )
     .min(1)

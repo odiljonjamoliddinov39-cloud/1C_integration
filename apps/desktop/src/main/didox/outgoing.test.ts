@@ -194,6 +194,25 @@ describe("free-form document draft", () => {
     });
   });
 
+  it("marks the goods as bought in Uzbekistan unless the line says otherwise", () => {
+    const result = buildInvoiceDraft(
+      {
+        ...input,
+        lines: [
+          { name: "A", unit: "шт.", qty: 1, price: 1, vatRate: 12 },
+          { name: "B", unit: "шт.", qty: 1, price: 1, vatRate: 12, origin: 1 },
+          { name: "C", unit: "шт.", qty: 1, price: 1, vatRate: 12, origin: 3 },
+        ],
+      },
+      seller,
+      buyer,
+      measures,
+    );
+    if (!result.ok) throw new Error(JSON.stringify(result.problems));
+    const products = (result.built.body.ProductList as { Products: { origin: number }[] }).Products;
+    expect(products.map((p) => p.origin)).toEqual([2, 1, 3]);
+  });
+
   it("does not take an all-zero INN for a buyer", () => {
     for (const buyerTin of ["000000000", "00000000000000"]) {
       const result = buildInvoiceDraft({ ...input, buyerTin }, seller, null, measures);
