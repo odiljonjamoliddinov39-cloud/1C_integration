@@ -1,14 +1,15 @@
 /** Billing from the admin dashboard: plans and add-ons, subscriptions, revenue and promo codes. */
-import type {
-  AddonSaveInput,
-  AdminBillingDetail,
-  AdminPlansView,
-  AdminSubscriptionRow,
-  PlanSaveInput,
-  PromoInput,
-  PromoView,
-  RevenueReport,
-  SubscriptionActionInput,
+import {
+  type AddonSaveInput,
+  type AdminBillingDetail,
+  type AdminPlansView,
+  type AdminSubscriptionRow,
+  type PlanSaveInput,
+  type PromoInput,
+  type PromoView,
+  type RevenueReport,
+  type SubscriptionActionInput,
+  yearPriceOf,
 } from "@platform/shared";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
@@ -67,7 +68,8 @@ export class AdminBilling {
     const values = {
       name: input.name,
       priceUzs: input.priceMonthSum,
-      priceYearSum: input.priceYearSum,
+      // The yearly price left empty (0) is derived from the monthly one, so a plan never has a month price and no year price.
+      priceYearSum: yearPriceOf(input.priceMonthSum, input.priceYearSum),
       maxCompanies: input.companies,
       seats: input.users,
       importsPerMonth: input.importsPerMonth,
@@ -360,7 +362,9 @@ export class AdminBilling {
         continue;
       }
       paid++;
-      const monthly = (s.billing_cycle === "year" ? s.year_price / 12 : s.month_price) + s.addons_mrr;
+      const monthly =
+        (s.billing_cycle === "year" ? yearPriceOf(s.month_price, s.year_price) / 12 : s.month_price) +
+        s.addons_mrr;
       mrr += monthly;
       const row = byPlan.get(s.plan) ?? { accounts: 0, mrrSum: 0 };
       row.accounts += 1;

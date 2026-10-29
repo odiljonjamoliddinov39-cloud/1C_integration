@@ -10,6 +10,7 @@ import {
   type InvoiceView,
   type SubscriptionResponse,
   TRIAL_DAYS,
+  yearPriceOf,
 } from "@platform/shared";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 
@@ -45,7 +46,7 @@ export interface Quote {
 }
 
 const priceFor = (plan: PlanRow, cycle: "month" | "year") =>
-  cycle === "year" ? plan.priceYearSum : plan.priceUzs;
+  cycle === "year" ? yearPriceOf(plan.priceUzs, plan.priceYearSum) : plan.priceUzs;
 const months = (cycle: "month" | "year") => (cycle === "year" ? 12 : 1);
 const refuse = (status: number, code: string, message: string) => new HttpError(status, code, message);
 
@@ -447,7 +448,7 @@ export class Invoicing {
       const daysLeft = daysBetween(now, s.endsAt);
       const inPeriod = Math.max(1, daysBetween(s.startsAt, s.endsAt));
       const credit = Math.floor((current.priceUzs * daysLeft) / inPeriod / 1000) * 1000;
-      const amountSum = Math.max(0, target.priceYearSum - credit);
+      const amountSum = Math.max(0, priceFor(target, "year") - credit);
       const items: InvoiceItem[] = [
         {
           kind: "upgrade",

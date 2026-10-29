@@ -11,10 +11,12 @@ const uz = {
     toggleYear: "Yillik · 2 oy bepul",
     perMonth: "/ oy",
     perYear: "/ yil",
+    monthEquivalent: "Oyiga",
+    saves: "Tejaysiz",
+    perYearShort: "/ yil",
     free: "Bepul",
     popular: "Mashhur",
     startFree: "Bepul boshlash",
-    tryBusiness: "Business — 14 kun bepul",
     choose: "Tanlash",
     current: "Joriy tarif",
     rows: {
@@ -46,30 +48,6 @@ const uz = {
     addonOn: "Mavjud:",
     custom: "10 tadan ortiq kompaniya kerakmi? Maxsus tarif tuzamiz — biz bilan bogʻlaning.",
     vat: "Narxlar QQSsiz. QQS (12%) hisob-fakturada alohida koʻrsatiladi.",
-    faqTitle: "Savollar",
-    faq: [
-      [
-        "Bepul tarif haqiqatan ham doim bepulmi?",
-        "Ha. Bepul tarif hech qachon tugamaydi. Pullik tarif toʻlanmasa, siz Bepul tarifga qaytasiz — maʼlumotlaringiz hech qachon oʻchirilmaydi.",
-      ],
-      [
-        "Sinov qanday ishlaydi?",
-        "Har bir Bepul akkaunt Business tarifini 14 kun, karta kiritmasdan, bir marta sinab koʻrishi mumkin. Sinov davrida AI savollari 30 tagacha.",
-      ],
-      [
-        "Toʻlov oʻtmasa nima boʻladi?",
-        "3 kun toʻliq kirish saqlanadi va eslatmalar yuboriladi, soʻng akkaunt Bepul tarifga oʻtadi. Limitdan ortiq kompaniyalar faqat oʻqish rejimida qoladi.",
-      ],
-      [
-        "Qanday toʻlayman?",
-        "Payme orqali karta bilan yoki yuridik shaxslar uchun bank oʻtkazmasi bilan (hisob-faktura PDF).",
-      ],
-      [
-        "AI savoli nima hisoblanadi?",
-        "Oddiy savol — 1 ta. Katta ish (masalan, koʻp hujjatni import qilish) koʻproq AI resursi sarflaydi va bir nechta savol hisoblanadi: har qoʻshimcha ~0,5 USD uchun yana 1 ta. Shablon va saqlangan javoblar hisoblanmaydi.",
-      ],
-      ["Narx oʻzgarsa-chi?", "Joriy davr eski narxda qoladi, yangi narx keyingi davrdan boshlanadi."],
-    ] as [string, string][],
   },
   cabinet: {
     subscription: "Obuna",
@@ -91,8 +69,6 @@ const uz = {
     audits: "Audit / oy",
     ai: "AI savollari",
     unlimited: "cheksiz",
-    startTrial: "Business — 14 kun bepul sinash",
-    trialNote: "Karta kerak emas. 14 kundan soʻng Bepul tarifga qaytasiz.",
     choosePlan: "Tarifni tanlang",
     promo: "Promokod",
     cycle: { month: "Oylik", year: "Yillik" } as Record<string, string>,
@@ -152,10 +128,12 @@ const ru: typeof uz = {
     toggleYear: "За год · 2 месяца в подарок",
     perMonth: "/ мес",
     perYear: "/ год",
+    monthEquivalent: "В месяц",
+    saves: "Экономия",
+    perYearShort: "/ год",
     free: "Бесплатно",
     popular: "Популярный",
     startFree: "Начать бесплатно",
-    tryBusiness: "Business — 14 дней бесплатно",
     choose: "Выбрать",
     current: "Ваш тариф",
     rows: {
@@ -187,27 +165,6 @@ const ru: typeof uz = {
     addonOn: "Доступно на:",
     custom: "Нужно больше 10 компаний? Составим индивидуальный тариф — напишите нам.",
     vat: "Цены без НДС. НДС (12%) показывается в счёте отдельной строкой.",
-    faqTitle: "Вопросы",
-    faq: [
-      [
-        "Бесплатный тариф правда бесплатный навсегда?",
-        "Да. Бесплатный тариф не заканчивается. Если платный тариф не оплачен, вы возвращаетесь на Бесплатный — данные никогда не удаляются.",
-      ],
-      [
-        "Как работает пробный период?",
-        "Любой бесплатный аккаунт один раз может попробовать Business 14 дней без карты. В пробный период — до 30 вопросов к ИИ.",
-      ],
-      [
-        "Что будет, если оплата не пройдёт?",
-        "3 дня полный доступ сохраняется, приходят напоминания, затем аккаунт переходит на Бесплатный. Компании сверх лимита остаются в режиме чтения.",
-      ],
-      ["Как оплатить?", "Картой через Payme или банковским переводом для юридических лиц (счёт в PDF)."],
-      [
-        "Что считается вопросом к ИИ?",
-        "Обычный вопрос — это 1. Большая работа (например, импорт многих документов) тратит больше ресурсов ИИ и считается как несколько вопросов: ещё 1 за каждые дополнительные ~0,5 USD. Ответы по шаблонам и сохранённые ответы не считаются.",
-      ],
-      ["Что если цена изменится?", "Текущий период остаётся по старой цене, новая действует со следующего."],
-    ],
   },
   cabinet: {
     subscription: "Подписка",
@@ -229,8 +186,6 @@ const ru: typeof uz = {
     audits: "Аудит / мес",
     ai: "Вопросы к ИИ",
     unlimited: "без ограничений",
-    startTrial: "Попробовать Business 14 дней бесплатно",
-    trialNote: "Карта не нужна. Через 14 дней вы вернётесь на Бесплатный тариф.",
     choosePlan: "Выберите тариф",
     promo: "Промокод",
     cycle: { month: "Помесячно", year: "На год" },

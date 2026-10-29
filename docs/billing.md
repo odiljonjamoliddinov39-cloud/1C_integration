@@ -17,6 +17,8 @@ Four plans, in the `plans` table (the admin dashboard edits them: **Plans**; no 
 | AI questions / month       | 10    | 80        | 250        | 700        |
 | Excel export               | no    | yes       | yes        | yes        |
 
+The yearly price is worked out from the monthly one (12 for 10) when the admin leaves it empty (0); the admin form fills it in as you type the monthly price, and a price typed by hand stays. The pricing page's yearly view shows the monthly equivalent, the saving and each monthly limit with its yearly total.
+
 Prices exclude VAT (`VAT_PERCENT`, 12): invoices show it as its own line. Add-ons: extra company
 390 000 / month, extra user 150 000 / month, extra 100 AI questions 390 000 (one-off, valid to the end
 of the period). Over 10 companies: a `custom` plan made by hand in the dashboard (hidden from the

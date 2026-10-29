@@ -1028,6 +1028,31 @@ describe.skipIf(!available)("tariffs", () => {
     });
   });
 
+  it("works the yearly price out of the monthly one (12 for 10) when the admin leaves it empty, and keeps one set by hand", async () => {
+    const admin = await adminToken();
+    const start = (await adminCall("GET", "/v1/admin/billing/plans", admin))
+      .json()
+      .plans.find((p: { code: string }) => p.code === "start");
+    const yearOf = async () =>
+      (await call("GET", "/v1/plans")).json().plans.find((p: { code: string }) => p.code === "start")
+        .priceYearSum;
+    await adminCall("PUT", "/v1/admin/plans/start", admin, {
+      ...start,
+      priceMonthSum: 700_000,
+      priceYearSum: 0,
+      isPublic: true,
+    });
+    expect(await yearOf()).toBe(7_000_000);
+    await adminCall("PUT", "/v1/admin/plans/start", admin, {
+      ...start,
+      priceMonthSum: 700_000,
+      priceYearSum: 6_500_000,
+      isPublic: true,
+    });
+    expect(await yearOf()).toBe(6_500_000);
+    await adminCall("PUT", "/v1/admin/plans/start", admin, { ...start, isPublic: true });
+  });
+
   it("changes a plan, extends it, grants an add-on and marks a bank transfer paid from the admin, with a reason in the audit log", async () => {
     const admin = await adminToken();
     const { token, accountId } = await register();
