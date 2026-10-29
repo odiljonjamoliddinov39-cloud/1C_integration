@@ -71,7 +71,7 @@ export function Pricing({ locale }: { locale: Locale }) {
           const free = plan.priceMonthSum === 0;
           const featured = plan.code === "business";
           // The yearly price is worked out from the monthly one when the admin set none (12 for 10).
-          const yearPrice = yearPriceOf(plan.priceMonthSum, plan.priceYearSum);
+          const yearPrice = yearPriceOf(plan.priceMonthSum);
           const price = cycle === "year" ? yearPrice : plan.priceMonthSum;
           const saved = plan.priceMonthSum * YEAR_MONTHS - yearPrice;
           return (

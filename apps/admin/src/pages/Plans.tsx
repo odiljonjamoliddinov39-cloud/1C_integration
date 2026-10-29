@@ -5,6 +5,7 @@ import {
   type PlanSaveInput,
   type PlanView,
   YEAR_PAID_MONTHS,
+  yearPriceOf,
 } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -111,15 +112,12 @@ function PlanEditor({
   const [form, setForm] = useState<PlanSaveInput>(toInput(plan));
   const save = useMutation({ mutationFn: () => api.savePlan(plan.code, form), onSuccess: onSaved });
   const dirty = JSON.stringify(form) !== JSON.stringify(toInput(plan));
-  // The yearly price follows the monthly one (12 for 10) until the admin types a yearly price of their own.
-  const [ownYear, setOwnYear] = useState(
-    plan.priceYearSum > 0 && plan.priceYearSum !== plan.priceMonthSum * YEAR_PAID_MONTHS,
-  );
+  // The yearly price is always the monthly one for 10 months (12 for 10): it is shown, not typed.
   const set = <K extends keyof PlanSaveInput>(key: K, value: PlanSaveInput[K]) =>
     setForm({
       ...form,
       [key]: value,
-      ...(key === "priceMonthSum" && !ownYear ? { priceYearSum: Number(value) * YEAR_PAID_MONTHS } : {}),
+      ...(key === "priceMonthSum" ? { priceYearSum: yearPriceOf(Number(value)) } : {}),
     });
   const field = (label: string, node: React.ReactNode) => (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -127,18 +125,13 @@ function PlanEditor({
       {node}
     </label>
   );
-  const numeric = (
-    key: "priceMonthSum" | "priceYearSum" | "companies" | "users" | "aiQuestionsPerMonth" | "sortOrder",
-  ) => (
+  const numeric = (key: "priceMonthSum" | "companies" | "users" | "aiQuestionsPerMonth" | "sortOrder") => (
     <Input
       type="number"
       min={0}
       disabled={!owner}
       value={form[key]}
-      onChange={(e) => {
-        if (key === "priceYearSum") setOwnYear(true);
-        set(key, num(e.target.value));
-      }}
+      onChange={(e) => set(key, num(e.target.value))}
     />
   );
   /** What a monthly limit comes to over a year, shown under the field. */
@@ -173,13 +166,13 @@ function PlanEditor({
         )}
         {field("Price / month, sum", numeric("priceMonthSum"))}
         {field(
-          "Price / year, sum",
+          "Price / year, sum (automatic)",
           <>
-            {numeric("priceYearSum")}
+            <Input type="number" disabled value={yearPriceOf(form.priceMonthSum)} readOnly />
             <span className="text-[11px]">
-              {ownYear ? "set by hand" : "= monthly × 10 (2 months free)"}
+              = monthly × {YEAR_PAID_MONTHS} (2 months free)
               {form.priceMonthSum > 0 &&
-                `, saves ${new Intl.NumberFormat("ru-RU").format(form.priceMonthSum * 12 - form.priceYearSum)}`}
+                `, saves ${new Intl.NumberFormat("ru-RU").format(form.priceMonthSum * 12 - yearPriceOf(form.priceMonthSum))}`}
             </span>
           </>,
         )}
