@@ -20,7 +20,6 @@ import {
   openInvoicePrint,
   quote,
   resumePlan,
-  startTrial,
   subscription as loadSubscription,
 } from "../lib/api";
 import { billingText, money } from "../lib/billing-i18n";
@@ -191,19 +190,6 @@ export function BillingSection({ locale }: { locale: Locale }) {
             </li>
           ))}
         </ul>
-
-        {ent.canStartTrial && (
-          <div className="mt-5 rounded-xl bg-primary/5 p-4">
-            <button
-              disabled={busy}
-              onClick={() => void act(async () => (await startTrial(), null))}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-md shadow-primary/25 hover:opacity-90 disabled:opacity-60"
-            >
-              {t.startTrial}
-            </button>
-            <p className="mt-2 text-xs text-muted-foreground">{t.trialNote}</p>
-          </div>
-        )}
 
         {paid && (
           <div className="mt-5 flex flex-wrap gap-3 text-sm">

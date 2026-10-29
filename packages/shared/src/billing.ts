@@ -57,6 +57,14 @@ export const EntitlementsResponse = z.object({
 });
 export type EntitlementsResponse = z.infer<typeof EntitlementsResponse>;
 
+/** A year is paid as 10 months (12 for 10: "2 months free"), the rule the pricing page and the invoices follow. */
+export const YEAR_PAID_MONTHS = 10;
+export const YEAR_MONTHS = 12;
+
+/** The yearly price of a plan: the one the admin set, else the monthly price for 10 months. */
+export const yearPriceOf = (monthSum: number, storedYearSum: number): number =>
+  storedYearSum > 0 ? storedYearSum : monthSum * YEAR_PAID_MONTHS;
+
 export const PlanView = z.object({
   code: z.string(),
   name: z.string(),

@@ -10,6 +10,7 @@ import {
   type InviteUserInput,
   type PlanView,
   TRIAL_DAYS,
+  yearPriceOf,
 } from "@platform/shared";
 import { hash } from "@node-rs/argon2";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
@@ -29,7 +30,7 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
     code: p.code,
     name: p.name || p.code,
     priceMonthSum: p.priceUzs,
-    priceYearSum: p.priceYearSum,
+    priceYearSum: yearPriceOf(p.priceUzs, p.priceYearSum),
     companies: p.maxCompanies,
     users: p.seats,
     importsPerMonth: p.importsPerMonth,

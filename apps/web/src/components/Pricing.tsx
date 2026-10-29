@@ -1,7 +1,7 @@
-import type { CatalogResponse, PlanView } from "@platform/shared";
+import { type CatalogResponse, type PlanView, YEAR_MONTHS, yearPriceOf } from "@platform/shared";
 import { useEffect, useState } from "react";
 
-import { ApiError, catalog as loadCatalog, signedIn, startTrial } from "../lib/api";
+import { catalog as loadCatalog, signedIn } from "../lib/api";
 import { billingText, money } from "../lib/billing-i18n";
 import { type Locale, href } from "../lib/i18n";
 
@@ -11,7 +11,6 @@ export function Pricing({ locale }: { locale: Locale }) {
   const [data, setData] = useState<CatalogResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cycle, setCycle] = useState<"month" | "year">("month");
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -24,32 +23,31 @@ export function Pricing({ locale }: { locale: Locale }) {
     };
   }, []);
 
-  async function tryBusiness() {
-    if (!signedIn()) return window.location.assign(href(locale, "/signup"));
-    setBusy(true);
-    try {
-      await startTrial();
-    } catch (e) {
-      // Already used or not available: the cabinet explains.
-      if (!(e instanceof ApiError)) setError(e instanceof Error ? e.message : String(e));
-    }
-    window.location.assign(href(locale, "/cabinet"));
-  }
-
   if (error)
     return <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>;
   if (!data) return <p className="text-muted-foreground">…</p>;
 
-  const limit = (n: number | null) => (n === null ? t.rows.unlimited : String(n));
-  const cell = (plan: PlanView) => [
+  const nf = (n: number) => new Intl.NumberFormat("ru-RU").format(n);
+  /** A monthly limit; in the yearly view also what it comes to over the 12 months. */
+  const limit = (n: number | null, year: boolean) =>
+    n === null
+      ? t.rows.unlimited
+      : year
+        ? `${nf(n)} ${t.rows.perMonthShort} · ${nf(n * YEAR_MONTHS)} ${t.perYearShort}`
+        : nf(n);
+  const cell = (plan: PlanView, year: boolean) => [
     [t.rows.companies, String(plan.companies)],
     [t.rows.users, String(plan.users)],
-    [t.rows.imports, limit(plan.importsPerMonth)],
+    [t.rows.imports, limit(plan.importsPerMonth, year)],
     [
       t.rows.audits,
-      plan.auditsPerMonth === null ? t.rows.unlimited : `${plan.auditsPerMonth} ${t.rows.perMonthShort}`,
+      plan.auditsPerMonth === null
+        ? t.rows.unlimited
+        : year
+          ? limit(plan.auditsPerMonth, year)
+          : `${plan.auditsPerMonth} ${t.rows.perMonthShort}`,
     ],
-    [t.rows.ai, String(plan.aiQuestionsPerMonth)],
+    [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
     [t.rows.excel, plan.features.excelExport ? "✓" : "—"],
     [t.rows.support, t.support[plan.features.support] ?? plan.features.support],
   ];
@@ -72,7 +70,10 @@ export function Pricing({ locale }: { locale: Locale }) {
         {data.plans.map((plan) => {
           const free = plan.priceMonthSum === 0;
           const featured = plan.code === "business";
-          const price = cycle === "year" ? plan.priceYearSum : plan.priceMonthSum;
+          // The yearly price is worked out from the monthly one when the admin set none (12 for 10).
+          const yearPrice = yearPriceOf(plan.priceMonthSum, plan.priceYearSum);
+          const price = cycle === "year" ? yearPrice : plan.priceMonthSum;
+          const saved = plan.priceMonthSum * YEAR_MONTHS - yearPrice;
           return (
             <div
               key={plan.code}
@@ -92,8 +93,13 @@ export function Pricing({ locale }: { locale: Locale }) {
               <div className="h-5 text-sm text-muted-foreground">
                 {free ? "" : cycle === "year" ? t.perYear : t.perMonth}
               </div>
+              <div className="h-5 text-xs text-muted-foreground">
+                {!free && cycle === "year"
+                  ? `${t.monthEquivalent} ≈ ${money(Math.round(yearPrice / YEAR_MONTHS), locale)}${saved > 0 ? ` · ${t.saves} ${money(saved, locale)}` : ""}`
+                  : ""}
+              </div>
               <ul className="mt-4 flex-1 space-y-2 text-sm">
-                {cell(plan).map(([label, value]) => (
+                {cell(plan, cycle === "year").map(([label, value]) => (
                   <li key={label} className="flex justify-between gap-3 border-b border-border/60 pb-1.5">
                     <span className="text-muted-foreground">{label}</span>
                     <span className="text-right font-medium">{value}</span>
@@ -116,15 +122,6 @@ export function Pricing({ locale }: { locale: Locale }) {
                   >
                     {t.choose}
                   </a>
-                )}
-                {featured && (
-                  <button
-                    disabled={busy}
-                    onClick={() => void tryBusiness()}
-                    className="block w-full rounded-xl bg-primary py-2.5 text-center text-sm font-medium text-primary-foreground shadow-md shadow-primary/25 hover:opacity-90 disabled:opacity-60"
-                  >
-                    {t.tryBusiness}
-                  </button>
                 )}
               </div>
             </div>
@@ -153,18 +150,6 @@ export function Pricing({ locale }: { locale: Locale }) {
             </li>
           ))}
         </ul>
-      </section>
-
-      <section className="mt-12">
-        <h2 className="text-2xl font-bold">{t.faqTitle}</h2>
-        <div className="mt-4 space-y-3">
-          {t.faq.map(([q, a]) => (
-            <details key={q} className="rounded-2xl border border-border bg-card px-5 py-3">
-              <summary className="cursor-pointer font-medium">{q}</summary>
-              <p className="mt-2 text-sm text-muted-foreground">{a}</p>
-            </details>
-          ))}
-        </div>
       </section>
     </div>
   );

@@ -1,4 +1,11 @@
-import type { AddonSaveInput, AdminPlansView, AdminView, PlanSaveInput, PlanView } from "@platform/shared";
+import {
+  type AddonSaveInput,
+  type AdminPlansView,
+  type AdminView,
+  type PlanSaveInput,
+  type PlanView,
+  YEAR_PAID_MONTHS,
+} from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -104,8 +111,16 @@ function PlanEditor({
   const [form, setForm] = useState<PlanSaveInput>(toInput(plan));
   const save = useMutation({ mutationFn: () => api.savePlan(plan.code, form), onSuccess: onSaved });
   const dirty = JSON.stringify(form) !== JSON.stringify(toInput(plan));
+  // The yearly price follows the monthly one (12 for 10) until the admin types a yearly price of their own.
+  const [ownYear, setOwnYear] = useState(
+    plan.priceYearSum > 0 && plan.priceYearSum !== plan.priceMonthSum * YEAR_PAID_MONTHS,
+  );
   const set = <K extends keyof PlanSaveInput>(key: K, value: PlanSaveInput[K]) =>
-    setForm({ ...form, [key]: value });
+    setForm({
+      ...form,
+      [key]: value,
+      ...(key === "priceMonthSum" && !ownYear ? { priceYearSum: Number(value) * YEAR_PAID_MONTHS } : {}),
+    });
   const field = (label: string, node: React.ReactNode) => (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
@@ -120,18 +135,29 @@ function PlanEditor({
       min={0}
       disabled={!owner}
       value={form[key]}
-      onChange={(e) => set(key, num(e.target.value))}
+      onChange={(e) => {
+        if (key === "priceYearSum") setOwnYear(true);
+        set(key, num(e.target.value));
+      }}
     />
   );
+  /** What a monthly limit comes to over a year, shown under the field. */
+  const perYear = (monthly: number | null) =>
+    monthly === null ? null : (
+      <span className="text-[11px]">= {new Intl.NumberFormat("ru-RU").format(monthly * 12)} / year</span>
+    );
   const nullable = (key: "importsPerMonth" | "auditsPerMonth") => (
-    <Input
-      type="number"
-      min={0}
-      placeholder="unlimited"
-      disabled={!owner}
-      value={form[key] ?? ""}
-      onChange={(e) => set(key, e.target.value === "" ? null : num(e.target.value))}
-    />
+    <>
+      <Input
+        type="number"
+        min={0}
+        placeholder="unlimited"
+        disabled={!owner}
+        value={form[key] ?? ""}
+        onChange={(e) => set(key, e.target.value === "" ? null : num(e.target.value))}
+      />
+      {perYear(form[key])}
+    </>
   );
   return (
     <div className="rounded-xl border border-border p-4">
@@ -146,10 +172,26 @@ function PlanEditor({
           <Input disabled={!owner} value={form.name} onChange={(e) => set("name", e.target.value)} />,
         )}
         {field("Price / month, sum", numeric("priceMonthSum"))}
-        {field("Price / year, sum", numeric("priceYearSum"))}
+        {field(
+          "Price / year, sum",
+          <>
+            {numeric("priceYearSum")}
+            <span className="text-[11px]">
+              {ownYear ? "set by hand" : "= monthly × 10 (2 months free)"}
+              {form.priceMonthSum > 0 &&
+                `, saves ${new Intl.NumberFormat("ru-RU").format(form.priceMonthSum * 12 - form.priceYearSum)}`}
+            </span>
+          </>,
+        )}
         {field("Companies", numeric("companies"))}
         {field("Users", numeric("users"))}
-        {field("AI questions / month", numeric("aiQuestionsPerMonth"))}
+        {field(
+          "AI questions / month",
+          <>
+            {numeric("aiQuestionsPerMonth")}
+            {perYear(form.aiQuestionsPerMonth)}
+          </>,
+        )}
         {field("Imports / month", nullable("importsPerMonth"))}
         {field("Audits / month", nullable("auditsPerMonth"))}
         {field(
