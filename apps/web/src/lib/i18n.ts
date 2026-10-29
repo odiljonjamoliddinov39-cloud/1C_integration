@@ -30,7 +30,6 @@ const uz = {
     features: "Imkoniyatlar",
     pricing: "Narxlar",
     security: "Xavfsizlik",
-    faq: "Savollar",
     download: "Yuklab olish",
     login: "Kirish",
     signup: "Bepul sinash",
@@ -158,35 +157,6 @@ const uz = {
       },
     ],
   },
-  faq: {
-    title: "Koʻp soʻraladigan savollar",
-    items: [
-      {
-        q: "Qaysi 1C konfiguratsiyalari bilan ishlaydi?",
-        a: "1C:Buxgalteriya Oʻzbekiston uchun 3.0 (1C:Korxona 8.3, 64-bit). Bazaga kichik PlatformAPI kengaytmasi oʻrnatiladi.",
-      },
-      {
-        q: "Bazani internetga nashr qilish kerakmi?",
-        a: "Yoʻq. Ilova 1C bilan oʻsha kompyuterda COM orqali ishlaydi. Fayl baza ham, 1C server ham mos keladi.",
-      },
-      {
-        q: "Internet uzilsa nima boʻladi?",
-        a: "Ilova 7 kungacha internetsiz ishlaydi. Keyin litsenziyani tekshirish uchun ulanish kerak.",
-      },
-      {
-        q: "AI yordamchi maʼlumotlarimni qayerga yuboradi?",
-        a: "Faqat siz yoqqan kompaniya uchun: savol va javob uchun kerakli qatorlar serverimiz orqali Claude (Anthropic) ga yuboriladi. Ular modellarni oʻqitishda ishlatilmaydi.",
-      },
-      {
-        q: "Nechta kompyuterga oʻrnatsa boʻladi?",
-        a: "Sinov tarifida bitta foydalanuvchi 2 ta kompyuterda. Eskisini kabinetda oʻchirib, yangisiga oʻtishingiz mumkin.",
-      },
-      {
-        q: "Windows «kompyuteringiz himoyalangan» deb ogohlantiradi — bu normalmi?",
-        a: "Ha, hozircha oʻrnatuvchi raqamli imzosiz. «Batafsil» → «Baribir ishga tushirish» ni bosing.",
-      },
-    ],
-  },
   download: {
     title: "Yuklab olish",
     subtitle: "Windows ilovasi 1C turgan kompyuterga oʻrnatiladi.",
@@ -277,7 +247,6 @@ const ru: Dict = {
     features: "Возможности",
     pricing: "Цены",
     security: "Безопасность",
-    faq: "Вопросы",
     download: "Скачать",
     login: "Войти",
     signup: "Попробовать бесплатно",
@@ -402,35 +371,6 @@ const ru: Dict = {
       {
         title: "ИИ только читает",
         text: "Ассистент не может создавать, менять или удалять что-либо в 1С. Включается отдельно для каждой компании.",
-      },
-    ],
-  },
-  faq: {
-    title: "Частые вопросы",
-    items: [
-      {
-        q: "С какими конфигурациями 1С работает?",
-        a: "1С:Бухгалтерия для Узбекистана 3.0 (1С:Предприятие 8.3, 64-бит). В базу ставится небольшое расширение PlatformAPI.",
-      },
-      {
-        q: "Нужно ли публиковать базу в интернет?",
-        a: "Нет. Приложение работает с 1С на том же компьютере через COM. Подходит и файловая база, и сервер 1С.",
-      },
-      {
-        q: "Что будет, если пропадёт интернет?",
-        a: "Приложение работает без интернета до 7 дней. Потом нужно подключение, чтобы проверить лицензию.",
-      },
-      {
-        q: "Куда ИИ-ассистент отправляет мои данные?",
-        a: "Только для компании, где вы его включили: вопрос и нужные для ответа строки уходят через наш сервер в Claude (Anthropic). Они не используются для обучения моделей.",
-      },
-      {
-        q: "На сколько компьютеров можно установить?",
-        a: "В пробном тарифе — один пользователь на 2 компьютерах. Старый компьютер можно удалить в кабинете и перейти на новый.",
-      },
-      {
-        q: "Windows пишет «Система Windows защитила ваш компьютер» — это нормально?",
-        a: "Да, пока установщик без цифровой подписи. Нажмите «Подробнее» → «Выполнить в любом случае».",
       },
     ],
   },
