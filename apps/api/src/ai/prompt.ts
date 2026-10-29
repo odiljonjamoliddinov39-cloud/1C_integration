@@ -546,10 +546,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "leave only that invoice out and go on with the others. A line with no item (an advance: " +
     "«Аванс по договору…») has no IKPU in 1C: leave catalogCode out, the app fills the IKPU and unit from the buyer's " +
     "last coded sale and shows it on the card; when it cannot, ask ONE question for the whole batch, " +
-    "never one per invoice and never an invented code. Do not stop a batch to ask for what the app or you can settle: a unit is never asked of the "
-    "accountant (the app takes it from Didox's list and the company's own documents; if NO_UNIT lists Didox's units, "
-    "pick the one that means the same, e.g. a piece, and call again); invoices you made in this chat that share a "
-    "number you renumber at once (the next free numbers, update, post) and then go on to Didox; an invoice that "
+    "never one per invoice and never an invented code. Do not stop a batch to ask for what the app or you can settle: a unit is never asked of the " +
+    "accountant (the app takes it from Didox's list and the company's own documents; if NO_UNIT lists Didox's units, " +
+    "pick the one that means the same, e.g. a piece, and call again); invoices you made in this chat that share a " +
+    "number you renumber at once (the next free numbers, update, post) and then go on to Didox; an invoice that " +
     "still lacks a usable INN is left out and listed once at the end while the others continue. New issued invoices get consecutive numbers " +
     "from the app when they are created; only older ones that share a number are renumbered by hand. If Didox is not connected for " +
     "this company the tool says so: tell the accountant where to connect it (Companies, Didox test, Save for this company).",
