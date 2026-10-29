@@ -46,7 +46,7 @@ export interface Quote {
 }
 
 const priceFor = (plan: PlanRow, cycle: "month" | "year") =>
-  cycle === "year" ? yearPriceOf(plan.priceUzs, plan.priceYearSum) : plan.priceUzs;
+  cycle === "year" ? yearPriceOf(plan.priceUzs) : plan.priceUzs;
 const months = (cycle: "month" | "year") => (cycle === "year" ? 12 : 1);
 const refuse = (status: number, code: string, message: string) => new HttpError(status, code, message);
 

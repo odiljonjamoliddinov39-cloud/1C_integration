@@ -30,7 +30,7 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
     code: p.code,
     name: p.name || p.code,
     priceMonthSum: p.priceUzs,
-    priceYearSum: yearPriceOf(p.priceUzs, p.priceYearSum),
+    priceYearSum: yearPriceOf(p.priceUzs),
     companies: p.maxCompanies,
     users: p.seats,
     importsPerMonth: p.importsPerMonth,

@@ -68,8 +68,8 @@ export class AdminBilling {
     const values = {
       name: input.name,
       priceUzs: input.priceMonthSum,
-      // The yearly price left empty (0) is derived from the monthly one, so a plan never has a month price and no year price.
-      priceYearSum: yearPriceOf(input.priceMonthSum, input.priceYearSum),
+      // The yearly price is always the monthly one for 10 months; what the form sends for it is ignored.
+      priceYearSum: yearPriceOf(input.priceMonthSum),
       maxCompanies: input.companies,
       seats: input.users,
       importsPerMonth: input.importsPerMonth,
@@ -363,8 +363,7 @@ export class AdminBilling {
       }
       paid++;
       const monthly =
-        (s.billing_cycle === "year" ? yearPriceOf(s.month_price, s.year_price) / 12 : s.month_price) +
-        s.addons_mrr;
+        (s.billing_cycle === "year" ? yearPriceOf(s.month_price) / 12 : s.month_price) + s.addons_mrr;
       mrr += monthly;
       const row = byPlan.get(s.plan) ?? { accounts: 0, mrrSum: 0 };
       row.accounts += 1;

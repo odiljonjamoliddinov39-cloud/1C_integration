@@ -1028,7 +1028,7 @@ describe.skipIf(!available)("tariffs", () => {
     });
   });
 
-  it("works the yearly price out of the monthly one (12 for 10) when the admin leaves it empty, and keeps one set by hand", async () => {
+  it("always works the yearly price out of the monthly one (12 for 10), whatever the form sends for it", async () => {
     const admin = await adminToken();
     const start = (await adminCall("GET", "/v1/admin/billing/plans", admin))
       .json()
@@ -1038,18 +1038,18 @@ describe.skipIf(!available)("tariffs", () => {
         .priceYearSum;
     await adminCall("PUT", "/v1/admin/plans/start", admin, {
       ...start,
+      priceMonthSum: 899_000,
+      priceYearSum: 899_000,
+      isPublic: true,
+    });
+    expect(await yearOf()).toBe(8_990_000);
+    await adminCall("PUT", "/v1/admin/plans/start", admin, {
+      ...start,
       priceMonthSum: 700_000,
       priceYearSum: 0,
       isPublic: true,
     });
     expect(await yearOf()).toBe(7_000_000);
-    await adminCall("PUT", "/v1/admin/plans/start", admin, {
-      ...start,
-      priceMonthSum: 700_000,
-      priceYearSum: 6_500_000,
-      isPublic: true,
-    });
-    expect(await yearOf()).toBe(6_500_000);
     await adminCall("PUT", "/v1/admin/plans/start", admin, { ...start, isPublic: true });
   });
 
