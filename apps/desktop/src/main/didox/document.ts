@@ -22,6 +22,8 @@ export interface DidoxLine {
   catalogCode: string;
   catalogName: string;
   unit: string;
+  /** Didox's code of the unit when the document carries one (`measureid`, else `packagecode`). */
+  unitId?: string;
   qty: number;
   /** Price without VAT, tiyin. */
   price: number;
@@ -219,6 +221,9 @@ function line(item: Record<string, unknown>, fallback: number): DidoxLine {
     catalogCode: str(item.catalogcode),
     catalogName: str(item.catalogname).replace(/\s+/g, " "),
     unit: str(item.packagename),
+    ...(str(item.measureid) || str(item.packagecode)
+      ? { unitId: str(item.measureid) || str(item.packagecode) }
+      : {}),
     qty,
     price,
     amount,

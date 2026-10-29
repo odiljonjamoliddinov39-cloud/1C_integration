@@ -65,3 +65,16 @@ export function tinsByName(docs: DidoxDocument[], name: string): { tin: string; 
         found.set(party.tin, party.name);
   return [...found].map(([tin, partyName]) => ({ tin, name: partyName }));
 }
+
+/**
+ * The units the company's own Didox documents use, as `{id, name}` (the shape `findMeasure` reads): what a document
+ * says of a unit is certain to be one Didox accepts, whatever shape its list of units has.
+ */
+export function unitsOfDocuments(docs: DidoxDocument[]): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  for (const doc of docs)
+    for (const line of doc.lines)
+      if (line.unitId && line.unit.trim() && !seen.has(line.unit.trim()))
+        seen.set(line.unit.trim(), line.unitId);
+  return [...seen].map(([name, id]) => ({ id, name }));
+}

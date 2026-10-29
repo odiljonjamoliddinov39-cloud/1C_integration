@@ -36,6 +36,51 @@ describe("invoice draft in Didox", () => {
     expect(server.requests.map((r) => r.url.pathname).filter((p) => /sign|send|accept/.test(p))).toEqual([]);
   });
 
+  it("takes a unit from the company's own documents when Didox's list does not give it by that name", async () => {
+    const { server, client } = setup();
+    // A list of units this app cannot read a name from.
+    server.measures = [{ id: "9", name: "" }];
+    const today = new Date().toISOString().slice(0, 10);
+    server.documents = [
+      {
+        id: "o1",
+        doctype: "002",
+        status: 3,
+        owner: 1,
+        updated: `${today} 10:00:00`,
+        json: {
+          facturadoc: { facturano: "1", facturadate: today },
+          sellertin: "302936161",
+          seller: { name: "OWN MCHJ" },
+          buyertin: "201607534",
+          buyer: { name: "NAVRO'Z-PTK MCHJ" },
+          productlist: {
+            hasvat: false,
+            products: [
+              {
+                ordno: 1,
+                name: "Suv",
+                count: "1",
+                summa: "1000.00",
+                deliverysum: "1000.00",
+                vatrate: 0,
+                vatsum: 0,
+                deliverysumwithvat: "1000.00",
+                packagename: "dona (paket)",
+                packagecode: "1234567",
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const prepared = await prepareDraft(client, input, "302936161");
+    if (!prepared.ok) throw new Error(JSON.stringify(prepared.problems));
+    const products = (prepared.body as { ProductList: { Products: { MeasureId: string }[] } }).ProductList
+      .Products;
+    expect(products[0]?.MeasureId).toBe("1234567");
+  });
+
   it("says that Didox does not know the buyer", async () => {
     const { client } = setup();
     const prepared = await prepareDraft(client, { ...input, buyerTin: "999999999" }, "302936161");

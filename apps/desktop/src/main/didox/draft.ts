@@ -5,6 +5,8 @@
  */
 import type { DidoxClient } from "./client.js";
 import { DidoxError } from "./client.js";
+import { unitsOfDocuments } from "./enrich.js";
+import { fetchDidoxDocuments } from "./fetch.js";
 import type { DidoxDocumentPreview, DidoxReconciliationPreview } from "../../shared/ipc.js";
 import { type LetterInput, letterHtml } from "./letter.js";
 import {
@@ -22,6 +24,7 @@ import {
   INVOICE_DOCTYPE,
   buildInvoiceDraft,
   draftIdOf,
+  findMeasure,
   partyFromProfile,
   type Party,
 } from "./outgoing.js";
@@ -58,8 +61,31 @@ export async function prepareDraft(
     /^(\d{9}|\d{14})$/.test(input.buyerTin) ? partyOf(client, input.buyerTin, false) : null,
     client.measures(),
   ]);
-  const built = buildInvoiceDraft(input, seller, buyer, measures);
+  // A unit that Didox's list of units does not give by that name is looked for in the company's own recent documents:
+  // what they carry is accepted by Didox whatever shape the list has.
+  const unresolved = input.lines.some((line) => !line.measureId && !findMeasure(measures, line.unit));
+  const learned = unresolved ? await ownUnits(client) : [];
+  const lines = input.lines.map((line) =>
+    line.measureId || findMeasure(measures, line.unit)
+      ? line
+      : { ...line, measureId: findMeasure(learned, line.unit) ?? undefined },
+  );
+  const built = buildInvoiceDraft({ ...input, lines }, seller, buyer, measures);
   return built.ok ? { ok: true, body: built.built.body, preview: built.built.preview } : built;
+}
+
+/** The units of the company's newest outgoing documents; none when they cannot be read. */
+async function ownUnits(client: DidoxClient): Promise<{ id: string; name: string }[]> {
+  try {
+    const found = await fetchDidoxDocuments(client, {
+      direction: "outgoing",
+      from: new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10),
+      limit: 40,
+    });
+    return unitsOfDocuments(found.documents);
+  } catch {
+    return [];
+  }
 }
 
 export type PreparedDocument =
