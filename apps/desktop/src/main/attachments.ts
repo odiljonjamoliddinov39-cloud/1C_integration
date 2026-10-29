@@ -15,7 +15,8 @@ import { type BankStatement, describeBankStatement, parseBankStatement } from ".
 import { type GtdFile, gtdNote, isDeclaration, readPages } from "./gtd/pages.js";
 import { readPdfPages } from "./gtd/pdf-text.js";
 import { type TableFile, cellText, describeTable, parseCsv } from "./tables.js";
-import { ZipError, readZip } from "./zip.js";
+import { isRar, readRar } from "./rar.js";
+import { type ZipEntry, ZipError, readZip } from "./zip.js";
 
 /** The longest side the model looks at; larger photos are scaled down before they are sent. */
 const IMAGE_SIDE = 1568;
@@ -39,6 +40,8 @@ const ARCHIVE_EXTENSIONS = new Set([
   ".gif",
   ".xlsx",
   ".xlsm",
+  ".xltx",
+  ".xltm",
   ".csv",
   ".tsv",
   ".docx",
@@ -85,7 +88,7 @@ export async function readAttachments(
   const gtd: GtdFile[] = [];
   const budget: Budget = { sent: 0 };
   for (const file of files) {
-    if (extensionOf(file.name) === ".zip") {
+    if (isArchiveName(file.name)) {
       const archive = await readArchive(file, budget, shrink);
       blocks.push(...archive.blocks);
       info.push({ name: file.name, kind: "archive", size: file.data.byteLength });
@@ -139,7 +142,7 @@ async function readOne(
       ...(pages && isDeclaration(pages) ? { gtd: { fileName: name, pages } } : {}),
     };
   }
-  if (extension === ".xlsx" || extension === ".xlsm") {
+  if ([".xlsx", ".xlsm", ".xltx", ".xltm"].includes(extension)) {
     const table = await spreadsheet(data, name);
     const bank = parseBankStatement(table);
     return bank && isWorthSummarising(bank)
@@ -201,6 +204,13 @@ async function readOne(
  */
 export function minifyXml(xml: string): string {
   return xml.replace(/>\s+</g, "><").replace(/^\s+|\s+$/g, "");
+}
+
+const isArchiveName = (name: string) => [".zip", ".rar"].includes(extensionOf(name));
+
+/** The entries of a .zip or a .rar, told by the first bytes (a renamed file is what its content says). */
+async function readEntries(data: Uint8Array): Promise<ZipEntry[]> {
+  return isRar(data) ? readRar(data) : readZip(data);
 }
 
 const extensionOf = (name: string) => name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
@@ -318,7 +328,7 @@ async function readArchive(
     throw walk.supported === 0
       ? new AttachmentError(
           "FILE_TYPE",
-          `${name}: nothing in the archive can be read (PDF, images, Excel .xlsx, Word .docx and text files can).${inside}`,
+          `${name}: nothing in the archive can be read (PDF, images, Excel .xlsx/.xltx, Word .docx and text files can).${inside}`,
         )
       : new AttachmentError("FILE_UNREADABLE", `${name}: no file in the archive could be read.${inside}`);
   }
@@ -351,7 +361,7 @@ async function walkArchive(
 ): Promise<void> {
   let entries;
   try {
-    entries = readZip(data);
+    entries = await readEntries(data);
   } catch (error) {
     // The attached archive itself can not be opened: that is the answer. One inside it is only skipped.
     if (depth === 1) throw archiveError(top, error);
@@ -408,7 +418,7 @@ async function walkArchive(
       walk.skipped.push(`${path} (the XML of the same document is read instead)`);
       continue;
     }
-    const nested = extension === ".zip";
+    const nested = extension === ".zip" || extension === ".rar";
     if (!nested && !ARCHIVE_EXTENSIONS.has(extension)) {
       walk.skipped.push(`${path} (not a supported kind of file)`);
       continue;

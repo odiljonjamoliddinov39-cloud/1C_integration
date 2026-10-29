@@ -623,7 +623,7 @@ const en = {
     EXTENSION_UPDATE_FAILED: "1C could not update the extension.",
     EXTENSION_NOT_UPDATED: "1C still reports the old PlatformAPI.",
     FILE_TYPE:
-      "This kind of file is not supported: attach PDF, photos, Excel (.xlsx), Word (.docx), text files or a ZIP of them.",
+      "This kind of file is not supported: attach PDF, photos, Excel (.xlsx, .xltx), Word (.docx), text files or a ZIP/RAR of them. An old .xls: save it as .xlsx first.",
     FILE_TOO_LARGE: "The file is too large (at most 10 MB, images 5 MB).",
     FILE_UNREADABLE: "The file could not be read; it may be damaged.",
     TOO_MANY_FILES: "At most 20 files per question.",
@@ -1260,7 +1260,7 @@ const ru: Dict = {
     EXTENSION_UPDATE_FAILED: "1С не смогла обновить расширение.",
     EXTENSION_NOT_UPDATED: "1С всё ещё сообщает старую версию PlatformAPI.",
     FILE_TYPE:
-      "Такой файл не поддерживается: прикрепите PDF, фото, Excel (.xlsx), Word (.docx), текстовый файл или ZIP с ними.",
+      "Такой файл не поддерживается: прикрепите PDF, фото, Excel (.xlsx, .xltx), Word (.docx), текстовый файл или ZIP/RAR с ними. Старый .xls сначала сохраните как .xlsx.",
     FILE_TOO_LARGE: "Файл слишком большой (не более 10 МБ, изображения — 5 МБ).",
     FILE_UNREADABLE: "Файл не удалось прочитать; возможно, он повреждён.",
     TOO_MANY_FILES: "Не более 20 файлов к одному вопросу.",
@@ -1905,7 +1905,7 @@ const uz: Dict = {
     EXTENSION_UPDATE_FAILED: "1C kengaytmani yangilay olmadi.",
     EXTENSION_NOT_UPDATED: "1C hali ham eski PlatformAPI versiyasini koʻrsatmoqda.",
     FILE_TYPE:
-      "Bu turdagi fayl qoʻllab-quvvatlanmaydi: PDF, rasm, Excel (.xlsx), Word (.docx), matn fayli yoki ular solingan ZIP biriktiring.",
+      "Bu turdagi fayl qoʻllab-quvvatlanmaydi: PDF, rasm, Excel (.xlsx, .xltx), Word (.docx), matn fayli yoki ular solingan ZIP/RAR biriktiring. Eski .xls ni avval .xlsx qilib saqlang.",
     FILE_TOO_LARGE: "Fayl juda katta (koʻpi bilan 10 MB, rasmlar 5 MB).",
     FILE_UNREADABLE: "Faylni oʻqib boʻlmadi; u buzilgan boʻlishi mumkin.",
     TOO_MANY_FILES: "Bitta savolga koʻpi bilan 20 ta fayl.",
