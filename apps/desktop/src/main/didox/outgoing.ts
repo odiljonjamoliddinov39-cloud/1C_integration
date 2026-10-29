@@ -27,6 +27,8 @@ export interface DraftLineInput {
   catalogCode?: string | undefined;
   catalogName?: string | undefined;
   barcode?: string | undefined;
+  /** Where the goods came from, as Didox's form has it: 1 made by the company, 2 bought in Uzbekistan, 3 imported. */
+  origin?: 1 | 2 | 3 | undefined;
 }
 
 export interface DraftInput {
@@ -313,7 +315,8 @@ export function buildInvoiceDraft(
       MeasureId: measureId ?? "",
       ...(line.catalogCode ? { CatalogCode: line.catalogCode, CatalogName: line.catalogName ?? "" } : {}),
       ...(line.barcode ? { Barcode: line.barcode } : {}),
-      origin: 1,
+      // A company that resells what it bought (most sellers) did not make it: bought in Uzbekistan unless told otherwise.
+      origin: line.origin ?? 2,
       expansion: { showcount: true },
     });
   });
