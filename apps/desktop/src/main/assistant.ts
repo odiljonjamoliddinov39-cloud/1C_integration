@@ -136,7 +136,7 @@ import {
 import { type SalesCache, resolveSales } from "./didox/sales.js";
 import { accountingCalc } from "./calc.js";
 import { readSaleKit } from "./didox/sale-kit.js";
-import { PolicyMemory, learnPolicy, reflectOnImport } from "./bank/policy.js";
+import { PolicyMemory, costMethodOfRecord, learnPolicy, reflectOnImport } from "./bank/policy.js";
 import type { BankPayment, BankStatement } from "./bank/statement.js";
 import { DidoxClient, DidoxError } from "./didox/client.js";
 import {
@@ -2155,6 +2155,15 @@ export class AssistantService {
     return [state, rules, learned].filter(Boolean).join("\n\n").slice(0, 12_000);
   }
 
+  /**
+   * Learns this company's accounting policy right away (called when the company is added), instead of
+   * leaving it to be learned lazily on the first question. Best-effort: a failed or slow read is simply
+   * tried again the next time something asks for it.
+   */
+  warmPolicy(companyId: string): void {
+    void this.policyOf(companyId).catch(() => {});
+  }
+
   private policyOf(companyId: string, force = false) {
     if (this.deps.learnPolicy === false) return Promise.resolve({ policy: null, text: "" });
     const connection = this.deps.store.connection(companyId);
@@ -2453,12 +2462,23 @@ export class AssistantService {
     const connection = this.deps.store.connection(chat.companyId);
     // The cost method is the accountant's decision: once named it is the company's setting.
     if (input.method) this.deps.store.setStockCostMethod(chat.companyId, input.method);
+    let costMethod = this.deps.store.stockCostMethod(chat.companyId);
+    if (!costMethod) {
+      // Not named by the accountant yet: the company's own accounting-policy register, already learned
+      // from 1C (policyOf), may already say it — use that instead of asking.
+      const learned = await this.policyOf(chat.companyId);
+      const fromPolicy = costMethodOfRecord(learned.policy?.record ?? null);
+      if (fromPolicy) {
+        this.deps.store.setStockCostMethod(chat.companyId, fromPolicy);
+        costMethod = fromPolicy;
+      }
+    }
     const context: ReportContext = {
       posting: {
         companyRules: this.deps.store.postingRules(chat.companyId),
         chart: await this.chartCodes(chat),
       },
-      costMethod: this.deps.store.stockCostMethod(chat.companyId),
+      costMethod,
       profile: this.deps.store.taxProfile(chat.companyId),
       // Each attached statement that prints its closing balance, at its last day.
       statements: (chat.bank ?? []).map((s) => ({

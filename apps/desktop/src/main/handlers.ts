@@ -149,6 +149,8 @@ export function createHandlers({
       try {
         const added = store.addCompany({ ...input.data, organization: org }, check.status);
         void billing.refresh();
+        // Learn how this company works right away, instead of waiting for its first question.
+        assistant.warmPolicy(added.id);
         return { ok: true, data: added };
       } catch (e) {
         if (e instanceof StoreError) return { ok: false, code: e.code, message: e.message };

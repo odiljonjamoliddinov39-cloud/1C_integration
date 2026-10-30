@@ -387,6 +387,21 @@ async function readCurrencies(deps: ResolverDeps): Promise<Policy["currencies"]>
     .sort((a, b) => b.contracts - a.contracts);
 }
 
+/**
+ * The stock valuation method ("average" or "fifo"), when the company's own accounting-policy register already
+ * states it plainly — read once by `learnPolicy`, never asked of the accountant twice. `null` when the register
+ * was not found or does not say (a moving-average wording still counts as "average"; LIFO is not offered here).
+ */
+export function costMethodOfRecord(record: PolicyRecord | null): "average" | "fifo" | null {
+  if (!record) return null;
+  for (const { name, value } of record.fields) {
+    const text = `${name} ${value}`;
+    if (/фифо|fifo/i.test(text)) return "fifo";
+    if (/сред|average/i.test(text)) return "average";
+  }
+  return null;
+}
+
 /** Reads what 1C says about how the company works. Never throws: what cannot be read is listed in `gaps`. */
 export async function learnPolicy(deps: ResolverDeps, ownInn?: string): Promise<Policy> {
   const gaps: string[] = [];
