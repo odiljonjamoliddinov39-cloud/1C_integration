@@ -84,6 +84,7 @@ describe.skipIf(!available)("tariffs", () => {
       ENTITLEMENTS_CACHE_SECONDS: "0",
       VAT_PERCENT: "12", // the VAT logic stays configurable; the product default is 0
       BILLING_JOBS: "off",
+      OFFER_REQUIRED: "off", // the offer gate has its own tests (offer.test.ts)
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",
       PAYME_TEST: "true",

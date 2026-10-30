@@ -853,3 +853,23 @@ export const creditRechargeFailures = pgTable(
   },
   (t) => [index("credit_recharge_failures_idx").on(t.createdAt)],
 );
+
+/** Who accepted which version of the public offer, in which language, when and from where. */
+export const offerAcceptances = pgTable(
+  "offer_acceptances",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    locale: text("locale").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("offer_acceptances_account_version_idx").on(t.accountId, t.version)],
+);

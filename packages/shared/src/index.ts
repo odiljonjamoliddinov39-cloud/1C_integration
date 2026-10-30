@@ -12,3 +12,4 @@ export * from "./knowledge.js";
 export * from "./remote.js";
 export * from "./entry-catalog.js";
 export * from "./entry-rules.js";
+export * from "./offer.js";

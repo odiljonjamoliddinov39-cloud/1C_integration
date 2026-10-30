@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import { ApiError, login, register, signedIn } from "../lib/api";
 import { type Locale, dict, href } from "../lib/i18n";
+import { offerOf } from "../lib/offer";
 
 const field =
   "h-11 w-full rounded-xl border border-border bg-background/60 px-3.5 text-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/15";
@@ -84,6 +85,20 @@ export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "l
       >
         {busy ? t.working : mode === "signup" ? t.submitSignup : t.submitLogin}
       </button>
+      {mode === "signup" && (
+        <p className="text-center text-xs text-muted-foreground">
+          {offerOf(locale).ui.signupNote}{" "}
+          <a
+            className="underline hover:text-foreground"
+            href={href(locale, "/oferta")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {offerOf(locale).ui.signupLink}
+          </a>
+          .
+        </p>
+      )}
       <p className="text-center text-sm">
         <a className="text-primary underline" href={href(locale, mode === "signup" ? "/login" : "/signup")}>
           {mode === "signup" ? t.haveAccount : t.noAccount}

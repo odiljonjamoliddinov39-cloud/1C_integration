@@ -1,5 +1,6 @@
 import type {
   CatalogResponse,
+  OfferStatus,
   EntitlementsResponse,
   InvoiceView,
   PlanView,
@@ -8,9 +9,11 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 
 import { CreditsSection } from "./Credits";
+import { OfferModal } from "./OfferModal";
 import { type ClickWindowValues, openClickWindow } from "../lib/click-checkout";
 import {
   ApiError,
+  acceptOffer,
   cancelPlan,
   catalog as loadCatalog,
   changePlan,
@@ -18,6 +21,7 @@ import {
   entitlements as loadEntitlements,
   invoiceCheckout,
   invoices as loadInvoices,
+  offerStatus as loadOffer,
   openInvoicePrint,
   quote,
   resumePlan,
@@ -44,6 +48,11 @@ export function BillingSection({ locale }: { locale: Locale }) {
   const [list, setList] = useState<InvoiceView[]>([]);
   const [message, setMessage] = useState<{ text: string; bad: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The public offer: shown before a purchase until the owner has accepted it (the server refuses a purchase without it).
+  const [offer, setOffer] = useState<OfferStatus | null>(null);
+  const [pendingBuy, setPendingBuy] = useState<(() => void) | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
 
   // Bumped after a change, to load everything again.
   const [version, setVersion] = useState(0);
@@ -58,13 +67,20 @@ export function BillingSection({ locale }: { locale: Locale }) {
 
   useEffect(() => {
     let current = true;
-    Promise.all([loadCatalog(), loadSubscription(), loadEntitlements(), loadInvoices()]).then(
-      ([c, s, e, i]) => {
+    Promise.all([
+      loadCatalog(),
+      loadSubscription(),
+      loadEntitlements(),
+      loadInvoices(),
+      loadOffer().catch(() => null),
+    ]).then(
+      ([c, s, e, i, o]) => {
         if (!current) return;
         setPlans(c);
         setSub(s);
         setEnt(e);
         setList(i);
+        setOffer(o);
       },
       (e: unknown) => {
         if (current) setMessage({ text: failure(e), bad: true });
@@ -96,6 +112,30 @@ export function BillingSection({ locale }: { locale: Locale }) {
         {message ? message.text : t.working}
       </section>
     );
+  }
+
+  /** Runs a purchase; first the offer, when the owner has not accepted its current text. */
+  const guard = (run: () => void) => {
+    if (offer && offer.required && !offer.accepted) {
+      setOfferError(null);
+      setPendingBuy(() => run);
+    } else run();
+  };
+  async function agree() {
+    if (!offer) return;
+    setAccepting(true);
+    setOfferError(null);
+    try {
+      const status = await acceptOffer({ version: offer.version, locale });
+      setOffer(status);
+      const run = pendingBuy;
+      setPendingBuy(null);
+      run?.();
+    } catch (e) {
+      setOfferError(failure(e));
+    } finally {
+      setAccepting(false);
+    }
   }
 
   const e = ent.entitlements;
@@ -227,6 +267,7 @@ export function BillingSection({ locale }: { locale: Locale }) {
           version={version}
           act={act}
           pay={pay}
+          guard={guard}
           providers={plans.providers}
         />
       )}
@@ -238,15 +279,18 @@ export function BillingSection({ locale }: { locale: Locale }) {
         currentCycle={sub.billingCycle}
         busy={busy}
         providers={plans.providers}
-        onCheckout={(input) => void act(async () => pay(await checkout(input)))}
+        onCheckout={(input) => guard(() => void act(async () => pay(await checkout(input))))}
         onChange={(input) =>
-          void act(async () => {
-            const result = await changePlan(input);
-            if (result.checkout) return pay(result.checkout);
-            return result.effectiveAt
-              ? t.scheduled.replace("{date}", dateOf(result.effectiveAt, locale))
-              : null;
-          })
+          guard(
+            () =>
+              void act(async () => {
+                const result = await changePlan(input);
+                if (result.checkout) return pay(result.checkout);
+                return result.effectiveAt
+                  ? t.scheduled.replace("{date}", dateOf(result.effectiveAt, locale))
+                  : null;
+              }),
+          )
         }
         previewTotals={(input) => quote(input)}
       />
@@ -267,14 +311,17 @@ export function BillingSection({ locale }: { locale: Locale }) {
                   <button
                     disabled={busy || sub.status === "grace"}
                     onClick={() =>
-                      void act(async () =>
-                        pay(
-                          await checkout({
-                            addon: a.code,
-                            quantity: 1,
-                            provider: CARD_PROVIDERS.find((p) => plans.providers.includes(p)) ?? "bank",
-                          }),
-                        ),
+                      guard(
+                        () =>
+                          void act(async () =>
+                            pay(
+                              await checkout({
+                                addon: a.code,
+                                quantity: 1,
+                                provider: CARD_PROVIDERS.find((p) => plans.providers.includes(p)) ?? "bank",
+                              }),
+                            ),
+                          ),
                       )
                     }
                     className="rounded-lg border border-primary px-3 py-1 text-primary hover:bg-primary/5 disabled:opacity-50"
@@ -313,10 +360,17 @@ export function BillingSection({ locale }: { locale: Locale }) {
                       key={p}
                       disabled={busy}
                       onClick={() =>
-                        void act(async () => {
-                          const result = await invoiceCheckout(inv.id, p);
-                          return pay({ invoice: inv, checkoutUrl: result.checkoutUrl, click: result.click });
-                        })
+                        guard(
+                          () =>
+                            void act(async () => {
+                              const result = await invoiceCheckout(inv.id, p);
+                              return pay({
+                                invoice: inv,
+                                checkoutUrl: result.checkoutUrl,
+                                click: result.click,
+                              });
+                            }),
+                        )
                       }
                       className="rounded-lg bg-primary px-3 py-1 text-primary-foreground hover:opacity-90"
                     >
@@ -328,6 +382,15 @@ export function BillingSection({ locale }: { locale: Locale }) {
           </ul>
         )}
       </section>
+      {pendingBuy && (
+        <OfferModal
+          locale={locale}
+          busy={accepting}
+          error={offerError}
+          onAgree={() => void agree()}
+          onCancel={() => setPendingBuy(null)}
+        />
+      )}
     </>
   );
 }
