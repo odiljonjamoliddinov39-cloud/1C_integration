@@ -10,6 +10,10 @@ import { Card, ErrorText } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { isLimitCode } from "@/lib/billing";
 
+/** What 1C says when the base has users and the name or password was not given or is wrong. */
+const LOGIN_FAILED =
+  /Идентификация пользователя не выполнена|Неправильное имя или пароль|Incorrect user name or password|User authentication failed|Authentication failed/i;
+
 /** TD §4 "Connect company": pick the infobase, check the 1C extension, choose the organization. */
 export function ConnectCompanyDialog({
   onClose,
@@ -247,6 +251,13 @@ export function ConnectCompanyDialog({
           {test && !test.status.ok && (
             <ErrorText>{errorText(t, test.status.code, test.status.message)}</ErrorText>
           )}
+          {/* 1C reached the base and asked who is opening it: the base has users, so the 1C name and password are needed. */}
+          {test &&
+            !test.status.ok &&
+            test.status.code === "CONNECT_FAILED" &&
+            LOGIN_FAILED.test(test.status.message) && (
+              <div className="rounded-lg bg-muted p-3 text-sm">{t("connect.loginHint")}</div>
+            )}
           {/* The base is reachable but has no PlatformAPI: the app can load it itself. */}
           {test && !test.status.ok && test.status.code === "NOT_FOUND" && !install.isPending && (
             <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">

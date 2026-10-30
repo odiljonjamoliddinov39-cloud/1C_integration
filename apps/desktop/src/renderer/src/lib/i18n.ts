@@ -525,6 +525,8 @@ const en = {
     registered: "Bases on this PC (from 1C)",
     pickRegistered: "Pick a base…",
     found: "The base was found in: {{folder}}",
+    loginHint:
+      "The base was found, but it has users: enter the 1C user name and password you use when you open this base in 1C (the two fields above), then check again.",
     serverName: "Server",
     ref: "Infobase name on the server",
     user: "1C user",
@@ -1176,6 +1178,8 @@ const ru: Dict = {
     registered: "Базы на этом ПК (из списка 1С)",
     pickRegistered: "Выберите базу…",
     found: "База найдена в папке: {{folder}}",
+    loginHint:
+      "База найдена, но в ней есть пользователи: введите имя и пароль пользователя 1С, под которыми вы заходите в эту базу в 1С (два поля выше), и проверьте снова.",
     serverName: "Сервер",
     ref: "Имя базы на сервере",
     user: "Пользователь 1С",
@@ -1836,6 +1840,8 @@ const uz: Dict = {
     registered: "Shu kompyuterdagi bazalar (1C roʻyxatidan)",
     pickRegistered: "Bazani tanlang…",
     found: "Baza shu papkada topildi: {{folder}}",
+    loginHint:
+      "Baza topildi, lekin unda foydalanuvchilar bor: bu bazani 1C da ochganingizda kiritadigan foydalanuvchi nomi va parolni yuqoridagi ikkita maydonga yozing, keyin qayta tekshiring.",
     serverName: "Server",
     ref: "Serverdagi baza nomi",
     user: "1C foydalanuvchisi",
