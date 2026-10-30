@@ -2468,11 +2468,8 @@ export class AssistantService {
       // Not named by the accountant yet: the company's own accounting-policy register, already learned
       // from 1C (policyOf), may already say it — use that instead of asking.
       const learned = await this.policyOf(chat.companyId);
-      const fromPolicy = costMethodOfRecord(learned.policy?.record ?? null);
-      if (fromPolicy) {
-        this.deps.store.setStockCostMethod(chat.companyId, fromPolicy);
-        costMethod = fromPolicy;
-      }
+      // Used for this report only: it is not saved as the accountant's decision (that is only what they name).
+      costMethod = costMethodOfRecord(learned.policy?.record ?? null) ?? costMethod;
     }
     const context: ReportContext = {
       posting: {

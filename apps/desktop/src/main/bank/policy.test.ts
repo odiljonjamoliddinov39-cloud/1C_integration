@@ -4,7 +4,14 @@ import type { RunQueryInput } from "@platform/shared";
 
 import type { QueryOutcome, ResolverDeps } from "../didox/resolve.js";
 import { type LedgerPlan } from "./ledger.js";
-import { PolicyMemory, describePolicy, learnPolicy, purposeOf, reflectOnImport } from "./policy.js";
+import {
+  PolicyMemory,
+  costMethodOfRecord,
+  describePolicy,
+  learnPolicy,
+  purposeOf,
+  reflectOnImport,
+} from "./policy.js";
 
 const ref = (type: string, id: string, name: string) => ({ type, ref: id, name });
 const ok = (rows: unknown[][]): QueryOutcome => ({ ok: true, data: { columns: [], rows, truncated: false } });
@@ -402,5 +409,47 @@ describe("PolicyMemory", () => {
     const memory = new PolicyMemory(1000, 10);
     const slow = () => new Promise<never>(() => undefined);
     expect(await memory.get("c", slow)).toEqual({ policy: null, text: "" });
+  });
+});
+
+describe("costMethodOfRecord", () => {
+  const record = (...fields: [string, string][]) => ({
+    object: "РегистрСведений.УчетнаяПолитика",
+    fields: fields.map(([name, value]) => ({ name, value })),
+  });
+
+  it("reads FIFO and the average from the field about valuation", () => {
+    expect(costMethodOfRecord(record(["Способ оценки МПЗ при списании", "ФИФО"]))).toBe("fifo");
+    expect(costMethodOfRecord(record(["Метод оценки запасов", "По средней себестоимости"]))).toBe("average");
+    expect(costMethodOfRecord(record(["Метод оценки запасов", "По средней"]))).toBe("average");
+    expect(costMethodOfRecord(record(["Способ списания", "FIFO"]))).toBe("fifo");
+  });
+
+  it("is not fooled by an unrelated field that has 'сред' in it", () => {
+    expect(
+      costMethodOfRecord(
+        record(["Средства на счетах", "Средний остаток"], ["Среднесписочная численность", "5"]),
+      ),
+    ).toBeNull();
+    expect(costMethodOfRecord(record(["Организация", "Средняя Азия МЧЖ"]))).toBeNull();
+    // A valuation field whose value is not a method says nothing.
+    expect(costMethodOfRecord(record(["Способ оценки", "Не задан"]))).toBeNull();
+  });
+
+  it("reads only the value: 'сред' in a field's title does not make it the average", () => {
+    expect(costMethodOfRecord(record(["Метод оценки: средняя", "ЛИФО"]))).toBeNull();
+  });
+
+  it("gives nothing when the fields disagree, so the accountant is asked", () => {
+    expect(
+      costMethodOfRecord(
+        record(["Способ оценки товаров", "ФИФО"], ["Метод оценки материалов", "По средней"]),
+      ),
+    ).toBeNull();
+  });
+
+  it("gives nothing without a record", () => {
+    expect(costMethodOfRecord(null)).toBeNull();
+    expect(costMethodOfRecord(record())).toBeNull();
   });
 });

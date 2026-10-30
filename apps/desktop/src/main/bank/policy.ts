@@ -387,19 +387,27 @@ async function readCurrencies(deps: ResolverDeps): Promise<Policy["currencies"]>
     .sort((a, b) => b.contracts - a.contracts);
 }
 
+/** A field that is about how stock is valued or written off (by its title), and the words of the value that name a method. */
+const METHOD_FIELD = /метод|способ|оценк|списани|выбыти|valuation|costing/i;
+// Cyrillic has no \b in JavaScript: the word edges are spelled out.
+const FIFO = /(^|[^a-zа-яё])(фифо|fifo)([^a-zа-яё]|$)/i;
+const AVERAGE = /по\s+средн|средн[а-яё]*\s+(стоимост|себестоимост|цен)|moving[- ]average|average\s+cost/i;
+
 /**
- * The stock valuation method ("average" or "fifo"), when the company's own accounting-policy register already
- * states it plainly — read once by `learnPolicy`, never asked of the accountant twice. `null` when the register
- * was not found or does not say (a moving-average wording still counts as "average"; LIFO is not offered here).
+ * The stock valuation method ("average" or "fifo"), when the company's own accounting-policy register states it plainly.
+ * Only a field whose TITLE is about valuation or write-off is looked at, and only its VALUE is read for the method: a field
+ * such as "Средства…" or "Среднесписочная численность" says nothing about it. When the fields disagree (one says FIFO, another
+ * average) or none says it, the answer is null and the accountant is asked, as before. LIFO is not offered here.
  */
 export function costMethodOfRecord(record: PolicyRecord | null): "average" | "fifo" | null {
   if (!record) return null;
+  const found = new Set<"average" | "fifo">();
   for (const { name, value } of record.fields) {
-    const text = `${name} ${value}`;
-    if (/фифо|fifo/i.test(text)) return "fifo";
-    if (/сред|average/i.test(text)) return "average";
+    if (!METHOD_FIELD.test(name)) continue;
+    if (FIFO.test(value)) found.add("fifo");
+    else if (AVERAGE.test(value)) found.add("average");
   }
-  return null;
+  return found.size === 1 ? ([...found][0] ?? null) : null;
 }
 
 /** Reads what 1C says about how the company works. Never throws: what cannot be read is listed in `gaps`. */
