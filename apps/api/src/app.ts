@@ -59,6 +59,7 @@ import { Billing } from "./billing/entitlements.js";
 import { AdminBilling } from "./billing/admin.js";
 import { Invoicing } from "./billing/invoicing.js";
 import { Credits, type CardCharger } from "./billing/credits.js";
+import { Offers } from "./billing/offer.js";
 import { CreditRates, startRateJob } from "./billing/credit-rate.js";
 import { Lifecycle, startBillingJobs } from "./billing/lifecycle.js";
 import { ClickMerchant } from "./billing/click.js";
@@ -114,6 +115,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const click = new ClickMerchant(db, config, invoicing);
   const credits = new Credits(db, config, entitlements, invoicing, deps.cardCharger);
   billing.credits = credits;
+  const offer = new Offers(db, config);
   const creditRates = new CreditRates(db, deps.fetch);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
   const adminBilling = new AdminBilling(db, entitlements, invoicing);
@@ -191,7 +193,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
-  const billingDeps = { db, credits, billing, invoicing, payme, click, auth };
+  const billingDeps = { db, credits, offer, billing, invoicing, payme, click, auth };
   registerBillingRoutes(app, billingDeps);
   registerSubscriptionRoutes(app, billingDeps);
 

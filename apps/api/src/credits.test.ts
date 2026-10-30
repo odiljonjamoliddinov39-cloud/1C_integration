@@ -99,6 +99,7 @@ describe.skipIf(!available)("AI credits", () => {
       AUTH_RATE_PER_MINUTE: "1000",
       ENTITLEMENTS_CACHE_SECONDS: "0",
       BILLING_JOBS: "off",
+      OFFER_REQUIRED: "off", // the offer gate has its own tests (offer.test.ts)
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",
       PAYME_TEST: "true",

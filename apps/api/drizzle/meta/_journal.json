@@ -141,6 +141,13 @@
       "when": 1793336499318,
       "tag": "0019_ai_credits",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793339969981,
+      "tag": "0020_offer_acceptances",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import {
   ImportInput,
   InviteUserInput,
   PaymentProvider,
+  AcceptOfferInput,
   PurchaseCreditsInput,
 } from "@platform/shared";
 import { eq } from "drizzle-orm";
@@ -19,6 +20,7 @@ import { users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { ClickMerchant } from "./click.js";
 import type { Credits } from "./credits.js";
+import type { Offers } from "./offer.js";
 import type { Invoicing } from "./invoicing.js";
 import { PAYME_NOT_POST, PAYME_PARSE_ERROR, PAYME_SYSTEM_ERROR, type PaymeMerchant } from "./payme.js";
 import type { BillingService } from "./service.js";
@@ -26,6 +28,7 @@ import type { BillingService } from "./service.js";
 export interface RouteDeps {
   db: Db;
   credits: Credits;
+  offer: Offers;
   billing: BillingService;
   invoicing: Invoicing;
   payme: PaymeMerchant;
@@ -103,12 +106,27 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
       totalSum: q.totalSum,
     };
   });
-  app.post("/v1/billing/checkout", async (req) =>
-    invoicing.checkout((await owner(req)).accountId, parse(CheckoutInput, req.body)),
-  );
-  app.post("/v1/billing/change-plan", async (req) =>
-    invoicing.changePlan((await owner(req)).accountId, parse(ChangePlanInput, req.body)),
-  );
+  // The public offer: the owner accepts its current version, and nothing below sells without it.
+  app.get("/v1/billing/offer", async (req) => deps.offer.status((await deps.auth(req)).accountId));
+  app.post("/v1/billing/offer/accept", async (req) => {
+    const who = await owner(req);
+    return deps.offer.accept(who.accountId, who.userId, parse(AcceptOfferInput, req.body), {
+      ip: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+  });
+  app.post("/v1/billing/checkout", async (req) => {
+    const { accountId } = await owner(req);
+    const input = parse(CheckoutInput, req.body);
+    await deps.offer.require(accountId);
+    return invoicing.checkout(accountId, input);
+  });
+  app.post("/v1/billing/change-plan", async (req) => {
+    const { accountId } = await owner(req);
+    const input = parse(ChangePlanInput, req.body);
+    await deps.offer.require(accountId);
+    return invoicing.changePlan(accountId, input);
+  });
   app.post("/v1/billing/cancel", async (req) => invoicing.cancel((await owner(req)).accountId));
   app.post("/v1/billing/resume", async (req) => invoicing.resume((await owner(req)).accountId));
   app.get("/v1/billing/invoices", async (req) => invoicing.listInvoices((await owner(req)).accountId));
@@ -117,7 +135,9 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
   app.get("/v1/billing/credits", async (req) => deps.credits.view((await deps.auth(req)).accountId));
   app.post("/v1/billing/credits/purchase", async (req) => {
     const input = parse(PurchaseCreditsInput, req.body);
-    return deps.credits.purchase((await owner(req)).accountId, input.credits, input.provider);
+    const { accountId } = await owner(req);
+    await deps.offer.require(accountId);
+    return deps.credits.purchase(accountId, input.credits, input.provider);
   });
   app.post("/v1/billing/credits/auto-recharge", async (req) =>
     deps.credits.saveAutoRecharge((await owner(req)).accountId, parse(AutoRechargeInput, req.body)),
@@ -126,6 +146,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
   // Pays an invoice that already exists (a renewal, or one made earlier): picks the provider.
   app.post("/v1/billing/invoices/:id/checkout", async (req) => {
     const { accountId } = await owner(req);
+    await deps.offer.require(accountId);
     const { id } = parse(z.object({ id: z.uuid() }), req.params);
     const { provider } = parse(z.object({ provider: PaymentProvider.default("payme") }), req.body ?? {});
     const row = await invoicing.invoice(accountId, id);

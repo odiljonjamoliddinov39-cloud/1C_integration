@@ -111,6 +111,16 @@ their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-b
 - **Not charged:** the engine's own reasoner calls (they are not an answer to a customer's question). No e-mail or Telegram
   notice exists yet: the customer sees the banner in the cabinet and the warning in the app.
 
+## Public offer (Ommaviy oferta)
+
+The offer text (Uzbek, and its Russian translation) is in `apps/web/src/lib/offer.ts`; it is shown in the site's language on `/oferta`
+(`/ru/oferta`), linked from the footer and the sign-up form, and in a window before every purchase (a plan, an add-on, credits, paying
+an invoice) with an "Agree" button. The owner's acceptance is saved in `offer_acceptances` (account, user, version, language, IP, time);
+`POST /v1/billing/checkout`, `/change-plan`, `/credits/purchase` and `/invoices/:id/checkout` answer `OFFER_NOT_ACCEPTED` (409) until the
+current version is accepted, so the page cannot be bypassed. `GET /v1/billing/offer` tells the cabinet whether to ask.
+When the text changes, change `OFFER_VERSION` in `packages/shared/src/offer.ts`: everyone is asked again. `OFFER_REQUIRED=off` switches
+the server check off.
+
 ## Rules from the design (section 10)
 
 A repeated webhook (same `provider_txn_id`) returns the stored result and applies nothing. A payment

@@ -1,0 +1,20 @@
+---
+import { OfferDocument } from "../../components/OfferDocument";
+import PageHero from "../../components/PageHero.astro";
+import Base from "../../layouts/Base.astro";
+import { localeOf, localePaths } from "../../lib/i18n";
+import { offerOf } from "../../lib/offer";
+
+export const getStaticPaths = localePaths;
+const locale = localeOf(Astro.params.locale);
+const offer = offerOf(locale);
+---
+
+<Base locale={locale} path="/oferta" title={offer.title}>
+  <PageHero title={offer.title} narrow />
+  <section class="mx-auto max-w-3xl px-4 py-12">
+    <div class="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-9">
+      <OfferDocument locale={locale} />
+    </div>
+  </section>
+</Base>

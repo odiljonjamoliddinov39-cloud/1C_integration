@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import { type Locale, dict, href } from "../lib/i18n";
+import { offerOf } from "../lib/offer";
 
 interface Props {
   locale: Locale;
@@ -12,6 +13,7 @@ interface Props {
 const { locale, path, title } = Astro.props;
 const t = dict(locale);
 const other: Locale = locale === "uz" ? "ru" : "uz";
+const offerLink = offerOf(locale).ui.footerLink;
 const nav = [
   ["/#features", t.nav.features],
   ["/pricing", t.nav.pricing],
@@ -116,6 +118,7 @@ const nav = [
           </div>
           <nav class="ml-auto flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-muted">
             {nav.map(([p, label]) => <a class="transition-colors hover:text-ink-foreground" href={href(locale, p)}>{label}</a>)}
+            <a class="transition-colors hover:text-ink-foreground" href={href(locale, "/oferta")}>{offerLink}</a>
           </nav>
         </div>
         <div class="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-white/10 pt-6 text-xs text-ink-muted">

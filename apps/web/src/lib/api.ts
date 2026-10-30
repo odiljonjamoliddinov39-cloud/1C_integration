@@ -13,6 +13,7 @@ import {
   EntitlementsResponse,
   InvoiceView,
   Me,
+  OfferStatus,
   SubscriptionResponse,
   TokenPair,
 } from "@platform/shared";
@@ -221,3 +222,9 @@ export const saveAutoRecharge = (input: {
   amountCredits: number;
   method: "payme" | "click" | null;
 }) => authorized("POST", "/v1/billing/credits/auto-recharge", AutoRechargeSettings, input);
+
+// --- the public offer --------------------------------------------------------------------------
+
+export const offerStatus = () => authorized("GET", "/v1/billing/offer", OfferStatus);
+export const acceptOffer = (input: { version: string; locale: "uz" | "ru" }) =>
+  authorized("POST", "/v1/billing/offer/accept", OfferStatus, input);

@@ -15,6 +15,7 @@ export function CreditsSection({
   version,
   act,
   pay,
+  guard,
   providers,
 }: {
   locale: Locale;
@@ -23,6 +24,8 @@ export function CreditsSection({
   version: number;
   act: (run: () => Promise<string | null>) => Promise<void>;
   pay: (result: CheckoutResponse) => Promise<string>;
+  /** Runs a purchase after the public offer is accepted (it asks first when it is not). */
+  guard: (run: () => void) => void;
   providers: string[];
 }) {
   const t = billingText(locale).cabinet;
@@ -94,7 +97,7 @@ export function CreditsSection({
             className="mt-2 flex flex-wrap items-end gap-3 text-sm"
             onSubmit={(e) => {
               e.preventDefault();
-              void act(async () => pay(await purchaseCredits({ credits: amount, provider })));
+              guard(() => void act(async () => pay(await purchaseCredits({ credits: amount, provider }))));
             }}
           >
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
