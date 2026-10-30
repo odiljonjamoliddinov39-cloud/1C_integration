@@ -4,7 +4,7 @@ import { ApiError, login, register, signedIn } from "../lib/api";
 import { type Locale, dict, href } from "../lib/i18n";
 
 const field =
-  "h-10 w-full rounded-xl border border-border bg-card px-3 text-sm outline-none focus:border-primary";
+  "h-11 w-full rounded-xl border border-border bg-background/60 px-3.5 text-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/15";
 
 /** Sign-up (14-day trial) and sign-in. The same account signs in to the desktop app. */
 export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "login" }) {
@@ -80,7 +80,7 @@ export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "l
       <button
         type="submit"
         disabled={busy}
-        className="h-10 w-full rounded-xl bg-primary shadow-md shadow-primary/25 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+        className="btn btn-primary h-11 w-full text-sm disabled:opacity-60"
       >
         {busy ? t.working : mode === "signup" ? t.submitSignup : t.submitLogin}
       </button>

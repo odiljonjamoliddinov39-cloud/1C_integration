@@ -1,4 +1,6 @@
 ---
+import Icon from "../../components/Icon.astro";
+import PageHero from "../../components/PageHero.astro";
 import Base from "../../layouts/Base.astro";
 import { DOWNLOAD_URL } from "../../lib/config";
 import { dict, href, localeOf, localePaths } from "../../lib/i18n";
@@ -10,22 +12,24 @@ const nav = dict(locale).nav;
 ---
 
 <Base locale={locale} path="/download" title={t.title}>
+  <PageHero title={t.title} subtitle={t.subtitle} narrow />
   <section class="mx-auto max-w-4xl px-4 py-14">
-    <h1 class="text-4xl font-bold">{t.title}</h1>
-    <p class="mt-3 text-muted-foreground">{t.subtitle}</p>
-    <div class="mt-8 flex flex-wrap items-center gap-4 rounded-3xl border border-border bg-card p-7 shadow-lg shadow-primary/10">
-      <a href={DOWNLOAD_URL} class="rounded-xl bg-primary shadow-md shadow-primary/25 px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.button}</a>
-      <span class="text-sm text-muted-foreground">{t.file}</span>
-      <span class="ml-auto text-sm">{t.noAccount} <a class="text-primary underline" href={href(locale, "/signup")}>{nav.signup}</a></span>
-    </div>
-    <div class="mt-10 grid gap-8 md:grid-cols-2">
-      <div>
-        <h2 class="text-xl font-semibold">{t.requirementsTitle}</h2>
-        <ul class="mt-4 list-disc space-y-2 pl-5 text-sm text-muted-foreground">{t.requirements.map((r) => <li>{r}</li>)}</ul>
+    <div class="reveal gradient-border flex flex-wrap items-center gap-5 rounded-3xl bg-card p-8 shadow-xl shadow-primary/10">
+      <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Icon name="monitor" class="h-7 w-7" /></span>
+      <div class="min-w-48 flex-1">
+        <a href={DOWNLOAD_URL} class="btn btn-primary px-7 py-3.5 text-base"><Icon name="download" class="h-5 w-5" />{t.button}</a>
+        <div class="mt-3 text-sm text-muted-foreground">{t.file}</div>
       </div>
-      <div>
-        <h2 class="text-xl font-semibold">{t.stepsTitle}</h2>
-        <ol class="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">{t.steps.map((s) => <li>{s}</li>)}</ol>
+      <span class="text-sm">{t.noAccount} <a class="font-semibold text-primary underline" href={href(locale, "/signup")}>{nav.signup}</a></span>
+    </div>
+    <div class="mt-12 grid gap-6 md:grid-cols-2">
+      <div class="reveal spot rounded-3xl p-7">
+        <h2 class="text-xl font-bold">{t.requirementsTitle}</h2>
+        <ul class="mt-4 space-y-3 text-sm text-muted-foreground">{t.requirements.map((r) => <li class="flex gap-2.5"><Icon name="check" class="mt-0.5 h-4 w-4 shrink-0 text-teal" />{r}</li>)}</ul>
+      </div>
+      <div class="reveal spot rounded-3xl p-7" style="--d:90ms">
+        <h2 class="text-xl font-bold">{t.stepsTitle}</h2>
+        <ol class="mt-4 space-y-3 text-sm text-muted-foreground">{t.steps.map((s, i) => <li class="flex gap-3"><span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{i + 1}</span>{s}</li>)}</ol>
       </div>
     </div>
   </section>

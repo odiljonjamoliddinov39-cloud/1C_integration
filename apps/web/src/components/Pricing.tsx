@@ -56,12 +56,12 @@ export function Pricing({ locale }: { locale: Locale }) {
 
   return (
     <div>
-      <div className="inline-flex rounded-xl border border-border bg-card p-1 text-sm">
+      <div className="glass inline-flex rounded-2xl p-1 text-sm">
         {(["month", "year"] as const).map((c) => (
           <button
             key={c}
             onClick={() => setCycle(c)}
-            className={`rounded-lg px-4 py-1.5 font-medium ${cycle === c ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+            className={`rounded-xl px-5 py-2 font-semibold transition-all ${cycle === c ? "bg-linear-to-br from-primary to-violet-500 text-white shadow-md shadow-primary/30" : "text-muted-foreground hover:text-foreground"}`}
           >
             {c === "month" ? t.toggleMonth : t.toggleYear}
           </button>
@@ -79,17 +79,17 @@ export function Pricing({ locale }: { locale: Locale }) {
           return (
             <div
               key={plan.code}
-              className={`flex flex-col rounded-3xl border bg-card p-6 ${featured ? "border-2 border-primary shadow-xl shadow-primary/15" : "border-border shadow-sm"}`}
+              className={`spot relative flex flex-col rounded-3xl p-6 ${featured ? "gradient-border !border-transparent shadow-2xl shadow-primary/20 xl:-translate-y-2" : ""}`}
             >
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-semibold">{plan.name}</h2>
                 {featured && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  <span className="rounded-full bg-linear-to-r from-primary to-violet-500 px-2.5 py-0.5 text-xs font-semibold text-white">
                     {t.popular}
                   </span>
                 )}
               </div>
-              <div className="mt-3 text-2xl font-bold whitespace-nowrap">
+              <div className="mt-4 text-3xl font-extrabold tracking-tight whitespace-nowrap xl:text-2xl 2xl:text-3xl">
                 {free ? t.free : money(price, locale)}
               </div>
               <div className="h-5 text-sm text-muted-foreground">
@@ -102,7 +102,7 @@ export function Pricing({ locale }: { locale: Locale }) {
               </div>
               <ul className="mt-4 flex-1 space-y-2 text-sm">
                 {cell(plan, cycle === "year").map(([label, value]) => (
-                  <li key={label} className="flex justify-between gap-3 border-b border-border/60 pb-1.5">
+                  <li key={label} className="flex justify-between gap-3 border-b border-border/60 pb-2">
                     <span className="text-muted-foreground">{label}</span>
                     <span className="text-right font-medium">{value}</span>
                   </li>
@@ -113,14 +113,14 @@ export function Pricing({ locale }: { locale: Locale }) {
                 {free ? (
                   <a
                     href={href(locale, signedIn() ? "/cabinet" : "/signup")}
-                    className="block rounded-xl bg-primary py-2.5 text-center font-medium text-primary-foreground shadow-md shadow-primary/25 hover:opacity-90"
+                    className="btn btn-primary w-full"
                   >
                     {t.startFree}
                   </a>
                 ) : (
                   <a
                     href={`${href(locale, "/cabinet")}?plan=${plan.code}&cycle=${cycle}`}
-                    className="block rounded-xl border border-primary py-2.5 text-center font-medium text-primary hover:bg-primary/5"
+                    className={`btn w-full ${featured ? "btn-primary" : "btn-ghost !border-primary/40 text-primary"}`}
                   >
                     {t.choose}
                   </a>
@@ -135,9 +135,9 @@ export function Pricing({ locale }: { locale: Locale }) {
       {data.vatPercent > 0 && <p className="mt-1 text-sm text-muted-foreground">{t.vat}</p>}
 
       <section className="mt-12">
-        <h2 className="text-2xl font-bold">{t.addonsTitle}</h2>
+        <h2 className="text-2xl font-extrabold tracking-tight">{t.addonsTitle}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t.addonsNote}</p>
-        <ul className="mt-4 divide-y divide-border rounded-2xl border border-border bg-card">
+        <ul className="mt-4 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
           {data.addons.map((a) => (
             <li key={a.code} className="flex flex-wrap items-center gap-x-6 gap-y-1 px-5 py-3 text-sm">
               <span className="min-w-56 flex-1 font-medium">{t.addonNames[a.code] ?? a.name}</span>

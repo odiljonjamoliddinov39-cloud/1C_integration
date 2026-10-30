@@ -1,101 +1,179 @@
 ---
+import Icon from "../../components/Icon.astro";
 import Base from "../../layouts/Base.astro";
+import type { IconName } from "../../lib/icons";
 import { dict, href, localeOf, localePaths } from "../../lib/i18n";
 
 export const getStaticPaths = localePaths;
 const locale = localeOf(Astro.params.locale);
 const t = dict(locale).home;
+const uz = locale === "uz";
+const featureIcons: IconName[] = ["link", "sparkles", "file", "bank", "shield", "search"];
+const problemIcons: IconName[] = ["copy", "table", "clock"];
+const tones = ["primary", "teal", "accent"] as const;
+const integrations = ["1C:Buxgalteriya 3.0", "Didox", "Faktura.uz", "Payme", "Click", "Telegram", "Excel"];
 ---
 
 <Base locale={locale} path="/">
-  <section class="relative overflow-hidden bg-linear-to-b from-indigo-100/70 to-background dark:from-ink">
-    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 pt-16 pb-16 md:pt-24 lg:grid-cols-[1.1fr_0.9fr]">
-      <div>
-        <span class="inline-block rounded-full bg-teal/10 px-3 py-1 text-xs font-semibold text-teal">{t.badge}</span>
-        <h1 class="mt-5 text-4xl font-extrabold tracking-tight md:text-6xl">{t.title}</h1>
-        <p class="mt-5 max-w-xl text-lg text-muted-foreground">{t.subtitle}</p>
-        <div class="mt-8 flex flex-wrap gap-3">
-          <a href={href(locale, "/signup")} class="rounded-xl bg-primary px-6 py-3 font-semibold text-primary-foreground shadow-lg shadow-primary/30 hover:opacity-90">{t.cta}</a>
-          <a href="#how" class="rounded-xl border border-border bg-card px-6 py-3 font-semibold hover:bg-muted">{t.ctaSecondary}</a>
+  <!-- Hero -->
+  <section class="aurora">
+    <div class="aurora-gold"></div>
+    <div class="grid-bg"></div>
+    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 pt-12 pb-16 sm:pt-16 md:pt-24 md:pb-20 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
+      <div class="min-w-0">
+        <span class="reveal glass inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold">
+          <span class="pulse-dot h-2 w-2 rounded-full bg-teal"></span>{t.badge}
+        </span>
+        <h1 class="reveal mt-6 text-4xl leading-[1.08] font-extrabold tracking-tight break-words sm:text-5xl md:text-6xl lg:text-7xl" style="--d:80ms">
+          <span class="gradient-text">{t.title}</span>
+        </h1>
+        <p class="reveal mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground md:text-xl" style="--d:160ms">{t.subtitle}</p>
+        <div class="reveal mt-9 flex flex-wrap gap-3" style="--d:240ms">
+          <a href={href(locale, "/signup")} class="btn btn-primary flex-1 px-7 py-3.5 text-base sm:flex-none">{t.cta}<Icon name="arrow" class="h-4 w-4" /></a>
+          <a href="#how" class="btn btn-ghost flex-1 px-7 py-3.5 text-base sm:flex-none">{t.ctaSecondary}</a>
+        </div>
+        <div class="reveal mt-10 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground" style="--d:320ms">
+          {
+            (uz
+              ? ["Karta talab qilinmaydi", "Maʼlumotlar kompyuteringizda", "Faqat oʻqiydi, siz tasdiqlaysiz"]
+              : ["Без карты", "Данные остаются на вашем ПК", "Читает, а пишет только после вашего подтверждения"]
+            ).map((x) => (
+              <span class="flex items-center gap-1.5"><Icon name="check" class="h-4 w-4 text-teal" />{x}</span>
+            ))
+          }
         </div>
       </div>
-      <div class="rounded-3xl border border-border bg-card p-4 shadow-2xl shadow-primary/15" aria-hidden="true">
-        <div class="flex items-center gap-2 border-b border-border pb-3">
-          <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-ink text-[10px] font-bold text-amber-300">AI</span>
-          <span class="text-sm font-bold">AI Accounting Assistant</span>
-          <span class="ml-auto rounded-full bg-teal/10 px-2 py-0.5 text-xs font-semibold text-teal">1C</span>
+
+      <!-- The product, as a glass window with a chat that plays itself -->
+      <div class="reveal relative min-w-0" style="--d:200ms" aria-hidden="true">
+        <div class="absolute -inset-6 -z-10 rounded-[2.5rem] bg-linear-to-tr from-primary/30 via-fuchsia-400/20 to-teal/30 blur-2xl"></div>
+        <div class="glass gradient-border rounded-3xl p-4 shadow-2xl shadow-primary/20">
+          <div class="flex items-center gap-2 border-b border-border/70 pb-3">
+            <span class="flex gap-1.5"><i class="h-2.5 w-2.5 rounded-full bg-red-400/80"></i><i class="h-2.5 w-2.5 rounded-full bg-amber-400/80"></i><i class="h-2.5 w-2.5 rounded-full bg-emerald-400/80"></i></span>
+            <span class="ml-2 text-sm font-bold">AI Accounting Assistant</span>
+            <span class="ml-auto rounded-full bg-teal/15 px-2.5 py-0.5 text-xs font-semibold text-teal">1C</span>
+          </div>
+          <div class="space-y-3 py-5 text-sm">
+            <div class="chat-line ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-linear-to-br from-primary to-violet-500 px-4 py-2.5 text-white shadow-md" style="--at:0.6s">{uz ? "Bugun 5110 schyotidagi qoldiq qancha?" : "Какой остаток на счёте 5110 сегодня?"}</div>
+            <div class="chat-line flex gap-2" style="--at:1.6s">
+              <span class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink text-[9px] font-bold text-amber-300">AI</span>
+              <div class="rounded-2xl rounded-bl-md bg-muted px-4 py-3">
+                <div class="font-semibold">5110 · {uz ? "Hisob-kitob schyoti" : "Расчётный счёт"}</div>
+                <div class="mt-0.5 text-xl font-bold tabular-nums">125 000 000 <span class="text-sm font-medium text-muted-foreground">{uz ? "soʻm" : "сум"}</span></div>
+                <div class="mt-2 h-1.5 w-44 overflow-hidden rounded-full bg-border"><div class="h-full w-3/4 rounded-full bg-linear-to-r from-primary to-teal"></div></div>
+              </div>
+            </div>
+            <div class="chat-line rounded-2xl border border-primary/30 bg-primary/5 p-3.5" style="--at:2.8s">
+              <div class="flex items-center gap-2 text-xs font-semibold text-primary"><Icon name="file" class="h-4 w-4" />{uz ? "1C ga yoziladi — tasdiqlang" : "Запись в 1С — подтвердите"}</div>
+              <div class="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span class="rounded-lg bg-teal/15 px-2.5 py-1 font-semibold text-teal">{uz ? "2 ta hujjat" : "2 документа"}</span>
+                <span class="rounded-lg bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-600 dark:text-emerald-400">{uz ? "Tekshirildi" : "Проверено"}</span>
+                <span class="btn btn-primary ml-auto !rounded-lg !px-3.5 !py-1.5 text-xs">{uz ? "Tasdiqlash" : "Подтвердить"}</span>
+              </div>
+            </div>
+            <div class="chat-line flex items-center gap-2 pl-9 text-muted-foreground" style="--at:3.8s"><span class="typing"><span></span><span></span><span></span></span></div>
+          </div>
         </div>
-        <div class="space-y-3 py-4 text-sm">
-          <div class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground">{locale === "uz" ? "Bugun 5110 schyotidagi qoldiq qancha?" : "Какой остаток на счёте 5110 сегодня?"}</div>
-          <div class="flex gap-2">
-            <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-ink text-[9px] font-bold text-amber-300">AI</span>
-            <div class="rounded-2xl rounded-bl-md bg-muted px-4 py-2.5">
-              <div class="font-semibold">5110 · {locale === "uz" ? "Hisob-kitob schyoti" : "Расчётный счёт"}</div>
-              <div class="tabular-nums text-muted-foreground">125 000 000 {locale === "uz" ? "soʻm" : "сум"}</div>
-            </div>
-          </div>
-          <div class="rounded-2xl border border-primary/30 bg-primary/5 p-3">
-            <div class="text-xs font-semibold text-primary">{locale === "uz" ? "1C ga yoziladi — tasdiqlang" : "Запись в 1С — подтвердите"}</div>
-            <div class="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-              <span class="rounded-lg bg-teal/10 px-2 py-1 font-semibold text-teal">{locale === "uz" ? "2 ta hujjat" : "2 документа"}</span>
-              <span class="ml-auto rounded-lg bg-accent px-3 py-1.5 font-semibold text-white">{locale === "uz" ? "Tasdiqlash" : "Подтвердить"}</span>
-            </div>
-          </div>
+        <div class="glass float-slow absolute -top-5 -right-3 hidden items-center gap-2 rounded-2xl px-3.5 py-2 text-xs font-semibold shadow-xl md:flex" style="--r:3deg">
+          <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-teal/15 text-teal"><Icon name="shield" class="h-3.5 w-3.5" /></span>{uz ? "Yozishdan oldin tekshiruv" : "Проверка перед записью"}
+        </div>
+        <div class="glass float-slow absolute -bottom-5 -left-4 hidden items-center gap-2 rounded-2xl px-3.5 py-2 text-xs font-semibold shadow-xl md:flex" style="--r:-3deg;animation-delay:-3s">
+          <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-400/20 text-amber-500"><Icon name="sparkles" class="h-3.5 w-3.5" /></span>{uz ? "Soniyalarda javob" : "Ответ за секунды"}
         </div>
       </div>
     </div>
   </section>
 
-  <section class="mx-auto max-w-6xl px-4 py-10">
-    <h2 class="text-2xl font-bold tracking-tight md:text-3xl">{t.problemTitle}</h2>
-    <ul class="mt-5 grid gap-3 md:grid-cols-3">
-      {t.problems.map((p) => <li class="rounded-2xl border border-border bg-card p-6 text-muted-foreground shadow-sm">{p}</li>)}
-    </ul>
+  <!-- Integrations -->
+  <section class="border-y border-border/70 bg-muted/40 py-6">
+    <div class="marquee-mask overflow-hidden">
+      <div class="flex w-max animate-marquee gap-x-14 text-lg font-bold tracking-tight text-muted-foreground/70">
+        {[0, 1].map(() => integrations.map((name) => <span class="flex items-center gap-14 whitespace-nowrap">{name}<i class="h-1.5 w-1.5 rounded-full bg-primary/40"></i></span>))}
+      </div>
+    </div>
   </section>
 
-  <section id="how" class="mx-auto max-w-6xl scroll-mt-20 px-4 py-10">
-    <h2 class="text-2xl font-bold tracking-tight md:text-3xl">{t.howTitle}</h2>
-    <ol class="mt-5 grid gap-4 md:grid-cols-3">
+  <!-- The problem -->
+  <section class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+    <h2 class="reveal max-w-2xl text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl">{t.problemTitle}</h2>
+    <ul class="mt-12 grid gap-5 md:grid-cols-3">
       {
-        t.steps.map((s, i) => (
-          <li class:list={["rounded-2xl p-6", ["bg-primary/10", "bg-teal/10", "bg-accent/10"][i % 3]]}>
-            <span class:list={["flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold text-white", ["bg-primary", "bg-teal", "bg-accent"][i % 3]]}>{i + 1}</span>
-            <h3 class="mt-4 text-lg font-bold">{s.title}</h3>
-            <p class="mt-1 text-sm text-muted-foreground">{s.text}</p>
+        t.problems.map((p, i) => (
+          <li class="reveal spot rounded-3xl p-7" style={`--d:${i * 90}ms`}>
+            <span class:list={["flex h-12 w-12 items-center justify-center rounded-2xl", ["bg-red-500/10 text-red-500", "bg-amber-500/10 text-amber-500", "bg-violet-500/10 text-violet-500"][i % 3]]}>
+              <Icon name={problemIcons[i % 3] as IconName} class="h-6 w-6" />
+            </span>
+            <p class="mt-5 text-lg leading-snug font-semibold">{p}</p>
           </li>
         ))
       }
-    </ol>
+    </ul>
   </section>
 
-  <section id="features" class="mx-auto max-w-6xl scroll-mt-20 px-4 py-10">
-    <h2 class="text-2xl font-bold tracking-tight md:text-3xl">{t.featuresTitle}</h2>
-    <div class="mt-5 grid gap-4 md:grid-cols-3">
+  <!-- How it works -->
+  <section id="how" class="relative scroll-mt-24 bg-muted/40 py-16 md:py-24">
+    <div class="mx-auto max-w-6xl px-4">
+      <h2 class="reveal text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl">{t.howTitle}</h2>
+      <ol class="relative mt-14 grid gap-6 md:grid-cols-3">
+        <div class="absolute top-7 right-[16%] left-[16%] hidden h-px bg-linear-to-r from-primary/0 via-primary/40 to-teal/0 md:block"></div>
+        {
+          t.steps.map((s, i) => (
+            <li class="reveal relative" style={`--d:${i * 110}ms`}>
+              <span class:list={["relative z-10 flex h-14 w-14 items-center justify-center rounded-2xl text-xl font-extrabold text-white shadow-lg", ["bg-linear-to-br from-primary to-violet-500 shadow-primary/30", "bg-linear-to-br from-teal to-emerald-400 shadow-teal/30", "bg-linear-to-br from-accent to-amber-400 shadow-accent/30"][i % 3]]}>{i + 1}</span>
+              <h3 class="mt-6 text-xl font-bold">{s.title}</h3>
+              <p class="mt-2 leading-relaxed text-muted-foreground">{s.text}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </section>
+
+  <!-- Features: a bento grid -->
+  <section id="features" class="mx-auto max-w-6xl scroll-mt-24 px-4 py-16 md:py-24">
+    <h2 class="reveal text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl">{t.featuresTitle}</h2>
+    <div class="mt-12 grid gap-5 md:grid-cols-3">
       {
         t.features.map((f, i) => (
-          <div class:list={["rounded-2xl border border-border border-t-4 bg-card p-6 shadow-sm", ["border-t-primary", "border-t-teal", "border-t-amber-400", "border-t-accent"][i % 4]]}>
-            <div class="flex items-start gap-2">
-              <h3 class="font-semibold">{f.title}</h3>
-              {f.soon && <span class="ml-auto shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.soon}</span>}
+          <div class:list={["reveal spot rounded-3xl p-7", i === 0 && "md:col-span-2", i === 5 && "md:col-span-3"]} style={`--d:${(i % 3) * 90}ms`}>
+            <div class="flex items-start gap-3">
+              <span class:list={["flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl", ["bg-primary/10 text-primary", "bg-violet-500/10 text-violet-500", "bg-teal/10 text-teal", "bg-amber-400/15 text-amber-500", "bg-emerald-500/10 text-emerald-500", "bg-accent/10 text-accent"][i % 6]]}>
+                <Icon name={featureIcons[i % 6] as IconName} class="h-5 w-5" />
+              </span>
+              {f.soon && <span class="ml-auto shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">{t.soon}</span>}
             </div>
-            <p class="mt-1 text-sm text-muted-foreground">{f.text}</p>
+            <h3 class="mt-5 text-lg font-bold">{f.title}</h3>
+            <p class="mt-1.5 leading-relaxed text-muted-foreground">{f.text}</p>
           </div>
         ))
       }
     </div>
   </section>
 
-  <section class="mx-auto max-w-6xl px-4 py-10">
-    <div class="rounded-3xl bg-ink p-10 text-ink-foreground">
-      <h2 class="text-2xl font-bold tracking-tight md:text-3xl">{t.securityTitle}</h2>
-      <p class="mt-3 max-w-3xl text-ink-muted">{t.securityText}</p>
-      <a class="mt-4 inline-block font-semibold text-amber-300 underline" href={href(locale, "/security")}>{t.securityLink}</a>
+  <!-- Security -->
+  <section class="mx-auto max-w-6xl px-4 pb-16 md:pb-24">
+    <div class="reveal gradient-border relative overflow-hidden rounded-[2rem] bg-ink p-7 text-ink-foreground sm:p-10 md:p-14">
+      <div class="pointer-events-none absolute -top-24 -right-16 h-72 w-72 rounded-full bg-teal/30 blur-3xl"></div>
+      <div class="pointer-events-none absolute -bottom-28 -left-16 h-72 w-72 rounded-full bg-primary/40 blur-3xl"></div>
+      <div class="relative flex flex-wrap items-center gap-8">
+        <span class="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-amber-300 ring-1 ring-white/15"><Icon name="lock" class="h-8 w-8" /></span>
+        <div class="min-w-64 flex-1">
+          <h2 class="text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">{t.securityTitle}</h2>
+          <p class="mt-3 max-w-3xl leading-relaxed text-ink-muted">{t.securityText}</p>
+          <a class="mt-5 inline-flex items-center gap-2 font-semibold text-amber-300 hover:underline" href={href(locale, "/security")}>{t.securityLink}<Icon name="arrow" class="h-4 w-4" /></a>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="mx-auto max-w-6xl px-4 pt-6 pb-20 text-center">
-    <h2 class="text-3xl font-extrabold tracking-tight">{t.finalTitle}</h2>
-    <p class="mt-2 text-muted-foreground">{t.finalText}</p>
-    <a href={href(locale, "/signup")} class="mt-6 inline-block rounded-xl bg-primary shadow-md shadow-primary/25 px-6 py-3 font-medium text-primary-foreground hover:opacity-90">{t.cta}</a>
+  <!-- Closing -->
+  <section class="mx-auto max-w-6xl px-4 pb-16 md:pb-24">
+    <div class="reveal gradient-border rounded-[2rem] bg-card">
+     <div class="aurora rounded-[2rem] px-5 py-14 text-center md:py-20">
+      <h2 class="text-3xl font-extrabold tracking-tight sm:text-4xl md:text-5xl"><span class="gradient-text">{t.finalTitle}</span></h2>
+      <p class="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">{t.finalText}</p>
+      <a href={href(locale, "/signup")} class="btn btn-primary mt-8 px-8 py-4 text-base">{t.cta}<Icon name="arrow" class="h-4 w-4" /></a>
+     </div>
+    </div>
   </section>
 </Base>

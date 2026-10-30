@@ -1,0 +1,17 @@
+---
+interface Props {
+  title: string;
+  subtitle?: string;
+  /** Narrow (text pages) or wide. */
+  narrow?: boolean;
+}
+const { title, subtitle, narrow = false } = Astro.props;
+---
+
+<header class="aurora border-b border-border/60">
+  <div class="grid-bg"></div>
+  <div class:list={["mx-auto px-4 pt-12 pb-10 sm:pt-16 md:pt-24 md:pb-16", narrow ? "max-w-4xl" : "max-w-6xl"]}>
+    <h1 class="reveal text-4xl font-extrabold tracking-tight break-words sm:text-5xl md:text-6xl"><span class="gradient-text">{title}</span></h1>
+    {subtitle && <p class="reveal mt-4 max-w-2xl text-base text-muted-foreground sm:text-lg" style="--d:80ms">{subtitle}</p>}
+  </div>
+</header>
