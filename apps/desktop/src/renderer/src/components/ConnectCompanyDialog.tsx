@@ -29,6 +29,7 @@ export function ConnectCompanyDialog({
   const [ref, setRef] = useState("");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [organizationRef, setOrganizationRef] = useState("");
   const [test, setTest] = useState<ConnectionTestResult | null>(null);
   // The bases 1C's launcher already knows on this PC: a base is picked here instead of typing its folder.
@@ -50,7 +51,8 @@ export function ConnectCompanyDialog({
 
   const connection = (): ConnectionInput => ({
     infobase: kind === "file" ? { kind, file } : { kind, server, ref },
-    user,
+    // A name pasted from somewhere often carries a space at an end, which 1C takes as part of the name.
+    user: user.trim(),
     password,
   });
   const changed =
@@ -229,13 +231,19 @@ export function ConnectCompanyDialog({
             </div>
             <div>
               <Label htmlFor="password">{t("connect.password")}</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => changed(setPassword)(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => changed(setPassword)(e.target.value)}
+                />
+                {/* So a typing slip or the wrong keyboard layout can be seen before 1C refuses it. */}
+                <Button type="button" variant="outline" onClick={() => setShowPassword((v) => !v)}>
+                  {showPassword ? t("connect.hidePassword") : t("connect.showPassword")}
+                </Button>
+              </div>
             </div>
           </div>
 
