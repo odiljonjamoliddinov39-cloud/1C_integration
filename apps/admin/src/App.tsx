@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore } from "react";
+import { t } from "@/lib/i18n";
 
+import { LanguageSelect } from "@/components/LanguageSelect";
 import { Logo } from "@/components/Logo";
 import { api, getToken, onTokenChange, setToken } from "@/lib/api";
 import { href, useRoute } from "@/lib/router";
@@ -22,18 +24,18 @@ import { TemplatesPage } from "@/pages/Templates";
 import { UsagePage } from "@/pages/Usage";
 
 const NAV = [
-  { path: "", label: "Overview" },
-  { path: "customers", label: "Customers" },
-  { path: "subscriptions", label: "Subscriptions" },
-  { path: "revenue", label: "Revenue" },
-  { path: "plans", label: "Plans" },
-  { path: "promo", label: "Promo codes" },
-  { path: "usage", label: "AI usage" },
-  { path: "cost", label: "AI cost" },
-  { path: "ai", label: "AI model" },
-  { path: "limits", label: "AI limits" },
-  { path: "templates", label: "Templates" },
-  { path: "audit", label: "Audit log" },
+  { path: "", label: t("Overview") },
+  { path: "customers", label: t("Customers") },
+  { path: "subscriptions", label: t("Subscriptions") },
+  { path: "revenue", label: t("Revenue") },
+  { path: "plans", label: t("Plans") },
+  { path: "promo", label: t("Promo codes") },
+  { path: "usage", label: t("AI usage") },
+  { path: "cost", label: t("AI cost") },
+  { path: "ai", label: t("AI model") },
+  { path: "limits", label: t("AI limits") },
+  { path: "templates", label: t("Templates") },
+  { path: "audit", label: t("Audit log") },
 ] as const;
 
 export function App() {
@@ -49,7 +51,7 @@ function Shell() {
   const route = useRoute();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const [section = "", id] = route;
-  const nav = me.data?.role === "owner" ? [...NAV, { path: "admins", label: "Admins" } as const] : NAV;
+  const nav = me.data?.role === "owner" ? [...NAV, { path: "admins", label: t("Admins") } as const] : NAV;
 
   return (
     <div className="min-h-screen lg:flex">
@@ -57,8 +59,8 @@ function Shell() {
         <div className="flex items-center gap-3 px-5 py-4 lg:py-6">
           <Logo size={40} className="shrink-0" />
           <div className="min-w-0">
-            <div className="text-sm leading-tight font-bold">AI Accounting Assistant</div>
-            <div className="text-xs font-semibold tracking-wider text-amber-300 uppercase">Admin</div>
+            <div className="text-sm leading-tight font-bold">{t("AI Accounting Assistant")}</div>
+            <div className="text-xs font-semibold tracking-wider text-amber-300 uppercase">{t("Admin")}</div>
           </div>
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:overflow-y-auto">
@@ -81,13 +83,14 @@ function Shell() {
         <div className="flex items-center gap-3 border-t border-white/10 px-5 py-3 lg:flex-col lg:items-stretch lg:py-4">
           <div className="min-w-0 text-xs text-sidebar-muted">
             <div className="truncate font-semibold text-sidebar-foreground">{me.data?.email}</div>
-            {me.data && <div>{me.data.role}</div>}
+            {me.data && <div>{t(me.data.role)}</div>}
           </div>
+          <LanguageSelect className="w-full text-foreground" />
           <button
             className="ml-auto rounded-xl border border-white/15 px-3 py-2 text-sm font-semibold text-pink-300 hover:bg-white/10 lg:ml-0"
             onClick={() => setToken(null)}
           >
-            Sign out
+            {t("Sign out")}
           </button>
         </div>
       </aside>

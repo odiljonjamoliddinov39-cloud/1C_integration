@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { Card, Empty, ErrorText, Select, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -13,33 +14,36 @@ export function UsagePage() {
   return (
     <Card>
       <div className="flex items-center gap-2 border-b border-border p-3">
-        <h1 className="text-sm font-semibold">AI usage by customer</h1>
+        <h1 className="text-sm font-semibold">{t("AI usage by customer")}</h1>
         <Select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-          <option value={7}>7 days</option>
-          <option value={30}>30 days</option>
-          <option value={90}>90 days</option>
+          <option value={7}>{t("7 days")}</option>
+          <option value={30}>{t("30 days")}</option>
+          <option value={90}>{t("90 days")}</option>
         </Select>
-        <span className="tabular ml-auto text-sm text-muted-foreground">Total {usd(total)}</span>
+        <span className="tabular ml-auto text-sm text-muted-foreground">
+          {t("Total {total}", { total: usd(total) })}
+        </span>
       </div>
       <p className="border-b border-border px-3 py-2 text-xs text-muted-foreground">
-        Cached reads are the chat sent again on each step: they cost a tenth of input. Output is the dearest
-        (5× input), and grows with the effort setting.
+        {t(
+          "Cached reads are the chat sent again on each step: they cost a tenth of input. Output is the dearest (5× input), and grows with the effort setting.",
+        )}
       </p>
       <ErrorText error={usage.error} />
       {usage.data?.length === 0 ? (
-        <Empty>No AI use in this period.</Empty>
+        <Empty>{t("No AI use in this period.")}</Empty>
       ) : (
         <Table
           head={[
-            "Customer",
-            "Requests",
-            "Tokens",
-            "Input",
-            "Output (thinking incl.)",
-            "Cached reads",
-            "Cache writes",
-            "Cost",
-            "Share",
+            t("Customer"),
+            t("Requests"),
+            t("Tokens"),
+            t("Input"),
+            t("Output (thinking incl.)"),
+            t("Cached reads"),
+            t("Cache writes"),
+            t("Cost"),
+            t("Share"),
           ]}
         >
           {usage.data?.map((r) => (

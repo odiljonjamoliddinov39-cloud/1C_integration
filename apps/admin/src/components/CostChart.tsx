@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 /**
  * Daily AI cost as bars, one per day. One series, so no legend: the section title names it.
  * Hovering (or focusing) a bar shows its date, cost, requests and tokens.
@@ -15,7 +16,9 @@ export function CostChart({ days }: { days: UsageDay[] }) {
   const total = days.reduce((s, d) => s + d.costUsd, 0);
   const shown = active === null ? null : days[active];
   if (max === 0)
-    return <div className="py-8 text-center text-sm text-muted-foreground">No AI use in this period.</div>;
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">{t("No AI use in this period.")}</div>
+    );
 
   return (
     <div>
@@ -25,12 +28,13 @@ export function CostChart({ days }: { days: UsageDay[] }) {
             <span className="font-medium text-foreground">{shown.date}</span>
             <span className="tabular">{usd(shown.costUsd)}</span>
             <span className="tabular">
-              {shown.requests} requests{shown.tokens > 0 ? ` · ${compact(shown.tokens)} tokens` : ""}
+              {t("{count} requests", { count: shown.requests })}
+              {shown.tokens > 0 ? ` · ${t("{count} tokens", { count: compact(shown.tokens) })}` : ""}
             </span>
           </>
         ) : (
           <span className="tabular">
-            Total {usd(total)} · max {usd(max)} a day
+            {t("Total {total} · max {max} a day", { total: usd(total), max: usd(max) })}
           </span>
         )}
       </div>
