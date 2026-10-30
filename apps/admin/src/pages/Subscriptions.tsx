@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge, Button, Empty, ErrorText, Input, Section, Select, Table, Td } from "@/components/ui";
@@ -22,16 +23,16 @@ function List() {
     queryFn: () => api.subscriptions(q, plan, status),
   });
   return (
-    <Section title="Subscriptions">
+    <Section title={t("Subscriptions")}>
       <div className="mb-3 flex flex-wrap gap-2">
         <Input
           className="w-64"
-          placeholder="Search by name or email"
+          placeholder={t("Search by name or email")}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <Select value={plan} onChange={(e) => setPlan(e.target.value)}>
-          <option value="">All plans</option>
+          <option value="">{t("All plans")}</option>
           {plans.data?.plans.map((p) => (
             <option key={p.code} value={p.code}>
               {p.code}
@@ -39,20 +40,22 @@ function List() {
           ))}
         </Select>
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
+          <option value="">{t("All statuses")}</option>
           {["free", "trial", "active", "grace", "suspended", "cancelled"].map((s) => (
             <option key={s} value={s}>
-              {s}
+              {t(s)}
             </option>
           ))}
         </Select>
-        <span className="ml-auto text-xs text-muted-foreground">{list.data?.length ?? 0} accounts</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {t("{count} accounts", { count: list.data?.length ?? 0 })}
+        </span>
       </div>
       <ErrorText error={list.error} />
       {list.data?.length === 0 ? (
-        <Empty>Nothing found.</Empty>
+        <Empty>{t("Nothing found.")}</Empty>
       ) : (
-        <Table head={["Account", "Plan", "Status", "Period end", "Billing", "Unpaid", ""]}>
+        <Table head={[t("Account"), t("Plan"), t("Status"), t("Period end"), t("Billing"), t("Unpaid"), ""]}>
           {list.data?.map((r) => (
             <tr key={r.subscriptionId}>
               <Td>
@@ -65,15 +68,15 @@ function List() {
               </Td>
               <Td>{date(r.periodEnd)}</Td>
               <Td className="text-xs">
-                {r.billingCycle}
-                {r.cancelAtPeriodEnd && <Badge tone="warning">cancels</Badge>}
+                {t(r.billingCycle)}
+                {r.cancelAtPeriodEnd && <Badge tone="warning">{t("cancels")}</Badge>}
                 {r.pendingPlan && <Badge tone="info">→ {r.pendingPlan}</Badge>}
                 {r.promoCode && <Badge>{r.promoCode}</Badge>}
               </Td>
               <Td>{r.pendingInvoices > 0 ? <Badge tone="warning">{r.pendingInvoices}</Badge> : "—"}</Td>
               <Td className="text-right">
                 <a className="text-primary hover:underline" href={href(`subscriptions/${r.accountId}`)}>
-                  Open
+                  {t("Open")}
                 </a>
               </Td>
             </tr>
@@ -98,7 +101,7 @@ function Detail({ accountId }: { accountId: string }) {
   const act = useMutation({
     mutationFn: (input: Parameters<typeof api.subscriptionAction>[1]) => {
       const id = detail.data?.subscription.subscriptionId;
-      if (!id) throw new Error("not loaded");
+      if (!id) throw new Error(t("not loaded"));
       return api.subscriptionAction(id, { ...input, reason });
     },
     onSuccess: (data) => {
@@ -118,24 +121,24 @@ function Detail({ accountId }: { accountId: string }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <a className="text-sm text-muted-foreground hover:underline" href={href("subscriptions")}>
-          ← Subscriptions
+          {t("← Subscriptions")}
         </a>
         <h1 className="text-xl font-semibold">{s.accountName}</h1>
         <StatusBadge status={s.status as never} />
         <span className="text-sm text-muted-foreground">
-          {s.plan} · {s.billingCycle} · until {date(s.periodEnd)}
+          {s.plan} · {t(s.billingCycle)} · {t("until {date}", { date: date(s.periodEnd) })}
         </span>
         <a className="ml-auto text-sm text-primary hover:underline" href={href(`customers/${accountId}`)}>
-          Customer page
+          {t("Customer page")}
         </a>
       </div>
 
-      <Section title="Change">
+      <Section title={t("Change")}>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase">Put on a plan</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase">{t("Put on a plan")}</div>
             <Select className="w-full" value={plan} onChange={(e) => setPlan(e.target.value)}>
-              <option value="">Choose…</option>
+              <option value="">{t("Choose…")}</option>
               {plans.data?.plans.map((p) => (
                 <option key={p.code} value={p.code}>
                   {p.code}
@@ -143,27 +146,27 @@ function Detail({ accountId }: { accountId: string }) {
               ))}
             </Select>
             <Button disabled={!plan || act.isPending} onClick={() => act.mutate({ plan })}>
-              Set plan (1 period)
+              {t("Set plan (1 period)")}
             </Button>
           </div>
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase">Extend</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase">{t("Extend")}</div>
             <Input
               type="number"
               min={1}
               className="w-full"
-              placeholder="Days"
+              placeholder={t("Days")}
               value={days}
               onChange={(e) => setDays(e.target.value)}
             />
             <Button disabled={!days || act.isPending} onClick={() => act.mutate({ days: Number(days) })}>
-              Extend
+              {t("Extend")}
             </Button>
           </div>
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase">Give an add-on</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase">{t("Give an add-on")}</div>
             <Select className="w-full" value={addon} onChange={(e) => setAddon(e.target.value)}>
-              <option value="">Choose…</option>
+              <option value="">{t("Choose…")}</option>
               {plans.data?.addons.map((a) => (
                 <option key={a.code} value={a.code}>
                   {a.code}
@@ -171,24 +174,24 @@ function Detail({ accountId }: { accountId: string }) {
               ))}
             </Select>
             <Button disabled={!addon || act.isPending} onClick={() => act.mutate({ addon, quantity: 1 })}>
-              Grant
+              {t("Grant")}
             </Button>
           </div>
         </div>
         <Input
           className="mt-3 w-full"
-          placeholder="Reason (goes to the audit log)"
+          placeholder={t("Reason (goes to the audit log)")}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
         <ErrorText error={act.error} />
       </Section>
 
-      <Section title="Invoices">
+      <Section title={t("Invoices")}>
         {d.invoices.length === 0 ? (
-          <Empty>No invoices.</Empty>
+          <Empty>{t("No invoices.")}</Empty>
         ) : (
-          <Table head={["Invoice", "Created", "Items", "Total", "Status", ""]}>
+          <Table head={[t("Invoice"), t("Created"), t("Items"), t("Total"), t("Status"), ""]}>
             {d.invoices.map((i) => (
               <tr key={i.id}>
                 <Td className="font-medium">{i.number}</Td>
@@ -199,7 +202,7 @@ function Detail({ accountId }: { accountId: string }) {
                   <Badge
                     tone={i.status === "paid" ? "success" : i.status === "pending" ? "warning" : "muted"}
                   >
-                    {i.status}
+                    {t(i.status)}
                   </Badge>
                   {i.provider && <span className="ml-1 text-xs text-muted-foreground">{i.provider}</span>}
                 </Td>
@@ -210,13 +213,18 @@ function Detail({ accountId }: { accountId: string }) {
                       disabled={act.isPending}
                       onClick={() => {
                         if (
-                          window.confirm(`Mark ${i.number} (${sum(i.totalSum)}) as paid by bank transfer?`)
+                          window.confirm(
+                            t("Mark {number} ({total}) as paid by bank transfer?", {
+                              number: i.number,
+                              total: sum(i.totalSum),
+                            }),
+                          )
                         ) {
                           act.mutate({ markPaidInvoiceId: i.id });
                         }
                       }}
                     >
-                      Mark paid
+                      {t("Mark paid")}
                     </Button>
                   )}
                 </Td>
@@ -226,11 +234,11 @@ function Detail({ accountId }: { accountId: string }) {
         )}
       </Section>
 
-      <Section title="Add-ons">
+      <Section title={t("Add-ons")}>
         {d.addons.length === 0 ? (
-          <Empty>None.</Empty>
+          <Empty>{t("None.")}</Empty>
         ) : (
-          <Table head={["Add-on", "Quantity", "From", "Until"]}>
+          <Table head={[t("Add-on"), t("Quantity"), t("From"), t("Until")]}>
             {d.addons.map((a, n) => (
               <tr key={n}>
                 <Td className="font-medium">{a.code}</Td>
@@ -243,11 +251,11 @@ function Detail({ accountId }: { accountId: string }) {
         )}
       </Section>
 
-      <Section title="Billing events">
+      <Section title={t("Billing events")}>
         {d.events.length === 0 ? (
-          <Empty>No events.</Empty>
+          <Empty>{t("No events.")}</Empty>
         ) : (
-          <Table head={["When", "Event", "Details"]}>
+          <Table head={[t("When"), t("Event"), t("Details")]}>
             {d.events.map((e) => (
               <tr key={e.id}>
                 <Td className="whitespace-nowrap">{dateTime(e.createdAt)}</Td>

@@ -7,6 +7,7 @@ import {
 } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { Badge, Button, Card, Empty, ErrorText, Input, Section, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -37,18 +38,16 @@ export function TemplatesPage({ me }: { me: AdminView }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Query templates</h1>
+          <h1 className="text-xl font-semibold">{t("Query templates")}</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            A question the app recognizes is answered by a fixed 1C query, with no AI and no cost. Templates
-            are learned automatically from the questions your customers ask (see below), and you can also
-            write them by hand. The matcher compares words, answers only when the question is no longer than
-            the phrase plus its parameters, and every answer has an &quot;Ask AI anyway&quot; button. Look
-            over what was learned, and turn off a template that looks wrong.
+            {t(
+              'A question the app recognizes is answered by a fixed 1C query, with no AI and no cost. Templates are learned automatically from the questions your customers ask (see below), and you can also write them by hand. The matcher compares words, answers only when the question is no longer than the phrase plus its parameters, and every answer has an "Ask AI anyway" button. Look over what was learned, and turn off a template that looks wrong.',
+            )}
           </p>
         </div>
         {owner && (
           <Button className="ml-auto" onClick={() => setEditing("new")}>
-            New template
+            {t("New template")}
           </Button>
         )}
       </div>
@@ -62,51 +61,62 @@ export function TemplatesPage({ me }: { me: AdminView }) {
       )}
       <Card>
         {templates.data?.length === 0 ? (
-          <Empty>No templates yet. Every question goes to the model.</Empty>
+          <Empty>{t("No templates yet. Every question goes to the model.")}</Empty>
         ) : (
           <Table
-            head={["Code", "Title", "Phrases", "For", "Used to learn", "Version", "State", "Changed", ""]}
+            head={[
+              t("Code"),
+              t("Title"),
+              t("Phrases"),
+              t("For"),
+              t("Used to learn"),
+              t("Version"),
+              t("State"),
+              t("Changed"),
+              "",
+            ]}
           >
-            {templates.data?.map((t) => (
-              <tr key={t.id}>
-                <Td className="font-mono text-xs">{t.code}</Td>
-                <Td>{t.title}</Td>
-                <Td className="max-w-xs truncate">{t.intents.join(" · ")}</Td>
+            {templates.data?.map((row) => (
+              <tr key={row.id}>
+                <Td className="font-mono text-xs">{row.code}</Td>
+                <Td>{row.title}</Td>
+                <Td className="max-w-xs truncate">{row.intents.join(" · ")}</Td>
                 <Td>
-                  {t.source === "learned" ? (
-                    <span title="Learned from this company's own questions">
-                      {t.accountName} · {t.company}
+                  {row.source === "learned" ? (
+                    <span title={t("Learned from this company's own questions")}>
+                      {row.accountName} · {row.company}
                     </span>
                   ) : (
-                    "Everyone"
+                    t("Everyone")
                   )}
                 </Td>
-                <Td>{t.source === "learned" ? t.hits : "—"}</Td>
-                <Td>{t.version}</Td>
+                <Td>{row.source === "learned" ? row.hits : "—"}</Td>
+                <Td>{row.version}</Td>
                 <Td>
-                  {t.enabled ? (
-                    <Badge tone="success">On</Badge>
-                  ) : t.rejected > 0 ? (
-                    <Badge tone="warning">Off: rejected by a user</Badge>
+                  {row.enabled ? (
+                    <Badge tone="success">{t("On")}</Badge>
+                  ) : row.rejected > 0 ? (
+                    <Badge tone="warning">{t("Off: rejected by a user")}</Badge>
                   ) : (
-                    <Badge>Off</Badge>
+                    <Badge>{t("Off")}</Badge>
                   )}
                 </Td>
-                <Td>{relative(t.updatedAt)}</Td>
+                <Td>{relative(row.updatedAt)}</Td>
                 <Td className="space-x-2 text-right">
                   {owner && (
                     <>
-                      <Button variant="outline" onClick={() => setEditing(t)}>
-                        Edit
+                      <Button variant="outline" onClick={() => setEditing(row)}>
+                        {t("Edit")}
                       </Button>
                       <Button
                         variant="danger"
                         disabled={remove.isPending}
                         onClick={() => {
-                          if (window.confirm(`Delete the template ${t.code}?`)) remove.mutate(t.id);
+                          if (window.confirm(t("Delete the template {code}?", { code: row.code })))
+                            remove.mutate(row.id);
                         }}
                       >
-                        Delete
+                        {t("Delete")}
                       </Button>
                     </>
                   )}
@@ -119,13 +129,11 @@ export function TemplatesPage({ me }: { me: AdminView }) {
       <Card>
         <div className="flex items-start gap-3 border-b border-border px-4 py-2.5">
           <div>
-            <h2 className="text-sm font-semibold">What the engine is learning</h2>
+            <h2 className="text-sm font-semibold">{t("What the engine is learning")}</h2>
             <p className="text-xs text-muted-foreground">
-              Every finished question leaves a trace (the steps, no data). Questions answered by the same
-              query form a group; once a group has been seen as many times as the AI limits page says, Claude
-              decides whether it is one reusable question and writes the template. A card confirmed by the
-              user whose documents were exactly the query&apos;s rows becomes an action template: it still
-              asks for confirmation. A user pressing &quot;Ask AI anyway&quot; turns a learned template off.
+              {t(
+                'Every finished question leaves a trace (the steps, no data). Questions answered by the same query form a group; once a group has been seen as many times as the AI limits page says, Claude decides whether it is one reusable question and writes the template. A card confirmed by the user whose documents were exactly the query\'s rows becomes an action template: it still asks for confirmation. A user pressing "Ask AI anyway" turns a learned template off.',
+              )}
             </p>
           </div>
           {owner && (
@@ -135,21 +143,32 @@ export function TemplatesPage({ me }: { me: AdminView }) {
               disabled={analyze.isPending}
               onClick={() => analyze.mutate()}
             >
-              Analyze now
+              {t("Analyze now")}
             </Button>
           )}
         </div>
         {analyze.data && (
           <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-            Decided {analyze.data.decided} group(s), made {analyze.data.made} template(s).
+            {t("Decided {decided} group(s), made {made} template(s).", {
+              decided: analyze.data.decided,
+              made: analyze.data.made,
+            })}
           </p>
         )}
         <ErrorText error={groups.error ?? analyze.error} />
         {groups.data?.length === 0 ? (
-          <Empty>Nothing yet. It starts with the next questions your customers ask.</Empty>
+          <Empty>{t("Nothing yet. It starts with the next questions your customers ask.")}</Empty>
         ) : (
           <Table
-            head={["Customer", "Company", "Latest question", "Does", "Seen", "State", "Claude's reason"]}
+            head={[
+              t("Customer"),
+              t("Company"),
+              t("Latest question"),
+              t("Does"),
+              t("Seen"),
+              t("State"),
+              t("Claude's reason"),
+            ]}
           >
             {groups.data?.map((g, i) => (
               <tr key={i}>
@@ -158,15 +177,15 @@ export function TemplatesPage({ me }: { me: AdminView }) {
                 <Td className="max-w-xs truncate" title={g.question}>
                   {g.question}
                 </Td>
-                <Td>{g.action ? "Prepares a card" : "Answers"}</Td>
+                <Td>{g.action ? t("Prepares a card") : t("Answers")}</Td>
                 <Td>{g.hits}</Td>
                 <Td>
                   {g.status === "accepted" ? (
-                    <Badge tone="success">Template made</Badge>
+                    <Badge tone="success">{t("Template made")}</Badge>
                   ) : g.status === "rejected" ? (
-                    <Badge tone="warning">Not reusable</Badge>
+                    <Badge tone="warning">{t("Not reusable")}</Badge>
                   ) : (
-                    <Badge>Waiting</Badge>
+                    <Badge>{t("Waiting")}</Badge>
                   )}
                 </Td>
                 <Td className="max-w-xs truncate" title={g.reason}>
@@ -227,10 +246,10 @@ function TemplateForm({ template, onClose }: { template: QueryTemplateView | nul
   });
   return (
     <Section
-      title={template ? `Edit ${template.code}` : "New template"}
+      title={template ? t("Edit {code}", { code: template.code }) : t("New template")}
       actions={
         <Button variant="ghost" onClick={onClose}>
-          Close
+          {t("Close")}
         </Button>
       }
     >
@@ -243,16 +262,16 @@ function TemplateForm({ template, onClose }: { template: QueryTemplateView | nul
       >
         <div className="flex flex-wrap gap-3">
           <label className="space-y-1">
-            <div>Code (a–z, 0–9, _)</div>
+            <div>{t("Code (a–z, 0–9, _)")}</div>
             <Input value={code} disabled={template !== null} onChange={(e) => setCode(e.target.value)} />
           </label>
           <label className="min-w-64 flex-1 space-y-1">
-            <div>Title</div>
+            <div>{t("Title")}</div>
             <Input className="w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
         </div>
         <label className="block space-y-1">
-          <div>Phrases that ask it, one per line, in any language</div>
+          <div>{t("Phrases that ask it, one per line, in any language")}</div>
           <textarea
             className="min-h-20 w-full rounded-lg border border-border bg-card p-2 text-sm"
             value={intents}
@@ -261,7 +280,7 @@ function TemplateForm({ template, onClose }: { template: QueryTemplateView | nul
           />
         </label>
         <label className="block space-y-1">
-          <div>1C query (it only reads; its columns are the result columns, in order)</div>
+          <div>{t("1C query (it only reads; its columns are the result columns, in order)")}</div>
           <textarea
             className="min-h-32 w-full rounded-lg border border-border bg-card p-2 font-mono text-xs"
             value={query}
@@ -271,18 +290,22 @@ function TemplateForm({ template, onClose }: { template: QueryTemplateView | nul
         <div className="grid gap-3 md:grid-cols-2">
           <label className="block space-y-1">
             <div>
-              &amp;Parameters, one per line as name:type ({PARAM_TYPES.join(", ")}). month_end is the
-              month&apos;s last day: use КОНЕЦПЕРИОДА(&amp;Name, ДЕНЬ) in the query.
+              {t(
+                "&Parameters, one per line as name:type ({types}). month_end is the month's last day: use КОНЕЦПЕРИОДА(&Name, ДЕНЬ) in the query.",
+                { types: PARAM_TYPES.join(", ") },
+              )}
             </div>
             <textarea
               className="min-h-20 w-full rounded-lg border border-border bg-card p-2 font-mono text-xs"
               value={params}
               onChange={(e) => setParams(e.target.value)}
-              placeholder="ДатаОстатка:date"
+              placeholder={t("ДатаОстатка:date")}
             />
           </label>
           <label className="block space-y-1">
-            <div>Result columns, one per line as label|format ({FORMATS.join(", ")})</div>
+            <div>
+              {t("Result columns, one per line as label|format ({formats})", { formats: FORMATS.join(", ") })}
+            </div>
             <textarea
               className="min-h-20 w-full rounded-lg border border-border bg-card p-2 font-mono text-xs"
               value={columns}
@@ -294,13 +317,13 @@ function TemplateForm({ template, onClose }: { template: QueryTemplateView | nul
         <div className="flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={totals} onChange={(e) => setTotals(e.target.checked)} />
-            Totals row
+            {t("Totals row")}
           </label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            On
+            {t("On")}
           </label>
-          <Button disabled={!parsed.success || save.isPending}>Save</Button>
+          <Button disabled={!parsed.success || save.isPending}>{t("Save")}</Button>
           {!parsed.success && (
             <span className="text-destructive">
               {parsed.error.issues[0]?.path.join(".")}: {parsed.error.issues[0]?.message}

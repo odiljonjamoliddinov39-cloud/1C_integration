@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { intlLocale, t } from "@/lib/i18n";
 
 import { CostChart } from "@/components/CostChart";
 import { ErrorText, Section, Stat, Table, Td } from "@/components/ui";
@@ -17,41 +18,53 @@ export function OverviewPage() {
       {o.aiAlert && (
         <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <div className="font-semibold">
-            The AI provider is refusing our requests: customers cannot use the assistant
+            {t("The AI provider is refusing our requests: customers cannot use the assistant")}
           </div>
           <div className="mt-1">{o.aiAlert.message}</div>
           <div className="mt-1 text-xs">
-            Since {new Date(o.aiAlert.at).toLocaleString("en-GB")}. Fix it at the provider (credit or
-            billing); this clears itself after the next successful answer.
+            {t(
+              "Since {when}. Fix it at the provider (credit or billing); this clears itself after the next successful answer.",
+              { when: new Date(o.aiAlert.at).toLocaleString(intlLocale()) },
+            )}
           </div>
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Customers" value={o.accounts} note={`${o.newAccounts7d} new in 7 days`} />
         <Stat
-          label="Paying · trial"
-          value={`${o.byStatus.active} · ${o.byStatus.trial}`}
-          note={`${o.byStatus.grace} unpaid (grace), ${o.byStatus.suspended} suspended`}
+          label={t("Customers")}
+          value={o.accounts}
+          note={t("{count} new in 7 days", { count: o.newAccounts7d })}
         />
-        <Stat label="PCs active today" value={o.activeDevices24h} note="license checked in 24 h" />
         <Stat
-          label="AI cost, 30 days"
+          label={t("Paying · trial")}
+          value={`${o.byStatus.active} · ${o.byStatus.trial}`}
+          note={t("{grace} unpaid (grace), {suspended} suspended", {
+            grace: o.byStatus.grace,
+            suspended: o.byStatus.suspended,
+          })}
+        />
+        <Stat label={t("PCs active today")} value={o.activeDevices24h} note={t("license checked in 24 h")} />
+        <Stat
+          label={t("AI cost, 30 days")}
           value={usd(o.ai.costUsd30d)}
-          note={`${usd(o.ai.costUsdToday)} today · ${compact(o.ai.tokens30d)} tokens`}
+          note={t("{cost} today · {tokens} tokens", {
+            cost: usd(o.ai.costUsdToday),
+            tokens: compact(o.ai.tokens30d),
+          })}
         />
       </div>
-      <Section title="AI cost per day (USD, last 30 days)">
+      <Section title={t("AI cost per day (USD, last 30 days)")}>
         <CostChart days={o.usage} />
       </Section>
       <Section
-        title="Top AI users, 30 days"
+        title={t("Top AI users, 30 days")}
         actions={
           <a className="text-xs text-primary" href={href("usage")}>
-            All
+            {t("All")}
           </a>
         }
       >
-        <Table head={["Customer", "Requests", "Tokens", "Cost"]}>
+        <Table head={[t("Customer"), t("Requests"), t("Tokens"), t("Cost")]}>
           {(top.data ?? []).slice(0, 5).map((row) => (
             <tr key={row.accountId}>
               <Td>

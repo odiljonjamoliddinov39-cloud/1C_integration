@@ -7,6 +7,7 @@ import {
 } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { Badge, Button, ErrorText, Section } from "@/components/ui";
 import { EFFORTS, effortName, modelName } from "@/lib/ai";
@@ -40,25 +41,26 @@ function AiModelForm({ saved, me }: { saved: AiSettingsView; me: AdminView }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <h1 className="text-xl font-semibold">AI model</h1>
+          <h1 className="text-xl font-semibold">{t("AI model")}</h1>
           <p className="text-sm text-muted-foreground">
-            What the assistant runs on for every customer, unless a customer has its own setting (on the
-            customer&apos;s page). A change applies from the next step of every answer; no app update needed.
+            {t(
+              "What the assistant runs on for every customer, unless a customer has its own setting (on the customer's page). A change applies from the next step of every answer; no app update needed.",
+            )}
           </p>
         </div>
         <div className="ml-auto text-right text-sm">
           <div>
-            Now: <b>{modelName(saved.model)}</b> · <b>{effortName(saved.effort)}</b> effort
+            {t("Now:")} <b>{modelName(saved.model)}</b> · <b>{effortName(saved.effort)}</b> {t("effort")}
           </div>
           <div className="text-xs text-muted-foreground">
             {saved.source === "admin"
-              ? `set ${saved.updatedAt ? date(saved.updatedAt) : ""}${saved.updatedBy ? ` by ${saved.updatedBy}` : ""}`
-              : "the server's default (AI_MODEL / AI_EFFORT)"}
+              ? `${t("set")} ${saved.updatedAt ? date(saved.updatedAt) : ""}${saved.updatedBy ? ` ${t("by {name}", { name: saved.updatedBy })}` : ""}`
+              : t("the server's default (AI_MODEL / AI_EFFORT)")}
           </div>
         </div>
       </div>
 
-      <Section title="Model">
+      <Section title={t("Model")}>
         <div className="grid gap-3 md:grid-cols-2">
           {AI_MODELS.map((m) => (
             <button
@@ -74,7 +76,7 @@ function AiModelForm({ saved, me }: { saved: AiSettingsView; me: AdminView }) {
             >
               <div className="flex items-center gap-2 font-medium">
                 {m.name}
-                {saved.model === m.id && <Badge tone="success">in use</Badge>}
+                {saved.model === m.id && <Badge tone="success">{t("in use")}</Badge>}
               </div>
               <div className="font-mono text-xs text-muted-foreground">{m.id}</div>
               <div className="mt-1 text-xs text-muted-foreground">{m.price}</div>
@@ -83,7 +85,7 @@ function AiModelForm({ saved, me }: { saved: AiSettingsView; me: AdminView }) {
         </div>
       </Section>
 
-      <Section title="Effort">
+      <Section title={t("Effort")}>
         <div className="grid gap-2 md:grid-cols-5">
           {EFFORTS.map((e) => (
             <button
@@ -99,7 +101,7 @@ function AiModelForm({ saved, me }: { saved: AiSettingsView; me: AdminView }) {
             >
               <div className="flex items-center gap-2 font-medium">
                 {e.name}
-                {saved.effort === e.id && <Badge tone="success">in use</Badge>}
+                {saved.effort === e.id && <Badge tone="success">{t("in use")}</Badge>}
               </div>
               <div className="mt-1 text-xs text-muted-foreground">{e.note}</div>
             </button>
@@ -114,22 +116,26 @@ function AiModelForm({ saved, me }: { saved: AiSettingsView; me: AdminView }) {
             onClick={() => {
               if (
                 window.confirm(
-                  `Run the assistant on ${modelName(model)} at ${effortName(effort)} effort for every customer?`,
+                  t("Run the assistant on {model} at {effort} effort for every customer?", {
+                    model: modelName(model),
+                    effort: effortName(effort),
+                  }),
                 )
               )
                 save.mutate();
             }}
           >
-            Save
+            {t("Save")}
           </Button>
           <ErrorText error={save.error} />
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">Only an owner can change the model.</p>
+        <p className="text-sm text-muted-foreground">{t("Only an owner can change the model.")}</p>
       )}
       <p className="text-xs text-muted-foreground">
-        Higher effort and Opus give better answers on long jobs, take longer per step, and cost more (see AI
-        usage). Open chats continue on the new setting.
+        {t(
+          "Higher effort and Opus give better answers on long jobs, take longer per step, and cost more (see AI usage). Open chats continue on the new setting.",
+        )}
       </p>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { t } from "@/lib/i18n";
 
 import { Badge, Empty, ErrorText, Section, Stat, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -15,27 +16,31 @@ export function RevenuePage() {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
-          label="MRR"
+          label={t("MRR")}
           value={sum(r.mrrSum)}
-          note="paid plans and recurring add-ons per month, VAT excluded"
+          note={t("paid plans and recurring add-ons per month, VAT excluded")}
         />
         <Stat
-          label="Paid accounts"
+          label={t("Paid accounts")}
           value={r.paidAccounts}
-          note={`${r.trialAccounts} on trial · ${r.freeAccounts} on Free`}
+          note={t("{trial} on trial · {free} on Free", { trial: r.trialAccounts, free: r.freeAccounts })}
         />
         <Stat
-          label="Free → paid"
+          label={t("Free → paid")}
           value={`${r.conversionPercent}%`}
-          note={`of ${r.accounts} accounts ever paid`}
+          note={t("of {count} accounts ever paid", { count: r.accounts })}
         />
-        <Stat label="Collected, 30 days" value={sum(r.collected30dSum)} note="paid invoices, VAT included" />
+        <Stat
+          label={t("Collected, 30 days")}
+          value={sum(r.collected30dSum)}
+          note={t("paid invoices, VAT included")}
+        />
       </div>
-      <Section title="Paid accounts per plan">
+      <Section title={t("Paid accounts per plan")}>
         {r.byPlan.length === 0 ? (
-          <Empty>No paid accounts yet.</Empty>
+          <Empty>{t("No paid accounts yet.")}</Empty>
         ) : (
-          <Table head={["Plan", "Accounts", "MRR"]}>
+          <Table head={[t("Plan"), t("Accounts"), t("MRR")]}>
             {r.byPlan.map((p) => (
               <tr key={p.plan}>
                 <Td className="font-medium">{p.plan}</Td>
@@ -47,13 +52,13 @@ export function RevenuePage() {
         )}
       </Section>
       <Section
-        title="Overdue invoices"
+        title={t("Overdue invoices")}
         actions={r.overdue.count > 0 ? <Badge tone="danger">{sum(r.overdue.totalSum)}</Badge> : undefined}
       >
         {r.overdue.count === 0 ? (
-          <Empty>Nothing overdue.</Empty>
+          <Empty>{t("Nothing overdue.")}</Empty>
         ) : (
-          <Table head={["Invoice", "Account", "Total", "Due"]}>
+          <Table head={[t("Invoice"), t("Account"), t("Total"), t("Due")]}>
             {r.overdue.items.map((i) => (
               <tr key={i.number}>
                 <Td className="font-medium">{i.number}</Td>

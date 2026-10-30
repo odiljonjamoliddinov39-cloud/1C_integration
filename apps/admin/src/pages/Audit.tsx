@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { t } from "@/lib/i18n";
 
 import { Card, Empty, ErrorText, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -10,13 +11,13 @@ export function AuditPage() {
   return (
     <Card>
       <div className="border-b border-border p-3">
-        <h1 className="text-sm font-semibold">Admin actions (latest 200)</h1>
+        <h1 className="text-sm font-semibold">{t("Admin actions (latest 200)")}</h1>
       </div>
       <ErrorText error={audit.error} />
       {audit.data?.length === 0 ? (
-        <Empty>Nothing yet.</Empty>
+        <Empty>{t("Nothing yet.")}</Empty>
       ) : (
-        <Table head={["When", "Admin", "Action", "Target", "Details"]}>
+        <Table head={[t("When"), t("Admin"), t("Action"), t("Target"), t("Details")]}>
           {audit.data?.map((e) => {
             const [kind, id] = e.target.split(":");
             return (
@@ -27,7 +28,7 @@ export function AuditPage() {
                 <Td>
                   {kind === "account" && id ? (
                     <a className="text-primary hover:underline" href={href(`customers/${id}`)}>
-                      customer
+                      {t("customer")}
                     </a>
                   ) : (
                     kind

@@ -1,6 +1,7 @@
 import type { AdminView, PromoView } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { Badge, Button, Empty, ErrorText, Input, Section, Select, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -48,29 +49,29 @@ export function PromoPage({ me }: { me: AdminView }) {
   });
   return (
     <div className="space-y-4">
-      <Section title="Promo codes">
+      <Section title={t("Promo codes")}>
         <ErrorText error={promos.error ?? toggle.error} />
         {promos.data?.length === 0 ? (
-          <Empty>No promo codes.</Empty>
+          <Empty>{t("No promo codes.")}</Empty>
         ) : (
-          <Table head={["Code", "Discount", "Months", "Used", "Valid until", "Plans", ""]}>
+          <Table head={[t("Code"), t("Discount"), t("Months"), t("Used"), t("Valid until"), t("Plans"), ""]}>
             {promos.data?.map((p) => (
               <tr key={p.code}>
                 <Td className="font-medium">
-                  {p.code} {p.disabled && <Badge tone="danger">off</Badge>}
+                  {p.code} {p.disabled && <Badge tone="danger">{t("off")}</Badge>}
                 </Td>
-                <Td>{p.kind === "percent" ? `${p.value}%` : `${p.value} UZS`}</Td>
-                <Td>{p.months ?? "first payment"}</Td>
+                <Td>{p.kind === "percent" ? `${p.value}%` : `${p.value} ${t("UZS")}`}</Td>
+                <Td>{p.months ?? t("first payment")}</Td>
                 <Td>
                   {p.usedCount}
                   {p.maxUses !== null ? ` / ${p.maxUses}` : ""}
                 </Td>
                 <Td>{date(p.validTo)}</Td>
-                <Td>{p.allowedPlans.length ? p.allowedPlans.join(", ") : "all paid"}</Td>
+                <Td>{p.allowedPlans.length ? p.allowedPlans.join(", ") : t("all paid")}</Td>
                 <Td className="text-right">
                   {owner && (
                     <Button variant={p.disabled ? "outline" : "danger"} onClick={() => toggle.mutate(p)}>
-                      {p.disabled ? "Enable" : "Disable"}
+                      {p.disabled ? t("Enable") : t("Disable")}
                     </Button>
                   )}
                 </Td>
@@ -80,7 +81,7 @@ export function PromoPage({ me }: { me: AdminView }) {
         )}
       </Section>
       {owner && (
-        <Section title="Create a promo code">
+        <Section title={t("Create a promo code")}>
           <form
             className="grid gap-2 sm:grid-cols-4 xl:grid-cols-8"
             onSubmit={(e) => {
@@ -89,7 +90,7 @@ export function PromoPage({ me }: { me: AdminView }) {
             }}
           >
             <Input
-              placeholder="CODE"
+              placeholder={t("CODE")}
               required
               value={form.code}
               onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
@@ -98,33 +99,33 @@ export function PromoPage({ me }: { me: AdminView }) {
               value={form.kind}
               onChange={(e) => setForm({ ...form, kind: e.target.value as "percent" | "fixed" })}
             >
-              <option value="percent">percent</option>
-              <option value="fixed">fixed sum</option>
+              <option value="percent">{t("percent")}</option>
+              <option value="fixed">{t("fixed sum")}</option>
             </Select>
             <Input
               type="number"
               min={1}
               required
-              placeholder="Value"
+              placeholder={t("Value")}
               value={form.value}
               onChange={(e) => setForm({ ...form, value: e.target.value })}
             />
             <Input
               type="number"
               min={1}
-              placeholder="Months (empty: first payment)"
+              placeholder={t("Months (empty: first payment)")}
               value={form.months}
               onChange={(e) => setForm({ ...form, months: e.target.value })}
             />
             <Input
               type="number"
               min={1}
-              placeholder="Max uses"
+              placeholder={t("Max uses")}
               value={form.maxUses}
               onChange={(e) => setForm({ ...form, maxUses: e.target.value })}
             />
             <Input
-              placeholder="Plans: start,business"
+              placeholder={t("Plans: start,business")}
               value={form.plans}
               onChange={(e) => setForm({ ...form, plans: e.target.value })}
             />
@@ -133,11 +134,11 @@ export function PromoPage({ me }: { me: AdminView }) {
               value={form.validTo}
               onChange={(e) => setForm({ ...form, validTo: e.target.value })}
             />
-            <Button disabled={create.isPending}>Create</Button>
+            <Button disabled={create.isPending}>{t("Create")}</Button>
           </form>
           <ErrorText error={create.error} />
           <p className="mt-2 text-xs text-muted-foreground">
-            Launch code for the first 10 customers: 30%, 12 months, max uses 10.
+            {t("Launch code for the first 10 customers: 30%, 12 months, max uses 10.")}
           </p>
         </Section>
       )}

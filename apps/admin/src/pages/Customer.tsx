@@ -7,6 +7,7 @@ import {
 } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { CostChart } from "@/components/CostChart";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -45,55 +46,71 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <a className="text-sm text-muted-foreground hover:underline" href={href("customers")}>
-          ← Customers
+          {t("← Customers")}
         </a>
         <h1 className="text-xl font-semibold">{a.name}</h1>
         <StatusBadge status={a.status} />
-        {a.blocked && <Badge tone="danger">Blocked</Badge>}
+        {a.blocked && <Badge tone="danger">{t("Blocked")}</Badge>}
         {me.role === "owner" && (
           <Button
             variant={a.blocked ? "outline" : "danger"}
             className="ml-auto"
             disabled={block.isPending}
             onClick={() => {
-              const verb = a.blocked ? "Unblock" : "Block";
               if (
                 window.confirm(
-                  `${verb} ${a.name}? ${a.blocked ? "" : "They will be signed out of the app and the assistant."}`,
+                  a.blocked
+                    ? t("Unblock {name}?", { name: a.name })
+                    : t("Block {name}? They will be signed out of the app and the assistant.", {
+                        name: a.name,
+                      }),
                 )
               )
                 block.mutate(!a.blocked);
             }}
           >
-            {a.blocked ? "Unblock" : "Block account"}
+            {a.blocked ? t("Unblock") : t("Block account")}
           </Button>
         )}
       </div>
       <ErrorText error={block.error ?? device.error} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Plan" value={a.plan ?? "—"} note={`ends ${date(a.endsAt)} (${relative(a.endsAt)})`} />
         <Stat
-          label="PCs in use"
+          label={t("Plan")}
+          value={a.plan ?? "—"}
+          note={t("ends {date} ({when})", { date: date(a.endsAt), when: relative(a.endsAt) })}
+        />
+        <Stat
+          label={t("PCs in use")}
           value={a.activeDevices}
-          note={`${d.users.length} user(s), ${a.companies} company(ies)`}
+          note={t("{users} user(s), {companies} company(ies)", {
+            users: d.users.length,
+            companies: a.companies,
+          })}
         />
         <Stat
-          label="AI quota left"
-          value={d.aiQuota > 0 ? compact(Math.max(0, d.aiQuota - d.aiUsedTokens)) : "no cap"}
-          note={`${compact(d.aiUsedTokens)} of ${compact(d.aiQuota)} tokens used (${Math.round(quotaShare * 100)}%) this period${
-            d.aiGranted > 0 ? `, ${compact(d.aiGranted)} recharged` : ""
-          }`}
+          label={t("AI quota left")}
+          value={d.aiQuota > 0 ? compact(Math.max(0, d.aiQuota - d.aiUsedTokens)) : t("no cap")}
+          note={`${t("{used} of {total} tokens used ({percent}%) this period", {
+            used: compact(d.aiUsedTokens),
+            total: compact(d.aiQuota),
+            percent: Math.round(quotaShare * 100),
+          })}${d.aiGranted > 0 ? `, ${t("{count} recharged", { count: compact(d.aiGranted) })}` : ""}`}
         />
         <Stat
-          label="AI left today"
-          value={d.aiDailyLimit > 0 ? compact(Math.max(0, d.aiDailyLimit - d.aiUsedToday)) : "no cap"}
-          note={`${compact(d.aiUsedToday)} of ${compact(d.aiDailyLimit)} tokens used (${Math.round(todayShare * 100)}%, resets 00:00 UTC)`}
+          label={t("AI left today")}
+          value={d.aiDailyLimit > 0 ? compact(Math.max(0, d.aiDailyLimit - d.aiUsedToday)) : t("no cap")}
+          note={t("{used} of {total} tokens used ({percent}%, resets 00:00 UTC)", {
+            used: compact(d.aiUsedToday),
+            total: compact(d.aiDailyLimit),
+            percent: Math.round(todayShare * 100),
+          })}
         />
         <Stat
-          label="AI cost, 30 days"
+          label={t("AI cost, 30 days")}
           value={usd(a.aiCostUsd30d)}
-          note={`last activity ${relative(a.lastActivityAt)}`}
+          note={t("last activity {when}", { when: relative(a.lastActivityAt) })}
         />
       </div>
 
@@ -117,11 +134,11 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         onDone={update}
       />
 
-      <Section title="PCs">
+      <Section title={t("PCs")}>
         {d.devices.length === 0 ? (
-          <Empty>No PC activated yet.</Empty>
+          <Empty>{t("No PC activated yet.")}</Empty>
         ) : (
-          <Table head={["PC", "User", "Activated", "Last check", "", ""]}>
+          <Table head={[t("PC"), t("User"), t("Activated"), t("Last check"), "", ""]}>
             {d.devices.map((pc) => (
               <tr key={pc.id}>
                 <Td className="font-medium">{pc.name}</Td>
@@ -129,7 +146,11 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
                 <Td>{date(pc.activatedAt)}</Td>
                 <Td>{relative(pc.lastSeenAt)}</Td>
                 <Td>
-                  {pc.revoked ? <Badge tone="danger">Removed</Badge> : <Badge tone="success">In use</Badge>}
+                  {pc.revoked ? (
+                    <Badge tone="danger">{t("Removed")}</Badge>
+                  ) : (
+                    <Badge tone="success">{t("In use")}</Badge>
+                  )}
                 </Td>
                 <Td className="text-right">
                   <Button
@@ -137,7 +158,7 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
                     disabled={device.isPending}
                     onClick={() => device.mutate({ deviceId: pc.id, revoked: !pc.revoked })}
                   >
-                    {pc.revoked ? "Let back in" : "Remove"}
+                    {pc.revoked ? t("Let back in") : t("Remove")}
                   </Button>
                 </Td>
               </tr>
@@ -145,32 +166,34 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
           </Table>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
-          Removing a PC frees its seat; that PC goes read-only and cannot sign in again until let back in.
+          {t(
+            "Removing a PC frees its seat; that PC goes read-only and cannot sign in again until let back in.",
+          )}
         </p>
       </Section>
 
-      <Section title="AI cost per day (USD, last 30 days)">
+      <Section title={t("AI cost per day (USD, last 30 days)")}>
         <CostChart days={d.usage} />
       </Section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="Users">
-          <Table head={["Email", "Name", "Role", "Last sign-in"]}>
+        <Section title={t("Users")}>
+          <Table head={[t("Email"), t("Name"), t("Role"), t("Last sign-in")]}>
             {d.users.map((u) => (
               <tr key={u.id}>
                 <Td>{u.email}</Td>
                 <Td>{u.name}</Td>
-                <Td>{u.role}</Td>
+                <Td>{t(u.role)}</Td>
                 <Td>{relative(u.lastLoginAt)}</Td>
               </tr>
             ))}
           </Table>
         </Section>
-        <Section title="Companies (INN and name only)">
+        <Section title={t("Companies (INN and name only)")}>
           {d.companies.length === 0 ? (
-            <Empty>None connected yet.</Empty>
+            <Empty>{t("None connected yet.")}</Empty>
           ) : (
-            <Table head={["INN", "Name", "Connected"]}>
+            <Table head={[t("INN"), t("Name"), t("Connected")]}>
               {d.companies.map((c) => (
                 <tr key={c.inn}>
                   <Td>{c.inn}</Td>
@@ -184,8 +207,8 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="Subscriptions">
-          <Table head={["Plan", "Status", "From", "Until"]}>
+        <Section title={t("Subscriptions")}>
+          <Table head={[t("Plan"), t("Status"), t("From"), t("Until")]}>
             {d.subscriptions.map((s) => (
               <tr key={s.id}>
                 <Td>{s.plan}</Td>
@@ -198,15 +221,15 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
             ))}
           </Table>
         </Section>
-        <Section title="Admin actions on this customer">
+        <Section title={t("Admin actions on this customer")}>
           {d.audit.length === 0 ? (
-            <Empty>None yet.</Empty>
+            <Empty>{t("None yet.")}</Empty>
           ) : (
             <ul className="space-y-2 text-sm">
               {d.audit.map((e) => (
                 <li key={e.id}>
-                  <span className="text-muted-foreground">{dateTime(e.at)}</span> · <b>{e.action}</b> by{" "}
-                  {e.adminEmail ?? "a removed admin"}
+                  <span className="text-muted-foreground">{dateTime(e.at)}</span> · <b>{e.action}</b>{" "}
+                  {t("by {name}", { name: e.adminEmail ?? t("a removed admin") })}
                   {Object.keys(e.payload).length > 0 && (
                     <div className="text-xs text-muted-foreground">{describe(e.payload)}</div>
                   )}
@@ -231,7 +254,7 @@ function ExtendForm({ id, onDone }: { id: string; onDone: (d: AccountDetail) => 
     },
   });
   return (
-    <Section title="Extend the license">
+    <Section title={t("Extend the license")}>
       <form
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
@@ -247,20 +270,21 @@ function ExtendForm({ id, onDone }: { id: string; onDone: (d: AccountDetail) => 
           value={days}
           onChange={(e) => setDays(e.target.value)}
         />
-        <span className="text-sm text-muted-foreground">days</span>
+        <span className="text-sm text-muted-foreground">{t("days")}</span>
         <Input
           className="min-w-64 flex-1"
-          placeholder="Reason, e.g. paid by bank transfer"
+          placeholder={t("Reason, e.g. paid by bank transfer")}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
-        <Button disabled={extend.isPending || !(Number(days) >= 1)}>Extend</Button>
-        {extend.isSuccess && <span className="text-sm text-success">Done</span>}
+        <Button disabled={extend.isPending || !(Number(days) >= 1)}>{t("Extend")}</Button>
+        {extend.isSuccess && <span className="text-sm text-success">{t("Done")}</span>}
       </form>
       <ErrorText error={extend.error} />
       <p className="mt-2 text-xs text-muted-foreground">
-        Adds the days to the end date (or to today if it has passed) and reactivates a suspended account. The
-        PCs pick it up at their next license check (within 6 hours, or when the app restarts).
+        {t(
+          "Adds the days to the end date (or to today if it has passed) and reactivates a suspended account. The PCs pick it up at their next license check (within 6 hours, or when the app restarts).",
+        )}
       </p>
     </Section>
   );
@@ -291,17 +315,18 @@ function RechargeForm({
   const valid = Number.isInteger(amount) && amount >= 1_000 && amount <= 100_000_000;
   const stopped =
     detail.aiUsedToday >= detail.aiDailyLimit
-      ? "Stopped by today's limit."
+      ? t("Stopped by today's limit.")
       : detail.aiUsedTokens >= detail.aiQuota
-        ? "Stopped by the quota."
+        ? t("Stopped by the quota.")
         : null;
   return (
-    <Section title="Recharge AI tokens">
+    <Section title={t("Recharge AI tokens")}>
       <form
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (window.confirm(`Add ${compact(amount)} AI tokens to this customer?`)) recharge.mutate();
+          if (window.confirm(t("Add {count} AI tokens to this customer?", { count: compact(amount) })))
+            recharge.mutate();
         }}
       >
         {RECHARGE_PRESETS.map((preset) => (
@@ -320,24 +345,25 @@ function RechargeForm({
           min={1000}
           max={100_000_000}
           step={1000}
-          aria-label="Tokens"
+          aria-label={t("Tokens")}
           value={tokens}
           onChange={(e) => setTokens(e.target.value)}
         />
         <Input
           className="min-w-48 flex-1"
-          placeholder="Reason, e.g. paid 50 000 so'm"
+          placeholder={t("Reason, e.g. paid 50 000 so'm")}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
-        <Button disabled={recharge.isPending || !valid}>Recharge</Button>
-        {recharge.isSuccess && <span className="text-sm text-success">Done</span>}
+        <Button disabled={recharge.isPending || !valid}>{t("Recharge")}</Button>
+        {recharge.isSuccess && <span className="text-sm text-success">{t("Done")}</span>}
       </form>
       <ErrorText error={recharge.error} />
       <p className="mt-2 text-xs text-muted-foreground">
         {stopped && <b className="text-destructive">{stopped} </b>}
-        Adds the tokens to this period&apos;s quota and to today&apos;s limit, so the assistant works again at
-        once. Cached prompt tokens count a tenth.
+        {t(
+          "Adds the tokens to this period's quota and to today's limit, so the assistant works again at once. Cached prompt tokens count a tenth.",
+        )}
       </p>
     </Section>
   );
@@ -367,21 +393,22 @@ function BudgetForm({
   });
   const share = budget.limitUsd > 0 ? Math.min(1, budget.usedUsd / budget.limitUsd) : 0;
   return (
-    <Section title={`AI budget, ${budget.period} (USD)`}>
+    <Section title={t("AI budget, {period} (USD)", { period: budget.period })}>
       <div className="mb-3 text-sm">
-        Spent <b>{usd(budget.usedUsd)}</b> of <b>{budget.limitUsd > 0 ? usd(budget.limitUsd) : "no cap"}</b>
+        {t("Spent")} <b>{usd(budget.usedUsd)}</b> {t("of")}{" "}
+        <b>{budget.limitUsd > 0 ? usd(budget.limitUsd) : t("no cap")}</b>
         {budget.limitUsd > 0 && (
           <>
             {" "}
-            · left{" "}
+            · {t("left")}{" "}
             <b className={budget.usedUsd >= budget.limitUsd * 0.8 ? "text-destructive" : "text-success"}>
               {usd(Math.max(0, budget.limitUsd - budget.usedUsd))}
             </b>
           </>
         )}
-        {budget.custom && <span className="text-muted-foreground"> (set for this customer)</span>}
+        {budget.custom && <span className="text-muted-foreground"> {t("(set for this customer)")}</span>}
         {budget.limitUsd > 0 && budget.usedUsd >= budget.limitUsd && (
-          <b className="ml-2 text-destructive">Stopped: the budget is used up.</b>
+          <b className="ml-2 text-destructive">{t("Stopped: the budget is used up.")}</b>
         )}
         {budget.limitUsd > 0 && (
           <div className="mt-1 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-muted">
@@ -396,7 +423,9 @@ function BudgetForm({
             e.preventDefault();
             if (
               window.confirm(
-                `Set this month's AI budget to ${Number(limit) > 0 ? usd(Number(limit)) : "no cap"}?`,
+                t("Set this month's AI budget to {amount}?", {
+                  amount: Number(limit) > 0 ? usd(Number(limit)) : t("no cap"),
+                }),
               )
             )
               save.mutate();
@@ -407,26 +436,29 @@ function BudgetForm({
             type="number"
             min={0}
             step={1}
-            aria-label="Budget, USD"
+            aria-label={t("Budget, USD")}
             value={limit}
             onChange={(e) => setLimit(e.target.value)}
           />
           <Input
             className="min-w-48 flex-1"
-            placeholder="Reason, e.g. paid add-on"
+            placeholder={t("Reason, e.g. paid add-on")}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
-          <Button disabled={save.isPending || !(Number(limit) >= 0) || limit === ""}>Set budget</Button>
-          {save.isSuccess && <span className="text-sm text-success">Done</span>}
+          <Button disabled={save.isPending || !(Number(limit) >= 0) || limit === ""}>
+            {t("Set budget")}
+          </Button>
+          {save.isSuccess && <span className="text-sm text-success">{t("Done")}</span>}
         </form>
       ) : (
-        <p className="text-xs text-muted-foreground">Only an owner can change the budget.</p>
+        <p className="text-xs text-muted-foreground">{t("Only an owner can change the budget.")}</p>
       )}
       <ErrorText error={save.error} />
       <p className="mt-2 text-xs text-muted-foreground">
-        The monthly cap comes from the AI limits page; setting it here applies to this month only and lifts a
-        stop at once. 0 removes the cap.
+        {t(
+          "The monthly cap comes from the AI limits page; setting it here applies to this month only and lifts a stop at once. 0 removes the cap.",
+        )}
       </p>
     </Section>
   );
@@ -456,7 +488,7 @@ function AiModelForm({
   });
   const changed = model !== (detail.ai.model ?? "") || effort !== (detail.ai.effort ?? "");
   return (
-    <Section title="Assistant model for this customer">
+    <Section title={t("Assistant model for this customer")}>
       <form
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
@@ -464,8 +496,13 @@ function AiModelForm({
           save.mutate();
         }}
       >
-        <Select aria-label="Model" value={model} disabled={!owner} onChange={(e) => setModel(e.target.value)}>
-          <option value="">Model: default</option>
+        <Select
+          aria-label={t("Model")}
+          value={model}
+          disabled={!owner}
+          onChange={(e) => setModel(e.target.value)}
+        >
+          <option value="">{t("Model: default")}</option>
           {AI_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
@@ -473,27 +510,27 @@ function AiModelForm({
           ))}
         </Select>
         <Select
-          aria-label="Effort"
+          aria-label={t("Effort")}
           value={effort}
           disabled={!owner}
           onChange={(e) => setEffort(e.target.value)}
         >
-          <option value="">Effort: default</option>
+          <option value="">{t("Effort: default")}</option>
           {EFFORTS.map((e) => (
             <option key={e.id} value={e.id}>
               {e.name}
             </option>
           ))}
         </Select>
-        {owner && <Button disabled={!changed || save.isPending}>Save</Button>}
+        {owner && <Button disabled={!changed || save.isPending}>{t("Save")}</Button>}
         <span className="text-sm text-muted-foreground">
-          Runs on <b>{modelName(detail.ai.effective.model)}</b> ·{" "}
-          <b>{effortName(detail.ai.effective.effort)}</b> effort
-          {!detail.ai.model && !detail.ai.effort && " (the default from the AI model page)"}
+          {t("Runs on")} <b>{modelName(detail.ai.effective.model)}</b> ·{" "}
+          <b>{effortName(detail.ai.effective.effort)}</b> {t("effort")}
+          {!detail.ai.model && !detail.ai.effort && t(" (the default from the AI model page)")}
         </span>
       </form>
       <ErrorText error={save.error} />
-      {!owner && <p className="mt-2 text-xs text-muted-foreground">Only an owner can change it.</p>}
+      {!owner && <p className="mt-2 text-xs text-muted-foreground">{t("Only an owner can change it.")}</p>}
     </Section>
   );
 }

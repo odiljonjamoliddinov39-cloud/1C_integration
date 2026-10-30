@@ -9,6 +9,7 @@ import {
 } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { intlLocale, t } from "@/lib/i18n";
 
 import { Badge, Button, ErrorText, Input, Section, Select, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -54,10 +55,12 @@ export function PlansPage({ me }: { me: AdminView }) {
   if (!view.data) return null;
   return (
     <div className="space-y-4">
-      <Section title="Plans">
+      <Section title={t("Plans")}>
         <p className="mb-3 text-xs text-muted-foreground">
-          A new price applies from a customer's next period; the period they paid for keeps the old one. Empty
-          imports or audits mean unlimited. {owner ? "" : "Only owners can edit."}
+          {t(
+            "A new price applies from a customer's next period; the period they paid for keeps the old one. Empty imports or audits mean unlimited.",
+          )}{" "}
+          {owner ? "" : t("Only owners can edit.")}
         </p>
         <div className="space-y-4">
           {view.data.plans.map((p) => (
@@ -66,7 +69,7 @@ export function PlansPage({ me }: { me: AdminView }) {
         </div>
       </Section>
       {owner && (
-        <Section title="Add a custom plan">
+        <Section title={t("Add a custom plan")}>
           <div className="flex flex-wrap items-center gap-2">
             <Input
               value={newCode}
@@ -74,18 +77,19 @@ export function PlansPage({ me }: { me: AdminView }) {
               className="w-40"
             />
             <Button disabled={create.isPending || newCode.length < 2} onClick={() => create.mutate()}>
-              Create (hidden)
+              {t("Create (hidden)")}
             </Button>
             <span className="text-xs text-muted-foreground">
-              For more than 10 companies: create it, edit its limits above, then put an account on it from
-              Subscriptions.
+              {t(
+                "For more than 10 companies: create it, edit its limits above, then put an account on it from Subscriptions.",
+              )}
             </span>
           </div>
           <ErrorText error={create.error} />
         </Section>
       )}
-      <Section title="Add-ons">
-        <Table head={["Code", "Name", "Price", "Kind", "Plans", "Grants", "Public", ""]}>
+      <Section title={t("Add-ons")}>
+        <Table head={[t("Code"), t("Name"), t("Price"), t("Kind"), t("Plans"), t("Grants"), t("Public"), ""]}>
           {view.data.addons.map((a) => (
             <AddonRow key={`${a.code}-${JSON.stringify(a)}`} addon={a} owner={owner} onSaved={done} />
           ))}
@@ -137,14 +141,16 @@ function PlanEditor({
   /** What a monthly limit comes to over a year, shown under the field. */
   const perYear = (monthly: number | null) =>
     monthly === null ? null : (
-      <span className="text-[11px]">= {new Intl.NumberFormat("ru-RU").format(monthly * 12)} / year</span>
+      <span className="text-[11px]">
+        = {new Intl.NumberFormat(intlLocale()).format(monthly * 12)} {t("/ year")}
+      </span>
     );
   const nullable = (key: "importsPerMonth" | "auditsPerMonth") => (
     <>
       <Input
         type="number"
         min={0}
-        placeholder="unlimited"
+        placeholder={t("unlimited")}
         disabled={!owner}
         value={form[key] ?? ""}
         onChange={(e) => set(key, e.target.value === "" ? null : num(e.target.value))}
@@ -156,39 +162,43 @@ function PlanEditor({
     <div className="rounded-xl border border-border p-4">
       <div className="mb-3 flex items-center gap-2">
         <span className="font-semibold">{plan.code}</span>
-        {!form.isPublic && <Badge tone="warning">hidden</Badge>}
-        {dirty && <Badge tone="info">unsaved</Badge>}
+        {!form.isPublic && <Badge tone="warning">{t("hidden")}</Badge>}
+        {dirty && <Badge tone="info">{t("unsaved")}</Badge>}
       </div>
       <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
         {field(
-          "Name",
+          t("Name"),
           <Input disabled={!owner} value={form.name} onChange={(e) => set("name", e.target.value)} />,
         )}
-        {field("Price / month, sum", numeric("priceMonthSum"))}
+        {field(t("Price / month, sum"), numeric("priceMonthSum"))}
         {field(
-          "Price / year, sum (automatic)",
+          t("Price / year, sum (automatic)"),
           <>
             <Input type="number" disabled value={yearPriceOf(form.priceMonthSum)} readOnly />
             <span className="text-[11px]">
-              = monthly × {YEAR_PAID_MONTHS} (2 months free)
+              {t("= monthly × {months} (2 months free)", { months: YEAR_PAID_MONTHS })}
               {form.priceMonthSum > 0 &&
-                `, saves ${new Intl.NumberFormat("ru-RU").format(form.priceMonthSum * 12 - yearPriceOf(form.priceMonthSum))}`}
+                `, ${t("saves {amount}", {
+                  amount: new Intl.NumberFormat(intlLocale()).format(
+                    form.priceMonthSum * 12 - yearPriceOf(form.priceMonthSum),
+                  ),
+                })}`}
             </span>
           </>,
         )}
-        {field("Companies", numeric("companies"))}
-        {field("Users", numeric("users"))}
+        {field(t("Companies"), numeric("companies"))}
+        {field(t("Users"), numeric("users"))}
         {field(
-          "AI questions / month",
+          t("AI questions / month"),
           <>
             {numeric("aiQuestionsPerMonth")}
             {perYear(form.aiQuestionsPerMonth)}
           </>,
         )}
-        {field("Imports / month", nullable("importsPerMonth"))}
-        {field("Audits / month", nullable("auditsPerMonth"))}
+        {field(t("Imports / month"), nullable("importsPerMonth"))}
+        {field(t("Audits / month"), nullable("auditsPerMonth"))}
         {field(
-          "Support",
+          t("Support"),
           <Select
             disabled={!owner}
             value={form.features.support}
@@ -199,45 +209,45 @@ function PlanEditor({
             ))}
           </Select>,
         )}
-        {field("Order", numeric("sortOrder"))}
+        {field(t("Order"), numeric("sortOrder"))}
         {field(
-          "Excel export",
+          t("Excel export"),
           <Select
             disabled={!owner}
             value={String(form.features.excelExport)}
             onChange={(e) => set("features", { ...form.features, excelExport: e.target.value === "true" })}
           >
-            <option value="true">yes</option>
-            <option value="false">no</option>
+            <option value="true">{t("yes")}</option>
+            <option value="false">{t("no")}</option>
           </Select>,
         )}
         {field(
-          "Telegram remote control",
+          t("Telegram remote control"),
           <Select
             disabled={!owner}
             value={String(form.features.telegram)}
             onChange={(e) => set("features", { ...form.features, telegram: e.target.value === "true" })}
           >
-            <option value="true">yes</option>
-            <option value="false">no</option>
+            <option value="true">{t("yes")}</option>
+            <option value="false">{t("no")}</option>
           </Select>,
         )}
         {field(
-          "On the pricing page",
+          t("On the pricing page"),
           <Select
             disabled={!owner}
             value={String(form.isPublic)}
             onChange={(e) => set("isPublic", e.target.value === "true")}
           >
-            <option value="true">shown</option>
-            <option value="false">hidden</option>
+            <option value="true">{t("shown")}</option>
+            <option value="false">{t("hidden")}</option>
           </Select>,
         )}
       </div>
       {owner && (
         <div className="mt-3 flex items-center gap-3">
           <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
-            Save {plan.code}
+            {t("Save {code}", { code: plan.code })}
           </Button>
           <ErrorText error={save.error} />
         </div>
@@ -294,14 +304,14 @@ function AddonRow({
           value={String(isPublic)}
           onChange={(e) => setPublic(e.target.value === "true")}
         >
-          <option value="true">shown</option>
-          <option value="false">hidden</option>
+          <option value="true">{t("shown")}</option>
+          <option value="false">{t("hidden")}</option>
         </Select>
       </Td>
       <Td>
         {owner && (
           <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
-            Save
+            {t("Save")}
           </Button>
         )}
         <ErrorText error={save.error} />

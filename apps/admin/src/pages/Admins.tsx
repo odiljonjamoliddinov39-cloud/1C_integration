@@ -1,6 +1,7 @@
 import type { AdminRole, AdminView } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { Badge, Button, ErrorText, Input, Section, Select, Table, Td } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -23,18 +24,18 @@ export function AdminsPage({ me }: { me: AdminView }) {
   });
   return (
     <div className="space-y-4">
-      <Section title="Admins">
+      <Section title={t("Admins")}>
         <ErrorText error={admins.error ?? toggle.error} />
-        <Table head={["Email", "Name", "Role", "Last sign-in", ""]}>
+        <Table head={[t("Email"), t("Name"), t("Role"), t("Last sign-in"), ""]}>
           {admins.data?.map((a) => (
             <tr key={a.id}>
               <Td>{a.email}</Td>
               <Td>{a.name}</Td>
               <Td>
-                <Badge tone={a.role === "owner" ? "info" : "muted"}>{a.role}</Badge>
+                <Badge tone={a.role === "owner" ? "info" : "muted"}>{t(a.role)}</Badge>
                 {a.disabled && (
                   <span className="ml-2">
-                    <Badge tone="danger">disabled</Badge>
+                    <Badge tone="danger">{t("disabled")}</Badge>
                   </span>
                 )}
               </Td>
@@ -42,7 +43,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
               <Td className="text-right">
                 {a.id !== me.id && (
                   <Button variant={a.disabled ? "outline" : "danger"} onClick={() => toggle.mutate(a)}>
-                    {a.disabled ? "Enable" : "Disable"}
+                    {a.disabled ? t("Enable") : t("Disable")}
                   </Button>
                 )}
               </Td>
@@ -50,7 +51,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
           ))}
         </Table>
       </Section>
-      <Section title="Add an admin">
+      <Section title={t("Add an admin")}>
         <form
           className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto_auto]"
           onSubmit={(e) => {
@@ -60,20 +61,20 @@ export function AdminsPage({ me }: { me: AdminView }) {
         >
           <Input
             type="email"
-            placeholder="Email"
+            placeholder={t("Email")}
             required
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
           <Input
-            placeholder="Name"
+            placeholder={t("Name")}
             required
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
           <Input
             type="password"
-            placeholder="Password (10+ characters)"
+            placeholder={t("Password (10+ characters)")}
             minLength={10}
             required
             autoComplete="new-password"
@@ -81,15 +82,16 @@ export function AdminsPage({ me }: { me: AdminView }) {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
           <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as AdminRole })}>
-            <option value="support">Support</option>
-            <option value="owner">Owner</option>
+            <option value="support">{t("Support")}</option>
+            <option value="owner">{t("Owner")}</option>
           </Select>
-          <Button disabled={create.isPending}>Add</Button>
+          <Button disabled={create.isPending}>{t("Add")}</Button>
         </form>
         <ErrorText error={create.error} />
         <p className="mt-2 text-xs text-muted-foreground">
-          Support can look up customers, extend licenses and manage PCs. Only owners can block accounts and
-          manage admins.
+          {t(
+            "Support can look up customers, extend licenses and manage PCs. Only owners can block accounts and manage admins.",
+          )}
         </p>
       </Section>
     </div>
