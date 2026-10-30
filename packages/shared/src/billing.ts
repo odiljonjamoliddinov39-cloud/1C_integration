@@ -2,6 +2,7 @@
  * Tariffs and billing (docs/billing.md): what a plan allows, what an account may do now, and what the
  * customer pays. Prices are whole sum, VAT excluded unless a field says otherwise.
  */
+import { CreditsSummary } from "./credits.js";
 import { z } from "zod";
 
 export const PlanCode = z.enum(["free", "start", "business", "firm", "custom"]);
@@ -54,6 +55,8 @@ export const EntitlementsResponse = z.object({
   cancelAtPeriodEnd: z.boolean(),
   /** The website's cabinet, where "Upgrade" leads (null when the server does not know the site). */
   cabinetUrl: z.string().nullable(),
+  /** The AI credit balance (absent when the server still counts AI use in questions). */
+  credits: CreditsSummary.optional(),
 });
 export type EntitlementsResponse = z.infer<typeof EntitlementsResponse>;
 
@@ -74,6 +77,8 @@ export const PlanView = z.object({
   importsPerMonth: z.number().nullable(),
   auditsPerMonth: z.number().nullable(),
   aiQuestionsPerMonth: z.number(),
+  /** The AI credits the plan adds each month. */
+  monthlyCredits: z.number().default(0),
   features: z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),
@@ -112,7 +117,7 @@ export const CatalogResponse = z.object({
 export type CatalogResponse = z.infer<typeof CatalogResponse>;
 
 export const InvoiceItemView = z.object({
-  kind: z.enum(["plan", "upgrade", "addon"]),
+  kind: z.enum(["plan", "upgrade", "addon", "credits"]),
   code: z.string(),
   title: z.string(),
   quantity: z.number(),

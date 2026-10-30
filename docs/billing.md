@@ -19,7 +19,7 @@ Four plans, in the `plans` table (the admin dashboard edits them: **Plans**; no 
 
 The yearly price is always the monthly one for 10 months (12 for 10): it is worked out wherever it is used (catalog, invoices, revenue) and when a plan is saved, so whatever the form sends for it is ignored. The admin form shows it as you type the monthly price; the pricing page's yearly view shows the monthly equivalent, the saving and each monthly limit with its yearly total.
 
-Prices exclude VAT (`VAT_PERCENT`, 12): invoices show it as its own line. Add-ons: extra company
+No VAT is added: the price of a plan is the price paid (`VAT_PERCENT` defaults to 0; set it to add VAT as its own invoice line). Add-ons: extra company
 390 000 / month, extra user 150 000 / month, extra 100 AI questions 390 000 (one-off, valid to the end
 of the period). Over 10 companies: a `custom` plan made by hand in the dashboard (hidden from the
 pricing page, then put on an account from **Subscriptions**).
@@ -78,6 +78,38 @@ Imports are saved unposted: what the assistant creates from attached files is wr
 the question itself asks for posting. XML documents (Didox ЭСФ) are sent without the indentation between
 tags. The files stay in the chat until the question ends, because a job in several cards needs them for
 each card; they are cached, so resending them is cheap.
+
+## AI credits (TZ "AI Buxgalter kredit tizimi")
+
+One balance per account replaces the question count and the dollar budget. **1 credit = $0.01**; the customer sees credits and
+their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-budget path (the old code is kept for that).
+
+- **Spending.** After every AI call its real cost (`costUsd / 0.01`) leaves the balance as an `ai_usage` transaction tied to the
+  usage row. Answers from templates and the answer cache cost nothing. The balance is checked _before_ a step, so an answer
+  already being written is never cut; it may take the balance under zero and the next call is refused with
+  `AI_BUDGET_EXCEEDED`. A low balance (under 500 credits or 20% of the plan's monthly credits, the smaller) warns once
+  (`AI_CREDITS_LOW`, event `credits_low`) until the balance recovers.
+- **Plan credits.** Free 500, Start 3 040, Business 8 110, Firm 19 930 a month (`plans.monthly_credits`, editable in the admin's
+  Plans page); the trial gives 1 500 once per account and per company INN. They are added lazily, once per billing period
+  (`credit_transactions.period_key` is unique per account and type). Unused credits carry over (a `rollover` record each month);
+  the balance never goes over **50 000 credits** ($500): monthly credits and purchases stop at it.
+- **Price.** `credit_rate_history` holds every price. A daily job reads the CBU USD rate; the price is
+  `round10(rate × 0.01 × 1.013)` and is changed only when the rate has moved 5% from the rate of the last change. The starting
+  price is 120 soum (rate 11 839). An owner admin can set a price by hand (with a reason); it stays until the rate moves 5%.
+- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price, paid
+  by Payme, Click or bank transfer; credits are added once when the invoice is paid.
+- **Auto-recharge** is off by default and not available on Free. It needs a saved card; at zero balance the card is charged
+  through the `CardCharger` interface. A failure is written to `credit_recharge_failures`, raises the `auto_recharge_failed`
+  event and shows in the admin Credits page. **The real card charge is not built:** the default charger always fails
+  (Payme/Click card tokens and merchant access are needed); the tests use a fake one.
+- **Migration.** At start (with `BILLING_JOBS=on`) accounts without a balance get the share of their plan's credits that is left
+  of the month's questions.
+- **API.** `GET /v1/billing/credits`, `POST /v1/billing/credits/purchase`, `POST /v1/billing/credits/auto-recharge`;
+  admin: `GET /v1/admin/credits` (report, rate history, failures), `GET /v1/admin/credits/by-account/:id`,
+  `POST /v1/admin/credits/:id/adjust` (reason required, never below zero, audited), `POST /v1/admin/credits/rate`.
+  `GET /v1/billing/entitlements` carries `credits` for the desktop sidebar.
+- **Not charged:** the engine's own reasoner calls (they are not an answer to a customer's question). No e-mail or Telegram
+  notice exists yet: the customer sees the banner in the cabinet and the warning in the app.
 
 ## Rules from the design (section 10)
 

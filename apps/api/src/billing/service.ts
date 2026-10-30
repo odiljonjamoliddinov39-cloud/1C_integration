@@ -19,6 +19,7 @@ import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
 import { addons, aiQuestionCharges, companies, plans, usageCounters, users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
+import type { Credits } from "./credits.js";
 import type { Billing } from "./entitlements.js";
 
 type Field = "imports" | "audits" | "ai_questions";
@@ -36,6 +37,7 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
     importsPerMonth: p.importsPerMonth,
     auditsPerMonth: p.auditsPerMonth,
     aiQuestionsPerMonth: p.aiQuestionsPerMonth,
+    monthlyCredits: p.monthlyCredits,
     features: {
       excelExport: p.features.excelExport ?? false,
       prioritySupport: p.features.prioritySupport ?? false,
@@ -105,8 +107,12 @@ export class BillingService {
       pendingPlan: pending?.code ?? null,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
       cabinetUrl: this.config.SITE_URL ? `${this.config.SITE_URL}/cabinet` : null,
+      ...(this.credits?.enabled ? { credits: await this.credits.summary(accountId) } : {}),
     };
   }
+
+  /** The AI credit balance, set by the app once it is built (the balance needs the invoicing this service is made beside). */
+  credits: Credits | null = null;
 
   private enforced(): boolean {
     return this.config.PLAN_LIMITS === "on";

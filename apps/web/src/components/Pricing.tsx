@@ -47,7 +47,9 @@ export function Pricing({ locale }: { locale: Locale }) {
           ? limit(plan.auditsPerMonth, year)
           : `${plan.auditsPerMonth} ${t.rows.perMonthShort}`,
     ],
-    [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
+    plan.monthlyCredits > 0
+      ? [t.rows.credits, limit(plan.monthlyCredits, year)]
+      : [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
     [t.rows.excel, plan.features.excelExport ? "✓" : "—"],
     [t.rows.support, t.support[plan.features.support] ?? plan.features.support],
   ];
@@ -130,7 +132,7 @@ export function Pricing({ locale }: { locale: Locale }) {
       </div>
 
       <p className="mt-4 text-sm text-muted-foreground">{t.custom}</p>
-      <p className="mt-1 text-sm text-muted-foreground">{t.vat}</p>
+      {data.vatPercent > 0 && <p className="mt-1 text-sm text-muted-foreground">{t.vat}</p>}
 
       <section className="mt-12">
         <h2 className="text-2xl font-bold">{t.addonsTitle}</h2>

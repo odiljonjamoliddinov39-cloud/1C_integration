@@ -23,6 +23,7 @@ const toInput = (p: PlanView): PlanSaveInput => ({
   importsPerMonth: p.importsPerMonth,
   auditsPerMonth: p.auditsPerMonth,
   aiQuestionsPerMonth: p.aiQuestionsPerMonth,
+  monthlyCredits: p.monthlyCredits,
   features: p.features,
   isPublic: p.isPublic,
   sortOrder: p.sortOrder,
@@ -38,6 +39,7 @@ const NEW_PLAN: PlanSaveInput = {
   importsPerMonth: null,
   auditsPerMonth: null,
   aiQuestionsPerMonth: 1500,
+  monthlyCredits: 19_930,
   features: { excelExport: true, prioritySupport: true, support: "manager", telegram: true },
   isPublic: false,
   sortOrder: 50,
@@ -129,7 +131,9 @@ function PlanEditor({
       {node}
     </label>
   );
-  const numeric = (key: "priceMonthSum" | "companies" | "users" | "aiQuestionsPerMonth" | "sortOrder") => (
+  const numeric = (
+    key: "priceMonthSum" | "companies" | "users" | "aiQuestionsPerMonth" | "monthlyCredits" | "sortOrder",
+  ) => (
     <Input
       type="number"
       min={0}
@@ -193,6 +197,13 @@ function PlanEditor({
           <>
             {numeric("aiQuestionsPerMonth")}
             {perYear(form.aiQuestionsPerMonth)}
+          </>,
+        )}
+        {field(
+          t("AI credits / month"),
+          <>
+            {numeric("monthlyCredits")}
+            {perYear(form.monthlyCredits)}
           </>,
         )}
         {field(t("Imports / month"), nullable("importsPerMonth"))}

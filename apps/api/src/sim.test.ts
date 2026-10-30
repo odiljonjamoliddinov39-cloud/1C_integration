@@ -66,6 +66,8 @@ describe.skipIf(!available)("simulation: fake accounts use the AI", () => {
     db = createDb(url);
     await runMigrations(db.db);
     const config = loadConfig({
+      // These tests cover the older question quota and dollar budget; the credit balance has its own (credits.test.ts).
+      AI_CREDITS: "off",
       DATABASE_URL: url,
       JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),

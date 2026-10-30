@@ -13,6 +13,8 @@ export const PlanSaveInput = z.object({
   importsPerMonth: z.number().int().min(0).nullable(),
   auditsPerMonth: z.number().int().min(0).nullable(),
   aiQuestionsPerMonth: z.number().int().min(0).max(1_000_000),
+  /** The AI credits the plan adds each month. */
+  monthlyCredits: z.number().int().min(0).max(1_000_000).default(0),
   features: z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),

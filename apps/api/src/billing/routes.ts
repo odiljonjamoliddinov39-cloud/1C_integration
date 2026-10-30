@@ -1,12 +1,14 @@
 /** Customer-facing billing routes: plans, entitlements, companies, users and the usage counters. */
 import {
   AuditRunInput,
+  AutoRechargeInput,
   ChangePlanInput,
   CheckoutInput,
   CompanyInput,
   ImportInput,
   InviteUserInput,
   PaymentProvider,
+  PurchaseCreditsInput,
 } from "@platform/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -16,12 +18,14 @@ import type { Db } from "../db/client.js";
 import { users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { ClickMerchant } from "./click.js";
+import type { Credits } from "./credits.js";
 import type { Invoicing } from "./invoicing.js";
 import { PAYME_NOT_POST, PAYME_PARSE_ERROR, PAYME_SYSTEM_ERROR, type PaymeMerchant } from "./payme.js";
 import type { BillingService } from "./service.js";
 
 export interface RouteDeps {
   db: Db;
+  credits: Credits;
   billing: BillingService;
   invoicing: Invoicing;
   payme: PaymeMerchant;
@@ -108,6 +112,16 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
   app.post("/v1/billing/cancel", async (req) => invoicing.cancel((await owner(req)).accountId));
   app.post("/v1/billing/resume", async (req) => invoicing.resume((await owner(req)).accountId));
   app.get("/v1/billing/invoices", async (req) => invoicing.listInvoices((await owner(req)).accountId));
+
+  // AI credits: the balance with its history, buying more, and auto-recharge (owner only for changes).
+  app.get("/v1/billing/credits", async (req) => deps.credits.view((await deps.auth(req)).accountId));
+  app.post("/v1/billing/credits/purchase", async (req) => {
+    const input = parse(PurchaseCreditsInput, req.body);
+    return deps.credits.purchase((await owner(req)).accountId, input.credits, input.provider);
+  });
+  app.post("/v1/billing/credits/auto-recharge", async (req) =>
+    deps.credits.saveAutoRecharge((await owner(req)).accountId, parse(AutoRechargeInput, req.body)),
+  );
 
   // Pays an invoice that already exists (a renewal, or one made earlier): picks the provider.
   app.post("/v1/billing/invoices/:id/checkout", async (req) => {

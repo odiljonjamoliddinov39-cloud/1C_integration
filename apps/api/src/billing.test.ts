@@ -74,12 +74,15 @@ describe.skipIf(!available)("tariffs", () => {
     db = createDb(url);
     await runMigrations(db.db);
     config = loadConfig({
+      // These tests cover the older question quota and dollar budget; the credit balance has its own (credits.test.ts).
+      AI_CREDITS: "off",
       DATABASE_URL: url,
       JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
       LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
       LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
       ENTITLEMENTS_CACHE_SECONDS: "0",
+      VAT_PERCENT: "12", // the VAT logic stays configurable; the product default is 0
       BILLING_JOBS: "off",
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",

@@ -134,6 +134,13 @@
       "when": 1793085985227,
       "tag": "0018_remote_plan_features",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793336499318,
+      "tag": "0019_ai_credits",
+      "breakpoints": true
     }
   ]
 }

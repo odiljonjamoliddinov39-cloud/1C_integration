@@ -5,6 +5,7 @@ export * from "./ai.js";
 export * from "./admin.js";
 export * from "./ai-policy.js";
 export * from "./billing.js";
+export * from "./credits.js";
 export * from "./admin-billing.js";
 export * from "./seed-templates.js";
 export * from "./knowledge.js";

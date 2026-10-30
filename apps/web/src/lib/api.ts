@@ -7,6 +7,8 @@ import {
   CatalogResponse,
   ChangePlanResponse,
   CheckoutResponse,
+  CreditsView,
+  AutoRechargeSettings,
   DeviceView,
   EntitlementsResponse,
   InvoiceView,
@@ -207,3 +209,15 @@ export async function openInvoicePrint(id: string): Promise<void> {
   const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/html" }));
   window.open(url, "_blank");
 }
+
+// --- AI credits --------------------------------------------------------------------------------
+
+export const credits = () => authorized("GET", "/v1/billing/credits", CreditsView);
+export const purchaseCredits = (input: { credits: number; provider: "payme" | "click" | "bank" }) =>
+  authorized("POST", "/v1/billing/credits/purchase", CheckoutResponse, input);
+export const saveAutoRecharge = (input: {
+  enabled: boolean;
+  thresholdCredits: number;
+  amountCredits: number;
+  method: "payme" | "click" | null;
+}) => authorized("POST", "/v1/billing/credits/auto-recharge", AutoRechargeSettings, input);

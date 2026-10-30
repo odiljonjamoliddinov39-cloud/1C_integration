@@ -17,8 +17,8 @@ const Env = z.object({
     .string()
     .optional()
     .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
-  /** VAT added to every invoice (shown separately); prices of the plans exclude it. */
-  VAT_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  /** VAT added to every invoice (shown separately). 0: the price of a plan is the price paid, nothing is added. */
+  VAT_PERCENT: z.coerce.number().min(0).max(100).default(0),
   /** Days an invoice can be paid before it expires (a late payment is still accepted). */
   INVOICE_DUE_DAYS: z.coerce.number().int().min(1).default(3),
   /** Payme Merchant API (docs/billing.md): off until both are set. The key signs the webhook's Basic auth. */
@@ -78,6 +78,8 @@ const Env = z.object({
    * real AI cost (an ordinary question, under it, is 1). 0: every question counts as 1.
    */
   AI_QUESTION_UNIT_USD: z.coerce.number().min(0).default(0.5),
+  /** "on": AI use is paid from the account's credits (TZ credit system); "off": the older question quota and dollar budget. */
+  AI_CREDITS: z.enum(["on", "off"]).default("on"),
   /** How long a computed set of limits is reused (0: never; tests use 0). */
   ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */

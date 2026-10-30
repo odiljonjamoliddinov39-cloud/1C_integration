@@ -32,6 +32,7 @@ import { HttpError } from "../lib/errors.js";
 import { type Billing, type PlanRow, type Resolved, stateOf } from "./entitlements.js";
 import { addDays, daysBetween, periodEndOf, roundUpThousand } from "./period.js";
 import { clickCheckout, clickEnabled } from "./click.js";
+import { grantPurchase } from "./credits.js";
 import { paymeCheckoutUrl } from "./payme.js";
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -256,6 +257,38 @@ export class Invoicing {
       }
     }
     return { items, intent, ...this.totals(items, discountSum) };
+  }
+
+  // --- AI credits -------------------------------------------------------------------------------
+
+  /** What `credits` AI credits cost at `somPerCredit`: one line, VAT added like on every invoice. */
+  async creditsQuote(accountId: string, credits: number, somPerCredit: number): Promise<Quote> {
+    void accountId;
+    const items: InvoiceItem[] = [
+      {
+        kind: "credits",
+        code: "credits",
+        title: `${credits} AI credits (${somPerCredit} soum each)`,
+        quantity: credits,
+        amountSum: credits * somPerCredit,
+      },
+    ];
+    return { items, intent: { type: "credits", credits }, ...this.totals(items, 0) };
+  }
+
+  /** POST /v1/billing/credits/purchase: an invoice for the credits and where to pay it. */
+  async creditsCheckout(
+    accountId: string,
+    credits: number,
+    somPerCredit: number,
+    provider: "payme" | "click" | "bank",
+  ): Promise<CheckoutResponse> {
+    if (provider !== "bank" && !this.providers().includes(provider)) {
+      throw refuse(409, "PROVIDER_UNAVAILABLE", "Card payment is not available yet: pay by bank transfer");
+    }
+    const quote = await this.creditsQuote(accountId, credits, somPerCredit);
+    const invoice = await this.createInvoice(accountId, quote, provider);
+    return this.checkoutOf(invoice, provider);
   }
 
   // --- invoices ---------------------------------------------------------------------------------
@@ -623,6 +656,14 @@ export class Invoicing {
     if (!sub) throw new HttpError(402, "NO_SUBSCRIPTION", "The account has no subscription");
     const stateNow = stateOf(sub, now);
 
+    if (intent.type === "credits") {
+      const credits = intent.credits ?? 0;
+      if (credits <= 0) return;
+      await grantPurchase(tx, accountId, credits, invoice ? invoiceNumber(invoice.number) : "credits");
+      await this.event(accountId, "credits_purchased", { credits }, tx);
+      return;
+    }
+
     if (intent.type === "addon") {
       if (!intent.addonCode) return;
       const validFrom = now;
@@ -775,7 +816,7 @@ table{width:100%;border-collapse:collapse;margin:16px 0}td,th{padding:8px;border
 <table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>${lines}
 <tr class="tot"><td colspan="2">Subtotal</td><td class="n">${sum(row.subtotalSum)}</td></tr>
 ${row.discountSum > 0 ? `<tr class="tot"><td colspan="2">Discount</td><td class="n">−${sum(row.discountSum)}</td></tr>` : ""}
-<tr class="tot"><td colspan="2">VAT ${this.config.VAT_PERCENT}%</td><td class="n">${sum(row.vatSum)}</td></tr>
+${row.vatSum > 0 ? `<tr class="tot"><td colspan="2">VAT ${this.config.VAT_PERCENT}%</td><td class="n">${sum(row.vatSum)}</td></tr>` : ""}
 <tr class="tot"><td colspan="2">Total</td><td class="n">${sum(row.totalSum)}</td></tr></tbody></table>
 ${requisites ? `<h2>Bank requisites</h2><p>${requisites}<br>Payment purpose: Invoice ${invoiceNumber(row.number)}</p>` : ""}
 </body></html>`;
