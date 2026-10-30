@@ -12,7 +12,12 @@ import { createRequire } from "node:module";
 
 import type { PlatformFunction } from "@platform/shared";
 
-import { type ConnectionOptions, buildConnectionString, describeInfobase } from "./connection-string.js";
+import {
+  type ConnectionOptions,
+  buildConnectionString,
+  describeCredentials,
+  describeInfobase,
+} from "./connection-string.js";
 import { OneCError } from "./errors.js";
 import type { PlatformTransport } from "./transport.js";
 
@@ -77,7 +82,8 @@ export class ComTransport implements PlatformTransport {
       // 1C explains the reason itself: wrong user or password, base not found, exclusive mode, no license.
       throw new OneCError(
         "CONNECT_FAILED",
-        `Cannot connect to ${describeInfobase(options.infobase)}: ${comMessage(e)}`,
+        `Cannot connect to ${describeInfobase(options.infobase)}: ${comMessage(e)} ` +
+          `[sent: ${describeCredentials(options.user, options.password)}]`,
       );
     }
     return new ComTransport(winax, connector, connection);
