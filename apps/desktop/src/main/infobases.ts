@@ -4,7 +4,7 @@
  * chosen folder, and reads the list of bases the 1C launcher already knows (ibases.v8i).
  */
 import { readFile, readdir, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { RegisteredInfobase } from "../shared/ipc.js";
 
@@ -13,6 +13,8 @@ export const DB_FILE = "1Cv8.1CD";
 /** How far below the chosen folder to look, and how many folders to open at most (a Downloads folder can be big). */
 const MAX_DEPTH = 3;
 const MAX_FOLDERS = 3000;
+/** The whole search may take this long (a network share that does not answer). */
+export const RESOLVE_TIMEOUT_MS = 15_000;
 const SKIP = new Set([
   "node_modules",
   "$recycle.bin",
@@ -25,7 +27,7 @@ export type ResolvedInfobase =
   | { ok: true; folder: string; changed: boolean }
   | {
       ok: false;
-      code: "INFOBASE_NOT_FOUND" | "INFOBASE_FOLDER_MISSING" | "INFOBASE_AMBIGUOUS";
+      code: "INFOBASE_NOT_FOUND" | "INFOBASE_FOLDER_MISSING" | "INFOBASE_AMBIGUOUS" | "INFOBASE_TIMEOUT";
       message: string;
       candidates: string[];
     };
@@ -83,7 +85,19 @@ async function findBelow(root: string): Promise<string[]> {
  * The folder of the base for what the user entered: the folder itself when it holds 1Cv8.1CD; the folder of the file
  * when a .1CD file was given; otherwise the one base found below it. More than one, or none, is a clear refusal.
  */
-export async function resolveInfobaseFolder(input: string): Promise<ResolvedInfobase> {
+export function resolveInfobaseFolder(input: string): Promise<ResolvedInfobase> {
+  // A slow or disconnected network share must not leave the dialog waiting for ever.
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<ResolvedInfobase>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ ok: false, code: "INFOBASE_TIMEOUT", message: cleanPath(input), candidates: [] }),
+      RESOLVE_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([resolveFolder(input), timeout]).finally(() => clearTimeout(timer));
+}
+
+async function resolveFolder(input: string): Promise<ResolvedInfobase> {
   const path = cleanPath(input);
   // The message is only the data (the folder, the folders found): the screen words the reason in the user's language.
   const notFound = (message: string): ResolvedInfobase => ({
@@ -97,11 +111,9 @@ export async function resolveInfobaseFolder(input: string): Promise<ResolvedInfo
   const info = await stat(path).catch(() => null);
   if (!info) return { ok: false, code: "INFOBASE_FOLDER_MISSING", message: path, candidates: [] };
   if (info.isFile()) {
-    // The file of the base (or any file in its folder): the base is the folder it lies in.
+    // Only the base's own file (1Cv8.1CD) names a base: its folder is the base. Any other file is not a base.
     folder = dirname(path);
-    if (!(await holdsDb(folder))) {
-      return notFound(folder);
-    }
+    if (!isDbFile(basename(path))) return notFound(path);
     return { ok: true, folder, changed: true };
   }
   if (await holdsDb(folder)) return { ok: true, folder, changed: folder !== input };

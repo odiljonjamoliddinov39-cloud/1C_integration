@@ -594,6 +594,8 @@ const en = {
     INFOBASE_NOT_FOUND:
       "No 1C base was found in this folder (there is no 1Cv8.1CD in it or in the folders below it). Choose the folder of the base, or pick one from the list of bases on this PC:",
     INFOBASE_FOLDER_MISSING: "This folder does not exist:",
+    INFOBASE_TIMEOUT:
+      "The folder did not answer in time (a network drive that is slow or not connected?). Check the connection, or choose a folder on this PC:",
     INFOBASE_AMBIGUOUS: "This folder holds more than one 1C base. Choose one of them:",
     NOT_FOUND: "The PlatformAPI extension is not installed in this infobase.",
     BAD_RESPONSE: "1C answered in an unexpected format (check the extension version).",
@@ -1243,6 +1245,8 @@ const ru: Dict = {
     INFOBASE_NOT_FOUND:
       "В этой папке не найдена база 1С (нет файла 1Cv8.1CD ни в ней, ни в папках ниже). Выберите папку самой базы или выберите базу из списка баз на этом ПК:",
     INFOBASE_FOLDER_MISSING: "Такой папки нет:",
+    INFOBASE_TIMEOUT:
+      "Папка не ответила вовремя (медленный или отключённый сетевой диск?). Проверьте подключение или выберите папку на этом ПК:",
     INFOBASE_AMBIGUOUS: "В этой папке несколько баз 1С. Выберите одну из них:",
     NOT_FOUND: "В базе не установлено расширение PlatformAPI.",
     BAD_RESPONSE: "1С ответила в неожиданном формате (проверьте версию расширения).",
@@ -1901,6 +1905,8 @@ const uz: Dict = {
     INFOBASE_NOT_FOUND:
       "Bu papkada 1C bazasi topilmadi (unda ham, ichidagi papkalarda ham 1Cv8.1CD fayli yoʻq). Bazaning oʻz papkasini tanlang yoki shu kompyuterdagi bazalar roʻyxatidan tanlang:",
     INFOBASE_FOLDER_MISSING: "Bunday papka yoʻq:",
+    INFOBASE_TIMEOUT:
+      "Papka oʻz vaqtida javob bermadi (sekin yoki ulanmagan tarmoq diski?). Ulanishni tekshiring yoki shu kompyuterdagi papkani tanlang:",
     INFOBASE_AMBIGUOUS: "Bu papkada bir nechta 1C bazasi bor. Bittasini tanlang:",
     NOT_FOUND: "Bazada PlatformAPI kengaytmasi oʻrnatilmagan.",
     BAD_RESPONSE: "1C kutilmagan formatda javob berdi (kengaytma versiyasini tekshiring).",

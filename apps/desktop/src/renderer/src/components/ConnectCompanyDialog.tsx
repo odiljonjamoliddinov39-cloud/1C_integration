@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ConnectionInput, ConnectionTestResult, InfobaseInput } from "../../../shared/ipc";
@@ -37,6 +37,12 @@ export function ConnectCompanyDialog({
   const found = (result: ConnectionTestResult) => {
     if (result.resolvedFile) setFile(result.resolvedFile);
   };
+  // What the form holds now, so an answer to an earlier request (the user changed the base meanwhile) is dropped.
+  const key = JSON.stringify([kind, file, server, ref, user, password]);
+  const current = useRef(key);
+  useEffect(() => {
+    current.current = key;
+  }, [key]);
 
   const connection = (): ConnectionInput => ({
     infobase: kind === "file" ? { kind, file } : { kind, server, ref },
@@ -52,16 +58,24 @@ export function ConnectCompanyDialog({
 
   const showLimit = useLimitDialog();
   const runTest = useMutation({
-    mutationFn: () => window.platform.companies.testConnection(connection()),
-    onSuccess: (result) => {
+    mutationFn: async () => ({
+      asked: current.current,
+      result: await window.platform.companies.testConnection(connection()),
+    }),
+    onSuccess: ({ asked, result }) => {
+      if (asked !== current.current) return;
       found(result);
       setTest(result);
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
   });
   const install = useMutation({
-    mutationFn: () => window.platform.companies.installExtension(connection()),
-    onSuccess: (result) => {
+    mutationFn: async () => ({
+      asked: current.current,
+      result: await window.platform.companies.installExtension(connection()),
+    }),
+    onSuccess: ({ asked, result }) => {
+      if (asked !== current.current) return;
       found(result);
       setTest(result);
       setOrganizationRef(result.organizations[0]?.ref ?? "");

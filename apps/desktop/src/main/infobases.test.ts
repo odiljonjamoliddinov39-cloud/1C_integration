@@ -34,6 +34,15 @@ describe("resolveInfobaseFolder", () => {
     });
   });
 
+  it("does not take an unrelated file for a base, even beside a base", async () => {
+    const folder = base("TEST");
+    writeFileSync(join(folder, "readme.txt"), "x");
+    expect(await resolveInfobaseFolder(join(folder, "readme.txt"))).toMatchObject({
+      ok: false,
+      code: "INFOBASE_NOT_FOUND",
+    });
+  });
+
   it("finds the one base below the folder that was chosen (the Downloads case)", async () => {
     const folder = base("Downloads", "Bases", "TEST_CRYSTAL");
     mkdirSync(join(root, "Downloads", "Other"), { recursive: true });
