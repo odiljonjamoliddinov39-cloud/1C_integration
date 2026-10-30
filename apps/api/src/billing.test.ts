@@ -82,6 +82,7 @@ describe.skipIf(!available)("tariffs", () => {
       LOG_LEVEL: process.env.TEST_LOG ?? "silent",
       AUTH_RATE_PER_MINUTE: "1000",
       ENTITLEMENTS_CACHE_SECONDS: "0",
+      VAT_PERCENT: "12", // the VAT logic stays configurable; the product default is 0
       BILLING_JOBS: "off",
       PAYME_MERCHANT_ID: "merchant-1",
       PAYME_KEY: "payme-secret-key",

@@ -132,7 +132,7 @@ export function Pricing({ locale }: { locale: Locale }) {
       </div>
 
       <p className="mt-4 text-sm text-muted-foreground">{t.custom}</p>
-      <p className="mt-1 text-sm text-muted-foreground">{t.vat}</p>
+      {data.vatPercent > 0 && <p className="mt-1 text-sm text-muted-foreground">{t.vat}</p>}
 
       <section className="mt-12">
         <h2 className="text-2xl font-bold">{t.addonsTitle}</h2>

@@ -279,7 +279,7 @@ describe.skipIf(!available)("AI credits", () => {
     expect(view.history.some((h) => h.type === "trial_grant" && h.amountCredits > 0)).toBe(false);
   });
 
-  it("sells credits by invoice: price at today's rate, VAT on top, added once when paid", async () => {
+  it("sells credits by invoice: price at today's rate (no VAT by default), added once when paid", async () => {
     const { token, accountId } = await register();
     await setPlan(accountId, "start");
     const bought = await call("POST", "/v1/billing/credits/purchase", token, {

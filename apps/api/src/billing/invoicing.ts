@@ -816,7 +816,7 @@ table{width:100%;border-collapse:collapse;margin:16px 0}td,th{padding:8px;border
 <table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Amount</th></tr></thead><tbody>${lines}
 <tr class="tot"><td colspan="2">Subtotal</td><td class="n">${sum(row.subtotalSum)}</td></tr>
 ${row.discountSum > 0 ? `<tr class="tot"><td colspan="2">Discount</td><td class="n">−${sum(row.discountSum)}</td></tr>` : ""}
-<tr class="tot"><td colspan="2">VAT ${this.config.VAT_PERCENT}%</td><td class="n">${sum(row.vatSum)}</td></tr>
+${row.vatSum > 0 ? `<tr class="tot"><td colspan="2">VAT ${this.config.VAT_PERCENT}%</td><td class="n">${sum(row.vatSum)}</td></tr>` : ""}
 <tr class="tot"><td colspan="2">Total</td><td class="n">${sum(row.totalSum)}</td></tr></tbody></table>
 ${requisites ? `<h2>Bank requisites</h2><p>${requisites}<br>Payment purpose: Invoice ${invoiceNumber(row.number)}</p>` : ""}
 </body></html>`;

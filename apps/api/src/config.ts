@@ -17,8 +17,8 @@ const Env = z.object({
     .string()
     .optional()
     .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
-  /** VAT added to every invoice (shown separately); prices of the plans exclude it. */
-  VAT_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  /** VAT added to every invoice (shown separately). 0: the price of a plan is the price paid, nothing is added. */
+  VAT_PERCENT: z.coerce.number().min(0).max(100).default(0),
   /** Days an invoice can be paid before it expires (a late payment is still accepted). */
   INVOICE_DUE_DAYS: z.coerce.number().int().min(1).default(3),
   /** Payme Merchant API (docs/billing.md): off until both are set. The key signs the webhook's Basic auth. */

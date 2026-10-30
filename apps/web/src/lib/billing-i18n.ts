@@ -4,7 +4,7 @@ import type { Locale } from "./i18n";
 const uz = {
   pricing: {
     title: "Narxlar",
-    subtitle: "Bepul boshlang, kerak boʻlganda tarifni oshiring. Narxlar QQSsiz, soʻmda.",
+    subtitle: "Bepul boshlang, kerak boʻlganda tarifni oshiring. Narxlar soʻmda.",
     month: "Oyiga",
     year: "Yiliga",
     toggleMonth: "Oylik",
@@ -89,7 +89,7 @@ const uz = {
     invoices: "Hisob-fakturalar",
     noInvoices: "Hisob-fakturalar yoʻq.",
     number: "Raqam",
-    amount: "Summa (QQS bilan)",
+    amount: "Summa",
     invoiceStatus: {
       pending: "Kutilmoqda",
       paid: "Toʻlangan",
@@ -121,7 +121,7 @@ const uz = {
         "Bepul tarifda kreditlar har oy qoʻshiladi. Qoʻshimcha kredit sotib olish uchun pullik tarifni tanlang.",
       buyTitle: "Kredit sotib olish",
       buyAmount: "Kreditlar soni (kamida {min})",
-      buyTotal: "{credits} kredit = {sum} (QQSsiz)",
+      buyTotal: "{credits} kredit = {sum}",
       buy: "Hisob-faktura olish",
       autoTitle: "Avtomatik toʻldirish",
       autoOff: "Oʻchirilgan. Yoqsangiz, balans chegaradan tushganda karta bilan avtomatik toʻldiriladi.",
@@ -167,7 +167,7 @@ const uz = {
 const ru: typeof uz = {
   pricing: {
     title: "Тарифы",
-    subtitle: "Начните бесплатно и переходите на платный тариф, когда понадобится. Цены в сумах, без НДС.",
+    subtitle: "Начните бесплатно и переходите на платный тариф, когда понадобится. Цены в сумах.",
     month: "В месяц",
     year: "В год",
     toggleMonth: "Помесячно",
@@ -249,7 +249,7 @@ const ru: typeof uz = {
     invoices: "Счета",
     noInvoices: "Счетов нет.",
     number: "Номер",
-    amount: "Сумма (с НДС)",
+    amount: "Сумма",
     invoiceStatus: { pending: "Ожидает", paid: "Оплачен", cancelled: "Отменён", expired: "Просрочен" },
     pay: "Оплатить",
     print: "PDF / печать",
@@ -276,7 +276,7 @@ const ru: typeof uz = {
         "На бесплатном тарифе кредиты добавляются каждый месяц. Чтобы докупать кредиты, выберите платный тариф.",
       buyTitle: "Купить кредиты",
       buyAmount: "Количество кредитов (от {min})",
-      buyTotal: "{credits} кредитов = {sum} (без НДС)",
+      buyTotal: "{credits} кредитов = {sum}",
       buy: "Выставить счёт",
       autoTitle: "Автопополнение",
       autoOff:

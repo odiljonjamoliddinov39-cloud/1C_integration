@@ -426,9 +426,8 @@ export const RU: Record<string, string> = {
   off: "выкл.",
   owner: "владелец",
   paid: "оплачен",
-  "paid invoices, VAT included": "оплаченные счета, включая НДС",
-  "paid plans and recurring add-ons per month, VAT excluded":
-    "платные тарифы и регулярные дополнения в месяц, без НДС",
+  "paid invoices": "оплаченные счета",
+  "paid plans and recurring add-ons per month": "платные тарифы и регулярные дополнения в месяц",
   pending: "ожидает",
   percent: "процент",
   "saves {amount}": "экономия {amount}",

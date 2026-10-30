@@ -19,7 +19,7 @@ Four plans, in the `plans` table (the admin dashboard edits them: **Plans**; no 
 
 The yearly price is always the monthly one for 10 months (12 for 10): it is worked out wherever it is used (catalog, invoices, revenue) and when a plan is saved, so whatever the form sends for it is ignored. The admin form shows it as you type the monthly price; the pricing page's yearly view shows the monthly equivalent, the saving and each monthly limit with its yearly total.
 
-Prices exclude VAT (`VAT_PERCENT`, 12): invoices show it as its own line. Add-ons: extra company
+No VAT is added: the price of a plan is the price paid (`VAT_PERCENT` defaults to 0; set it to add VAT as its own invoice line). Add-ons: extra company
 390 000 / month, extra user 150 000 / month, extra 100 AI questions 390 000 (one-off, valid to the end
 of the period). Over 10 companies: a `custom` plan made by hand in the dashboard (hidden from the
 pricing page, then put on an account from **Subscriptions**).
@@ -96,7 +96,7 @@ their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-b
 - **Price.** `credit_rate_history` holds every price. A daily job reads the CBU USD rate; the price is
   `round10(rate × 0.01 × 1.013)` and is changed only when the rate has moved 5% from the rate of the last change. The starting
   price is 120 soum (rate 11 839). An owner admin can set a price by hand (with a reason); it stays until the rate moves 5%.
-- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price, plus VAT, paid
+- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price, paid
   by Payme, Click or bank transfer; credits are added once when the invoice is paid.
 - **Auto-recharge** is off by default and not available on Free. It needs a saved card; at zero balance the card is charged
   through the `CardCharger` interface. A failure is written to `credit_recharge_failures`, raises the `auto_recharge_failed`

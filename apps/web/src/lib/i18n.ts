@@ -106,7 +106,7 @@ const uz = {
   },
   pricing: {
     title: "Narxlar",
-    subtitle: "Bepul boshlang, kerak boʻlganda tarifni oshiring. Narxlar QQSsiz, soʻmda.",
+    subtitle: "Bepul boshlang, kerak boʻlganda tarifni oshiring. Narxlar soʻmda.",
     trial: {
       name: "Sinov",
       price: "0 soʻm",
@@ -323,7 +323,7 @@ const ru: Dict = {
   },
   pricing: {
     title: "Цены",
-    subtitle: "Начните бесплатно и переходите на платный тариф, когда понадобится. Цены в сумах, без НДС.",
+    subtitle: "Начните бесплатно и переходите на платный тариф, когда понадобится. Цены в сумах.",
     trial: {
       name: "Пробный",
       price: "0 сум",

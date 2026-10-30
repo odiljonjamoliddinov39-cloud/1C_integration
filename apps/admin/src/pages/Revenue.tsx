@@ -15,11 +15,7 @@ export function RevenuePage() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat
-          label={t("MRR")}
-          value={sum(r.mrrSum)}
-          note={t("paid plans and recurring add-ons per month, VAT excluded")}
-        />
+        <Stat label={t("MRR")} value={sum(r.mrrSum)} note={t("paid plans and recurring add-ons per month")} />
         <Stat
           label={t("Paid accounts")}
           value={r.paidAccounts}
@@ -30,11 +26,7 @@ export function RevenuePage() {
           value={`${r.conversionPercent}%`}
           note={t("of {count} accounts ever paid", { count: r.accounts })}
         />
-        <Stat
-          label={t("Collected, 30 days")}
-          value={sum(r.collected30dSum)}
-          note={t("paid invoices, VAT included")}
-        />
+        <Stat label={t("Collected, 30 days")} value={sum(r.collected30dSum)} note={t("paid invoices")} />
       </div>
       <Section title={t("Paid accounts per plan")}>
         {r.byPlan.length === 0 ? (

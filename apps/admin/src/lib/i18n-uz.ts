@@ -428,9 +428,8 @@ export const UZ: Record<string, string> = {
   off: "oʻchiq",
   owner: "egasi",
   paid: "toʻlangan",
-  "paid invoices, VAT included": "toʻlangan hisob-fakturalar, QQS bilan",
-  "paid plans and recurring add-ons per month, VAT excluded":
-    "pullik tariflar va takrorlanuvchi qoʻshimchalar oyiga, QQSsiz",
+  "paid invoices": "toʻlangan hisob-fakturalar",
+  "paid plans and recurring add-ons per month": "pullik tariflar va takrorlanuvchi qoʻshimchalar oyiga",
   pending: "kutilmoqda",
   percent: "foiz",
   "saves {amount}": "{amount} tejaladi",

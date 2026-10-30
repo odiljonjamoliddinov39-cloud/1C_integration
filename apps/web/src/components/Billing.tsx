@@ -460,9 +460,11 @@ function PlanChooser(props: {
                   {t.discount}: −{money(shown.discountSum, locale)}
                 </div>
               )}
-              <div>
-                {t.vat}: {money(shown.vatSum, locale)}
-              </div>
+              {shown.vatSum > 0 && (
+                <div>
+                  {t.vat}: {money(shown.vatSum, locale)}
+                </div>
+              )}
               <div className="font-semibold">
                 {t.total}: {money(shown.totalSum, locale)}
               </div>
