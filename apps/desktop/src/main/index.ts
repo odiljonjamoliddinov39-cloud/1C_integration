@@ -263,6 +263,7 @@ void app.whenReady().then(async () => {
   });
   ipcMain.handle(CHANNELS.listCompanies, () => handlers.listCompanies());
   ipcMain.handle(CHANNELS.pickFolder, () => handlers.pickFolder());
+  ipcMain.handle(CHANNELS.listInfobases, () => handlers.listInfobases());
   ipcMain.handle(CHANNELS.testConnection, (_e, input: unknown) => handlers.testConnection(input));
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));

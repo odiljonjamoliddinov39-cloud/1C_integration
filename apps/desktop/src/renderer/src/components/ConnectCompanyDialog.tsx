@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -27,6 +27,16 @@ export function ConnectCompanyDialog({
   const [password, setPassword] = useState("");
   const [organizationRef, setOrganizationRef] = useState("");
   const [test, setTest] = useState<ConnectionTestResult | null>(null);
+  // The bases 1C's launcher already knows on this PC: a base is picked here instead of typing its folder.
+  const registered = useQuery({
+    queryKey: ["registered-infobases"],
+    queryFn: () => window.platform.companies.listInfobases(),
+    staleTime: Infinity,
+  });
+  // When the base was found in a folder below the one that was entered, the field shows the real folder.
+  const found = (result: ConnectionTestResult) => {
+    if (result.resolvedFile) setFile(result.resolvedFile);
+  };
 
   const connection = (): ConnectionInput => ({
     infobase: kind === "file" ? { kind, file } : { kind, server, ref },
@@ -44,6 +54,7 @@ export function ConnectCompanyDialog({
   const runTest = useMutation({
     mutationFn: () => window.platform.companies.testConnection(connection()),
     onSuccess: (result) => {
+      found(result);
       setTest(result);
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
@@ -51,6 +62,7 @@ export function ConnectCompanyDialog({
   const install = useMutation({
     mutationFn: () => window.platform.companies.installExtension(connection()),
     onSuccess: (result) => {
+      found(result);
       setTest(result);
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
@@ -73,6 +85,18 @@ export function ConnectCompanyDialog({
       if (result.ok) onConnected();
     },
   });
+
+  function pickRegistered(index: string) {
+    const base = registered.data?.[Number(index)];
+    if (!base) return;
+    setKind(base.kind);
+    if (base.kind === "file") setFile(base.file);
+    else {
+      setServer(base.server);
+      setRef(base.ref);
+    }
+    setTest(null);
+  }
 
   async function browse() {
     const folder = await window.platform.companies.pickInfobaseFolder();
@@ -122,6 +146,26 @@ export function ConnectCompanyDialog({
               ))}
             </div>
           </div>
+          {(registered.data?.length ?? 0) > 0 && (
+            <div>
+              <Label htmlFor="registered">{t("connect.registered")}</Label>
+              <select
+                id="registered"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                defaultValue=""
+                onChange={(e) => pickRegistered(e.target.value)}
+              >
+                <option value="" disabled>
+                  {t("connect.pickRegistered")}
+                </option>
+                {registered.data?.map((base, i) => (
+                  <option key={`${base.name}-${i}`} value={i}>
+                    {base.name} — {base.kind === "file" ? base.file : `${base.server}/${base.ref}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {kind === "file" ? (
             <div>
               <Label htmlFor="folder">{t("connect.folder")}</Label>
@@ -177,6 +221,11 @@ export function ConnectCompanyDialog({
             </div>
           </div>
 
+          {test?.resolvedFile && (
+            <div className="rounded-lg bg-muted p-3 text-sm">
+              {t("connect.found", { folder: test.resolvedFile })}
+            </div>
+          )}
           {runTest.isPending && <div className="text-sm text-muted-foreground">{t("connect.testing")}</div>}
           {install.isPending && (
             <div className="text-sm text-muted-foreground">{t("connect.installing")}</div>

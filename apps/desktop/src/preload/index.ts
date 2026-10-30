@@ -21,6 +21,7 @@ const bridge: PlatformBridge = {
   companies: {
     list: () => ipcRenderer.invoke(CHANNELS.listCompanies),
     pickInfobaseFolder: () => ipcRenderer.invoke(CHANNELS.pickFolder),
+    listInfobases: () => ipcRenderer.invoke(CHANNELS.listInfobases),
     testConnection: (input) => ipcRenderer.invoke(CHANNELS.testConnection, input),
     add: (input) => ipcRenderer.invoke(CHANNELS.addCompany, input),
     checkStatus: (id) => ipcRenderer.invoke(CHANNELS.checkStatus, id),
