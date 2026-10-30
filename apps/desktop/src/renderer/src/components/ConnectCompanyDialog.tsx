@@ -10,6 +10,10 @@ import { Card, ErrorText } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { isLimitCode } from "@/lib/billing";
 
+/** What 1C says when the base has users and the name or password was not given or is wrong. */
+const LOGIN_FAILED =
+  /Идентификация пользователя не выполнена|Неправильное имя или пароль|Incorrect user name or password|User authentication failed|Authentication failed/i;
+
 /** TD §4 "Connect company": pick the infobase, check the 1C extension, choose the organization. */
 export function ConnectCompanyDialog({
   onClose,
@@ -25,6 +29,7 @@ export function ConnectCompanyDialog({
   const [ref, setRef] = useState("");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [organizationRef, setOrganizationRef] = useState("");
   const [test, setTest] = useState<ConnectionTestResult | null>(null);
   // The bases 1C's launcher already knows on this PC: a base is picked here instead of typing its folder.
@@ -46,7 +51,8 @@ export function ConnectCompanyDialog({
 
   const connection = (): ConnectionInput => ({
     infobase: kind === "file" ? { kind, file } : { kind, server, ref },
-    user,
+    // A name pasted from somewhere often carries a space at an end, which 1C takes as part of the name.
+    user: user.trim(),
     password,
   });
   const changed =
@@ -225,13 +231,19 @@ export function ConnectCompanyDialog({
             </div>
             <div>
               <Label htmlFor="password">{t("connect.password")}</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => changed(setPassword)(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => changed(setPassword)(e.target.value)}
+                />
+                {/* So a typing slip or the wrong keyboard layout can be seen before 1C refuses it. */}
+                <Button type="button" variant="outline" onClick={() => setShowPassword((v) => !v)}>
+                  {showPassword ? t("connect.hidePassword") : t("connect.showPassword")}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -247,6 +259,13 @@ export function ConnectCompanyDialog({
           {test && !test.status.ok && (
             <ErrorText>{errorText(t, test.status.code, test.status.message)}</ErrorText>
           )}
+          {/* 1C reached the base and asked who is opening it: the base has users, so the 1C name and password are needed. */}
+          {test &&
+            !test.status.ok &&
+            test.status.code === "CONNECT_FAILED" &&
+            LOGIN_FAILED.test(test.status.message) && (
+              <div className="rounded-lg bg-muted p-3 text-sm">{t("connect.loginHint")}</div>
+            )}
           {/* The base is reachable but has no PlatformAPI: the app can load it itself. */}
           {test && !test.status.ok && test.status.code === "NOT_FOUND" && !install.isPending && (
             <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
