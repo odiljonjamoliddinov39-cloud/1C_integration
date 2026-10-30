@@ -78,6 +78,8 @@ const Env = z.object({
    * real AI cost (an ordinary question, under it, is 1). 0: every question counts as 1.
    */
   AI_QUESTION_UNIT_USD: z.coerce.number().min(0).default(0.5),
+  /** "on": AI use is paid from the account's credits (TZ credit system); "off": the older question quota and dollar budget. */
+  AI_CREDITS: z.enum(["on", "off"]).default("on"),
   /** How long a computed set of limits is reused (0: never; tests use 0). */
   ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */

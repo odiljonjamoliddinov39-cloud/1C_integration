@@ -81,9 +81,14 @@ export function readCallsInQuestion(messages: AiMessage[]): number {
   return calls;
 }
 
-export async function logUsage(db: Db, context: UsageContext, usage: TurnUsage): Promise<void> {
-  await db.insert(aiUsage).values({ ...context, ...usage });
+/** Writes the call's usage row and adds its cost to the month; gives back the row's id (the credit spend is tied to it). */
+export async function logUsage(db: Db, context: UsageContext, usage: TurnUsage): Promise<string | null> {
+  const [row] = await db
+    .insert(aiUsage)
+    .values({ ...context, ...usage })
+    .returning({ id: aiUsage.id });
   await addSpend(db, context.accountId, usage.costUsd);
+  return row?.id ?? null;
 }
 
 /** An answer from a template or the cache: no tokens, no cost. */

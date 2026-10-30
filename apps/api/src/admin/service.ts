@@ -568,12 +568,7 @@ export class AdminService {
 
   // --- helpers --------------------------------------------------------------------------------
 
-  private async audit(
-    adminId: string,
-    action: string,
-    target: string,
-    payload: Record<string, unknown> = {},
-  ) {
+  async audit(adminId: string, action: string, target: string, payload: Record<string, unknown> = {}) {
     await this.db.insert(adminAudit).values({ adminId, action, target, payload });
   }
 

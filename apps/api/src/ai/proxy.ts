@@ -23,6 +23,7 @@ import { appSettings } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { BillingService } from "../billing/service.js";
 import type { Service } from "../service.js";
+import type { Credits } from "../billing/credits.js";
 import { type Admission, checkBudget } from "./budget.js";
 import { latestDigest } from "./digest.js";
 import { loopGuard, loopNote } from "./loop.js";
@@ -76,6 +77,7 @@ export class AiProxy {
     private readonly config: Config,
     private readonly model: AiModel | null,
     private readonly log: { error: (obj: unknown, msg?: string) => void },
+    private readonly credits: Credits | null = null,
   ) {}
 
   /**
@@ -93,6 +95,12 @@ export class AiProxy {
       throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "This subscription is suspended: contact support");
     }
     const policy = await policyFor(this.db, effectivePlan.id);
+    // With credits, the balance is the one limit: every call is paid from it at its real cost (no question count, no dollar
+    // budget). Without, the older monthly dollar budget and the plan's questions apply.
+    if (this.credits?.enabled) {
+      const low = await this.credits.ensureCanSpend(accountId);
+      return { policy, warnings: low ? [low] : [] };
+    }
     const admission = await checkBudget(this.db, policy, { accountId, userId });
     if (this.config.PLAN_LIMITS === "off") return admission;
     // The plan's allowance is in questions: counted when a new one reaches the model (the first
@@ -245,7 +253,12 @@ export class AiProxy {
       if (!(error instanceof Anthropic.AnthropicError)) this.log.error(error, "AI turn failed");
       if (isProviderBilling(error)) await this.raiseAlert("AI_PROVIDER_BILLING", errorText(error));
       // A question that never got an answer is not charged: give back the one taken for it.
-      if (!audit && isFirstStep(input.messages) && !(error instanceof Anthropic.APIUserAbortError)) {
+      if (
+        !this.credits?.enabled &&
+        !audit &&
+        isFirstStep(input.messages) &&
+        !(error instanceof Anthropic.APIUserAbortError)
+      ) {
         await this.billingService
           .refundAiQuestion(who.accountId, questionKey(who.userId, input))
           .catch((e: unknown) => this.log.error(e, "AI question was not refunded"));
@@ -258,7 +271,7 @@ export class AiProxy {
       content: message.content as unknown as Extract<AiEvent, { type: "message" }>["content"],
       stopReason: message.stop_reason,
     });
-    await logUsage(
+    const usageId = await logUsage(
       this.db,
       {
         ...who,
@@ -278,7 +291,17 @@ export class AiProxy {
           : {}),
       },
       usageOf(message),
-    ).catch((error: unknown) => this.log.error(error, "AI usage was not recorded"));
+    ).catch((error: unknown) => {
+      this.log.error(error, "AI usage was not recorded");
+      return null;
+    });
+    // The call's real cost leaves the credit balance (a template or cache answer never gets here: it costs nothing).
+    if (this.credits?.enabled) {
+      await this.credits
+        .spend(who.accountId, usageOf(message).costUsd, usageId)
+        .catch((error: unknown) => this.log.error(error, "AI credits were not charged"));
+      return;
+    }
     // A heavy job is worth more than one question: charge what it has cost so far.
     if (!audit) {
       await this.billingService

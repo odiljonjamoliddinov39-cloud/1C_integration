@@ -10,6 +10,8 @@ import {
   ActivateDeviceInput,
   AdminLoginInput,
   AddonSaveInput,
+  AdminCreditAdjustInput,
+  AdminCreditRateInput,
   PlanSaveInput,
   PromoInput,
   SubscriptionActionInput,
@@ -56,6 +58,8 @@ import { Tokens } from "./lib/tokens.js";
 import { Billing } from "./billing/entitlements.js";
 import { AdminBilling } from "./billing/admin.js";
 import { Invoicing } from "./billing/invoicing.js";
+import { Credits, type CardCharger } from "./billing/credits.js";
+import { CreditRates, startRateJob } from "./billing/credit-rate.js";
 import { Lifecycle, startBillingJobs } from "./billing/lifecycle.js";
 import { ClickMerchant } from "./billing/click.js";
 import { PaymeMerchant } from "./billing/payme.js";
@@ -84,6 +88,10 @@ export interface AppDeps {
   miniappDir?: string;
   /** Replaces the Bot API in tests. */
   telegram?: TelegramApi;
+  /** Charges the card saved for auto-recharge; none: every auto-recharge fails and the customer is told. */
+  cardCharger?: CardCharger;
+  /** Replaces `fetch` for the CBU rate (tests). */
+  fetch?: typeof fetch;
   /** Hands the remote channel's parts to a test. */
   onRemote?: (parts: { service: RemoteService; hub: DeviceHub; blobs: Blobs; bot: Bot | null }) => void;
 }
@@ -104,16 +112,26 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const billing = new BillingService(db, config, entitlements, invoicing.providers());
   const payme = new PaymeMerchant(db, config, invoicing);
   const click = new ClickMerchant(db, config, invoicing);
+  const credits = new Credits(db, config, entitlements, invoicing, deps.cardCharger);
+  billing.credits = credits;
+  const creditRates = new CreditRates(db, deps.fetch);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
   const adminBilling = new AdminBilling(db, entitlements, invoicing);
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
-  const ai = new AiProxy(db, service, billing, config, aiModel, app.log);
+  const ai = new AiProxy(db, service, billing, config, aiModel, app.log, credits);
   const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);
   const admin = new AdminService(db, tokens, config);
   await admin.bootstrap(app.log);
   if (config.BILLING_JOBS === "on") {
     const stop = startBillingJobs(lifecycle, app.log);
     app.addHook("onClose", async () => stop());
+    // The credit price follows the CBU rate; accounts that have no balance yet get one from their month's questions.
+    const stopRates = startRateJob(creditRates, app.log);
+    app.addHook("onClose", async () => stopRates());
+    if (credits.enabled)
+      credits
+        .migrateExisting()
+        .catch((error: unknown) => app.log.error(error, "Moving accounts to credits failed"));
   }
 
   // The desktop calls from its main process; the website (via Vercel) and the admin dashboard
@@ -173,7 +191,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
-  const billingDeps = { db, billing, invoicing, payme, click, auth };
+  const billingDeps = { db, credits, billing, invoicing, payme, click, auth };
   registerBillingRoutes(app, billingDeps);
   registerSubscriptionRoutes(app, billingDeps);
 
@@ -460,6 +478,38 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       parse(SubscriptionActionInput, req.body),
     ),
   );
+  // AI credits: the report (sold, spent, rolled over, the price and its history, failed recharges), one account's balance
+  // with its history, a manual adjustment (a reason is required) and a manual price.
+  app.get("/v1/admin/credits", async (req) => {
+    await adminAuth(req);
+    return credits.report();
+  });
+  app.get("/v1/admin/credits/by-account/:id", async (req) => {
+    await adminAuth(req);
+    return credits.adminAccount(parse(idParam, req.params).id);
+  });
+  app.post("/v1/admin/credits/:id/adjust", async (req) => {
+    const who = await ownerOnly(req);
+    const { id } = parse(idParam, req.params);
+    const input = parse(AdminCreditAdjustInput, req.body);
+    const balance = await credits.adjust(id, input.credits, input.kind, input.reason, who.id);
+    await admin.audit(who.id, "credits.adjust", `account:${id}`, {
+      credits: input.credits,
+      reason: input.reason,
+    });
+    return { balanceCredits: balance };
+  });
+  app.post("/v1/admin/credits/rate", async (req) => {
+    const who = await ownerOnly(req);
+    const input = parse(AdminCreditRateInput, req.body);
+    await creditRates.setManual(who.id, input.somPerCredit, input.reason);
+    credits.invalidatePrice();
+    await admin.audit(who.id, "credits.rate", "settings:credit-rate", {
+      somPerCredit: input.somPerCredit,
+      reason: input.reason,
+    });
+    return credits.report();
+  });
   app.get("/v1/admin/revenue", async (req) => {
     await adminAuth(req);
     return adminBilling.revenue();

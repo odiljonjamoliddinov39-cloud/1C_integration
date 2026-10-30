@@ -15,6 +15,7 @@ import { CostPage } from "@/pages/Cost";
 import { CustomersPage } from "@/pages/Customers";
 import { LoginPage } from "@/pages/Login";
 import { OverviewPage } from "@/pages/Overview";
+import { CreditsPage } from "@/pages/Credits";
 import { PlansPage } from "@/pages/Plans";
 import { PromoPage } from "@/pages/Promo";
 import { RevenuePage } from "@/pages/Revenue";
@@ -29,6 +30,7 @@ const NAV = [
   { path: "subscriptions", label: t("Subscriptions") },
   { path: "revenue", label: t("Revenue") },
   { path: "plans", label: t("Plans") },
+  { path: "credits", label: t("AI credits") },
   { path: "promo", label: t("Promo codes") },
   { path: "usage", label: t("AI usage") },
   { path: "cost", label: t("AI cost") },
@@ -106,6 +108,8 @@ function Shell() {
             <RevenuePage />
           ) : section === "plans" ? (
             <PlansPage me={me.data} />
+          ) : section === "credits" ? (
+            <CreditsPage me={me.data} />
           ) : section === "promo" ? (
             <PromoPage me={me.data} />
           ) : section === "usage" ? (

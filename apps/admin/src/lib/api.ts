@@ -4,6 +4,10 @@
  */
 import type {
   AddonSaveInput,
+  AdminAccountCredits,
+  AdminCreditAdjustInput,
+  AdminCreditRateInput,
+  AdminCreditsReport,
   AdminBillingDetail,
   AdminPlansView,
   AdminSubscriptionRow,
@@ -130,6 +134,11 @@ export const api = {
     request<QueryTemplateView>("PUT", "/query-templates", input),
   deleteQueryTemplate: (id: string) => request<null>("DELETE", `/query-templates/${id}`),
   audit: () => request<AuditEntry[]>("GET", "/audit"),
+  creditsReport: () => request<AdminCreditsReport>("GET", "/credits"),
+  accountCredits: (id: string) => request<AdminAccountCredits>("GET", `/credits/by-account/${id}`),
+  adjustCredits: (id: string, input: AdminCreditAdjustInput) =>
+    request<{ balanceCredits: number }>("POST", `/credits/${id}/adjust`, input),
+  setCreditRate: (input: AdminCreditRateInput) => request<AdminCreditsReport>("POST", "/credits/rate", input),
   billingPlans: () => request<AdminPlansView>("GET", "/billing/plans"),
   savePlan: (code: string, input: PlanSaveInput) => request<AdminPlansView>("PUT", `/plans/${code}`, input),
   saveAddon: (code: string, input: AddonSaveInput) =>

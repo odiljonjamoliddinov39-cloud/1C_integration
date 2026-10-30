@@ -75,6 +75,7 @@ export class AdminBilling {
       importsPerMonth: input.importsPerMonth,
       auditsPerMonth: input.auditsPerMonth,
       aiQuestionsPerMonth: input.aiQuestionsPerMonth,
+      monthlyCredits: input.monthlyCredits,
       isPublic: input.isPublic,
       sortOrder: input.sortOrder,
     };

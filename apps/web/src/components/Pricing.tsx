@@ -47,7 +47,9 @@ export function Pricing({ locale }: { locale: Locale }) {
           ? limit(plan.auditsPerMonth, year)
           : `${plan.auditsPerMonth} ${t.rows.perMonthShort}`,
     ],
-    [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
+    plan.monthlyCredits > 0
+      ? [t.rows.credits, limit(plan.monthlyCredits, year)]
+      : [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
     [t.rows.excel, plan.features.excelExport ? "✓" : "—"],
     [t.rows.support, t.support[plan.features.support] ?? plan.features.support],
   ];

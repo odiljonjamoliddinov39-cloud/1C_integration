@@ -7,6 +7,7 @@ import type {
 } from "@platform/shared";
 import { useCallback, useEffect, useState } from "react";
 
+import { CreditsSection } from "./Credits";
 import { type ClickWindowValues, openClickWindow } from "../lib/click-checkout";
 import {
   ApiError,
@@ -107,7 +108,10 @@ export function BillingSection({ locale }: { locale: Locale }) {
     [t.users, ent.usage.users, e.users],
     [t.imports, ent.usage.imports, e.importsPerMonth],
     [t.audits, ent.usage.audits, e.auditsPerMonth],
-    [t.ai, ent.usage.aiQuestions, e.aiQuestionsPerMonth],
+    // With credits the balance replaces the question count: it has its own section.
+    ...(ent.credits
+      ? []
+      : [[t.ai, ent.usage.aiQuestions, e.aiQuestionsPerMonth] as [string, number, number | null]]),
   ];
 
   /** After an invoice exists: card goes to the provider, a bank transfer opens the printable invoice. */
@@ -215,6 +219,17 @@ export function BillingSection({ locale }: { locale: Locale }) {
           </div>
         )}
       </section>
+
+      {ent.credits && (
+        <CreditsSection
+          locale={locale}
+          busy={busy}
+          version={version}
+          act={act}
+          pay={pay}
+          providers={plans.providers}
+        />
+      )}
 
       <PlanChooser
         locale={locale}

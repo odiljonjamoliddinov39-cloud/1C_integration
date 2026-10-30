@@ -41,6 +41,13 @@ const DYNAMIC = [
   "owner",
   "support",
   "member",
+  // The types of a credit transaction.
+  "Monthly credits",
+  "Trial credits",
+  "Purchase",
+  "AI use",
+  "Carried over",
+  "Admin adjustment",
 ];
 // Examples of the code or of the 1C language, shown as they are.
 const AS_IS = new Set(["ДатаОстатка:date"]);

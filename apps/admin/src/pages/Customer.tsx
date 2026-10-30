@@ -10,6 +10,7 @@ import { useState } from "react";
 import { t } from "@/lib/i18n";
 
 import { CostChart } from "@/components/CostChart";
+import { CreditsSection } from "@/pages/Credits";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge, Button, Empty, ErrorText, Input, Section, Select, Stat, Table, Td } from "@/components/ui";
 import { EFFORTS, effortName, modelName } from "@/lib/ai";
@@ -118,6 +119,7 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         <ExtendForm id={id} onDone={update} />
         <RechargeForm id={id} detail={d} onDone={update} />
       </div>
+      <CreditsSection id={id} owner={me.role === "owner"} />
       <BudgetForm
         key={`${d.budget.limitUsd}-${d.budget.custom}`}
         id={id}

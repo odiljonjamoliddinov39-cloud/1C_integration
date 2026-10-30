@@ -76,6 +76,8 @@ export const plans = pgTable("plans", {
   importsPerMonth: integer("imports_per_month"),
   auditsPerMonth: integer("audits_per_month"),
   aiQuestionsPerMonth: integer("ai_questions_per_month").notNull().default(0),
+  /** The AI credits the plan adds to the account's balance each month (docs/billing.md, "AI credits"). */
+  monthlyCredits: integer("monthly_credits").notNull().default(0),
   /** e.g. {"maxDevicesPerSeat": 2, "excelExport": true}. */
   features: jsonb("features").$type<PlanFeatures>().notNull().default({}),
   isPublic: boolean("is_public").notNull().default(true),
@@ -174,7 +176,7 @@ export const usageCounters = pgTable(
 );
 
 export interface InvoiceItem {
-  kind: "plan" | "upgrade" | "addon";
+  kind: "plan" | "upgrade" | "addon" | "credits";
   code: string;
   title: string;
   quantity: number;
@@ -183,7 +185,9 @@ export interface InvoiceItem {
 
 /** What paying an invoice does: see applyInvoice. */
 export interface InvoiceIntent {
-  type: "plan" | "upgrade" | "addon";
+  type: "plan" | "upgrade" | "addon" | "credits";
+  /** A credits purchase: how many. */
+  credits?: number;
   planCode?: string;
   cycle?: "month" | "year";
   addonCode?: string;
@@ -772,4 +776,80 @@ export const remoteAudit = pgTable(
     detail: text("detail"),
   },
   (t) => [index("remote_audit_account_idx").on(t.accountId, t.at)],
+);
+
+/**
+ * The AI credit balance of an account (one row each). Credits are 1/100 USD; the balance keeps four decimals, as a call's
+ * cost is not a whole credit. Auto-recharge: when the balance falls under `auto_threshold`, `auto_amount` credits are bought
+ * with the card the payment system saved (`auto_card_token`).
+ */
+export const creditAccounts = pgTable("credit_accounts", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  balanceCredits: numeric("balance_credits", { precision: 16, scale: 4, mode: "number" })
+    .notNull()
+    .default(0),
+  rolloverCapCredits: integer("rollover_cap_credits").notNull().default(50_000),
+  autoEnabled: boolean("auto_enabled").notNull().default(false),
+  autoThreshold: integer("auto_threshold").notNull().default(300),
+  autoAmount: integer("auto_amount").notNull().default(1_000),
+  autoMethod: text("auto_method", { enum: ["payme", "click"] }),
+  autoCardToken: text("auto_card_token"),
+  /** When the low-balance warning was last raised; cleared once the balance is back over the level. */
+  lowWarnedAt: timestamp("low_warned_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Every change of a balance. `period_key` makes a monthly or trial grant once per period; `related_usage_id` ties spending to its AI call. */
+export const creditTransactions = pgTable(
+  "credit_transactions",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    type: text("type", {
+      enum: ["monthly_grant", "trial_grant", "purchase", "bonus", "ai_usage", "rollover", "admin_adjustment"],
+    }).notNull(),
+    amountCredits: numeric("amount_credits", { precision: 16, scale: 4, mode: "number" }).notNull(),
+    balanceAfter: numeric("balance_after", { precision: 16, scale: 4, mode: "number" }).notNull(),
+    relatedUsageId: uuid("related_usage_id"),
+    periodKey: text("period_key"),
+    note: text("note"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("credit_transactions_account_idx").on(t.accountId, t.createdAt),
+    uniqueIndex("credit_transactions_period_key").on(t.accountId, t.type, t.periodKey),
+  ],
+);
+
+/** The price of a credit in soum, each change of it (the last row is the price now). */
+export const creditRateHistory = pgTable("credit_rate_history", {
+  id: id(),
+  oldSomPerCredit: integer("old_som_per_credit").notNull(),
+  newSomPerCredit: integer("new_som_per_credit").notNull(),
+  /** The CBU rate (soum per USD) this price was worked out from. */
+  cbuRate: numeric("cbu_rate", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  /** "system" or an admin's id. */
+  setBy: text("set_by").notNull(),
+  note: text("note"),
+  createdAt: createdAt(),
+});
+
+/** Auto-recharges that did not go through, for the admin to follow. */
+export const creditRechargeFailures = pgTable(
+  "credit_recharge_failures",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    amountCredits: integer("amount_credits").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("credit_recharge_failures_idx").on(t.createdAt)],
 );

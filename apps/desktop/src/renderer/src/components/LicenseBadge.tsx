@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { BillingView, LicenseView } from "../../../shared/ipc";
-import { aiQuestionsLeft } from "@/lib/billing";
+import { aiCredits, aiQuestionsLeft } from "@/lib/billing";
 import { formatTime } from "@/lib/format";
 
 const TRIAL_DAYS = 14;
@@ -17,7 +17,9 @@ export function LicenseCard({
 }) {
   const { t, i18n } = useTranslation();
   const [now] = useState(() => Date.now());
-  const ai = aiQuestionsLeft(billing);
+  const credits = aiCredits(billing);
+  // With credits the balance replaces the question count.
+  const ai = credits ? null : aiQuestionsLeft(billing);
   const planName = billing ? t(`billing.plan.${billing.entitlements.plan}`) : null;
   const label = !license
     ? t("license.none")
@@ -56,6 +58,21 @@ export function LicenseCard({
             <div
               className={`h-full rounded-full ${ai.left === 0 ? "bg-destructive" : ai.left / Math.max(1, ai.total) <= 0.2 ? "bg-warning" : "bg-emerald-400"}`}
               style={{ width: `${Math.round((ai.left / Math.max(1, ai.total)) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {credits && (
+        <div className="mt-2 text-xs text-sidebar-foreground/90">
+          {credits.balance > 0
+            ? t("billing.credits", { balance: credits.balance.toLocaleString(i18n.language) })
+            : t("billing.creditsNone")}
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
+            <div
+              className={`h-full rounded-full ${credits.balance === 0 ? "bg-destructive" : billing?.credits?.low ? "bg-warning" : "bg-emerald-400"}`}
+              style={{
+                width: `${Math.round((credits.balance / Math.max(1, credits.monthly, credits.balance)) * 100)}%`,
+              }}
             />
           </div>
         </div>
