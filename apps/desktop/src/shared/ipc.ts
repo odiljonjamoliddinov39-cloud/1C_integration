@@ -98,7 +98,14 @@ export type ConnectorStatus =
 export interface ConnectionTestResult {
   status: ConnectorStatus;
   organizations: Organization[];
+  /** The base's folder when it is not the one that was entered (the base was found in a folder below it). */
+  resolvedFile?: string;
 }
+
+/** A base in 1C's own list (the launcher's ibases.v8i), to pick instead of typing a path. */
+export type RegisteredInfobase =
+  | { name: string; kind: "file"; file: string }
+  | { name: string; kind: "server"; server: string; ref: string };
 
 export interface CompanyView {
   id: string;
@@ -505,6 +512,8 @@ export interface PlatformBridge {
   companies: {
     list(): Promise<CompanyView[]>;
     pickInfobaseFolder(): Promise<string | null>;
+    /** The bases 1C's launcher already knows on this PC. */
+    listInfobases(): Promise<RegisteredInfobase[]>;
     testConnection(input: ConnectionInput): Promise<ConnectionTestResult>;
     add(input: AddCompanyInput): Promise<Result<CompanyView>>;
     checkStatus(id: string): Promise<CompanyView>;

@@ -20,6 +20,7 @@ import {
   type CompanyView,
   ConnectionInput,
   type ConnectionTestResult,
+  type RegisteredInfobase,
   RegisterAccountInput,
   ReportRunInput,
   type ReportView,
@@ -37,6 +38,7 @@ import { listKeys, runDidoxTest } from "./didox/test-run.js";
 import type { ConnectorRunner } from "./connector.js";
 import type { RemoteService } from "./remote/service.js";
 import type { SessionService } from "./session.js";
+import { type ResolvedInfobase, listRegisteredInfobases, resolveInfobaseFolder } from "./infobases.js";
 import { type LocalStore, StoreError } from "./store.js";
 
 export interface HandlerDeps {
@@ -47,6 +49,10 @@ export interface HandlerDeps {
   billing: BillingState;
   info: AppInfo;
   pickFolder: () => Promise<string | null>;
+  /** Finds the base for a folder the user entered (tests hand in a fake: their folders do not exist). */
+  resolveInfobase?: (input: string) => Promise<ResolvedInfobase>;
+  /** The bases 1C's launcher knows on this PC. */
+  listInfobases?: () => Promise<RegisteredInfobase[]>;
   /** Asks where to save a file and writes it there; false when the user cancelled. */
   saveFile: (defaultName: string, content: string) => Promise<boolean>;
   /** Loads the app's PlatformAPI extension into a base (1C Designer, batch mode). */
@@ -74,12 +80,38 @@ export function createHandlers({
   billing,
   info,
   pickFolder,
+  resolveInfobase = resolveInfobaseFolder,
+  listInfobases = listRegisteredInfobases,
   saveFile,
   installExtension,
   registerComConnector,
   didox,
   remote,
 }: HandlerDeps) {
+  /** A failed check, as the connect dialog shows it. */
+  const failedCheck = (code: string, message: string): ConnectionTestResult => ({
+    status: { ok: false, checkedAt: new Date().toISOString(), code, message },
+    organizations: [],
+  });
+  /**
+   * The base the user means: a file base's folder is looked for around what was entered (the 1Cv8.1CD may be in a folder
+   * below it, or the file itself was given). `resolvedFile` is set when the folder is not the one that was entered.
+   */
+  async function findBase<T extends ConnectionInput>(
+    connection: T,
+  ): Promise<
+    { ok: true; connection: T; resolvedFile?: string } | { ok: false; code: string; message: string }
+  > {
+    if (connection.infobase.kind !== "file") return { ok: true, connection };
+    const found = await resolveInfobase(connection.infobase.file);
+    if (!found.ok) return { ok: false, code: found.code, message: found.message };
+    if (found.folder === connection.infobase.file) return { ok: true, connection };
+    return {
+      ok: true,
+      connection: { ...connection, infobase: { kind: "file", file: found.folder } },
+      resolvedFile: found.folder,
+    };
+  }
   const noRemote = { ok: false, code: "UNAVAILABLE", message: "Remote control is not available" } as const;
   return {
     appInfo: async (): Promise<AppInfo> => info,
@@ -118,6 +150,8 @@ export function createHandlers({
 
     pickFolder: async (): Promise<string | null> => pickFolder(),
 
+    listInfobases: async (): Promise<RegisteredInfobase[]> => listInfobases(),
+
     testConnection: async (raw: unknown): Promise<ConnectionTestResult> => {
       const input = ConnectionInput.safeParse(raw);
       if (!input.success) {
@@ -127,16 +161,23 @@ export function createHandlers({
           organizations: [],
         };
       }
-      return connector.check(input.data);
+      const found = await findBase(input.data);
+      if (!found.ok) return failedCheck(found.code, found.message);
+      const result = await connector.check(found.connection);
+      return found.resolvedFile ? { ...result, resolvedFile: found.resolvedFile } : result;
     },
 
     /** Connects a company only after a fresh successful check of that infobase and organization. */
     addCompany: async (raw: unknown): Promise<Result<CompanyView>> => {
       const input = AddCompanyInput.safeParse(raw);
       if (!input.success) return invalid(input.error);
-      const check = await connector.check(input.data);
+      const found = await findBase(input.data);
+      if (!found.ok) return { ok: false, code: found.code, message: found.message };
+      // The base is kept under the folder where it was found, not under the one that was typed.
+      const data = { ...input.data, infobase: found.connection.infobase };
+      const check = await connector.check(data);
       if (!check.status.ok) return { ok: false, code: check.status.code, message: check.status.message };
-      const org = check.organizations.find((o) => o.ref === input.data.organization.ref);
+      const org = check.organizations.find((o) => o.ref === data.organization.ref);
       if (!org)
         return {
           ok: false,
@@ -147,7 +188,7 @@ export function createHandlers({
       const allowed = await billing.registerCompany({ inn: org.inn, name: org.name });
       if (!allowed.ok) return allowed;
       try {
-        const added = store.addCompany({ ...input.data, organization: org }, check.status);
+        const added = store.addCompany({ ...data, organization: org }, check.status);
         void billing.refresh();
         return { ok: true, data: added };
       } catch (e) {
@@ -195,10 +236,13 @@ export function createHandlers({
         organizations: [],
       });
       if (!input.success) return failed("VALIDATION", input.error.issues.map((i) => i.message).join("; "));
-      await connector.release(input.data);
-      const installed = await installExtension(input.data);
+      const found = await findBase(input.data);
+      if (!found.ok) return failed(found.code, found.message);
+      await connector.release(found.connection);
+      const installed = await installExtension(found.connection);
       if (!installed.ok) return failed(installed.code, installed.message);
-      return connector.check(input.data);
+      const result = await connector.check(found.connection);
+      return found.resolvedFile ? { ...result, resolvedFile: found.resolvedFile } : result;
     },
 
     /** Registers 1C's COM connector; Windows asks the user to approve it. */

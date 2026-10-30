@@ -132,6 +132,10 @@ app.setPath("userData", userDataFolder(app.getPath("userData"), app.getPath("app
 void app.whenReady().then(async () => {
   const store = new LocalStore(join(app.getPath("userData"), "platform.json"), secrets);
   const connector = new WorkerConnector(onecWorkerPath, demo1C);
+  // In the demo the base is in memory: any path is taken as entered.
+  const resolveInfobase = demo1C
+    ? async (folder: string) => ({ ok: true as const, folder, changed: false })
+    : undefined;
   let machineId: Promise<string> | undefined;
   const session = new SessionService({
     store,
@@ -200,6 +204,7 @@ void app.whenReady().then(async () => {
       demo1C,
       defaultServerUrl,
     },
+    ...(resolveInfobase ? { resolveInfobase } : {}),
     installExtension: (connection) =>
       installExtension(connection, {
         platform: process.platform,
@@ -263,6 +268,7 @@ void app.whenReady().then(async () => {
   });
   ipcMain.handle(CHANNELS.listCompanies, () => handlers.listCompanies());
   ipcMain.handle(CHANNELS.pickFolder, () => handlers.pickFolder());
+  ipcMain.handle(CHANNELS.listInfobases, () => handlers.listInfobases());
   ipcMain.handle(CHANNELS.testConnection, (_e, input: unknown) => handlers.testConnection(input));
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));

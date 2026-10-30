@@ -1,3 +1,4 @@
+import type { ResolvedInfobase } from "./infobases.js";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ const secrets: SecretBox = {
   decrypt: (enc) => Buffer.from(enc.split("").reverse().join(""), "base64").toString(),
 };
 
-function setup() {
+function setup(resolve?: (folder: string) => Promise<ResolvedInfobase>) {
   const installs: ConnectionInput[] = [];
   let installResult: { ok: true; data: unknown } | { ok: false; code: string; message: string } = {
     ok: true,
@@ -66,6 +67,8 @@ function setup() {
       defaultServerUrl: "http://localhost:3000",
     },
     pickFolder: async () => "D:\\Bases\\TEST",
+    // The folders of these tests do not exist: the base is taken as entered.
+    resolveInfobase: resolve ?? (async (folder: string) => ({ ok: true as const, folder, changed: false })),
     saveFile: async () => true,
     installExtension: async (connection) => {
       installs.push(connection);
@@ -123,6 +126,39 @@ describe("desktop main handlers", () => {
     expect(invalid.status).toMatchObject({ ok: false, code: "VALIDATION" });
     const blank = await handlers.testConnection({ ...connection, infobase: { kind: "file", file: "   " } });
     expect(blank.status).toMatchObject({ ok: false, code: "VALIDATION" });
+  });
+
+  it("finds the base in a folder below the one entered, tells the dialog, and keeps the found folder", async () => {
+    const found = "C:\\Downloads\\Bases\\TEST";
+    const { handlers, seen } = setup(async (folder) =>
+      folder === "C:\\Downloads"
+        ? { ok: true, folder: found, changed: true }
+        : { ok: true, folder, changed: false },
+    );
+    const entered = { ...connection, infobase: { kind: "file" as const, file: "C:\\Downloads" } };
+    const test = await handlers.testConnection(entered);
+    expect(test.status.ok).toBe(true);
+    expect(test.resolvedFile).toBe(found);
+    // 1C was asked about the folder where the base is, not the one that was typed.
+    expect(seen.at(-1)?.infobase).toEqual({ kind: "file", file: found });
+    const added = await handlers.addCompany({ ...entered, organization: test.organizations[0]! });
+    expect(added.ok).toBe(true);
+    expect((await handlers.listCompanies())[0]?.infobase).toEqual({ kind: "file", file: found });
+  });
+
+  it("refuses a folder with no base before 1C is asked, with a clear code", async () => {
+    const { handlers, seen } = setup(async () => ({
+      ok: false,
+      code: "INFOBASE_NOT_FOUND",
+      message: "There is no 1C base in C:\\Downloads",
+      candidates: [],
+    }));
+    const test = await handlers.testConnection({
+      ...connection,
+      infobase: { kind: "file", file: "C:\\Downloads" },
+    });
+    expect(test.status).toMatchObject({ ok: false, code: "INFOBASE_NOT_FOUND" });
+    expect(seen).toHaveLength(0);
   });
 
   it("refuses an organization that the infobase does not have", async () => {
@@ -261,6 +297,7 @@ describe("without secure storage", () => {
       }),
       info: { version: "0.0.0", platform: "linux", arch: "x64", demo1C: false, defaultServerUrl: "" },
       pickFolder: async () => null,
+      resolveInfobase: async (folder: string) => ({ ok: true as const, folder, changed: false }),
       saveFile: async () => true,
       installExtension: async () => ({ ok: true, data: null }),
       registerComConnector: async () => ({ ok: false, code: "COM_REGISTER_DENIED", message: "no" }),

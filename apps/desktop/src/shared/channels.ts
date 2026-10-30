@@ -8,6 +8,7 @@ export const CHANNELS = {
   signOut: "auth:sign-out",
   listCompanies: "companies:list",
   pickFolder: "companies:pick-folder",
+  listInfobases: "companies:list-infobases",
   testConnection: "companies:test",
   addCompany: "companies:add",
   checkStatus: "companies:check",
