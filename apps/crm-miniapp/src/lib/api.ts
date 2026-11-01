@@ -6,6 +6,7 @@
 import type {
   CallResult,
   CrmCallView,
+  CrmCardSection,
   CrmLeadDetail,
   CrmLeadInput,
   CrmLeadRow,
@@ -122,6 +123,9 @@ export class Api {
   /** Replaces a one-time password with the person's own. */
   changePassword = (currentPassword: string, newPassword: string) =>
     this.json<unknown>("POST", "/v1/crm/password", { currentPassword, newPassword });
+  card = () => this.request<CrmCardSection[]>("/v1/crm/card");
+  saveValues = (id: string, values: Record<string, string>) =>
+    this.json<Record<string, string>>("PUT", `/v1/crm/leads/${id}/values`, { values });
   me = () => this.request<CrmMe>("/v1/crm/me");
   funnel = () => this.request<CrmPipelineView>("/v1/crm/funnel");
   leads = (q: string, stageId: string, offset = 0) => {

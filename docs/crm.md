@@ -28,6 +28,18 @@ is the lead's birth — **conversion is counted from it**), `crm_calls`, `crm_no
 adding it again updates the lead (a manager cannot do that to another manager's lead: `DUPLICATE_LEAD`, 409). A number with 9
 digits is Uzbek; anything else needs 11–15 digits; letters make a number broken.
 
+## The client card
+
+Every lead has a **client card**. The basic details (name, phone, company, source) are always on it; the rest is shaped by the admin:
+CRM → Settings → _Client card_: make **sections** (Contact, Business, …) and the **fields** in them, each with a name and a type
+(text, long text, number, date, phone, e-mail, choice from a list with its options, yes/no); reorder them, move a field to another
+section, rename, delete (what was written in a deleted field or section is deleted too). The **managers fill the values in** on each
+lead, in the dashboard (the lead page) and in the Mini App (the lead card). A value is checked against its field's type (`BAD_VALUE`,
+400, nothing is saved if one is wrong); an empty one clears the field. A field's type is fixed once made. The card starts empty; a lead
+with no section shows only the basics. Tables: `crm_card_sections`, `crm_card_fields`, `crm_lead_values`. API: `GET /card`,
+`POST /card/sections`, `PATCH|DELETE /card/sections/:id`, `PUT /card/sections/order`, `POST /card/fields`, `PATCH|DELETE /card/fields/:id`,
+`PUT /card/sections/:id/fields/order` (owner/support), `PUT /leads/:id/values` (anyone who may see the lead).
+
 ## The funnel
 
 Admin → CRM → _Settings_: add, rename, colour, reorder, delete stages; mark one as **won** (a customer) and one as **lost**.

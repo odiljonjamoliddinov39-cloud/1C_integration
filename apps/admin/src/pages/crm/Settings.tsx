@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, ErrorText, Input, Section, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { CardBuilder } from "./CardBuilder";
 import { href } from "@/lib/router";
 
 type Kind = "open" | "won" | "lost";
@@ -171,6 +172,7 @@ export function CrmSettingsPage({ me }: { me: AdminView }) {
           <ErrorText error={add.error} />
         </div>
       </Section>
+      <CardBuilder />
       {me.role === "owner" && (
         <Section title={t("Sales managers")}>
           <p className="text-sm text-muted-foreground">

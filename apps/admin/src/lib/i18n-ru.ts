@@ -667,4 +667,28 @@ export const RU: Record<string, string> = {
     "Менеджер по продажам видит только CRM и только свои лиды. В CRM Mini App он входит с этим email и паролем.",
   "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.":
     "Менеджеры добавляются на странице «Администраторы» с ролью «Менеджер по продажам». В CRM Mini App они входят со своим email и показанным там одноразовым паролем.",
+  "Add a field": "Добавить поле",
+  "Add a section": "Добавить раздел",
+  "Choice from a list": "Выбор из списка",
+  "Choices, separated by commas": "Варианты через запятую",
+  "Client card": "Карточка клиента",
+  Date: "Дата",
+  "Delete the field “{label}”? What the managers wrote in it is deleted too.":
+    "Удалить поле «{label}»? Всё, что менеджеры в нём записали, тоже удалится.",
+  "Delete the section “{name}” with its {n} fields? What the managers wrote in them is deleted too.":
+    "Удалить раздел «{name}» с его полями ({n})? Всё, что менеджеры в них записали, тоже удалится.",
+  "E-mail": "E-mail",
+  "Every client card has the name, phone, company and source. Make sections and the fields in them here (a text, a number, a date, a choice from a list…): the managers fill them in on each client.":
+    "В каждой карточке клиента есть имя, телефон, компания и источник. Создайте здесь разделы и поля в них (текст, число, дата, выбор из списка…): менеджеры заполняют их по каждому клиенту.",
+  "Long text": "Длинный текст",
+  "New field name": "Название нового поля",
+  "New section name": "Название нового раздела",
+  No: "Нет",
+  Number: "Число",
+  "Save the card": "Сохранить карточку",
+  "Saved.": "Сохранено.",
+  Section: "Раздел",
+  Text: "Текст",
+  Yes: "Да",
+  "Yes / No": "Да / Нет",
 };

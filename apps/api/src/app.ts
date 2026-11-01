@@ -77,6 +77,7 @@ import { RemoteService } from "./remote/service.js";
 import { Bot, type TelegramApi, botApi } from "./remote/telegram.js";
 import { Service } from "./service.js";
 import { Crm } from "./crm/service.js";
+import { CrmCard } from "./crm/card.js";
 import { CrmImport } from "./crm/import.js";
 import { CrmReports } from "./crm/reports.js";
 import { registerCrmRoutes } from "./crm/routes.js";
@@ -619,6 +620,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     crm,
     imports: new CrmImport(db, crm),
     reports: new CrmReports(db, crm),
+    card: new CrmCard(db, crm),
     fetch: deps.fetch,
   });
 

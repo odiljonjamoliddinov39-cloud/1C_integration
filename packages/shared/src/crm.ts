@@ -153,6 +153,8 @@ export interface CrmHistoryView {
 
 export interface CrmLeadDetail {
   lead: CrmLeadRow;
+  /** What was filled in on the client card: field id → value (fields left empty are not here). */
+  values: Record<string, string>;
   notes: CrmNoteView[];
   calls: CrmCallView[];
   history: CrmHistoryView[];
@@ -263,4 +265,67 @@ export interface CrmReport {
     /** Won against won + lost. */
     winRatePct: number | null;
   }[];
+}
+
+// --- The client card: sections and fields the admin shapes, values the managers fill ------------------------------------
+
+export const CARD_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "date",
+  "phone",
+  "email",
+  "select",
+  "checkbox",
+] as const;
+export const CardFieldType = z.enum(CARD_FIELD_TYPES);
+export type CardFieldType = z.infer<typeof CardFieldType>;
+
+/** The most a card may grow to: a card of a hundred fields is no longer a card. */
+export const CARD_LIMITS = { sections: 20, fields: 100, options: 40 } as const;
+
+export const CrmCardSectionInput = z.object({ name: Text(60).min(1) });
+export type CrmCardSectionInput = z.infer<typeof CrmCardSectionInput>;
+
+const Options = z.array(Text(60).min(1)).max(CARD_LIMITS.options);
+
+export const CrmCardFieldInput = z.object({
+  sectionId: Id,
+  label: Text(60).min(1),
+  type: CardFieldType,
+  /** The choices of a "select" field. */
+  options: Options.optional(),
+});
+export type CrmCardFieldInput = z.infer<typeof CrmCardFieldInput>;
+
+/** A field's type is fixed once it has been made (its values were typed for it); the rest can change. */
+export const CrmCardFieldUpdate = z.object({
+  label: Text(60).min(1).optional(),
+  options: Options.optional(),
+  sectionId: Id.optional(),
+});
+export type CrmCardFieldUpdate = z.infer<typeof CrmCardFieldUpdate>;
+
+export const CrmCardOrderInput = z.object({ ids: z.array(Id).min(1).max(CARD_LIMITS.fields) });
+export type CrmCardOrderInput = z.infer<typeof CrmCardOrderInput>;
+
+/** What a person fills in: field id → value; an empty string clears the value. */
+export const CrmCardValuesInput = z.object({ values: z.record(Id, z.string().max(2000)) });
+export type CrmCardValuesInput = z.infer<typeof CrmCardValuesInput>;
+
+export interface CrmCardField {
+  id: string;
+  sectionId: string;
+  label: string;
+  type: CardFieldType;
+  options: string[];
+  position: number;
+}
+
+export interface CrmCardSection {
+  id: string;
+  name: string;
+  position: number;
+  fields: CrmCardField[];
 }

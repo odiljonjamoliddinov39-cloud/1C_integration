@@ -437,6 +437,132 @@ describe.skipIf(!available)("CRM", () => {
     expect((await ok(call("GET", `/v1/crm/leads/${lead.id}`, m.token))).history).toHaveLength(2);
   });
 
+  it("the admin shapes the client card, the managers fill it in", async () => {
+    const a = await manager("card-a@platform.uz");
+    const b = await manager("card-b@platform.uz");
+    type Card = {
+      id: string;
+      name: string;
+      fields: { id: string; label: string; type: string; options: string[] }[];
+    }[];
+    const layout = async (token = owner) => (await ok(call("GET", "/v1/crm/card", token))) as Card;
+    expect(await layout()).toEqual([]);
+
+    // Only owner and support shape the card.
+    expect((await call("POST", "/v1/crm/card/sections", a.token, { name: "Mine" })).statusCode).toBe(403);
+    await ok(call("POST", "/v1/crm/card/sections", owner, { name: "Contact" }));
+    await ok(call("POST", "/v1/crm/card/sections", owner, { name: "Business" }));
+    let card = await layout();
+    expect(card.map((s) => s.name)).toEqual(["Contact", "Business"]);
+    const [contact, business] = [card[0]!.id, card[1]!.id];
+    const field = (sectionId: string, label: string, type: string, options?: string[]) =>
+      ok(call("POST", "/v1/crm/card/fields", owner, { sectionId, label, type, options }));
+    await field(contact, "E-mail", "email");
+    await field(contact, "Birthday", "date");
+    await field(business, "Employees", "number");
+    await field(business, "Region", "select", ["Toshkent", "Samarqand", "Toshkent"]);
+    await field(business, "Uses 1C", "checkbox");
+    await field(business, "About", "textarea");
+    card = await layout();
+    expect(card[0]!.fields.map((f) => f.label)).toEqual(["E-mail", "Birthday"]);
+    expect(card[1]!.fields.find((f) => f.label === "Region")?.options).toEqual(["Toshkent", "Samarqand"]);
+    // A select needs choices; a field needs a section that exists.
+    expect(
+      (await call("POST", "/v1/crm/card/fields", owner, { sectionId: business, label: "X", type: "select" }))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await call("POST", "/v1/crm/card/fields", owner, {
+          sectionId: "11111111-1111-4111-8111-111111111111",
+          label: "X",
+          type: "text",
+        })
+      ).statusCode,
+    ).toBe(404);
+    const id = (label: string) => card.flatMap((s) => s.fields).find((f) => f.label === label)!.id;
+
+    // A manager fills in their own lead; the values are checked against the type.
+    const lead = (await ok(addLead(a.token, "909000001"))).lead;
+    const save = (token: string, values: Record<string, string>) =>
+      call("PUT", `/v1/crm/leads/${lead.id}/values`, token, { values });
+    const saved = await ok(
+      save(a.token, {
+        [id("E-mail")]: "ali@example.uz",
+        [id("Birthday")]: "1990-05-17",
+        [id("Employees")]: " 1 250,5 ",
+        [id("Region")]: "Samarqand",
+        [id("Uses 1C")]: "true",
+        [id("About")]: "Wants a quote\nfor 5 users",
+      }),
+    );
+    expect(saved[id("Employees")]).toBe("1250.5");
+    expect(saved[id("About")]).toBe("Wants a quote\nfor 5 users");
+    for (const [values, why] of [
+      [{ [id("E-mail")]: "not-an-email" }, "E-mail"],
+      [{ [id("Birthday")]: "17.05.1990" }, "Birthday"],
+      [{ [id("Employees")]: "many" }, "Employees"],
+      [{ [id("Region")]: "Paris" }, "Region"],
+      [{ [id("Uses 1C")]: "maybe" }, "Uses 1C"],
+    ] as const) {
+      const bad = await save(a.token, { ...values, [id("About")]: "should not be saved" });
+      expect(bad.statusCode, why).toBe(400);
+      expect(bad.json().code).toBe("BAD_VALUE");
+      expect(bad.json().message).toContain(why);
+    }
+    expect((await call("GET", `/v1/crm/leads/${lead.id}`, a.token)).json().values[id("About")]).toBe(
+      "Wants a quote\nfor 5 users",
+    );
+
+    // Empty clears a field, the others stay; the card comes back with the lead.
+    await ok(save(a.token, { [id("Region")]: "", [id("Uses 1C")]: "false" }));
+    const detail = (await call("GET", `/v1/crm/leads/${lead.id}`, owner)).json();
+    expect(detail.values[id("Region")]).toBeUndefined();
+    expect(detail.values[id("Uses 1C")]).toBe("false");
+    expect(detail.values[id("E-mail")]).toBe("ali@example.uz");
+    // Another manager cannot read or write this lead's card.
+    expect((await save(b.token, { [id("About")]: "x" })).statusCode).toBe(404);
+    expect((await call("GET", `/v1/crm/leads/${lead.id}`, b.token)).statusCode).toBe(404);
+    expect((await save(a.token, { "11111111-1111-4111-8111-111111111111": "x" })).statusCode).toBe(400);
+
+    // The admin reorders, renames, moves a field to another section and deletes; a deleted field takes its values with it.
+    await ok(call("PUT", "/v1/crm/card/sections/order", owner, { ids: [business, contact] }));
+    expect((await layout()).map((s) => s.name)).toEqual(["Business", "Contact"]);
+    await ok(call("PATCH", `/v1/crm/card/sections/${contact}`, owner, { name: "Contact details" }));
+    await ok(
+      call("PATCH", `/v1/crm/card/fields/${id("About")}`, owner, { label: "Notes", sectionId: contact }),
+    );
+    card = await layout();
+    expect(card.find((s) => s.id === contact)?.fields.map((f) => f.label)).toEqual([
+      "E-mail",
+      "Birthday",
+      "Notes",
+    ]);
+    expect(
+      (await call("PATCH", `/v1/crm/card/fields/${id("Region")}`, owner, { options: [] })).statusCode,
+    ).toBe(400);
+    await ok(
+      call("PUT", `/v1/crm/card/sections/${contact}/fields/order`, owner, {
+        ids: [id("Notes"), id("E-mail"), id("Birthday")],
+      }),
+    );
+    expect((await layout()).find((s) => s.id === contact)?.fields[0]?.label).toBe("Notes");
+    expect(
+      (await call("PUT", `/v1/crm/card/sections/${contact}/fields/order`, owner, { ids: [id("E-mail")] }))
+        .statusCode,
+    ).toBe(400);
+    await ok(call("DELETE", `/v1/crm/card/fields/${id("E-mail")}`, owner));
+    expect(
+      (await call("GET", `/v1/crm/leads/${lead.id}`, owner)).json().values[id("E-mail")],
+    ).toBeUndefined();
+    await ok(call("DELETE", `/v1/crm/card/sections/${business}`, owner));
+    expect((await layout()).map((s) => s.name)).toEqual(["Contact details"]);
+    expect(Object.keys((await call("GET", `/v1/crm/leads/${lead.id}`, owner)).json().values).sort()).toEqual(
+      [id("Birthday"), id("Notes")].sort(),
+    );
+    expect((await call("DELETE", `/v1/crm/card/sections/${business}`, owner)).statusCode).toBe(404);
+  });
+
   it("filters the lead list and finds a lead by any part of its phone", async () => {
     await ok(addLead(owner, "904444444", { name: "Sardor", source: "instagram" }));
     await ok(addLead(owner, "905555555", { name: "Dilnoza", source: "reklama", company: "Dil MChJ" }));

@@ -7,6 +7,11 @@ import {
   AdminLoginInput,
   ChangePasswordInput,
   CrmCallInput,
+  CrmCardFieldInput,
+  CrmCardFieldUpdate,
+  CrmCardOrderInput,
+  CrmCardSectionInput,
+  CrmCardValuesInput,
   CrmImportFileInput,
   CrmImportSheetInput,
   CrmLeadInput,
@@ -31,6 +36,7 @@ import { HttpError } from "../lib/errors.js";
 import { type Lang, langOf, leadsWorkbook, reportWorkbook } from "./export.js";
 import { readGoogleSheet } from "./google-sheets.js";
 import type { CrmImport } from "./import.js";
+import type { CrmCard } from "./card.js";
 import type { CrmReports } from "./reports.js";
 import { type Crm, type CrmActor, seesAll } from "./service.js";
 import { XLSX_TYPE, readSheetFile } from "./xlsx.js";
@@ -43,6 +49,7 @@ export interface CrmRouteDeps {
   crm: Crm;
   imports: CrmImport;
   reports: CrmReports;
+  card: CrmCard;
   fetch?: typeof fetch;
 }
 
@@ -60,7 +67,7 @@ const idParam = z.object({ id: z.uuid() });
 const IMPORT_BODY_LIMIT = 8 * 1024 * 1024;
 
 export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): void {
-  const { db, config, admin, crm, imports, reports } = deps;
+  const { db, config, admin, crm, imports, reports, card } = deps;
 
   const actorOf = (who: AdminIdentity): CrmActor => {
     if (who.mustChangePassword)
@@ -147,6 +154,43 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
     reply
       .status(201)
       .send(await crm.addCall(await auth(req), idParam.parse(req.params).id, CrmCallInput.parse(req.body))),
+  );
+
+  // The client card: the layout (sections and fields) is shaped by owner and support, the values are filled in per lead.
+  app.get("/v1/crm/card", async (req) => {
+    await auth(req);
+    return card.layout();
+  });
+  app.post("/v1/crm/card/sections", async (req) =>
+    card.addSection(await auth(req), CrmCardSectionInput.parse(req.body).name),
+  );
+  app.put("/v1/crm/card/sections/order", async (req) =>
+    card.reorderSections(await auth(req), CrmCardOrderInput.parse(req.body).ids),
+  );
+  app.patch("/v1/crm/card/sections/:id", async (req) =>
+    card.renameSection(
+      await auth(req),
+      idParam.parse(req.params).id,
+      CrmCardSectionInput.parse(req.body).name,
+    ),
+  );
+  app.delete("/v1/crm/card/sections/:id", async (req) =>
+    card.deleteSection(await auth(req), idParam.parse(req.params).id),
+  );
+  app.post("/v1/crm/card/fields", async (req) =>
+    card.addField(await auth(req), CrmCardFieldInput.parse(req.body)),
+  );
+  app.put("/v1/crm/card/sections/:id/fields/order", async (req) =>
+    card.reorderFields(await auth(req), idParam.parse(req.params).id, CrmCardOrderInput.parse(req.body).ids),
+  );
+  app.patch("/v1/crm/card/fields/:id", async (req) =>
+    card.updateField(await auth(req), idParam.parse(req.params).id, CrmCardFieldUpdate.parse(req.body)),
+  );
+  app.delete("/v1/crm/card/fields/:id", async (req) =>
+    card.deleteField(await auth(req), idParam.parse(req.params).id),
+  );
+  app.put("/v1/crm/leads/:id/values", async (req) =>
+    card.saveValues(await auth(req), idParam.parse(req.params).id, CrmCardValuesInput.parse(req.body).values),
   );
 
   app.get("/v1/crm/team", async (req) => crm.team(await auth(req)));
