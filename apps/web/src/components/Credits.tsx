@@ -75,15 +75,25 @@ export function CreditsSection({
       </section>
     ) : null;
   }
-  const sum = (credits: number) => money(Math.round(credits * view.somPerCredit), locale);
-  /** What an amount of credits is worth in questions (and tokens, once there is use to learn from). */
-  const estimate = (credits: number) => {
-    const questions = Math.round((credits * view.somPerCredit) / view.questionSom);
-    const text = c.estQuestions.replace("{n}", nf(questions));
-    return view.tokensPerQuestion === null
-      ? text
-      : `${text} · ${c.estTokens.replace("{n}", nf(questions * view.tokensPerQuestion))}`;
+  /** What an amount of credits comes to in questions: the customer is told questions and a scale, never money. */
+  const questionsOf = (credits: number) => (credits * view.somPerCredit) / view.questionSom;
+  /** Questions, with a decimal while it is only a few (a small use of the AI is a fraction of a question). */
+  const qText = (credits: number) => {
+    const q = questionsOf(credits);
+    return nf(Math.abs(q) < 10 ? Math.round(q * 10) / 10 : Math.round(q));
   };
+  /** The tokens of an amount of credits, when there is use to learn them from. */
+  const tokenText = (credits: number) =>
+    view.tokensPerQuestion === null
+      ? null
+      : c.estTokens.replace("{n}", nf(Math.round(questionsOf(credits) * view.tokensPerQuestion)));
+  const estimate = (credits: number) =>
+    [c.estQuestions.replace("{n}", qText(credits)), tokenText(credits)].filter(Boolean).join(" · ");
+  const planLeftPct = Math.min(
+    100,
+    Math.round((Math.max(0, view.balanceCredits) / Math.max(1, view.monthlyCredits)) * 100),
+  );
+  const monthlyQuestions = nf(Math.round(questionsOf(view.monthlyCredits)));
   const toggleExtra = (enabled: boolean) =>
     setExtraCredits({ enabled }).then(
       (v) => {
@@ -100,15 +110,16 @@ export function CreditsSection({
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <div>
           <div className="text-sm text-muted-foreground">{c.planBalance}</div>
-          <div className="text-2xl font-bold">{sum(view.balanceCredits)}</div>
-          <div className="text-sm text-muted-foreground">{estimate(view.balanceCredits)}</div>
+          <div className="text-2xl font-bold">{c.leftPct.replace("{pct}", nf(planLeftPct))}</div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              className={`h-full rounded-full ${planLeftPct === 0 ? "bg-destructive" : planLeftPct <= 20 ? "bg-warning" : "bg-primary"}`}
+              style={{ width: `${planLeftPct}%` }}
+            />
+          </div>
+          <div className="mt-1.5 text-sm text-muted-foreground">{estimate(view.balanceCredits)}</div>
           <div className="mt-1 text-sm text-muted-foreground">
-            {c.monthlySum
-              .replace("{sum}", sum(view.monthlyCredits))
-              .replace(
-                "{questions}",
-                nf(Math.round((view.monthlyCredits * view.somPerCredit) / view.questionSom)),
-              )}
+            {c.monthlyQuestions.replace("{questions}", monthlyQuestions)}
             {view.planResetsAt && (
               <> {c.planResets.replace("{date}", formatDate(new Date(view.planResetsAt), locale))}</>
             )}
@@ -116,8 +127,12 @@ export function CreditsSection({
         </div>
         <div>
           <div className="text-sm text-muted-foreground">{c.extraBalance}</div>
-          <div className="text-2xl font-bold">{sum(Math.max(0, view.extraCredits))}</div>
-          <div className="text-sm text-muted-foreground">{estimate(Math.max(0, view.extraCredits))}</div>
+          <div className="text-2xl font-bold">
+            {c.estQuestions.replace("{n}", qText(Math.max(0, view.extraCredits)))}
+          </div>
+          <div className="text-sm text-muted-foreground">
+            {tokenText(Math.max(0, view.extraCredits)) ?? ""}
+          </div>
         </div>
       </div>
       {(view.daily || view.weekly) && (
@@ -133,7 +148,10 @@ export function CreditsSection({
                 <div className="flex justify-between text-sm">
                   <span>{label}</span>
                   <span className="text-muted-foreground">
-                    {sum(Math.min(limit.usedCredits, limit.limitCredits))} / {sum(limit.limitCredits)}
+                    {c.usedPct.replace(
+                      "{pct}",
+                      nf(Math.min(100, Math.round((limit.usedCredits / limit.limitCredits) * 100))),
+                    )}
                   </span>
                 </div>
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -239,9 +257,10 @@ export function CreditsSection({
               {view.approvalRequired ? c.requestBuy : c.buy}
             </button>
             <span className="text-muted-foreground">
-              {c.buyGets
-                .replace("{gets}", money(Math.floor(amount * view.topupShare), locale))
-                .replace("{questions}", nf(Math.round((amount * view.topupShare) / view.questionSom)))}
+              {c.buyGets.replace(
+                "{questions}",
+                nf(Math.round((amount * view.topupShare) / view.questionSom)),
+              )}
             </span>
           </form>
           {view.approvalRequired && <p className="mt-2 text-sm text-muted-foreground">{c.requestNote}</p>}
@@ -254,7 +273,7 @@ export function CreditsSection({
                     <span className="whitespace-nowrap text-muted-foreground">
                       {formatDate(new Date(r.createdAt), locale)}
                     </span>
-                    <span className="font-medium">+{sum(r.credits)}</span>
+                    <span className="font-medium">+{c.estQuestions.replace("{n}", qText(r.credits))}</span>
                     <span className="text-muted-foreground">
                       {c.requestPays.replace("{sum}", money(r.totalSom, locale))}
                     </span>
@@ -389,9 +408,9 @@ export function CreditsSection({
                     className={`py-2 pr-3 text-right ${h.amountCredits < 0 ? "text-destructive" : "text-success"}`}
                   >
                     {h.amountCredits > 0 ? "+" : ""}
-                    {sum(h.amountCredits)}
+                    {qText(h.amountCredits)}
                   </td>
-                  <td className="py-2 text-right">{sum(h.balanceAfter)}</td>
+                  <td className="py-2 text-right">{qText(h.balanceAfter)}</td>
                 </tr>
               ))}
             </tbody>

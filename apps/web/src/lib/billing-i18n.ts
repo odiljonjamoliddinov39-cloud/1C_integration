@@ -121,12 +121,14 @@ const uz = {
       atCap: "Balans chegaraga yetdi: yangi oylik kreditlar qoʻshilmaydi.",
       freeNote:
         "Bepul tarifda kreditlar har oy qoʻshiladi. Qoʻshimcha kredit sotib olish uchun pullik tarifni tanlang.",
-      monthlySum:
-        "Tarif har oy {sum} AI zaxirasini beradi (≈ {questions} savol). Ishlatilmagani keyingi oyga oʻtadi.",
+      monthlyQuestions:
+        "Tarif har oy ≈ {questions} savollik AI zaxirasini beradi. Ishlatilmagani keyingi oyga oʻtadi.",
       estQuestions: "≈ {n} savol",
       estTokens: "≈ {n} token",
-      buyGets: "Balansga {gets} qoʻshiladi (≈ {questions} savol)",
+      buyGets: "Balansga ≈ {questions} savol qoʻshiladi",
       requestPays: "toʻlov: {sum}",
+      leftPct: "{pct}% qoldi",
+      usedPct: "{pct}% ishlatildi",
       planBalance: "Tarif AI zaxirasi",
       planResets: "Keyingisi {date} da qoʻshiladi.",
       extraBalance: "Qoʻshimcha balans",
@@ -177,7 +179,7 @@ const uz = {
       noHistory: "Hali yozuv yoʻq.",
       when: "Sana",
       type: "Turi",
-      amount: "Kredit",
+      amount: "Savol",
       after: "Balans",
       types: {
         monthly_grant: "Oylik kreditlar",
@@ -321,12 +323,14 @@ const ru: typeof uz = {
       atCap: "Баланс достиг лимита: новые ежемесячные кредиты не добавляются.",
       freeNote:
         "На бесплатном тарифе кредиты добавляются каждый месяц. Чтобы докупать кредиты, выберите платный тариф.",
-      monthlySum:
-        "Тариф каждый месяц даёт AI-запас {sum} (≈ {questions} вопросов). Неиспользованное переходит на следующий месяц.",
+      monthlyQuestions:
+        "Тариф каждый месяц даёт AI-запас примерно на {questions} вопросов. Неиспользованное переходит на следующий месяц.",
       estQuestions: "≈ {n} вопросов",
       estTokens: "≈ {n} токенов",
-      buyGets: "На баланс добавится {gets} (≈ {questions} вопросов)",
+      buyGets: "На баланс добавится ≈ {questions} вопросов",
       requestPays: "оплата: {sum}",
+      leftPct: "Осталось {pct}%",
+      usedPct: "Использовано {pct}%",
       planBalance: "AI-запас тарифа",
       planResets: "Следующие добавятся {date}.",
       extraBalance: "Дополнительный баланс",
@@ -376,7 +380,7 @@ const ru: typeof uz = {
       noHistory: "Записей пока нет.",
       when: "Дата",
       type: "Тип",
-      amount: "Кредиты",
+      amount: "Вопросы",
       after: "Баланс",
       types: {
         monthly_grant: "Ежемесячные кредиты",
