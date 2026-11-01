@@ -897,8 +897,10 @@ export const creditRequests = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    /** The AI balance the request adds (credits), the price of a credit then, and the soum the customer pays for it. */
     credits: integer("credits").notNull(),
     somPerCredit: integer("som_per_credit").notNull(),
+    paidSum: integer("paid_sum").notNull().default(0),
     status: text("status", { enum: ["pending", "approved", "rejected", "cancelled"] })
       .notNull()
       .default("pending"),

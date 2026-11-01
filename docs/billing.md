@@ -84,17 +84,28 @@ each card; they are cached, so resending them is cheap.
 One balance per account replaces the question count and the dollar budget. **1 credit = $0.01**; the customer sees credits and
 their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-budget path (the old code is kept for that).
 
-- **Two balances.** The **plan's credits** are the main balance: what the plan gives (`plans.monthly_credits`: Free 500, Start 3 040,
-  Business 8 110, Firm 19 930; the trial gives 1 500 once per account and per company INN), with what was carried over.
+- **The plan's AI comes from its price.** The plan's credits are the main balance, and their amount is not typed in: it is **40% of the
+  monthly price** (`AI_BUDGET_PCT`), plus the same share of each active add-on that renews each month (an extra company or user).
+  The AI **never costs more than 45%** of what the customer pays in a period (`AI_COST_CAP_PCT`): once the plan's credits used in
+  the period reach the ceiling, the call is refused (`AI_BUDGET_EXCEEDED`) whatever is left of the balance. The 5% over the budget
+  only keeps an answer in progress from being cut. The price is the plan's price in the table (the dashboard edits it), so a new price
+  changes the budget with nothing else to edit; the plan's `monthly_credits` column is not used any more. **Free** has no price: a fixed
+  20 000 soum (`FREE_AI_BUDGET_SUM`) a month, with no day or week limit. The price list and the cabinet show the budget in soum and what
+  it comes to in questions (a question costs about 2 800 soum until 30 real questions of the last 30 days give the average) and in
+  tokens (shown once there is use to learn from). Example at 899 000 / 2 399 000 / 5 899 000: budget 359 600 / 959 600 / 2 359 600
+  soum, ceiling 404 550 / 1 079 550 / 2 654 550 soum.
+- **Two balances.** The **plan's credits** are the main balance: the budget above, a month at a time (the trial gives 1 500 credits once
+  per account and per company INN), with what was carried over.
   The **extra credits** are bought (or given by an admin as a bonus) and kept apart (`credit_accounts.extra_credits`; every
-  `credit_transactions` row says which `pool` it moved). The customer sees both.
+  `credit_transactions` row says which `pool` it moved). The customer sees both, in soum.
 - **Spending.** After every AI call its real cost (`costUsd / 0.01`) leaves the **plan's credits** as an `ai_usage` transaction tied
   to the usage row. Answers from templates and the answer cache cost nothing. The check is made _before_ a step, so an answer
   already being written is never cut; it may take a balance under zero. A low balance of the plan's credits (under 500 credits
   or 20% of the monthly credits, the smaller) warns once (`AI_CREDITS_LOW`, event `credits_low`) until it recovers.
 - **Limits, like Claude's.** The plan also limits a **day** and a **week** to a share of its monthly credits
   (`plans.daily_limit_pct` 15 and `plans.weekly_limit_pct` 35 by default; 0 is no limit; editable per plan in the admin's Plans
-  page). A day starts at 00:00 Tashkent time (UTC+5), a week on Monday 00:00. The plan's credits are blocked when none are left
+  page). With several users a day is shared: one user may use at most 2 / (users) of the day's limit (a team of five: 40% each), so a
+  colleague cannot take the whole day. A day starts at 00:00 Tashkent time (UTC+5), a week on Monday 00:00. The plan's credits are blocked when none are left
   (`AI_BUDGET_EXCEEDED`), the week's limit is reached (`AI_LIMIT_WEEKLY`) or the day's (`AI_LIMIT_DAILY`).
 - **The offer.** When the plan's credits are blocked the call is refused and the desktop dialog and the cabinet offer: wait for
   the reset (the time is shown), turn on the extra credits, or buy more. The extra credits are spent **only** when the plan's
@@ -105,16 +116,18 @@ their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-b
 - **Price.** `credit_rate_history` holds every price. A daily job reads the CBU USD rate; the price is
   `round10(rate × 0.01 × 1.013)` and is changed only when the rate has moved 5% from the rate of the last change. The starting
   price is 120 soum (rate 11 839). An owner admin can set a price by hand (with a reason); it stays until the rate moves 5%.
-- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price; the credits
-  are added once to the **extra credits** when it is paid (the extra balance also stops at 50 000). With `CREDIT_APPROVAL=on` the
-  purchase goes through an admin first (below).
+- **Buying (a top-up)** (paid plans only): the customer pays **any sum from 10 000 soum** and **70% of it** becomes AI balance
+  (`TOPUP_BALANCE_SHARE`; 100 000 soum gives 70 000 soum of AI, so the cost of what is sold is at most 70% of the payment). The
+  invoice is for the sum paid (item kind `credits`); the credits are added once to the **extra credits** when it is paid (the extra
+  balance stops at 50 000 credits). With `CREDIT_APPROVAL=on` the top-up goes through an admin first (below). The old add-on "Extra 100
+  AI questions" cost more than 45% of its price and is off the price list (`is_public = false`; an existing purchase still works).
 - **Auto-recharge** is off by default and not available on Free. It needs a saved card; when the extra credits are being used and run low, the card is charged
   through the `CardCharger` interface. A failure is written to `credit_recharge_failures`, raises the `auto_recharge_failed`
   event and shows in the admin Credits page. **The real card charge is not built:** the default charger always fails
   (Payme/Click card tokens and merchant access are needed); the tests use a fake one.
 - **Migration.** At start (with `BILLING_JOBS=on`) accounts without a balance get the share of their plan's credits that is left
   of the month's questions.
-- **API.** `GET /v1/billing/credits`, `POST /v1/billing/credits/purchase`, `POST /v1/billing/credits/extra`, `POST /v1/billing/credits/auto-recharge`;
+- **API.** `GET /v1/billing/credits`, `POST /v1/billing/credits/purchase` (`{sum, provider}`), `POST /v1/billing/credits/extra`, `POST /v1/billing/credits/auto-recharge`;
   admin: `GET /v1/admin/credits` (report, rate history, failures), `GET /v1/admin/credits/by-account/:id`,
   `POST /v1/admin/credits/:id/adjust` (reason required, `pool` plan or extra, never below zero, audited), `POST /v1/admin/credits/rate`.
   `GET /v1/billing/entitlements` carries `credits` for the desktop sidebar.

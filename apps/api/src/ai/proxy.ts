@@ -99,7 +99,7 @@ export class AiProxy {
     // plan's day and week limits; the extra credits take over when those are out and the customer allowed it. Without credits, the
     // older monthly dollar budget and the plan's questions apply.
     if (this.credits?.enabled) {
-      const low = await this.credits.ensureCanSpend(accountId);
+      const low = await this.credits.ensureCanSpend(accountId, userId);
       return { policy, warnings: low ? [low] : [] };
     }
     const admission = await checkBudget(this.db, policy, { accountId, userId });
@@ -299,7 +299,7 @@ export class AiProxy {
     // The call's real cost leaves the credit balance (a template or cache answer never gets here: it costs nothing).
     if (this.credits?.enabled) {
       await this.credits
-        .spend(who.accountId, usageOf(message).costUsd, usageId)
+        .spend(who.accountId, usageOf(message).costUsd, usageId, who.userId)
         .catch((error: unknown) => this.log.error(error, "AI credits were not charged"));
       return;
     }

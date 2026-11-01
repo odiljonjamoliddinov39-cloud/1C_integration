@@ -162,6 +162,13 @@
       "when": 1793550805032,
       "tag": "0022_plan_limits_extra_credits",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793557355249,
+      "tag": "0023_plan_budget_by_price",
+      "breakpoints": true
     }
   ]
 }

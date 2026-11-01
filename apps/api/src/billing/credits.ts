@@ -10,6 +10,12 @@ import {
   type CreditLimitView,
   type CreditsSummary,
   type CreditsView,
+  FALLBACK_QUESTION_SOM,
+  FREE_AI_BUDGET_SUM,
+  MIN_TOPUP_SUM,
+  TOPUP_BALANCE_SHARE,
+  payForCredits,
+  topupCredits,
   type CreditTransactionType,
   LOW_BALANCE_CREDITS,
   LOW_BALANCE_SHARE,
@@ -20,20 +26,22 @@ import {
   TRIAL_CREDITS,
   creditsOfUsd,
 } from "@platform/shared";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 
 import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
   accounts,
+  addons,
   creditAccounts,
   creditRateHistory,
   creditRechargeFailures,
   creditTransactions,
+  subscriptionAddons,
   usageCounters,
 } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
-import type { Billing } from "./entitlements.js";
+import type { Billing, PlanRow, Resolved } from "./entitlements.js";
 import { dayStart, limitCredits, weekStart } from "./credit-limits.js";
 import { requestsOf } from "./credit-requests.js";
 import type { Invoicing } from "./invoicing.js";
@@ -172,6 +180,99 @@ export class Credits {
     this.priceCache = null;
   }
 
+  // --- what the plan's AI may cost, by the monthly payment ---------------------------------------
+
+  /** The soum the add-ons that renew each month (an extra company or user) were paid, so their share is added to the budget. */
+  private async recurringAddonSum(r: Resolved, now: Date): Promise<number> {
+    const rows = await this.db
+      .select({ price: addons.priceSum, quantity: subscriptionAddons.quantity, kind: addons.kind })
+      .from(subscriptionAddons)
+      .innerJoin(addons, eq(addons.code, subscriptionAddons.addonCode))
+      .where(
+        and(
+          eq(subscriptionAddons.subscriptionId, r.subscription.id),
+          lte(subscriptionAddons.validFrom, now),
+          gte(subscriptionAddons.validTo, now),
+        ),
+      );
+    return rows.filter((a) => a.kind === "recurring").reduce((sum, a) => sum + a.price * a.quantity, 0);
+  }
+
+  /**
+   * The AI an account's plan allows a month. The budget is a share of what the customer pays (40%), and the cost never goes
+   * over the ceiling share (45%); a paid add-on adds its own share. Free has no price: a fixed small budget. A trial has its credits.
+   */
+  async planBudget(r: Resolved, somPerCredit: number, now = new Date()) {
+    const budgetPct = this.config.AI_BUDGET_PCT;
+    const capPct = this.config.AI_COST_CAP_PCT;
+    let budgetSum: number;
+    let capSum: number;
+    if (r.state === "trial") {
+      budgetSum = TRIAL_CREDITS * somPerCredit;
+      capSum = (budgetSum * capPct) / budgetPct;
+    } else if (r.effectivePlan.priceUzs <= 0) {
+      budgetSum = FREE_AI_BUDGET_SUM;
+      capSum = (budgetSum * capPct) / budgetPct;
+    } else {
+      const paying = r.state === "active" || r.state === "grace";
+      const paid = r.effectivePlan.priceUzs + (paying ? await this.recurringAddonSum(r, now) : 0);
+      budgetSum = (paid * budgetPct) / 100;
+      capSum = (paid * capPct) / 100;
+    }
+    return {
+      budgetSum: Math.round(budgetSum),
+      capSum: Math.round(capSum),
+      budgetCredits: Math.round(budgetSum / somPerCredit),
+      capCredits: Math.round(capSum / somPerCredit),
+    };
+  }
+
+  /** What a plan's AI comes to by its price alone (for the price list), with the questions and tokens it is worth. */
+  async planAi(plan: PlanRow) {
+    const { somPerCredit } = await this.price();
+    const { questionSom, tokensPerQuestion } = await this.estimates();
+    const budgetSum =
+      plan.priceUzs > 0 ? Math.round((plan.priceUzs * this.config.AI_BUDGET_PCT) / 100) : FREE_AI_BUDGET_SUM;
+    const capSum =
+      plan.priceUzs > 0
+        ? Math.round((plan.priceUzs * this.config.AI_COST_CAP_PCT) / 100)
+        : Math.round((FREE_AI_BUDGET_SUM * this.config.AI_COST_CAP_PCT) / this.config.AI_BUDGET_PCT);
+    const estQuestions = Math.max(1, Math.round(budgetSum / questionSom));
+    return {
+      monthlyCredits: Math.round(budgetSum / somPerCredit),
+      aiBudgetSum: budgetSum,
+      aiCapSum: capSum,
+      estQuestions,
+      estTokens: tokensPerQuestion === null ? null : estQuestions * tokensPerQuestion,
+    };
+  }
+
+  private estimateCache: { at: number; questionSom: number; tokensPerQuestion: number | null } | null = null;
+
+  /**
+   * What a question costs on average (soum) and how many tokens it takes, learned from the last 30 days of questions answered by
+   * the model; until there are enough of them, a fixed average and no token figure.
+   */
+  async estimates(): Promise<{ questionSom: number; tokensPerQuestion: number | null }> {
+    if (this.estimateCache && Date.now() - this.estimateCache.at < 600_000) return this.estimateCache;
+    const { cbuRate } = await this.price();
+    const [row] = await this.db.execute<{ q: number; usd: number; tokens: number }>(sql`
+      select count(*) filter (where first_step)::int as q,
+        coalesce(sum(cost_usd), 0)::float8 as usd,
+        coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)::float8 as tokens
+      from ai_usage
+      where route = 'model' and feature = 'chat' and created_at >= now() - interval '30 days'`);
+    const enough = (row?.q ?? 0) >= 30 && (row?.usd ?? 0) > 0;
+    const value = enough
+      ? {
+          questionSom: Math.round(((row?.usd ?? 0) * cbuRate) / (row?.q ?? 1)),
+          tokensPerQuestion: Math.round((row?.tokens ?? 0) / (row?.q ?? 1)),
+        }
+      : { questionSom: FALLBACK_QUESTION_SOM, tokensPerQuestion: null };
+    this.estimateCache = { at: Date.now(), ...value };
+    return value;
+  }
+
   // --- grants -------------------------------------------------------------------------------------
 
   /**
@@ -186,7 +287,7 @@ export class Credits {
     if (r.state === "trial") {
       await this.trialGrant(accountId);
     } else {
-      const monthly = r.effectivePlan.monthlyCredits;
+      const monthly = (await this.planBudget(r, (await this.price()).somPerCredit, now)).budgetCredits;
       if (monthly > 0) await this.monthlyGrant(accountId, period, monthly);
     }
     this.granted.set(accountId, mark);
@@ -286,12 +387,14 @@ export class Credits {
     };
   }
 
-  /** The plan's credits used since `since` (AI use only), in credits. */
-  private async planUsed(accountId: string, since: Date): Promise<number> {
+  /** The plan's credits used since `since` (AI use only), in credits; of one user when `userId` is given. */
+  private async planUsed(accountId: string, since: Date, userId?: string): Promise<number> {
     const [row] = await this.db.execute<{ used: number }>(sql`
-      select coalesce(-sum(amount_credits), 0)::float8 as used from credit_transactions
-      where account_id = ${accountId} and type = 'ai_usage' and pool = 'plan'
-        and created_at >= ${since.toISOString()}::timestamptz`);
+      select coalesce(-sum(t.amount_credits), 0)::float8 as used from credit_transactions t
+      ${userId ? sql`join ai_usage u on u.id = t.related_usage_id` : sql``}
+      where t.account_id = ${accountId} and t.type = 'ai_usage' and t.pool = 'plan'
+        and t.created_at >= ${since.toISOString()}::timestamptz
+        ${userId ? sql`and u.user_id = ${userId}` : sql``}`);
     return row?.used ?? 0;
   }
 
@@ -303,14 +406,19 @@ export class Credits {
     accountId: string,
     row: typeof creditAccounts.$inferSelect | undefined,
     now = new Date(),
+    userId?: string,
   ): Promise<{
     blocked: CreditBlock;
     daily: CreditLimitView | null;
     weekly: CreditLimitView | null;
     planResetsAt: string;
+    budget: Awaited<ReturnType<Credits["planBudget"]>>;
+    usedPeriod: number;
   }> {
     const r = await this.billing.get(accountId, now);
-    const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
+    const { somPerCredit } = await this.price();
+    const budget = await this.planBudget(r, somPerCredit, now);
+    const monthly = budget.budgetCredits;
     const window = async (pct: number, start: Date, length: number): Promise<CreditLimitView | null> => {
       const limit = limitCredits(monthly, pct);
       if (limit === null) return null;
@@ -323,20 +431,42 @@ export class Credits {
     const daily = await window(r.effectivePlan.dailyLimitPct, dayStart(now), DAY_MS);
     const weekly = await window(r.effectivePlan.weeklyLimitPct, weekStart(now), 7 * DAY_MS);
     const reached = (w: CreditLimitView | null) => w !== null && w.usedCredits >= w.limitCredits;
+    // The cost of a period never goes over the ceiling (a share of what the customer pays), whatever is left of the balance.
+    const usedPeriod = await this.planUsed(accountId, r.counterStart);
+    // With several users a day's limit is shared: one user may use at most 2 / (users) of it, so a colleague cannot take it all.
+    let userReached = false;
+    const seats = r.entitlements.users;
+    if (userId && daily && seats > 1) {
+      const userLimit = Math.ceil(daily.limitCredits * Math.min(1, 2 / seats));
+      userReached = (await this.planUsed(accountId, dayStart(now), userId)) >= userLimit;
+    }
     const blocked: CreditBlock =
-      (row?.balanceCredits ?? 0) <= 0 ? "plan" : reached(weekly) ? "weekly" : reached(daily) ? "daily" : null;
-    return { blocked, daily, weekly, planResetsAt: addMonths(r.counterStart, 1).toISOString() };
+      (row?.balanceCredits ?? 0) <= 0 || usedPeriod >= budget.capCredits
+        ? "plan"
+        : reached(weekly)
+          ? "weekly"
+          : reached(daily) || userReached
+            ? "daily"
+            : null;
+    return {
+      blocked,
+      daily,
+      weekly,
+      planResetsAt: addMonths(r.counterStart, 1).toISOString(),
+      budget,
+      usedPeriod,
+    };
   }
 
   async summary(accountId: string): Promise<CreditsSummary> {
     await this.ensureGrants(accountId);
-    const r = await this.billing.get(accountId);
     const [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
     const balance = row?.balanceCredits ?? 0;
-    const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
     const gate = await this.gate(accountId, row);
+    const monthly = gate.budget.budgetCredits;
     return {
       balanceCredits: Math.floor(balance),
+      ...(await this.estimates()),
       extraCredits: Math.floor(row?.extraCredits ?? 0),
       extraEnabled: row?.extraEnabled ?? false,
       blocked: gate.blocked,
@@ -363,8 +493,8 @@ export class Credits {
     const balance = row?.balanceCredits ?? 0;
     const cap = row?.rolloverCapCredits ?? ROLLOVER_CAP_CREDITS;
     const { somPerCredit } = await this.price();
-    const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
     const gate = await this.gate(accountId, row);
+    const monthly = gate.budget.budgetCredits;
     const history = await this.db
       .select()
       .from(creditTransactions)
@@ -382,11 +512,15 @@ export class Credits {
       balanceSom: Math.round(balance * somPerCredit),
       somPerCredit,
       monthlyCredits: monthly,
+      capCredits: gate.budget.capCredits,
+      usedPeriodCredits: Math.round(gate.usedPeriod * 100) / 100,
+      ...(await this.estimates()),
       rolloverCapCredits: cap,
       low: balance < lowLevel(monthly),
       atCap: balance >= cap,
       canPurchase: r.effectivePlan.code !== "free",
-      minPurchaseCredits: MIN_PURCHASE_CREDITS,
+      minTopupSum: MIN_TOPUP_SUM,
+      topupShare: TOPUP_BALANCE_SHARE,
       autoRecharge: this.settings(row),
       approvalRequired: this.approvalRequired,
       requests: await requestsOf(this.db, accountId),
@@ -411,10 +545,13 @@ export class Credits {
    * Returns a warning (once) when the plan's credits are low. An answer already being written is never cut: this runs before
    * a step, and one step may take a balance under zero.
    */
-  async ensureCanSpend(accountId: string): Promise<{ code: string; message: string } | null> {
+  async ensureCanSpend(
+    accountId: string,
+    userId?: string,
+  ): Promise<{ code: string; message: string } | null> {
     await this.ensureGrants(accountId);
     let [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
-    const gate = await this.gate(accountId, row);
+    const gate = await this.gate(accountId, row, new Date(), userId);
     if (gate.blocked) {
       if (row?.extraEnabled && (row.extraCredits ?? 0) <= 0 && (await this.autoRecharge(accountId))) {
         [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
@@ -424,8 +561,7 @@ export class Credits {
       throw this.refusal(gate, row);
     }
     const balance = row?.balanceCredits ?? 0;
-    const monthly = (await this.billing.get(accountId)).effectivePlan.monthlyCredits;
-    if (balance < lowLevel(monthly)) {
+    if (balance < lowLevel(gate.budget.budgetCredits)) {
       const warned = await this.markLow(accountId, balance);
       if (warned)
         return {
@@ -489,14 +625,14 @@ export class Credits {
    * After an AI call: its real cost leaves the plan's credits, once, as a transaction tied to the call's usage row. When the
    * plan's credits cannot take it (out, or a limit reached) and the customer allowed it, it leaves the extra credits.
    */
-  async spend(accountId: string, costUsd: number, usageId: string | null): Promise<void> {
+  async spend(accountId: string, costUsd: number, usageId: string | null, userId?: string): Promise<void> {
     const credits = creditsOfUsd(costUsd);
     if (credits <= 0) return;
     const [before] = await this.db
       .select()
       .from(creditAccounts)
       .where(eq(creditAccounts.accountId, accountId));
-    const gate = await this.gate(accountId, before);
+    const gate = await this.gate(accountId, before, new Date(), userId);
     const { pool, balance } = await this.db.transaction(async (tx) => {
       const row = await lockRow(tx, accountId);
       const entry = {
@@ -529,7 +665,7 @@ export class Credits {
     if (!account) throw new HttpError(404, "NOT_FOUND", "No such account");
     await this.ensureGrants(accountId);
     const r = await this.billing.get(accountId);
-    const level = lowLevel(r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits);
+    const level = lowLevel((await this.planBudget(r, (await this.price()).somPerCredit)).budgetCredits);
     const balance = await this.db.transaction(async (tx) => {
       const row = await lockRow(tx, accountId);
       const current = pool === "extra" ? row.extraCredits : row.balanceCredits;
@@ -579,17 +715,21 @@ export class Credits {
       );
   }
 
-  /** A purchase: an invoice for `credits` at today's price, to be paid by Payme, Click or bank transfer. */
-  async purchase(accountId: string, credits: number, provider: "payme" | "click" | "bank") {
+  /**
+   * A top-up by the sum the customer pays (any sum from the minimum up): an invoice for it, to be paid by Payme, Click or bank
+   * transfer. The extra balance gets the share of it that is AI (70%).
+   */
+  async purchase(accountId: string, sum: number, provider: "payme" | "click" | "bank") {
     if (this.approvalRequired)
       throw new HttpError(
         409,
         "APPROVAL_REQUIRED",
         "Credits are added when an admin approves a request: send a request instead",
       );
-    await this.assertCanBuy(accountId, credits);
     const { somPerCredit } = await this.price();
-    return this.invoicing.creditsCheckout(accountId, credits, somPerCredit, provider);
+    const credits = topupCredits(sum, somPerCredit);
+    await this.assertCanBuy(accountId, credits);
+    return this.invoicing.creditsCheckout(accountId, credits, somPerCredit, provider, sum);
   }
 
   /** The customer allows (or stops) the extra credits being used when the plan's credits or a limit are out. */
@@ -659,7 +799,12 @@ export class Credits {
       if (amount < MIN_PURCHASE_CREDITS) return await fail("The balance is at the cap: nothing to add");
       if (!row.autoMethod || !row.autoCardToken) return await fail("No saved card");
       const { somPerCredit } = await this.price();
-      const quote = await this.invoicing.creditsQuote(accountId, amount, somPerCredit);
+      const quote = await this.invoicing.creditsQuote(
+        accountId,
+        amount,
+        somPerCredit,
+        payForCredits(amount, somPerCredit),
+      );
       const invoice = await this.invoicing.createInvoice(accountId, quote, row.autoMethod);
       const result = await this.charger.charge({
         accountId,

@@ -3,11 +3,12 @@
  * approves it (the credits are added, with an invoice marked paid for the books) or rejects it. Also "Restart payments":
  * an admin clears a customer's unfinished payments so the customer can begin again.
  */
-import type {
-  AdminCreditRequest,
-  AdminCreditRequestsResponse,
-  AdminRestartPaymentsResult,
-  CreditRequestView,
+import {
+  type AdminCreditRequest,
+  type AdminCreditRequestsResponse,
+  type AdminRestartPaymentsResult,
+  type CreditRequestView,
+  topupCredits,
 } from "@platform/shared";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
@@ -27,7 +28,7 @@ export function requestView(row: RequestRow): CreditRequestView {
     id: row.id,
     credits: row.credits,
     somPerCredit: row.somPerCredit,
-    totalSom: row.credits * row.somPerCredit,
+    totalSom: row.paidSum,
     status: row.status,
     note: row.note,
     createdAt: row.createdAt.toISOString(),
@@ -53,8 +54,10 @@ export class CreditRequests {
     private readonly invoicing: Invoicing,
   ) {}
 
-  /** The customer asks for `credits` at today's price. */
-  async create(accountId: string, userId: string | null, credits: number): Promise<CreditRequestView> {
+  /** The customer asks to top up the extra balance by `sum` soum: the AI balance it gives is worked out at today's price. */
+  async create(accountId: string, userId: string | null, sum: number): Promise<CreditRequestView> {
+    const { somPerCredit } = await this.credits.price();
+    const credits = topupCredits(sum, somPerCredit);
     await this.credits.assertCanBuy(accountId, credits);
     const [pending] = await this.db
       .select({ n: sql<number>`count(*)::int` })
@@ -66,10 +69,9 @@ export class CreditRequests {
         "TOO_MANY_REQUESTS",
         "You already have requests waiting for approval: wait for an answer first",
       );
-    const { somPerCredit } = await this.credits.price();
     const [row] = await this.db
       .insert(creditRequests)
-      .values({ accountId, userId, credits, somPerCredit })
+      .values({ accountId, userId, credits, somPerCredit, paidSum: sum })
       .returning();
     if (!row) throw new HttpError(500, "INTERNAL", "The request was not saved");
     return requestView(row);
@@ -152,7 +154,12 @@ export class CreditRequests {
     let invoiceId: string | null = null;
     try {
       await this.credits.assertCanBuy(row.accountId, row.credits);
-      const quote = await this.invoicing.creditsQuote(row.accountId, row.credits, row.somPerCredit);
+      const quote = await this.invoicing.creditsQuote(
+        row.accountId,
+        row.credits,
+        row.somPerCredit,
+        row.paidSum,
+      );
       const invoice = await this.invoicing.createInvoice(row.accountId, quote, "bank", undefined, now);
       invoiceId = invoice.id;
       await this.invoicing.applyInvoice(invoice.id, now, { provider: "bank", ref: `request:${row.id}` });

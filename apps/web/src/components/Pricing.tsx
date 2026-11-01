@@ -47,9 +47,15 @@ export function Pricing({ locale }: { locale: Locale }) {
           ? limit(plan.auditsPerMonth, year)
           : `${plan.auditsPerMonth} ${t.rows.perMonthShort}`,
     ],
-    plan.monthlyCredits > 0
-      ? [t.rows.credits, limit(plan.monthlyCredits, year)]
-      : [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
+    plan.aiBudgetSum > 0
+      ? [
+          t.rows.credits,
+          `${money(plan.aiBudgetSum, locale)} · ≈ ${nf(plan.estQuestions)} ${t.rows.questionsShort}` +
+            (plan.estTokens === null ? "" : ` · ≈ ${nf(plan.estTokens)} ${t.rows.tokensShort}`),
+        ]
+      : plan.monthlyCredits > 0
+        ? [t.rows.credits, limit(plan.monthlyCredits, year)]
+        : [t.rows.ai, limit(plan.aiQuestionsPerMonth, year)],
     [t.rows.excel, plan.features.excelExport ? "✓" : "—"],
     [t.rows.support, t.support[plan.features.support] ?? plan.features.support],
   ];

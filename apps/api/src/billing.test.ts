@@ -147,8 +147,8 @@ describe.skipIf(!available)("tariffs", () => {
       importsPerMonth: null,
     });
     expect(catalog.plans[0]).toMatchObject({ priceMonthSum: 0, importsPerMonth: 30, auditsPerMonth: 1 });
+    // "Extra 100 AI questions" cost more than 45% of its price: it is off the price list (an existing purchase still works).
     expect(catalog.addons.map((a: { code: string }) => a.code).sort()).toEqual([
-      "addon_ai_100",
       "addon_company",
       "addon_user",
     ]);

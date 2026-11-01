@@ -262,31 +262,41 @@ export class Invoicing {
   // --- AI credits -------------------------------------------------------------------------------
 
   /** What `credits` AI credits cost at `somPerCredit`: one line, VAT added like on every invoice. */
-  async creditsQuote(accountId: string, credits: number, somPerCredit: number): Promise<Quote> {
+  async creditsQuote(
+    accountId: string,
+    credits: number,
+    somPerCredit: number,
+    paySum?: number,
+  ): Promise<Quote> {
     void accountId;
+    // A top-up is paid by sum: the customer pays `paySum` and gets `credits` of AI balance (the rest of the sum is the margin).
+    const amountSum = paySum ?? credits * somPerCredit;
     const items: InvoiceItem[] = [
       {
         kind: "credits",
         code: "credits",
-        title: `${credits} AI credits (${somPerCredit} soum each)`,
+        title: paySum
+          ? `AI balance top-up: ${credits} credits (${somPerCredit} soum each at cost)`
+          : `${credits} AI credits (${somPerCredit} soum each)`,
         quantity: credits,
-        amountSum: credits * somPerCredit,
+        amountSum,
       },
     ];
     return { items, intent: { type: "credits", credits }, ...this.totals(items, 0) };
   }
 
-  /** POST /v1/billing/credits/purchase: an invoice for the credits and where to pay it. */
+  /** POST /v1/billing/credits/purchase: an invoice for the top-up and where to pay it. */
   async creditsCheckout(
     accountId: string,
     credits: number,
     somPerCredit: number,
     provider: "payme" | "click" | "bank",
+    paySum?: number,
   ): Promise<CheckoutResponse> {
     if (provider !== "bank" && !this.providers().includes(provider)) {
       throw refuse(409, "PROVIDER_UNAVAILABLE", "Card payment is not available yet: pay by bank transfer");
     }
-    const quote = await this.creditsQuote(accountId, credits, somPerCredit);
+    const quote = await this.creditsQuote(accountId, credits, somPerCredit, paySum);
     const invoice = await this.createInvoice(accountId, quote, provider);
     return this.checkoutOf(invoice, provider);
   }

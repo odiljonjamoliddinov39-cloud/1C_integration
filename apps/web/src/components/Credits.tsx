@@ -40,7 +40,7 @@ export function CreditsSection({
   const c = t.credits;
   const [view, setView] = useState<CreditsView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [amount, setAmount] = useState(1_000);
+  const [amount, setAmount] = useState(100_000);
   const [provider, setProvider] = useState<"payme" | "click" | "bank">("bank");
   const [auto, setAuto] = useState({ enabled: false, thresholdCredits: 300, amountCredits: 1_000 });
   const [method, setMethod] = useState<"payme" | "click">("payme");
@@ -76,6 +76,14 @@ export function CreditsSection({
     ) : null;
   }
   const sum = (credits: number) => money(Math.round(credits * view.somPerCredit), locale);
+  /** What an amount of credits is worth in questions (and tokens, once there is use to learn from). */
+  const estimate = (credits: number) => {
+    const questions = Math.round((credits * view.somPerCredit) / view.questionSom);
+    const text = c.estQuestions.replace("{n}", nf(questions));
+    return view.tokensPerQuestion === null
+      ? text
+      : `${text} · ${c.estTokens.replace("{n}", nf(questions * view.tokensPerQuestion))}`;
+  };
   const toggleExtra = (enabled: boolean) =>
     setExtraCredits({ enabled }).then(
       (v) => {
@@ -92,11 +100,15 @@ export function CreditsSection({
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <div>
           <div className="text-sm text-muted-foreground">{c.planBalance}</div>
-          <div className="text-2xl font-bold">{nf(view.balanceCredits)}</div>
-          <div className="text-sm text-muted-foreground">
-            {c.monthly
-              .replace("{count}", nf(view.monthlyCredits))
-              .replace("{cap}", nf(view.rolloverCapCredits))}
+          <div className="text-2xl font-bold">{sum(view.balanceCredits)}</div>
+          <div className="text-sm text-muted-foreground">{estimate(view.balanceCredits)}</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {c.monthlySum
+              .replace("{sum}", sum(view.monthlyCredits))
+              .replace(
+                "{questions}",
+                nf(Math.round((view.monthlyCredits * view.somPerCredit) / view.questionSom)),
+              )}
             {view.planResetsAt && (
               <> {c.planResets.replace("{date}", formatDate(new Date(view.planResetsAt), locale))}</>
             )}
@@ -104,11 +116,8 @@ export function CreditsSection({
         </div>
         <div>
           <div className="text-sm text-muted-foreground">{c.extraBalance}</div>
-          <div className="text-2xl font-bold">{nf(view.extraCredits)}</div>
-          <div className="text-sm text-muted-foreground">
-            {c.approx.replace("{sum}", sum(Math.max(0, view.extraCredits)))} ·{" "}
-            {c.perCredit.replace("{sum}", money(view.somPerCredit, locale))}
-          </div>
+          <div className="text-2xl font-bold">{sum(Math.max(0, view.extraCredits))}</div>
+          <div className="text-sm text-muted-foreground">{estimate(Math.max(0, view.extraCredits))}</div>
         </div>
       </div>
       {(view.daily || view.weekly) && (
@@ -124,7 +133,7 @@ export function CreditsSection({
                 <div className="flex justify-between text-sm">
                   <span>{label}</span>
                   <span className="text-muted-foreground">
-                    {nf(Math.min(limit.usedCredits, limit.limitCredits))} / {nf(limit.limitCredits)}
+                    {sum(Math.min(limit.usedCredits, limit.limitCredits))} / {sum(limit.limitCredits)}
                   </span>
                 </div>
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -190,21 +199,21 @@ export function CreditsSection({
                 () =>
                   void act(async () => {
                     if (view.approvalRequired) {
-                      await requestCredits({ credits: amount });
+                      await requestCredits({ sum: amount });
                       return c.requestSent;
                     }
-                    return pay(await purchaseCredits({ credits: amount, provider }));
+                    return pay(await purchaseCredits({ sum: amount, provider }));
                   }),
               );
             }}
           >
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              {c.buyAmount.replace("{min}", nf(view.minPurchaseCredits))}
+              {c.buyAmount.replace("{min}", money(view.minTopupSum, locale))}
               <input
                 className={input}
                 type="number"
-                min={view.minPurchaseCredits}
-                step={100}
+                min={view.minTopupSum}
+                step={10_000}
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
               />
@@ -224,13 +233,15 @@ export function CreditsSection({
             )}
             <button
               type="submit"
-              disabled={busy || amount < view.minPurchaseCredits}
+              disabled={busy || !(amount >= view.minTopupSum)}
               className="h-9 rounded-lg bg-primary px-4 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
               {view.approvalRequired ? c.requestBuy : c.buy}
             </button>
             <span className="text-muted-foreground">
-              {c.buyTotal.replace("{credits}", nf(amount)).replace("{sum}", sum(amount))}
+              {c.buyGets
+                .replace("{gets}", money(Math.floor(amount * view.topupShare), locale))
+                .replace("{questions}", nf(Math.round((amount * view.topupShare) / view.questionSom)))}
             </span>
           </form>
           {view.approvalRequired && <p className="mt-2 text-sm text-muted-foreground">{c.requestNote}</p>}
@@ -243,8 +254,10 @@ export function CreditsSection({
                     <span className="whitespace-nowrap text-muted-foreground">
                       {formatDate(new Date(r.createdAt), locale)}
                     </span>
-                    <span className="font-medium">+{nf(r.credits)}</span>
-                    <span className="text-muted-foreground">{money(r.totalSom, locale)}</span>
+                    <span className="font-medium">+{sum(r.credits)}</span>
+                    <span className="text-muted-foreground">
+                      {c.requestPays.replace("{sum}", money(r.totalSom, locale))}
+                    </span>
                     <span
                       className={
                         r.status === "approved"
@@ -319,7 +332,7 @@ export function CreditsSection({
                 <input
                   className={input}
                   type="number"
-                  min={view.minPurchaseCredits}
+                  min={1_000}
                   step={100}
                   value={auto.amountCredits}
                   onChange={(e) => setAuto({ ...auto, amountCredits: Number(e.target.value) })}
@@ -376,9 +389,9 @@ export function CreditsSection({
                     className={`py-2 pr-3 text-right ${h.amountCredits < 0 ? "text-destructive" : "text-success"}`}
                   >
                     {h.amountCredits > 0 ? "+" : ""}
-                    {nf(h.amountCredits)}
+                    {sum(h.amountCredits)}
                   </td>
-                  <td className="py-2 text-right">{nf(h.balanceAfter)}</td>
+                  <td className="py-2 text-right">{sum(h.balanceAfter)}</td>
                 </tr>
               ))}
             </tbody>
