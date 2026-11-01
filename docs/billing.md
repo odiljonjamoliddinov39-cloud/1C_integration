@@ -90,14 +90,16 @@ their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-b
   the period reach the ceiling, the call is refused (`AI_BUDGET_EXCEEDED`) whatever is left of the balance. The 5% over the budget
   only keeps an answer in progress from being cut. The price is the plan's price in the table (the dashboard edits it), so a new price
   changes the budget with nothing else to edit; the plan's `monthly_credits` column is not used any more. **Free** has no price: a fixed
-  20 000 soum (`FREE_AI_BUDGET_SUM`) a month, with no day or week limit. The price list and the cabinet show the budget in soum and what
-  it comes to in questions (a question costs about 2 800 soum until 30 real questions of the last 30 days give the average) and in
-  tokens (shown once there is use to learn from). Example at 899 000 / 2 399 000 / 5 899 000: budget 359 600 / 959 600 / 2 359 600
+  20 000 soum (`FREE_AI_BUDGET_SUM`) a month, with no day or week limit. The customer is told **questions and a usage scale, never money**: the cabinet and the desktop sidebar show what is left of the plan as a
+  percent with a bar and about how many questions, each limit (day, week) as a percent used with when it starts over, and the extra
+  balance in questions; the price list shows the questions a plan comes to. Only a payment is in soum. The dashboard (admin) keeps the
+  budget in soum for pricing. A question costs about 2 800 soum until 30 real questions of the last 30 days give the average; tokens are shown once there is use to
+  learn them from. Example at 899 000 / 2 399 000 / 5 899 000: budget 359 600 / 959 600 / 2 359 600
   soum, ceiling 404 550 / 1 079 550 / 2 654 550 soum.
 - **Two balances.** The **plan's credits** are the main balance: the budget above, a month at a time (the trial gives 1 500 credits once
   per account and per company INN), with what was carried over.
   The **extra credits** are bought (or given by an admin as a bonus) and kept apart (`credit_accounts.extra_credits`; every
-  `credit_transactions` row says which `pool` it moved). The customer sees both, in soum.
+  `credit_transactions` row says which `pool` it moved). The customer sees both as questions (the extra balance) and a scale (the plan).
 - **Spending.** After every AI call its real cost (`costUsd / 0.01`) leaves the **plan's credits** as an `ai_usage` transaction tied
   to the usage row. Answers from templates and the answer cache cost nothing. The check is made _before_ a step, so an answer
   already being written is never cut; it may take a balance under zero. A low balance of the plan's credits (under 500 credits

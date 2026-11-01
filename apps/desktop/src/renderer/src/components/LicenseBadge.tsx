@@ -59,18 +59,22 @@ export function LicenseCard({
   const { t, i18n } = useTranslation();
   const [now] = useState(() => Date.now());
   const credits = aiCredits(billing);
-  /** Credits as soum (the sidebar speaks soum), and what an amount is worth in questions. */
-  const som = (n: number, unit = false) =>
-    `${Math.round(n * (credits?.somPerCredit ?? 0)).toLocaleString(i18n.language)}${unit ? ` ${t("billing.sum")}` : ""}`;
+  /** Credits as questions (the sidebar tells questions and a scale, never money). */
+  const questionsOf = (n: number) => (credits ? (n * credits.somPerCredit) / credits.questionSom : 0);
+  const qText = (n: number) => {
+    const q = questionsOf(n);
+    return (Math.abs(q) < 10 ? Math.round(q * 10) / 10 : Math.round(q)).toLocaleString(i18n.language);
+  };
   const estimate = (n: number) => {
     if (!credits) return undefined;
-    const questions = Math.round((n * credits.somPerCredit) / credits.questionSom);
     const tokens =
       credits.tokensPerQuestion === null
         ? ""
-        : ` · ${t("billing.estTokens", { n: (questions * credits.tokensPerQuestion).toLocaleString(i18n.language) })}`;
-    return `${t("billing.estQuestions", { n: questions.toLocaleString(i18n.language) })}${tokens}`;
+        : ` · ${t("billing.estTokens", { n: Math.round(questionsOf(n) * credits.tokensPerQuestion).toLocaleString(i18n.language) })}`;
+    return `${t("billing.estQuestions", { n: qText(n) })}${tokens}`;
   };
+  const percent = (used: number, limit: number) =>
+    Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
   // With credits the balance replaces the question count.
   const ai = credits ? null : aiQuestionsLeft(billing);
   const planName = billing ? t(`billing.plan.${billing.entitlements.plan}`) : null;
@@ -119,7 +123,7 @@ export function LicenseCard({
         <div className="mt-3 space-y-3 border-t border-white/10 pt-3 text-xs">
           <Meter
             label={t("billing.planLabel")}
-            value={som(credits.balance, true)}
+            value={t("billing.leftPct", { pct: percent(credits.balance, credits.monthly) })}
             share={credits.balance / Math.max(1, credits.monthly, credits.balance)}
             low={credits.balance === 0 ? "out" : billing?.credits?.low ? "low" : "ok"}
             hint={estimate(credits.balance)}
@@ -127,7 +131,9 @@ export function LicenseCard({
           {credits.daily && (
             <Meter
               label={t("billing.dayLabel")}
-              value={`${som(Math.min(credits.daily.usedCredits, credits.daily.limitCredits))} / ${som(credits.daily.limitCredits)}`}
+              value={t("billing.usedPct", {
+                pct: percent(credits.daily.usedCredits, credits.daily.limitCredits),
+              })}
               share={credits.daily.usedCredits / Math.max(1, credits.daily.limitCredits)}
               low={limitTone(credits.daily.usedCredits / Math.max(1, credits.daily.limitCredits))}
               hint={t("billing.limitResets", { when: formatTime(credits.daily.resetsAt, i18n.language) })}
@@ -136,7 +142,9 @@ export function LicenseCard({
           {credits.weekly && (
             <Meter
               label={t("billing.weekLabel")}
-              value={`${som(Math.min(credits.weekly.usedCredits, credits.weekly.limitCredits))} / ${som(credits.weekly.limitCredits)}`}
+              value={t("billing.usedPct", {
+                pct: percent(credits.weekly.usedCredits, credits.weekly.limitCredits),
+              })}
               share={credits.weekly.usedCredits / Math.max(1, credits.weekly.limitCredits)}
               low={limitTone(credits.weekly.usedCredits / Math.max(1, credits.weekly.limitCredits))}
               hint={t("billing.limitResets", { when: formatTime(credits.weekly.resetsAt, i18n.language) })}
@@ -147,7 +155,7 @@ export function LicenseCard({
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-sidebar-muted">{t("billing.extraLabel")}</span>
                 <span className="font-semibold whitespace-nowrap tabular-nums">
-                  {som(credits.extra, true)}
+                  {t("billing.estQuestions", { n: qText(credits.extra) })}
                 </span>
               </div>
               <span
