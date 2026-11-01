@@ -95,8 +95,9 @@ export class AiProxy {
       throw new HttpError(402, "SUBSCRIPTION_INACTIVE", "This subscription is suspended: contact support");
     }
     const policy = await policyFor(this.db, effectivePlan.id);
-    // With credits, the balance is the one limit: every call is paid from it at its real cost (no question count, no dollar
-    // budget). Without, the older monthly dollar budget and the plan's questions apply.
+    // With credits, every call is paid at its real cost from the plan's credits (no question count, no dollar budget), within the
+    // plan's day and week limits; the extra credits take over when those are out and the customer allowed it. Without credits, the
+    // older monthly dollar budget and the plan's questions apply.
     if (this.credits?.enabled) {
       const low = await this.credits.ensureCanSpend(accountId);
       return { policy, warnings: low ? [low] : [] };

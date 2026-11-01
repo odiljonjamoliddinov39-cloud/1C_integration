@@ -67,6 +67,16 @@ export function LicenseCard({
           {credits.balance > 0
             ? t("billing.credits", { balance: credits.balance.toLocaleString(i18n.language) })
             : t("billing.creditsNone")}
+          {credits.extra > 0 && (
+            <div className="mt-0.5">
+              {t("billing.creditsExtra", { extra: credits.extra.toLocaleString(i18n.language) })}
+            </div>
+          )}
+          {credits.blocked && credits.resetsAt && (
+            <div className="mt-0.5 text-warning">
+              {t("billing.creditsLimit", { when: formatTime(credits.resetsAt, i18n.language) })}
+            </div>
+          )}
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
             <div
               className={`h-full rounded-full ${credits.balance === 0 ? "bg-destructive" : billing?.credits?.low ? "bg-warning" : "bg-emerald-400"}`}

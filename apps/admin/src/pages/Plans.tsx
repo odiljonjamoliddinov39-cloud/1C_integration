@@ -24,6 +24,8 @@ const toInput = (p: PlanView): PlanSaveInput => ({
   auditsPerMonth: p.auditsPerMonth,
   aiQuestionsPerMonth: p.aiQuestionsPerMonth,
   monthlyCredits: p.monthlyCredits,
+  dailyLimitPct: p.dailyLimitPct,
+  weeklyLimitPct: p.weeklyLimitPct,
   features: p.features,
   isPublic: p.isPublic,
   sortOrder: p.sortOrder,
@@ -40,6 +42,8 @@ const NEW_PLAN: PlanSaveInput = {
   auditsPerMonth: null,
   aiQuestionsPerMonth: 1500,
   monthlyCredits: 19_930,
+  dailyLimitPct: 15,
+  weeklyLimitPct: 35,
   features: { excelExport: true, prioritySupport: true, support: "manager", telegram: true },
   isPublic: false,
   sortOrder: 50,
@@ -132,7 +136,15 @@ function PlanEditor({
     </label>
   );
   const numeric = (
-    key: "priceMonthSum" | "companies" | "users" | "aiQuestionsPerMonth" | "monthlyCredits" | "sortOrder",
+    key:
+      | "priceMonthSum"
+      | "companies"
+      | "users"
+      | "aiQuestionsPerMonth"
+      | "monthlyCredits"
+      | "dailyLimitPct"
+      | "weeklyLimitPct"
+      | "sortOrder",
   ) => (
     <Input
       type="number"
@@ -204,6 +216,36 @@ function PlanEditor({
           <>
             {numeric("monthlyCredits")}
             {perYear(form.monthlyCredits)}
+          </>,
+        )}
+        {field(
+          t("Day limit, % of monthly credits"),
+          <>
+            {numeric("dailyLimitPct")}
+            <span className="text-[11px]">
+              {form.dailyLimitPct > 0
+                ? t("= {count} credits a day", {
+                    count: new Intl.NumberFormat(intlLocale()).format(
+                      Math.round((form.monthlyCredits * form.dailyLimitPct) / 100),
+                    ),
+                  })
+                : t("0: no day limit")}
+            </span>
+          </>,
+        )}
+        {field(
+          t("Week limit, % of monthly credits"),
+          <>
+            {numeric("weeklyLimitPct")}
+            <span className="text-[11px]">
+              {form.weeklyLimitPct > 0
+                ? t("= {count} credits a week", {
+                    count: new Intl.NumberFormat(intlLocale()).format(
+                      Math.round((form.monthlyCredits * form.weeklyLimitPct) / 100),
+                    ),
+                  })
+                : t("0: no week limit")}
+            </span>
           </>,
         )}
         {field(t("Imports / month"), nullable("importsPerMonth"))}

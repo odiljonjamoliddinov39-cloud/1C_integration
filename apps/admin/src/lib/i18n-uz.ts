@@ -531,4 +531,15 @@ export const UZ: Record<string, string> = {
     "Tayyor: {invoices} ta hisob-faktura va {requests} ta soʻrov bekor qilindi.",
   "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
     "Mijozning toʻlovlarini boshidan boshlaydi: toʻlanmagan hisob-fakturalar va hali kutayotgan kredit soʻrovlari bekor qilinadi, shunda u qaytadan sotib olishi mumkin. Toʻlangani, balans va tarix oʻzgarmaydi.",
+  "Day limit, % of monthly credits": "Kunlik limit, oylik kreditlarning %",
+  "Week limit, % of monthly credits": "Haftalik limit, oylik kreditlarning %",
+  "= {count} credits a day": "= kuniga {count} kredit",
+  "= {count} credits a week": "= haftasiga {count} kredit",
+  "0: no day limit": "0: kunlik limit yoʻq",
+  "0: no week limit": "0: haftalik limit yoʻq",
+  Extra: "Qoʻshimcha",
+  "extra off": "qoʻshimcha oʻchiq",
+  "Extra credits": "Qoʻshimcha kreditlar",
+  "Plan credits": "Tarif kreditlari",
+  After: "Keyin",
 };

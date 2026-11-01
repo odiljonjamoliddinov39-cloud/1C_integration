@@ -119,7 +119,28 @@ const uz = {
       atCap: "Balans chegaraga yetdi: yangi oylik kreditlar qoʻshilmaydi.",
       freeNote:
         "Bepul tarifda kreditlar har oy qoʻshiladi. Qoʻshimcha kredit sotib olish uchun pullik tarifni tanlang.",
-      buyTitle: "Kredit sotib olish",
+      planBalance: "Tarif kreditlari",
+      planResets: "Keyingisi {date} da qoʻshiladi.",
+      extraBalance: "Qoʻshimcha kreditlar",
+      today: "Bugun",
+      thisWeek: "Bu hafta",
+      resets: "{when} da yangilanadi",
+      blocked: {
+        daily: "Tarifning bugungi limiti tugadi.",
+        weekly: "Tarifning haftalik limiti tugadi.",
+        plan: "Tarifning kreditlari tugadi.",
+      },
+      blockedUsing: "Qoʻshimcha kreditlaringiz ishlatilmoqda.",
+      blockedTurnOn:
+        "Hoziroq davom etish uchun pastdagi belgini qoʻyib, qoʻshimcha kreditlardan foydalanishni yoqing, yoki limit yangilanishini kuting.",
+      blockedBuy:
+        "Hoziroq davom etish uchun qoʻshimcha kredit sotib oling, yoki limit yangilanishini kuting.",
+      blockedWait: "Limit yangilanishini kuting yoki pullik tarifni tanlang.",
+      extraToggle: "Tarif limiti yoki kreditlari tugaganda qoʻshimcha kreditlardan foydalanish",
+      extraHint:
+        "Oʻchiq boʻlsa, qoʻshimcha kreditlar sarflanmaydi: tarif tugaganda AI toʻxtab, shu taklif chiqadi.",
+      poolExtra: "qoʻshimcha",
+      buyTitle: "Qoʻshimcha kredit sotib olish",
       buyAmount: "Kreditlar soni (kamida {min})",
       buyTotal: "{credits} kredit = {sum}",
       buy: "Hisob-faktura olish",
@@ -290,7 +311,27 @@ const ru: typeof uz = {
       atCap: "Баланс достиг лимита: новые ежемесячные кредиты не добавляются.",
       freeNote:
         "На бесплатном тарифе кредиты добавляются каждый месяц. Чтобы докупать кредиты, выберите платный тариф.",
-      buyTitle: "Купить кредиты",
+      planBalance: "Кредиты тарифа",
+      planResets: "Следующие добавятся {date}.",
+      extraBalance: "Дополнительные кредиты",
+      today: "Сегодня",
+      thisWeek: "На этой неделе",
+      resets: "Обновится {when}",
+      blocked: {
+        daily: "Дневной лимит тарифа исчерпан.",
+        weekly: "Недельный лимит тарифа исчерпан.",
+        plan: "Кредиты тарифа закончились.",
+      },
+      blockedUsing: "Используются ваши дополнительные кредиты.",
+      blockedTurnOn:
+        "Чтобы продолжить сейчас, включите ниже использование дополнительных кредитов или дождитесь обновления лимита.",
+      blockedBuy: "Чтобы продолжить сейчас, купите дополнительные кредиты или дождитесь обновления лимита.",
+      blockedWait: "Дождитесь обновления лимита или выберите платный тариф.",
+      extraToggle: "Использовать дополнительные кредиты, когда лимит или кредиты тарифа закончились",
+      extraHint:
+        "Если выключено, дополнительные кредиты не тратятся: когда тариф исчерпан, ИИ останавливается и показывается это предложение.",
+      poolExtra: "доп.",
+      buyTitle: "Купить дополнительные кредиты",
       buyAmount: "Количество кредитов (от {min})",
       buyTotal: "{credits} кредитов = {sum}",
       buy: "Выставить счёт",

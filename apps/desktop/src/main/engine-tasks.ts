@@ -457,6 +457,8 @@ export function ratesText(data: unknown, lang: Lang): string {
 /** The codes under which the model cannot answer (no budget, no quota, no key, the provider's billing): the program answers. */
 export const MODEL_OFF_CODES = new Set([
   "AI_BUDGET_EXCEEDED",
+  "AI_LIMIT_DAILY",
+  "AI_LIMIT_WEEKLY",
   "AI_USER_DAILY_LIMIT",
   "AI_QUESTIONS_LIMIT",
   "AI_DAILY_LIMIT",

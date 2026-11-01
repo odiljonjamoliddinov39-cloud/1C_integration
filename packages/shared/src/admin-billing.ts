@@ -15,6 +15,9 @@ export const PlanSaveInput = z.object({
   aiQuestionsPerMonth: z.number().int().min(0).max(1_000_000),
   /** The AI credits the plan adds each month. */
   monthlyCredits: z.number().int().min(0).max(1_000_000).default(0),
+  /** The most of the monthly credits an account may use in a day and in a week, in percent (0: no limit). */
+  dailyLimitPct: z.number().int().min(0).max(100).default(15),
+  weeklyLimitPct: z.number().int().min(0).max(100).default(35),
   features: z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),

@@ -108,7 +108,7 @@ export class CreditRequests {
           r: creditRequests,
           name: accounts.name,
           email: users.email,
-          balance: creditAccounts.balanceCredits,
+          balance: creditAccounts.extraCredits,
         })
         .from(creditRequests)
         .innerJoin(accounts, eq(accounts.id, creditRequests.accountId))

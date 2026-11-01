@@ -6,6 +6,8 @@
 import {
   type AutoRechargeInput,
   type AutoRechargeSettings,
+  type CreditBlock,
+  type CreditLimitView,
   type CreditsSummary,
   type CreditsView,
   type CreditTransactionType,
@@ -32,8 +34,10 @@ import {
 } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Billing } from "./entitlements.js";
+import { dayStart, limitCredits, weekStart } from "./credit-limits.js";
 import { requestsOf } from "./credit-requests.js";
 import type { Invoicing } from "./invoicing.js";
+import { DAY_MS, addMonths } from "./period.js";
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -78,11 +82,18 @@ async function lockRow(tx: Tx, accountId: string) {
   return row;
 }
 
-/** Writes one entry and moves the balance; `balanceAfter` is what the balance is then. */
-async function post(tx: Tx, accountId: string, balance: number, entry: Entry): Promise<number> {
+/** Writes one entry and moves a balance (the plan's or the extra one); `balanceAfter` is what that balance is then. */
+async function write(
+  tx: Tx,
+  accountId: string,
+  pool: "plan" | "extra",
+  balance: number,
+  entry: Entry,
+): Promise<number> {
   const after = round4(balance + entry.credits);
   await tx.insert(creditTransactions).values({
     accountId,
+    pool,
     type: entry.type,
     amountCredits: round4(entry.credits),
     balanceAfter: after,
@@ -93,12 +104,24 @@ async function post(tx: Tx, accountId: string, balance: number, entry: Entry): P
   });
   await tx
     .update(creditAccounts)
-    .set({ balanceCredits: after, updatedAt: new Date() })
+    .set(
+      pool === "plan"
+        ? { balanceCredits: after, updatedAt: new Date() }
+        : { extraCredits: after, updatedAt: new Date() },
+    )
     .where(eq(creditAccounts.accountId, accountId));
   return after;
 }
 
-/** Credits bought (an invoice paid): added whole, even over the cap, as they are already paid for. */
+/** An entry of the plan's credits (monthly, trial, carried over, AI use). */
+const post = (tx: Tx, accountId: string, balance: number, entry: Entry) =>
+  write(tx, accountId, "plan", balance, entry);
+
+/** An entry of the extra credits (bought, bonus). */
+const postExtra = (tx: Tx, accountId: string, balance: number, entry: Entry) =>
+  write(tx, accountId, "extra", balance, entry);
+
+/** Credits bought (an invoice paid): added to the extra credits whole, even over the cap, as they are already paid for. */
 export async function grantPurchase(
   tx: Tx,
   accountId: string,
@@ -106,7 +129,7 @@ export async function grantPurchase(
   note: string,
 ): Promise<number> {
   const row = await lockRow(tx, accountId);
-  return post(tx, accountId, row.balanceCredits, { type: "purchase", credits, note });
+  return postExtra(tx, accountId, row.extraCredits, { type: "purchase", credits, note });
 }
 
 export const lowLevel = (monthlyCredits: number): number =>
@@ -263,14 +286,68 @@ export class Credits {
     };
   }
 
+  /** The plan's credits used since `since` (AI use only), in credits. */
+  private async planUsed(accountId: string, since: Date): Promise<number> {
+    const [row] = await this.db.execute<{ used: number }>(sql`
+      select coalesce(-sum(amount_credits), 0)::float8 as used from credit_transactions
+      where account_id = ${accountId} and type = 'ai_usage' and pool = 'plan'
+        and created_at >= ${since.toISOString()}::timestamptz`);
+    return row?.used ?? 0;
+  }
+
+  /**
+   * What stops the plan's credits now: nothing left of them, the week's limit, or the day's limit (the plan gives each a
+   * share of its monthly credits). The extra credits are not touched by any of these.
+   */
+  async gate(
+    accountId: string,
+    row: typeof creditAccounts.$inferSelect | undefined,
+    now = new Date(),
+  ): Promise<{
+    blocked: CreditBlock;
+    daily: CreditLimitView | null;
+    weekly: CreditLimitView | null;
+    planResetsAt: string;
+  }> {
+    const r = await this.billing.get(accountId, now);
+    const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
+    const window = async (pct: number, start: Date, length: number): Promise<CreditLimitView | null> => {
+      const limit = limitCredits(monthly, pct);
+      if (limit === null) return null;
+      return {
+        limitCredits: limit,
+        usedCredits: await this.planUsed(accountId, start),
+        resetsAt: new Date(start.getTime() + length).toISOString(),
+      };
+    };
+    const daily = await window(r.effectivePlan.dailyLimitPct, dayStart(now), DAY_MS);
+    const weekly = await window(r.effectivePlan.weeklyLimitPct, weekStart(now), 7 * DAY_MS);
+    const reached = (w: CreditLimitView | null) => w !== null && w.usedCredits >= w.limitCredits;
+    const blocked: CreditBlock =
+      (row?.balanceCredits ?? 0) <= 0 ? "plan" : reached(weekly) ? "weekly" : reached(daily) ? "daily" : null;
+    return { blocked, daily, weekly, planResetsAt: addMonths(r.counterStart, 1).toISOString() };
+  }
+
   async summary(accountId: string): Promise<CreditsSummary> {
     await this.ensureGrants(accountId);
     const r = await this.billing.get(accountId);
     const [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
     const balance = row?.balanceCredits ?? 0;
     const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
+    const gate = await this.gate(accountId, row);
     return {
       balanceCredits: Math.floor(balance),
+      extraCredits: Math.floor(row?.extraCredits ?? 0),
+      extraEnabled: row?.extraEnabled ?? false,
+      blocked: gate.blocked,
+      resetsAt:
+        gate.blocked === "daily"
+          ? (gate.daily?.resetsAt ?? null)
+          : gate.blocked === "weekly"
+            ? (gate.weekly?.resetsAt ?? null)
+            : gate.blocked === "plan"
+              ? gate.planResetsAt
+              : null,
       somPerCredit: (await this.price()).somPerCredit,
       monthlyCredits: monthly,
       low: balance < lowLevel(monthly),
@@ -285,6 +362,7 @@ export class Credits {
     const cap = row?.rolloverCapCredits ?? ROLLOVER_CAP_CREDITS;
     const { somPerCredit } = await this.price();
     const monthly = r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits;
+    const gate = await this.gate(accountId, row);
     const history = await this.db
       .select()
       .from(creditTransactions)
@@ -293,6 +371,12 @@ export class Credits {
       .limit(historyLimit);
     return {
       balanceCredits: Math.floor(balance),
+      extraCredits: Math.floor(row?.extraCredits ?? 0),
+      extraEnabled: row?.extraEnabled ?? false,
+      daily: gate.daily,
+      weekly: gate.weekly,
+      blocked: gate.blocked,
+      planResetsAt: gate.planResetsAt,
       balanceSom: Math.round(balance * somPerCredit),
       somPerCredit,
       monthlyCredits: monthly,
@@ -309,6 +393,7 @@ export class Credits {
         type: h.type,
         amountCredits: h.amountCredits,
         balanceAfter: h.balanceAfter,
+        pool: h.pool,
         note: h.note,
         createdAt: h.createdAt.toISOString(),
       })),
@@ -318,39 +403,70 @@ export class Credits {
   // --- spending -----------------------------------------------------------------------------------
 
   /**
-   * Before an AI call: the balance must be over zero. At zero an auto-recharge is tried first; failing that the call is
-   * refused with a plain message. Returns a warning (once) when the balance is low. An answer already being written is never
-   * cut: this runs before a step, and one step may take the balance under zero.
+   * Before an AI call. The plan's credits are used first: they must not be out, and the day's and the week's limits of the plan
+   * must not be reached. When one is, the extra credits (bought or given) are used if the customer allowed it and has some;
+   * else the call is refused with the reason, and the customer is offered to turn the extra credits on, buy more, or wait.
+   * Returns a warning (once) when the plan's credits are low. An answer already being written is never cut: this runs before
+   * a step, and one step may take a balance under zero.
    */
   async ensureCanSpend(accountId: string): Promise<{ code: string; message: string } | null> {
     await this.ensureGrants(accountId);
     let [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
-    if ((row?.balanceCredits ?? 0) <= 0) {
-      if (await this.autoRecharge(accountId)) {
+    const gate = await this.gate(accountId, row);
+    if (gate.blocked) {
+      if (row?.extraEnabled && (row.extraCredits ?? 0) <= 0 && (await this.autoRecharge(accountId))) {
         [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
       }
+      // spend() takes this call's cost from the extra credits.
+      if (row?.extraEnabled && (row.extraCredits ?? 0) > 0) return null;
+      throw this.refusal(gate, row);
     }
     const balance = row?.balanceCredits ?? 0;
-    if (balance <= 0) {
-      const r = await this.billing.get(accountId);
-      throw new HttpError(
-        429,
-        "AI_BUDGET_EXCEEDED",
-        r.effectivePlan.code === "free"
-          ? "Your AI credits are used up. They are added again next month, or choose a paid plan to continue."
-          : "Your AI credits are used up. Top up your credits to continue.",
-      );
-    }
     const monthly = (await this.billing.get(accountId)).effectivePlan.monthlyCredits;
     if (balance < lowLevel(monthly)) {
       const warned = await this.markLow(accountId, balance);
       if (warned)
         return {
           code: "AI_CREDITS_LOW",
-          message: `Your AI credits are running low: ${Math.floor(balance)} credits left.`,
+          message: `Your plan's AI credits are running low: ${Math.floor(balance)} credits left.`,
         };
     }
     return null;
+  }
+
+  /** The refusal for a call the plan's credits cannot take now, in words that name what to do. */
+  private refusal(
+    gate: {
+      blocked: CreditBlock;
+      daily: CreditLimitView | null;
+      weekly: CreditLimitView | null;
+      planResetsAt: string;
+    },
+    row: typeof creditAccounts.$inferSelect | undefined,
+  ): HttpError {
+    const extra = Math.floor(row?.extraCredits ?? 0);
+    const options = row?.extraEnabled
+      ? "Your extra credits are used up: buy more to continue now."
+      : extra > 0
+        ? "To continue now, turn on your extra credits in the cabinet."
+        : "To continue now, buy extra credits in the cabinet.";
+    if (gate.blocked === "daily")
+      return new HttpError(
+        429,
+        "AI_LIMIT_DAILY",
+        `Today's limit of your plan is reached; it starts over at ${gate.daily?.resetsAt}. ${options}`,
+      );
+    if (gate.blocked === "weekly")
+      return new HttpError(
+        429,
+        "AI_LIMIT_WEEKLY",
+        `This week's limit of your plan is reached; it starts over at ${gate.weekly?.resetsAt}. ${options}`,
+      );
+    return new HttpError(
+      429,
+      "AI_BUDGET_EXCEEDED",
+      `Your plan's AI credits are used up; they are added again at ${gate.planResetsAt}. ${options}`,
+    );
   }
 
   /** The low-balance mark: true the first time the balance is under the level (it is cleared when the balance recovers). */
@@ -367,21 +483,33 @@ export class Credits {
     return true;
   }
 
-  /** After an AI call: its real cost leaves the balance, once, as a transaction tied to the call's usage row. */
+  /**
+   * After an AI call: its real cost leaves the plan's credits, once, as a transaction tied to the call's usage row. When the
+   * plan's credits cannot take it (out, or a limit reached) and the customer allowed it, it leaves the extra credits.
+   */
   async spend(accountId: string, costUsd: number, usageId: string | null): Promise<void> {
     const credits = creditsOfUsd(costUsd);
     if (credits <= 0) return;
-    const balance = await this.db.transaction(async (tx) => {
+    const [before] = await this.db
+      .select()
+      .from(creditAccounts)
+      .where(eq(creditAccounts.accountId, accountId));
+    const gate = await this.gate(accountId, before);
+    const { pool, balance } = await this.db.transaction(async (tx) => {
       const row = await lockRow(tx, accountId);
-      return post(tx, accountId, row.balanceCredits, {
-        type: "ai_usage",
+      const entry = {
+        type: "ai_usage" as const,
         credits: -credits,
         relatedUsageId: usageId,
         note: `$${costUsd.toFixed(4)}`,
-      });
+      };
+      if (gate.blocked && row.extraEnabled && row.extraCredits > 0)
+        return { pool: "extra" as const, balance: await postExtra(tx, accountId, row.extraCredits, entry) };
+      return { pool: "plan" as const, balance: await post(tx, accountId, row.balanceCredits, entry) };
     });
     const [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
-    if (row?.autoEnabled && balance <= row.autoThreshold) void this.autoRecharge(accountId);
+    if (pool === "extra" && row?.autoEnabled && balance <= row.autoThreshold)
+      void this.autoRecharge(accountId);
   }
 
   // --- adding -------------------------------------------------------------------------------------
@@ -393,6 +521,7 @@ export class Credits {
     kind: "bonus" | "admin_adjustment",
     reason: string,
     adminId: string,
+    pool: "plan" | "extra" = "plan",
   ): Promise<number> {
     const account = await this.db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
     if (!account) throw new HttpError(404, "NOT_FOUND", "No such account");
@@ -401,15 +530,15 @@ export class Credits {
     const level = lowLevel(r.state === "trial" ? TRIAL_CREDITS : r.effectivePlan.monthlyCredits);
     const balance = await this.db.transaction(async (tx) => {
       const row = await lockRow(tx, accountId);
-      if (row.balanceCredits + credits < 0)
-        throw new HttpError(409, "BELOW_ZERO", "The balance cannot go below zero");
-      const after = await post(tx, accountId, row.balanceCredits, {
+      const current = pool === "extra" ? row.extraCredits : row.balanceCredits;
+      if (current + credits < 0) throw new HttpError(409, "BELOW_ZERO", "The balance cannot go below zero");
+      const after = await write(tx, accountId, pool, current, {
         type: kind,
         credits,
         note: reason,
         meta: { adminId },
       });
-      if (after >= level) {
+      if (pool === "plan" && after >= level) {
         await tx
           .update(creditAccounts)
           .set({ lowWarnedAt: null })
@@ -436,8 +565,9 @@ export class Credits {
         "CREDITS_NOT_AVAILABLE",
         "Credits are bought on a paid plan: choose a plan first",
       );
-    const balance = await this.balance(accountId);
+    await this.ensureGrants(accountId);
     const [row] = await this.db.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId));
+    const balance = row?.extraCredits ?? 0;
     const cap = row?.rolloverCapCredits ?? ROLLOVER_CAP_CREDITS;
     if (balance + credits > cap)
       throw new HttpError(
@@ -458,6 +588,18 @@ export class Credits {
     await this.assertCanBuy(accountId, credits);
     const { somPerCredit } = await this.price();
     return this.invoicing.creditsCheckout(accountId, credits, somPerCredit, provider);
+  }
+
+  /** The customer allows (or stops) the extra credits being used when the plan's credits or a limit are out. */
+  async setExtraEnabled(accountId: string, enabled: boolean): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await lockRow(tx, accountId);
+      await tx
+        .update(creditAccounts)
+        .set({ extraEnabled: enabled, updatedAt: new Date() })
+        .where(eq(creditAccounts.accountId, accountId));
+    });
+    await this.invoicing.event(accountId, enabled ? "extra_credits_on" : "extra_credits_off", {});
   }
 
   async saveAutoRecharge(accountId: string, input: AutoRechargeInput): Promise<AutoRechargeSettings> {
@@ -500,7 +642,7 @@ export class Credits {
       if (!row?.autoEnabled) return false;
       const r = await this.billing.get(accountId);
       if (r.effectivePlan.code === "free") return false;
-      const room = Math.floor(row.rolloverCapCredits - row.balanceCredits);
+      const room = Math.floor(row.rolloverCapCredits - row.extraCredits);
       const amount = Math.min(row.autoAmount, room);
       const fail = async (reason: string) => {
         await this.db
@@ -600,6 +742,8 @@ export class Credits {
       .limit(limit);
     return {
       balanceCredits: row?.balanceCredits ?? 0,
+      extraCredits: row?.extraCredits ?? 0,
+      extraEnabled: row?.extraEnabled ?? false,
       somPerCredit: (await this.price()).somPerCredit,
       rolloverCapCredits: row?.rolloverCapCredits ?? ROLLOVER_CAP_CREDITS,
       history: history.map((h) => ({
@@ -607,6 +751,7 @@ export class Credits {
         type: h.type,
         amountCredits: h.amountCredits,
         balanceAfter: h.balanceAfter,
+        pool: h.pool,
         note: h.note,
         createdAt: h.createdAt.toISOString(),
       })),
@@ -627,7 +772,7 @@ export class Credits {
         coalesce(-sum(amount_credits) filter (where type = 'ai_usage' and created_at >= ${since}::timestamptz), 0)::float8 as spent,
         coalesce(sum((meta->>'carried')::float8) filter (where type = 'rollover' and created_at >= ${since}::timestamptz), 0)::float8 as rolled,
         (select count(*)::int from credit_accounts where balance_credits >= rollover_cap_credits) as at_cap,
-        (select coalesce(sum(balance_credits), 0)::float8 from credit_accounts) as balance
+        (select coalesce(sum(balance_credits + extra_credits), 0)::float8 from credit_accounts) as balance
       from credit_transactions`);
     const [paid] = await this.db.execute<{ som: number }>(sql`
       select coalesce(sum(subtotal_sum - discount_sum), 0)::float8 as som from invoices

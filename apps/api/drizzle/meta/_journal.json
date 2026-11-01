@@ -155,6 +155,13 @@
       "when": 1793546121051,
       "tag": "0021_credit_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793550805032,
+      "tag": "0022_plan_limits_extra_credits",
+      "breakpoints": true
     }
   ]
 }

@@ -529,4 +529,15 @@ export const RU: Record<string, string> = {
     "Готово: отменено счетов — {invoices}, заявок — {requests}.",
   "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
     "Запускает платежи клиента заново: неоплаченные счета и ещё ожидающие заявки на кредиты отменяются, и он может купить с самого начала. Оплаченное, баланс и история остаются как есть.",
+  "Day limit, % of monthly credits": "Дневной лимит, % месячных кредитов",
+  "Week limit, % of monthly credits": "Недельный лимит, % месячных кредитов",
+  "= {count} credits a day": "= {count} кредитов в день",
+  "= {count} credits a week": "= {count} кредитов в неделю",
+  "0: no day limit": "0: без дневного лимита",
+  "0: no week limit": "0: без недельного лимита",
+  Extra: "Дополнительные",
+  "extra off": "дополнительные выключены",
+  "Extra credits": "Дополнительные кредиты",
+  "Plan credits": "Кредиты тарифа",
+  After: "После",
 };

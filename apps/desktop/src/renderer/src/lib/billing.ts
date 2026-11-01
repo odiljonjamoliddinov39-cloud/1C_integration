@@ -4,8 +4,13 @@ import { useEffect } from "react";
 
 import type { BillingView } from "../../../shared/ipc";
 
-// AI_BUDGET_EXCEEDED: the AI credits are used up.
-const LIMIT_CODES = new Set<string>([...LimitCode.options, "AI_BUDGET_EXCEEDED"]);
+// AI_BUDGET_EXCEEDED: the plan's AI credits are used up; AI_LIMIT_DAILY / AI_LIMIT_WEEKLY: the plan's day or week limit is reached.
+const LIMIT_CODES = new Set<string>([
+  ...LimitCode.options,
+  "AI_BUDGET_EXCEEDED",
+  "AI_LIMIT_DAILY",
+  "AI_LIMIT_WEEKLY",
+]);
 
 /** A refusal that comes from the plan's limits: it gets the "Upgrade" dialog. */
 export const isLimitCode = (code: string): boolean => LIMIT_CODES.has(code);
@@ -32,8 +37,25 @@ export function aiQuestionsLeft(billing: BillingView | null): { left: number; to
   return { left: Math.max(0, total - billing.usage.aiQuestions), total };
 }
 
-/** The AI credits balance with the monthly credits of the plan; null when credits are not in use. */
-export function aiCredits(billing: BillingView | null): { balance: number; monthly: number } | null {
+/**
+ * The plan's AI credits with the plan's monthly credits, the extra credits, and what stops the plan's credits now (a day or
+ * week limit reached, or none left) with when that starts over; null when credits are not in use.
+ */
+export function aiCredits(billing: BillingView | null): {
+  balance: number;
+  monthly: number;
+  extra: number;
+  blocked: "daily" | "weekly" | "plan" | null;
+  resetsAt: string | null;
+} | null {
   const c = billing?.credits;
-  return c ? { balance: Math.max(0, Math.floor(c.balanceCredits)), monthly: c.monthlyCredits } : null;
+  return c
+    ? {
+        balance: Math.max(0, Math.floor(c.balanceCredits)),
+        monthly: c.monthlyCredits,
+        extra: Math.max(0, Math.floor(c.extraCredits)),
+        blocked: c.blocked,
+        resetsAt: c.resetsAt,
+      }
+    : null;
 }

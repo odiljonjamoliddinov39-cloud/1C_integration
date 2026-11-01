@@ -84,29 +84,39 @@ each card; they are cached, so resending them is cheap.
 One balance per account replaces the question count and the dollar budget. **1 credit = $0.01**; the customer sees credits and
 their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-budget path (the old code is kept for that).
 
-- **Spending.** After every AI call its real cost (`costUsd / 0.01`) leaves the balance as an `ai_usage` transaction tied to the
-  usage row. Answers from templates and the answer cache cost nothing. The balance is checked _before_ a step, so an answer
-  already being written is never cut; it may take the balance under zero and the next call is refused with
-  `AI_BUDGET_EXCEEDED`. A low balance (under 500 credits or 20% of the plan's monthly credits, the smaller) warns once
-  (`AI_CREDITS_LOW`, event `credits_low`) until the balance recovers.
-- **Plan credits.** Free 500, Start 3 040, Business 8 110, Firm 19 930 a month (`plans.monthly_credits`, editable in the admin's
-  Plans page); the trial gives 1 500 once per account and per company INN. They are added lazily, once per billing period
-  (`credit_transactions.period_key` is unique per account and type). Unused credits carry over (a `rollover` record each month);
-  the balance never goes over **50 000 credits** ($500): monthly credits and purchases stop at it.
+- **Two balances.** The **plan's credits** are the main balance: what the plan gives (`plans.monthly_credits`: Free 500, Start 3 040,
+  Business 8 110, Firm 19 930; the trial gives 1 500 once per account and per company INN), with what was carried over.
+  The **extra credits** are bought (or given by an admin as a bonus) and kept apart (`credit_accounts.extra_credits`; every
+  `credit_transactions` row says which `pool` it moved). The customer sees both.
+- **Spending.** After every AI call its real cost (`costUsd / 0.01`) leaves the **plan's credits** as an `ai_usage` transaction tied
+  to the usage row. Answers from templates and the answer cache cost nothing. The check is made _before_ a step, so an answer
+  already being written is never cut; it may take a balance under zero. A low balance of the plan's credits (under 500 credits
+  or 20% of the monthly credits, the smaller) warns once (`AI_CREDITS_LOW`, event `credits_low`) until it recovers.
+- **Limits, like Claude's.** The plan also limits a **day** and a **week** to a share of its monthly credits
+  (`plans.daily_limit_pct` 15 and `plans.weekly_limit_pct` 35 by default; 0 is no limit; editable per plan in the admin's Plans
+  page). A day starts at 00:00 Tashkent time (UTC+5), a week on Monday 00:00. The plan's credits are blocked when none are left
+  (`AI_BUDGET_EXCEEDED`), the week's limit is reached (`AI_LIMIT_WEEKLY`) or the day's (`AI_LIMIT_DAILY`).
+- **The offer.** When the plan's credits are blocked the call is refused and the desktop dialog and the cabinet offer: wait for
+  the reset (the time is shown), turn on the extra credits, or buy more. The extra credits are spent **only** when the plan's
+  are blocked **and** the customer turned them on (`credit_accounts.extra_enabled`, `POST /v1/billing/credits/extra`; off by
+  default). With them on and none left the call is refused again and the customer is told to buy more.
+- **Plan credits are added** lazily once per billing period (`credit_transactions.period_key` is unique per account and type).
+  Unused plan credits carry over (a `rollover` record each month); the plan balance never goes over **50 000 credits**.
 - **Price.** `credit_rate_history` holds every price. A daily job reads the CBU USD rate; the price is
   `round10(rate × 0.01 × 1.013)` and is changed only when the rate has moved 5% from the rate of the last change. The starting
   price is 120 soum (rate 11 839). An owner admin can set a price by hand (with a reason); it stays until the rate moves 5%.
-- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price, paid
-  by Payme, Click or bank transfer; credits are added once when the invoice is paid.
-- **Auto-recharge** is off by default and not available on Free. It needs a saved card; at zero balance the card is charged
+- **Buying** (paid plans only, at least 1 000 credits): an invoice with item kind `credits` at the current price; the credits
+  are added once to the **extra credits** when it is paid (the extra balance also stops at 50 000). With `CREDIT_APPROVAL=on` the
+  purchase goes through an admin first (below).
+- **Auto-recharge** is off by default and not available on Free. It needs a saved card; when the extra credits are being used and run low, the card is charged
   through the `CardCharger` interface. A failure is written to `credit_recharge_failures`, raises the `auto_recharge_failed`
   event and shows in the admin Credits page. **The real card charge is not built:** the default charger always fails
   (Payme/Click card tokens and merchant access are needed); the tests use a fake one.
 - **Migration.** At start (with `BILLING_JOBS=on`) accounts without a balance get the share of their plan's credits that is left
   of the month's questions.
-- **API.** `GET /v1/billing/credits`, `POST /v1/billing/credits/purchase`, `POST /v1/billing/credits/auto-recharge`;
+- **API.** `GET /v1/billing/credits`, `POST /v1/billing/credits/purchase`, `POST /v1/billing/credits/extra`, `POST /v1/billing/credits/auto-recharge`;
   admin: `GET /v1/admin/credits` (report, rate history, failures), `GET /v1/admin/credits/by-account/:id`,
-  `POST /v1/admin/credits/:id/adjust` (reason required, never below zero, audited), `POST /v1/admin/credits/rate`.
+  `POST /v1/admin/credits/:id/adjust` (reason required, `pool` plan or extra, never below zero, audited), `POST /v1/admin/credits/rate`.
   `GET /v1/billing/entitlements` carries `credits` for the desktop sidebar.
 - **Not charged:** the engine's own reasoner calls (they are not an answer to a customer's question). No e-mail or Telegram
   notice exists yet: the customer sees the banner in the cabinet and the warning in the app.

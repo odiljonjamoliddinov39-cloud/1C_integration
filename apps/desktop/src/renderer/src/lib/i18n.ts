@@ -45,6 +45,9 @@ const en = {
     aiNone: "No AI questions left",
     credits: "AI credits: {{balance}}",
     creditsNone: "AI credits used up",
+    creditsExtra: "Extra credits: {{extra}}",
+    creditsLimit: "Limit reached, resets {{when}}",
+    openCabinet: "Open the cabinet",
     upgrade: "Upgrade",
     close: "Close",
     cabinet: "Open the website, sign in and choose a plan.",
@@ -74,8 +77,16 @@ const en = {
         body: "All AI questions of this period are used. Add 100 more questions or upgrade your plan. Answers from templates and saved answers still work.",
       },
       AI_BUDGET_EXCEEDED: {
-        title: "AI credits used up",
-        body: "Your AI credits are used up. Top up your credits in the cabinet to continue. Answers from templates and saved answers still work.",
+        title: "Plan credits used up",
+        body: "Your plan’s AI credits are used up; they are added again with the next period. To continue now, turn on your extra credits or buy more in the cabinet. Answers from templates and saved answers still work.",
+      },
+      AI_LIMIT_DAILY: {
+        title: "Today’s limit reached",
+        body: "Your plan’s limit for today is reached; it starts over tomorrow. To continue now, turn on your extra credits or buy more in the cabinet. Answers from templates and saved answers still work.",
+      },
+      AI_LIMIT_WEEKLY: {
+        title: "This week’s limit reached",
+        body: "Your plan’s limit for this week is reached; it starts over on Monday. To continue now, turn on your extra credits or buy more in the cabinet. Answers from templates and saved answers still work.",
       },
       COMPANY_READ_ONLY: {
         title: "Company is read-only",
@@ -620,7 +631,12 @@ const en = {
     AI_NOT_CONFIGURED: "The assistant is not set up on the server yet.",
     AI_QUOTA_EXCEEDED: "The plan's assistant quota is used up.",
     AI_DAILY_LIMIT: "Today's assistant limit is used up; it resets at midnight UTC.",
-    AI_BUDGET_EXCEEDED: "Your AI credits are used up. Top up your credits in the cabinet to continue.",
+    AI_BUDGET_EXCEEDED:
+      "Your plan’s AI credits are used up. Turn on extra credits or buy more in the cabinet to continue.",
+    AI_LIMIT_DAILY:
+      "Today’s limit of your plan is reached. Turn on extra credits or buy more in the cabinet to continue, or wait for tomorrow.",
+    AI_LIMIT_WEEKLY:
+      "This week’s limit of your plan is reached. Turn on extra credits or buy more in the cabinet to continue, or wait for Monday.",
     AI_USER_DAILY_LIMIT: "Your AI limit for today is used up. It resets at midnight UTC.",
     SUBSCRIPTION_INACTIVE: "The subscription is not active; renew it to use the assistant.",
     AI_BUSY: "The AI service is busy; try again in a minute.",
@@ -699,6 +715,9 @@ const ru: Dict = {
     aiNone: "Вопросов к ИИ не осталось",
     credits: "AI-кредиты: {{balance}}",
     creditsNone: "AI-кредиты закончились",
+    creditsExtra: "Доп. кредиты: {{extra}}",
+    creditsLimit: "Лимит исчерпан, обновится {{when}}",
+    openCabinet: "Открыть кабинет",
     upgrade: "Улучшить тариф",
     close: "Закрыть",
     cabinet: "Откройте сайт, войдите и выберите тариф.",
@@ -728,8 +747,16 @@ const ru: Dict = {
         body: "Все вопросы к ИИ за этот период использованы. Добавьте ещё 100 вопросов или перейдите на другой тариф. Ответы по шаблонам и сохранённые ответы работают по-прежнему.",
       },
       AI_BUDGET_EXCEEDED: {
-        title: "AI-кредиты закончились",
-        body: "AI-кредиты закончились. Пополните кредиты в личном кабинете, чтобы продолжить. Ответы по шаблонам и сохранённые ответы работают по-прежнему.",
+        title: "Кредиты тарифа закончились",
+        body: "AI-кредиты вашего тарифа закончились; они добавятся снова в следующем периоде. Чтобы продолжить сейчас, включите дополнительные кредиты или купите ещё в личном кабинете. Ответы по шаблонам и сохранённые ответы работают.",
+      },
+      AI_LIMIT_DAILY: {
+        title: "Дневной лимит исчерпан",
+        body: "Дневной лимит вашего тарифа исчерпан; завтра он обновится. Чтобы продолжить сейчас, включите дополнительные кредиты или купите ещё в личном кабинете. Ответы по шаблонам и сохранённые ответы работают.",
+      },
+      AI_LIMIT_WEEKLY: {
+        title: "Недельный лимит исчерпан",
+        body: "Недельный лимит вашего тарифа исчерпан; он обновится в понедельник. Чтобы продолжить сейчас, включите дополнительные кредиты или купите ещё в личном кабинете. Ответы по шаблонам и сохранённые ответы работают.",
       },
       COMPANY_READ_ONLY: {
         title: "Компания только для чтения",
@@ -1275,7 +1302,12 @@ const ru: Dict = {
     AI_NOT_CONFIGURED: "Ассистент ещё не настроен на сервере.",
     AI_QUOTA_EXCEEDED: "Лимит ассистента по тарифу исчерпан.",
     AI_DAILY_LIMIT: "Дневной лимит ассистента исчерпан; он обновится в полночь UTC.",
-    AI_BUDGET_EXCEEDED: "AI-кредиты закончились. Пополните кредиты в личном кабинете, чтобы продолжить.",
+    AI_BUDGET_EXCEEDED:
+      "AI-кредиты тарифа закончились. Включите дополнительные кредиты или купите ещё в личном кабинете, чтобы продолжить.",
+    AI_LIMIT_DAILY:
+      "Дневной лимит тарифа исчерпан. Включите дополнительные кредиты или купите ещё в личном кабинете, либо дождитесь завтрашнего дня.",
+    AI_LIMIT_WEEKLY:
+      "Недельный лимит тарифа исчерпан. Включите дополнительные кредиты или купите ещё в личном кабинете, либо дождитесь понедельника.",
     AI_USER_DAILY_LIMIT: "Ваш дневной лимит ИИ исчерпан. Он обновится в полночь UTC.",
     SUBSCRIPTION_INACTIVE: "Подписка не активна; продлите её, чтобы пользоваться ассистентом.",
     AI_BUSY: "ИИ-сервис перегружен; попробуйте через минуту.",
@@ -1353,6 +1385,9 @@ const uz: Dict = {
     aiNone: "AI savollari qolmadi",
     credits: "AI kreditlari: {{balance}}",
     creditsNone: "AI kreditlari tugadi",
+    creditsExtra: "Qoʻshimcha kreditlar: {{extra}}",
+    creditsLimit: "Limit tugadi, {{when}} da yangilanadi",
+    openCabinet: "Kabinetni ochish",
     upgrade: "Tarifni oshirish",
     close: "Yopish",
     cabinet: "Saytni oching, tizimga kiring va tarifni tanlang.",
@@ -1382,8 +1417,16 @@ const uz: Dict = {
         body: "Bu davrdagi barcha AI savollari ishlatildi. Yana 100 ta savol qoʻshing yoki tarifni oshiring. Andoza va saqlangan javoblar avvalgidek ishlaydi.",
       },
       AI_BUDGET_EXCEEDED: {
-        title: "AI kreditlari tugadi",
-        body: "AI kreditlari tugadi. Davom etish uchun kabinetda kreditlarni toʻldiring. Andoza va saqlangan javoblar avvalgidek ishlaydi.",
+        title: "Tarif kreditlari tugadi",
+        body: "Tarifingizning AI kreditlari tugadi; keyingi davrda yana qoʻshiladi. Hoziroq davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling. Shablon va saqlangan javoblar ishlayveradi.",
+      },
+      AI_LIMIT_DAILY: {
+        title: "Bugungi limit tugadi",
+        body: "Tarifingizning bugungi limiti tugadi; ertaga yangilanadi. Hoziroq davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling. Shablon va saqlangan javoblar ishlayveradi.",
+      },
+      AI_LIMIT_WEEKLY: {
+        title: "Haftalik limit tugadi",
+        body: "Tarifingizning haftalik limiti tugadi; dushanba kuni yangilanadi. Hoziroq davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling. Shablon va saqlangan javoblar ishlayveradi.",
       },
       COMPANY_READ_ONLY: {
         title: "Kompaniya faqat oʻqish uchun",
@@ -1939,7 +1982,12 @@ const uz: Dict = {
     AI_NOT_CONFIGURED: "Yordamchi serverda hali sozlanmagan.",
     AI_QUOTA_EXCEEDED: "Tarif boʻyicha yordamchi limiti tugadi.",
     AI_DAILY_LIMIT: "Kunlik yordamchi limiti tugadi; u UTC boʻyicha yarim tunda yangilanadi.",
-    AI_BUDGET_EXCEEDED: "AI kreditlari tugadi. Davom etish uchun kabinetda kreditlarni toʻldiring.",
+    AI_BUDGET_EXCEEDED:
+      "Tarifingizning AI kreditlari tugadi. Davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling.",
+    AI_LIMIT_DAILY:
+      "Tarifingizning bugungi limiti tugadi. Davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling, yoki ertagacha kuting.",
+    AI_LIMIT_WEEKLY:
+      "Tarifingizning haftalik limiti tugadi. Davom etish uchun kabinetda qoʻshimcha kreditlarni yoqing yoki koʻproq sotib oling, yoki dushanbagacha kuting.",
     AI_USER_DAILY_LIMIT: "Bugungi AI limitingiz tugadi. U UTC boʻyicha yarim tunda yangilanadi.",
     SUBSCRIPTION_INACTIVE: "Obuna faol emas; yordamchidan foydalanish uchun uni uzaytiring.",
     AI_BUSY: "AI xizmati band; bir daqiqadan keyin urinib koʻring.",
