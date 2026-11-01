@@ -15,15 +15,14 @@ A manager is added by the owner on **Buxgalteriya → Admins** (role _Sales mana
 and shows it once (only its hash is kept); the manager must change it at the first sign-in (until then every call answers
 `PASSWORD_CHANGE_REQUIRED`). The owner can make a new one-time password at any time (_New password_).
 
-The Mini App knows a person by their **Telegram ID**, which the owner links on the same page (the "pairing" step: nobody can
-sign in as someone else). One Telegram account belongs to one person; clearing the field signs them out of the Mini App.
+The Mini App needs **no Telegram link**: the person signs in with the same email and password (the one-time one the first time, then
+their own). Disabling the person on the Admins page signs them out of the Mini App at once.
 
 ## Data (`apps/api/src/db/schema.ts`)
 
 `crm_pipelines` (one for now), `crm_stages` (name, position, colour, `is_won`, `is_lost`, `archived`), `crm_leads` (name, phone,
 `phone_key` — its digits, unique —, source, company, stage, owner, last contact), `crm_stage_history` (every move, the first one
-is the lead's birth — **conversion is counted from it**), `crm_calls`, `crm_notes`, `crm_import_jobs`. `admins` gets `telegram_id`
-and `must_change_password`.
+is the lead's birth — **conversion is counted from it**), `crm_calls`, `crm_notes`, `crm_import_jobs`. `admins` gets `must_change_password`.
 
 **Duplicates.** The same phone is the same lead, however it is written (`+998 90 123-45-67`, `90 123 45 67`, `998901234567`):
 adding it again updates the lead (a manager cannot do that to another manager's lead: `DUPLICATE_LEAD`, 409). A number with 9
@@ -66,9 +65,11 @@ A manager's reports hold only their own leads.
 
 ## The Mini App (`apps/crm-miniapp`, served at `/crm-app/`)
 
-Its **own bot** (not the remote-control bot). Sign-in is Telegram's signed `initData` checked with `CRM_BOT_TOKEN`; the page trades
-it for a session token (`POST /v1/crm/session`, one working day, valid for `/v1/crm` only — it never opens the dashboard). Screens: the
-lead list (search, stage filters), the lead card (call, result of the call, stage, notes, history), a short _new lead_ form.
+Its **own bot** (not the remote-control bot), whose menu button opens the Mini App; the bot has no chat. Sign-in is the person's own
+email and password (`POST /v1/crm/login`): the answer is a session token for one working day, kept on the phone and valid for
+`/v1/crm` only (its own issuer: it never opens the dashboard, even for an owner). A one-time password is replaced on the first
+sign-in (`POST /v1/crm/password`), in the Mini App or in the dashboard. Screens: sign-in, the lead list (search, stage filters), the
+lead card (call, result of the call, stage, notes, history), a short _new lead_ form. It works in an ordinary browser too.
 
 **Calls (variant B)**: the _Call_ button is a `tel:` link, so the phone's own dialer makes the call; when the operator comes back
 the app asks what came of it (answered, no answer, busy, call back, wrong number; minutes and a note are optional) and writes it to
@@ -77,20 +78,19 @@ the call log. A call attempt moves the lead's _last contact_ date. Variants A (a
 ## Setup
 
 1. Make a bot with @BotFather (a new one, apart from the remote-control bot). In the repository secrets set `CRM_BOT_TOKEN` and
-   `CRM_BOT_USERNAME`; the deploy writes them to the server's `.env`. On start the server sets the bot's menu button to the Mini App
-   (`CRM_MINIAPP_URL`, `https://<site>/crm-app/`).
+   `CRM_BOT_USERNAME` (optional); the deploy writes them to the server's `.env`. On start the server sets the bot's menu button to the
+   Mini App (`CRM_MINIAPP_URL`, `https://<site>/crm-app/`).
 2. For Google Sheets: make a service account (Sheets API on, read only), put its JSON key in the `GOOGLE_SERVICE_ACCOUNT_JSON` secret.
-3. On Admins, add the sales managers and link their Telegram IDs (they can find theirs from a bot such as @userinfobot).
+3. On Admins, add the sales managers (role _Sales manager_) and give each the one-time password shown once.
 
 Environment (apps/api): `CRM_BOT_TOKEN`, `CRM_BOT_USERNAME`, `CRM_MINIAPP_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`.
 
-## API (`/v1/crm`, `Authorization: Bearer <admin or CRM session token>` or `tma <initData>`)
+## API (`/v1/crm`, `Authorization: Bearer <admin or CRM session token>`)
 
 `GET /me`, `GET /funnel`, `POST /stages`, `PATCH|DELETE /stages/:id`, `PUT /stages/order` (owner/support), `GET|POST /leads`,
 `GET /leads/export.xlsx`, `GET|PATCH /leads/:id`, `POST /leads/:id/stage|notes|calls`, `GET /team`, `GET /sources`,
-`POST /import/file|sheet`, `GET /import/jobs`, `GET /import/google`, `GET /reports`, `GET /reports/export.xlsx`, `POST /session`.
-Owner-only on the admin side: `POST /v1/admin/admins/:id/telegram`, `POST /v1/admin/admins/:id/reset-password`; every signed-in
-admin: `POST /v1/admin/password`.
+`POST /import/file|sheet`, `GET /import/jobs`, `GET /import/google`, `GET /reports`, `GET /reports/export.xlsx`, `POST /login`, `POST /password`.
+Owner-only on the admin side: `POST /v1/admin/admins/:id/reset-password`; every signed-in admin: `POST /v1/admin/password`.
 
 ## Left for later (v2+)
 

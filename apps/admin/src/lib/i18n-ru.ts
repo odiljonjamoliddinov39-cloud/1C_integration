@@ -544,8 +544,6 @@ export const RU: Record<string, string> = {
   "A lead moves through the stages in this order. Mark the stage where a lead becomes a customer as won, and the one where it is gone as lost: lost stages stay outside the funnel in the reports.":
     "Лид проходит этапы в таком порядке. Отметьте этап, где лид становится клиентом, как «выигран», а этап, где лид потерян, как «потерян»: потерянные этапы в отчётах остаются вне воронки.",
   "A lead with this phone already existed: it was updated.": "Лид с этим телефоном уже был: он обновлён.",
-  "A sales manager sees only the CRM, and only their own leads. Their Telegram ID is how the CRM Mini App knows them: they get it from a bot such as @userinfobot.":
-    "Менеджер по продажам видит только CRM и только свои лиды. CRM Mini App узнаёт его по Telegram ID: его можно получить у бота, например @userinfobot.",
   Accounting: "Бухгалтерия",
   "Add a stage": "Добавить этап",
   Added: "Добавлен",
@@ -594,8 +592,6 @@ export const RU: Record<string, string> = {
   Lost: "Потеряно",
   "Lost (outside the funnel)": "Потерян (вне воронки)",
   Manager: "Менеджер",
-  "Managers are added on the Admins page, with the role Manager. Link their Telegram ID there so they can sign in to the CRM Mini App.":
-    "Менеджеры добавляются на странице «Администраторы» с ролью «Менеджер по продажам». Привяжите там их Telegram ID, чтобы они могли войти в CRM Mini App.",
   Minutes: "Минуты",
   "Move and delete": "Переместить и удалить",
   "Move down": "Вниз",
@@ -640,7 +636,6 @@ export const RU: Record<string, string> = {
     "Откройте доступ к таблице для {email} (только чтение) и вставьте ссылку. Она читается один раз, без синхронизации.",
   Source: "Источник",
   Stage: "Этап",
-  "Telegram ID (for the CRM Mini App)": "Telegram ID (для CRM Mini App)",
   "The board shows the newest 500 leads; the Leads page has them all.":
     "Доска показывает 500 новых лидов; все лиды — на странице «Лиды».",
   "The file is over 5 MB": "Файл больше 5 МБ",
@@ -668,4 +663,8 @@ export const RU: Record<string, string> = {
   "The header is the row with the phone column (it may be under a few empty or title rows). Columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out, and a column with no title but with notes in it becomes the notes. A lead whose phone is already here is updated.":
     "Заголовок — строка со столбцом телефонов (она может быть под несколькими пустыми или титульными строками). Столбцы сопоставляются с полями по названиям (Ism, Telefon, Manba, Kompaniya, Izoh…); не подошедшие пропускаются, а столбец без названия, но с заметками, становится заметками. Лид, чей телефон уже есть, обновляется.",
   "Choose an .xlsx or .csv file": "Выбрать файл .xlsx или .csv",
+  "A sales manager sees only the CRM, and only their own leads. They sign in to the CRM Mini App with this email and password.":
+    "Менеджер по продажам видит только CRM и только свои лиды. В CRM Mini App он входит с этим email и паролем.",
+  "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.":
+    "Менеджеры добавляются на странице «Администраторы» с ролью «Менеджер по продажам». В CRM Mini App они входят со своим email и показанным там одноразовым паролем.",
 };

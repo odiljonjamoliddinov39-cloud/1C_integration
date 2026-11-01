@@ -1,9 +1,11 @@
 /**
- * The CRM's HTTP API (/v1/crm). Two ways in: the admin dashboard's token (`Bearer`) and the Mini App, which proves who it is with
- * Telegram's signed initData (`Authorization: tma <initData>`, checked with the CRM bot's token) and trades it for a session
- * token of its own. A person must have been linked to their Telegram account by an owner first.
+ * The CRM's HTTP API (/v1/crm). Two ways in, both with `Authorization: Bearer`: the admin dashboard's token, and a CRM session
+ * token, which the Mini App gets by signing in with the person's own email and password (`POST /v1/crm/login`). The CRM token
+ * opens /v1/crm only.
  */
 import {
+  AdminLoginInput,
+  ChangePasswordInput,
   CrmCallInput,
   CrmImportFileInput,
   CrmImportSheetInput,
@@ -26,8 +28,6 @@ import type { Config } from "../config.js";
 import type { Db } from "../db/client.js";
 import { admins } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
-import type { Tokens } from "../lib/tokens.js";
-import { verifyInitData } from "../remote/telegram.js";
 import { type Lang, langOf, leadsWorkbook, reportWorkbook } from "./export.js";
 import { readGoogleSheet } from "./google-sheets.js";
 import type { CrmImport } from "./import.js";
@@ -39,7 +39,6 @@ import { eq } from "drizzle-orm";
 export interface CrmRouteDeps {
   db: Db;
   config: Config;
-  tokens: Tokens;
   admin: AdminService;
   crm: Crm;
   imports: CrmImport;
@@ -61,7 +60,7 @@ const idParam = z.object({ id: z.uuid() });
 const IMPORT_BODY_LIMIT = 8 * 1024 * 1024;
 
 export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): void {
-  const { db, config, tokens, admin, crm, imports, reports } = deps;
+  const { db, config, admin, crm, imports, reports } = deps;
 
   const actorOf = (who: AdminIdentity): CrmActor => {
     if (who.mustChangePassword)
@@ -69,25 +68,11 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
     return { id: who.id, role: who.role };
   };
 
-  /** Who is calling: an admin token, a Mini App session, or Telegram's initData itself. */
+  /** Who is calling: an admin's token or a CRM session token. */
   async function identify(req: FastifyRequest): Promise<AdminIdentity> {
     const header = req.headers.authorization ?? "";
-    let who: AdminIdentity | null = null;
-    if (header.startsWith("Bearer ")) {
-      const token = header.slice(7);
-      who = (await admin.identify(token)) ?? (await admin.identifyCrm(token));
-    } else if (header.startsWith("tma ")) {
-      if (!config.CRM_BOT_TOKEN)
-        throw new HttpError(503, "TELEGRAM_OFF", "The CRM bot is not set up on this server");
-      const caller = verifyInitData(header.slice(4), config.CRM_BOT_TOKEN);
-      who = await admin.identifyTelegram(caller.id);
-      if (!who)
-        throw new HttpError(
-          403,
-          "NOT_LINKED",
-          "This Telegram account is not linked to anyone: ask the owner to add your Telegram ID",
-        );
-    }
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const who = token ? ((await admin.identify(token)) ?? (await admin.identifyCrm(token))) : null;
     if (!who) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
     return who;
   }
@@ -95,15 +80,14 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
 
   const strict = { config: { rateLimit: { max: config.AUTH_RATE_PER_MINUTE, timeWindow: "1 minute" } } };
 
-  // The Mini App's sign-in: Telegram's initData in, a session token out.
-  app.post("/v1/crm/session", strict, async (req) => {
-    const header = req.headers.authorization ?? "";
-    if (!header.startsWith("tma ")) throw new HttpError(401, "UNAUTHORIZED", "Open the app from Telegram");
-    const who = await identify(req);
-    const actor = actorOf(who);
-    const { token, expiresIn } = await tokens.crmToken(actor.id);
-    return { accessToken: token, expiresIn, me: await meOf(actor) };
+  // The Mini App's sign-in and the change of a one-time password (the only call that works until it is changed).
+  app.post("/v1/crm/login", strict, async (req) => {
+    const { email, password } = AdminLoginInput.parse(req.body);
+    return admin.loginCrm(email, password);
   });
+  app.post("/v1/crm/password", strict, async (req) =>
+    admin.changePassword((await identify(req)).id, ChangePasswordInput.parse(req.body)),
+  );
 
   async function meOf(actor: CrmActor): Promise<CrmMe> {
     const row = await db.query.admins.findFirst({ where: eq(admins.id, actor.id) });

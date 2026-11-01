@@ -175,7 +175,7 @@ export function CrmSettingsPage({ me }: { me: AdminView }) {
         <Section title={t("Sales managers")}>
           <p className="text-sm text-muted-foreground">
             {t(
-              "Managers are added on the Admins page, with the role Manager. Link their Telegram ID there so they can sign in to the CRM Mini App.",
+              "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.",
             )}{" "}
             <a className="font-semibold text-primary hover:underline" href={href("admins", "buxgalteriya")}>
               {t("Open the Admins page")}

@@ -26,8 +26,8 @@ import type {
   ChangePasswordInput,
   CreateAdminInput,
   CreatedAdmin,
+  CrmSession,
   ExtendInput,
-  SetTelegramInput,
   Overview,
   RechargeInput,
   SubscriptionStatus,
@@ -82,7 +82,6 @@ function adminView(a: Admin): AdminView {
     role: a.role,
     disabled: a.disabled,
     lastLoginAt: iso(a.lastLoginAt),
-    telegramId: a.telegramId,
     mustChangePassword: a.mustChangePassword,
   };
 }
@@ -142,7 +141,7 @@ export class AdminService {
     return { id: admin.id, role: admin.role, mustChangePassword: admin.mustChangePassword };
   }
 
-  /** The admin a CRM Mini App session (or a Telegram sign-in) stands for; disabled people are out at once. */
+  /** The admin a CRM Mini App session stands for; disabled people are out at once. */
   async identifyCrm(token: string): Promise<AdminIdentity | null> {
     const id = await this.tokens.verifyCrm(token);
     if (!id) return null;
@@ -150,10 +149,19 @@ export class AdminService {
     return admin && !admin.disabled ? this.identityOf(admin) : null;
   }
 
-  /** The person whose Telegram account this is (linked by an admin), for the CRM Mini App's sign-in. */
-  async identifyTelegram(telegramId: string): Promise<AdminIdentity | null> {
-    const admin = await this.db.query.admins.findFirst({ where: eq(admins.telegramId, telegramId) });
-    return admin && !admin.disabled ? this.identityOf(admin) : null;
+  /**
+   * The CRM Mini App's sign-in: the person's own email and password, as in the dashboard, but the token is for /v1/crm only (its
+   * own issuer), so a phone that keeps it holds no key to the rest of the dashboard.
+   */
+  async loginCrm(email: string, password: string): Promise<CrmSession> {
+    const admin = await this.db.query.admins.findFirst({ where: eq(admins.email, email) });
+    const ok = await verify(admin?.passwordHash ?? DUMMY_HASH, password).catch(() => false);
+    if (!admin || !ok) throw new HttpError(401, "INVALID_CREDENTIALS", "Wrong email or password");
+    if (admin.disabled) throw new HttpError(403, "ADMIN_DISABLED", "This admin is disabled");
+    await this.db.update(admins).set({ lastLoginAt: new Date() }).where(eq(admins.id, admin.id));
+    await this.audit(admin.id, "crm.login", `admin:${admin.id}`);
+    const { token, expiresIn } = await this.tokens.crmToken(admin.id);
+    return { accessToken: token, expiresIn, mustChangePassword: admin.mustChangePassword };
   }
 
   /** Changing the password ends the "one-time" state; the old password must be known. */
@@ -586,7 +594,6 @@ export class AdminService {
     requireOwner(admin);
     const existing = await this.db.query.admins.findFirst({ where: eq(admins.email, input.email) });
     if (existing) throw new HttpError(409, "EMAIL_TAKEN", "An admin with this email already exists");
-    if (input.telegramId) await this.requireFreeTelegram(input.telegramId);
     const generated = input.password ? null : temporaryPassword();
     const password = input.password ?? generated ?? "";
     const [created] = await this.db
@@ -596,7 +603,6 @@ export class AdminService {
         name: input.name,
         role: input.role,
         passwordHash: await hash(password),
-        telegramId: input.telegramId ?? null,
         mustChangePassword: generated !== null || input.role === "manager",
       })
       .returning();
@@ -606,26 +612,6 @@ export class AdminService {
       role: input.role,
     });
     return { ...adminView(created), tempPassword: generated };
-  }
-
-  private async requireFreeTelegram(telegramId: string, exceptId?: string): Promise<void> {
-    const taken = await this.db.query.admins.findFirst({ where: eq(admins.telegramId, telegramId) });
-    if (taken && taken.id !== exceptId)
-      throw new HttpError(409, "TELEGRAM_TAKEN", "This Telegram account is linked to another person");
-  }
-
-  /** Links the Telegram account a person uses in the CRM Mini App (the "pairing" step: nobody else can sign in as them). */
-  async setTelegram(admin: AdminIdentity, id: string, input: SetTelegramInput): Promise<AdminView> {
-    requireOwner(admin);
-    if (input.telegramId) await this.requireFreeTelegram(input.telegramId, id);
-    const [row] = await this.db
-      .update(admins)
-      .set({ telegramId: input.telegramId })
-      .where(eq(admins.id, id))
-      .returning();
-    if (!row) throw new HttpError(404, "NOT_FOUND", "No such admin");
-    await this.audit(admin.id, "admin.telegram", `admin:${id}`, { telegramId: input.telegramId });
-    return adminView(row);
   }
 
   /** A new one-time password for a person who lost theirs; shown once to the owner. */

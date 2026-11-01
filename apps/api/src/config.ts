@@ -166,8 +166,9 @@ const Env = z.object({
   /** Where uploaded files and generated outputs wait (sealed, deleted after delivery or 24 hours). */
   REMOTE_BLOB_DIR: z.string().default("/var/lib/platform/remote-blobs"),
   /**
-   * The CRM Mini App (docs/crm.md) has its own bot, apart from the remote-control one. The token checks the Mini App's
-   * Telegram sign-in; the URL is where the Mini App is served (https://…/crm-app) and goes to the bot's menu button.
+   * The CRM Mini App (docs/crm.md) has its own bot, apart from the remote-control one. The bot has no chat: the token only sets its
+   * menu button to the Mini App, whose address (https://…/crm-app) is CRM_MINIAPP_URL. People sign in with their own email and
+   * password, not with Telegram.
    */
   CRM_BOT_TOKEN: z
     .string()
