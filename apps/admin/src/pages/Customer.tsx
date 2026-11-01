@@ -119,6 +119,7 @@ export function CustomerPage({ id, me }: { id: string; me: AdminView }) {
         <ExtendForm id={id} onDone={update} />
         <RechargeForm id={id} detail={d} onDone={update} />
       </div>
+      <RestartPayments id={id} />
       <CreditsSection id={id} owner={me.role === "owner"} />
       <BudgetForm
         key={`${d.budget.limitUsd}-${d.budget.custom}`}
@@ -550,4 +551,54 @@ function describe(payload: Record<string, unknown>): string {
     .filter(([, v]) => v !== "" && v !== null && v !== undefined)
     .map(([k, v]) => `${k}: ${text(v)}`)
     .join(" · ");
+}
+
+/** "Restart": clears the customer's unfinished payments so they can begin a purchase again. */
+function RestartPayments({ id }: { id: string }) {
+  const queryClient = useQueryClient();
+  const restart = useMutation({
+    mutationFn: () => api.restartPayments(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["account", id] });
+      void queryClient.invalidateQueries({ queryKey: ["account-credits", id] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-requests"] });
+      void queryClient.invalidateQueries({ queryKey: ["credits-report"] });
+    },
+  });
+  return (
+    <Section title={t("Payments")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="danger"
+          disabled={restart.isPending}
+          onClick={() => {
+            if (
+              window.confirm(
+                t(
+                  "Restart this customer's payments? Their unpaid invoices and waiting requests are cancelled.",
+                ),
+              )
+            )
+              restart.mutate();
+          }}
+        >
+          {t("Restart")}
+        </Button>
+        {restart.data && (
+          <span className="text-sm text-success">
+            {t("Done: {invoices} invoice(s) and {requests} request(s) cancelled.", {
+              invoices: restart.data.cancelledInvoices,
+              requests: restart.data.cancelledRequests,
+            })}
+          </span>
+        )}
+      </div>
+      <ErrorText error={restart.error} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t(
+          "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.",
+        )}
+      </p>
+    </Section>
+  );
 }

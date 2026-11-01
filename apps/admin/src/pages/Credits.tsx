@@ -1,4 +1,9 @@
-import type { AdminCreditsReport, AdminView, CreditTransactionView } from "@platform/shared";
+import type {
+  AdminCreditRequest,
+  AdminCreditsReport,
+  AdminView,
+  CreditTransactionView,
+} from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -20,10 +25,130 @@ const TYPE_NAMES: Record<CreditTransactionView["type"], string> = {
   admin_adjustment: "Admin adjustment",
 };
 
+const REQUEST_STATUS: Record<
+  AdminCreditRequest["status"],
+  { name: string; tone: "warning" | "success" | "danger" | "muted" }
+> = {
+  pending: { name: "Waiting", tone: "warning" },
+  approved: { name: "Approved", tone: "success" },
+  rejected: { name: "Rejected", tone: "danger" },
+  cancelled: { name: "Cancelled", tone: "muted" },
+};
+
+/** Purchase requests: the customer asked for credits on the website; the admin approves (credits are added) or rejects. */
+export function CreditRequestsTable({
+  requests,
+  showCustomer,
+}: {
+  requests: AdminCreditRequest[];
+  showCustomer: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [note, setNote] = useState<Record<string, string>>({});
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["credit-requests"] });
+    void queryClient.invalidateQueries({ queryKey: ["credits-report"] });
+    void queryClient.invalidateQueries({ queryKey: ["account-credits"] });
+  };
+  const decide = useMutation({
+    mutationFn: ({ id, approve }: { id: string; approve: boolean }) =>
+      (approve ? api.approveCreditRequest : api.rejectCreditRequest)(id, {
+        note: note[id]?.trim() || undefined,
+      }),
+    onSuccess: refresh,
+  });
+  if (requests.length === 0) return <Empty>{t("No purchase requests.")}</Empty>;
+  return (
+    <>
+      <ErrorText error={decide.error} />
+      <Table
+        head={[
+          t("When"),
+          ...(showCustomer ? [t("Customer")] : []),
+          t("Credits"),
+          t("Sum"),
+          t("Balance"),
+          t("Status"),
+          t("Note"),
+          "",
+        ]}
+      >
+        {requests.map((r) => (
+          <tr key={r.id}>
+            <Td>{dateTime(r.createdAt)}</Td>
+            {showCustomer && (
+              <Td>
+                <a className="hover:underline" href={href(`customers/${r.accountId}`)}>
+                  {r.accountName}
+                </a>
+                {r.userEmail && <div className="text-xs text-muted-foreground">{r.userEmail}</div>}
+              </Td>
+            )}
+            <Td className="font-semibold">+{number(r.credits)}</Td>
+            <Td>
+              {number(r.totalSom)} {t("sum")}
+            </Td>
+            <Td>{number(r.balanceCredits)}</Td>
+            <Td>
+              <Badge tone={REQUEST_STATUS[r.status].tone}>{t(REQUEST_STATUS[r.status].name)}</Badge>
+            </Td>
+            <Td className="text-muted-foreground">
+              {r.status === "pending" ? (
+                <Input
+                  className="min-w-40"
+                  placeholder={t("Note (optional)")}
+                  value={note[r.id] ?? ""}
+                  onChange={(e) => setNote({ ...note, [r.id]: e.target.value })}
+                />
+              ) : (
+                r.note
+              )}
+            </Td>
+            <Td className="text-right whitespace-nowrap">
+              {r.status === "pending" && (
+                <span className="inline-flex gap-2">
+                  <Button
+                    disabled={decide.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          t("Approve: add {count} credits to {name}?", {
+                            count: number(r.credits),
+                            name: r.accountName,
+                          }),
+                        )
+                      )
+                        decide.mutate({ id: r.id, approve: true });
+                    }}
+                  >
+                    {t("Approve")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={decide.isPending}
+                    onClick={() => decide.mutate({ id: r.id, approve: false })}
+                  >
+                    {t("Reject")}
+                  </Button>
+                </span>
+              )}
+            </Td>
+          </tr>
+        ))}
+      </Table>
+    </>
+  );
+}
+
 /** Credits sold and spent, the price of a credit (CBU rate) with its history, and the recharges that failed. */
 export function CreditsPage({ me }: { me: AdminView }) {
   const queryClient = useQueryClient();
   const report = useQuery({ queryKey: ["credits-report"], queryFn: api.creditsReport });
+  const requests = useQuery({
+    queryKey: ["credit-requests"],
+    queryFn: api.creditRequests,
+    refetchInterval: 30_000,
+  });
   const owner = me.role === "owner";
   const done = (data: AdminCreditsReport) => queryClient.setQueryData(["credits-report"], data);
   const [price, setPrice] = useState("");
@@ -41,6 +166,23 @@ export function CreditsPage({ me }: { me: AdminView }) {
   if (!r) return null;
   return (
     <div className="space-y-4">
+      <Section
+        title={t("Purchase requests")}
+        actions={
+          requests.data && requests.data.pendingCount > 0 ? (
+            <Badge tone="warning">{t("{count} waiting", { count: requests.data.pendingCount })}</Badge>
+          ) : undefined
+        }
+      >
+        <p className="mb-3 text-xs text-muted-foreground">
+          {t(
+            "A customer asks for more credits on the website. Approve it once the payment is received: the credits are added at the price of the request and an invoice marked paid is kept.",
+          )}
+        </p>
+        <ErrorText error={requests.error} />
+        <CreditRequestsTable requests={requests.data?.requests ?? []} showCustomer />
+      </Section>
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat
           label={t("Price of a credit")}
@@ -169,6 +311,12 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
         </Badge>
       }
     >
+      {v.requests.length > 0 && (
+        <div className="mb-4">
+          <h3 className="mb-2 text-sm font-semibold">{t("Purchase requests")}</h3>
+          <CreditRequestsTable requests={v.requests} showCustomer={false} />
+        </div>
+      )}
       {owner && (
         <>
           <ErrorText error={adjust.error} />

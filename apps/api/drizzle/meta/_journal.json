@@ -148,6 +148,13 @@
       "when": 1793339969981,
       "tag": "0020_offer_acceptances",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793546121051,
+      "tag": "0021_credit_requests",
+      "breakpoints": true
     }
   ]
 }

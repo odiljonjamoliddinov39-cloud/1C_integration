@@ -53,6 +53,13 @@ function Shell() {
   const route = useRoute();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const [section = "", id] = route;
+  const requests = useQuery({
+    queryKey: ["credits-report"],
+    queryFn: api.creditsReport,
+    refetchInterval: 60_000,
+    enabled: Boolean(me.data),
+  });
+  const pending = requests.data?.pendingRequests ?? 0;
   const nav = me.data?.role === "owner" ? [...NAV, { path: "admins", label: t("Admins") } as const] : NAV;
 
   return (
@@ -79,6 +86,11 @@ function Shell() {
               )}
             >
               {item.label}
+              {item.path === "credits" && pending > 0 && (
+                <span className="ml-2 rounded-full bg-amber-400 px-2 py-0.5 text-xs font-bold text-black">
+                  {pending}
+                </span>
+              )}
             </a>
           ))}
         </nav>

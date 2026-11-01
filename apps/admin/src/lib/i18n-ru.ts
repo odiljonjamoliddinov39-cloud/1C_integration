@@ -509,4 +509,24 @@ export const RU: Record<string, string> = {
   "AI use": "Расход ИИ",
   "Carried over": "Перенесено",
   "Admin adjustment": "Корректировка админа",
+  Approved: "Одобрено",
+  Rejected: "Отклонено",
+  "No purchase requests.": "Заявок на покупку нет.",
+  Sum: "Сумма",
+  "Note (optional)": "Примечание (необязательно)",
+  "Approve: add {count} credits to {name}?": "Одобрить: добавить {count} кредитов клиенту {name}?",
+  Approve: "Одобрить",
+  Reject: "Отклонить",
+  "Purchase requests": "Заявки на покупку",
+  "{count} waiting": "Ожидает: {count}",
+  "A customer asks for more credits on the website. Approve it once the payment is received: the credits are added at the price of the request and an invoice marked paid is kept.":
+    "Клиент просит дополнительные кредиты на сайте. Одобряйте после получения оплаты: кредиты добавляются по цене заявки, а счёт сохраняется как оплаченный.",
+  Payments: "Платежи",
+  Restart: "Перезапустить",
+  "Restart this customer's payments? Their unpaid invoices and waiting requests are cancelled.":
+    "Перезапустить платежи клиента? Его неоплаченные счета и ожидающие заявки будут отменены.",
+  "Done: {invoices} invoice(s) and {requests} request(s) cancelled.":
+    "Готово: отменено счетов — {invoices}, заявок — {requests}.",
+  "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
+    "Запускает платежи клиента заново: неоплаченные счета и ещё ожидающие заявки на кредиты отменяются, и он может купить с самого начала. Оплаченное, баланс и история остаются как есть.",
 };

@@ -10,6 +10,7 @@ import {
   PaymentProvider,
   AcceptOfferInput,
   PurchaseCreditsInput,
+  RequestCreditsInput,
 } from "@platform/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -19,6 +20,7 @@ import type { Db } from "../db/client.js";
 import { users } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { ClickMerchant } from "./click.js";
+import type { CreditRequests } from "./credit-requests.js";
 import type { Credits } from "./credits.js";
 import type { Offers } from "./offer.js";
 import type { Invoicing } from "./invoicing.js";
@@ -28,6 +30,7 @@ import type { BillingService } from "./service.js";
 export interface RouteDeps {
   db: Db;
   credits: Credits;
+  creditRequests: CreditRequests;
   offer: Offers;
   billing: BillingService;
   invoicing: Invoicing;
@@ -138,6 +141,17 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
     const { accountId } = await owner(req);
     await deps.offer.require(accountId);
     return deps.credits.purchase(accountId, input.credits, input.provider);
+  });
+  // Extra credits are asked for here and added when an admin approves the request in the dashboard.
+  app.post("/v1/billing/credits/request", async (req) => {
+    const input = parse(RequestCreditsInput, req.body);
+    const { accountId, userId } = await owner(req);
+    await deps.offer.require(accountId);
+    return deps.creditRequests.create(accountId, userId, input.credits);
+  });
+  app.post("/v1/billing/credits/requests/:id/cancel", async (req) => {
+    const { accountId } = await owner(req);
+    return deps.creditRequests.cancel(accountId, parse(z.object({ id: z.uuid() }), req.params).id);
   });
   app.post("/v1/billing/credits/auto-recharge", async (req) =>
     deps.credits.saveAutoRecharge((await owner(req)).accountId, parse(AutoRechargeInput, req.body)),

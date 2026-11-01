@@ -873,3 +873,34 @@ export const offerAcceptances = pgTable(
   },
   (t) => [uniqueIndex("offer_acceptances_account_version_idx").on(t.accountId, t.version)],
 );
+
+/**
+ * A client's request to buy more AI credits. The admin approves it (the credits are added and an invoice, marked paid, is
+ * kept for the books) or rejects it. The price is the one at the time of the request.
+ */
+export const creditRequests = pgTable(
+  "credit_requests",
+  {
+    id: id(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    credits: integer("credits").notNull(),
+    somPerCredit: integer("som_per_credit").notNull(),
+    status: text("status", { enum: ["pending", "approved", "rejected", "cancelled"] })
+      .notNull()
+      .default("pending"),
+    /** The admin who decided, and what they wrote. */
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    note: text("note"),
+    /** The invoice made when the request was approved. */
+    invoiceId: uuid("invoice_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("credit_requests_status_idx").on(t.status, t.createdAt),
+    index("credit_requests_account_idx").on(t.accountId, t.createdAt),
+  ],
+);

@@ -32,6 +32,7 @@ import {
 } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
 import type { Billing } from "./entitlements.js";
+import { requestsOf } from "./credit-requests.js";
 import type { Invoicing } from "./invoicing.js";
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -301,6 +302,8 @@ export class Credits {
       canPurchase: r.effectivePlan.code !== "free",
       minPurchaseCredits: MIN_PURCHASE_CREDITS,
       autoRecharge: this.settings(row),
+      approvalRequired: this.approvalRequired,
+      requests: await requestsOf(this.db, accountId),
       history: history.map((h) => ({
         id: h.id,
         type: h.type,
@@ -419,8 +422,13 @@ export class Credits {
 
   // --- purchase and auto-recharge ----------------------------------------------------------------
 
-  /** A purchase: an invoice for `credits` at today's price, to be paid by Payme, Click or bank transfer. */
-  async purchase(accountId: string, credits: number, provider: "payme" | "click" | "bank") {
+  /** Extra credits are added when an admin approves a request, not paid online. */
+  get approvalRequired(): boolean {
+    return this.config.CREDIT_APPROVAL === "on";
+  }
+
+  /** A purchase or a request is possible: a paid plan, and the balance stays under the cap. */
+  async assertCanBuy(accountId: string, credits: number): Promise<void> {
     const r = await this.billing.get(accountId);
     if (r.effectivePlan.code === "free")
       throw new HttpError(
@@ -437,6 +445,17 @@ export class Credits {
         "CREDIT_CAP",
         `The balance can hold at most ${cap} credits: you can add up to ${Math.max(0, Math.floor(cap - balance))} now`,
       );
+  }
+
+  /** A purchase: an invoice for `credits` at today's price, to be paid by Payme, Click or bank transfer. */
+  async purchase(accountId: string, credits: number, provider: "payme" | "click" | "bank") {
+    if (this.approvalRequired)
+      throw new HttpError(
+        409,
+        "APPROVAL_REQUIRED",
+        "Credits are added when an admin approves a request: send a request instead",
+      );
+    await this.assertCanBuy(accountId, credits);
     const { somPerCredit } = await this.price();
     return this.invoicing.creditsCheckout(accountId, credits, somPerCredit, provider);
   }
@@ -625,8 +644,12 @@ export class Credits {
       .orderBy(desc(creditRechargeFailures.createdAt))
       .limit(50);
     const price = await this.price();
+    const [waiting] = await this.db.execute<{ n: number }>(
+      sql`select count(*)::int as n from credit_requests where status = 'pending'`,
+    );
     return {
       somPerCredit: price.somPerCredit,
+      pendingRequests: waiting?.n ?? 0,
       cbuRate: price.cbuRate,
       soldCredits30d: Math.round(totals?.sold ?? 0),
       soldSom30d: Math.round(paid?.som ?? 0),

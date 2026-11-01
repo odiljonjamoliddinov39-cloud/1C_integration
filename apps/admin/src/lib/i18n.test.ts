@@ -48,6 +48,11 @@ const DYNAMIC = [
   "AI use",
   "Carried over",
   "Admin adjustment",
+  // The statuses of a credit purchase request.
+  "Waiting",
+  "Approved",
+  "Rejected",
+  "Cancelled",
 ];
 // Examples of the code or of the 1C language, shown as they are.
 const AS_IS = new Set(["ДатаОстатка:date"]);

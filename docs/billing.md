@@ -111,6 +111,22 @@ their price in soum. Switch: `AI_CREDITS=off` goes back to the question/dollar-b
 - **Not charged:** the engine's own reasoner calls (they are not an answer to a customer's question). No e-mail or Telegram
   notice exists yet: the customer sees the banner in the cabinet and the warning in the app.
 
+### Buying more credits: admin approval, and "Restart" (`CREDIT_APPROVAL`)
+
+With `CREDIT_APPROVAL=on` (the default) extra credits are not paid online. In the cabinet the customer presses **Send request**
+(`POST /v1/billing/credits/request`; the offer must be accepted, a paid plan is needed, the balance may not pass the cap, at most 3
+requests wait at once). The request is a row of `credit_requests` and shows in the dashboard, **AI credits → Purchase requests**
+(with a count in the menu) and on the customer's page. An admin checks that the payment came and presses **Approve**: the credits are
+added at the price of the request through an invoice that is created and marked paid (`bank`, ref `request:<id>`), so the invoice
+list and the revenue are right. **Reject** adds nothing; both keep the admin's note and are written to the audit log. The customer can
+cancel a request that still waits (`POST /v1/billing/credits/requests/:id/cancel`). `POST /v1/billing/credits/purchase` answers
+`APPROVAL_REQUIRED` in this mode. `CREDIT_APPROVAL=off` brings back buying by Payme, Click or bank invoice. Auto-recharge (the saved
+card) is not affected.
+
+The customer page in the dashboard has a **Restart** button (`POST /v1/admin/credits/:accountId/restart-payments`): the customer's
+unpaid invoices and waiting requests are cancelled, so the purchase can begin again from nothing. What was paid, the balance and the
+history stay. It is written to the audit log (`payments.restart`) and the billing events (`payments_restarted`).
+
 ## Public offer (Ommaviy oferta)
 
 The offer text (Uzbek, and its Russian translation) is in `apps/web/src/lib/offer.ts`; it is shown in the site's language on `/oferta`
