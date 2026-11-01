@@ -7,7 +7,10 @@ import type {
   AdminAccountCredits,
   AdminCreditAdjustInput,
   AdminCreditRateInput,
+  AdminCreditDecisionInput,
+  AdminCreditRequestsResponse,
   AdminCreditsReport,
+  AdminRestartPaymentsResult,
   AdminBillingDetail,
   AdminPlansView,
   AdminSubscriptionRow,
@@ -138,6 +141,13 @@ export const api = {
   accountCredits: (id: string) => request<AdminAccountCredits>("GET", `/credits/by-account/${id}`),
   adjustCredits: (id: string, input: AdminCreditAdjustInput) =>
     request<{ balanceCredits: number }>("POST", `/credits/${id}/adjust`, input),
+  creditRequests: () => request<AdminCreditRequestsResponse>("GET", "/credits/requests"),
+  approveCreditRequest: (id: string, input: AdminCreditDecisionInput) =>
+    request<AdminCreditRequestsResponse>("POST", `/credits/requests/${id}/approve`, input),
+  rejectCreditRequest: (id: string, input: AdminCreditDecisionInput) =>
+    request<AdminCreditRequestsResponse>("POST", `/credits/requests/${id}/reject`, input),
+  restartPayments: (id: string) =>
+    request<AdminRestartPaymentsResult>("POST", `/credits/${id}/restart-payments`),
   setCreditRate: (input: AdminCreditRateInput) => request<AdminCreditsReport>("POST", "/credits/rate", input),
   billingPlans: () => request<AdminPlansView>("GET", "/billing/plans"),
   savePlan: (code: string, input: PlanSaveInput) => request<AdminPlansView>("PUT", `/plans/${code}`, input),

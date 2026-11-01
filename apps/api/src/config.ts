@@ -82,6 +82,8 @@ const Env = z.object({
   AI_CREDITS: z.enum(["on", "off"]).default("on"),
   /** A plan, add-on or credits can be bought only after the owner accepted the public offer. */
   OFFER_REQUIRED: z.enum(["on", "off"]).default("on"),
+  /** On: extra credits are added after an admin approves a request; off: bought online (Payme, Click, bank). */
+  CREDIT_APPROVAL: z.enum(["on", "off"]).default("on"),
   /** How long a computed set of limits is reused (0: never; tests use 0). */
   ENTITLEMENTS_CACHE_SECONDS: z.coerce.number().min(0).default(60),
   /** Open sign-up from the desktop app during the prototype (the website takes over later). */

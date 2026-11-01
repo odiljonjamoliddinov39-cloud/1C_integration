@@ -11,6 +11,7 @@ import {
   AdminLoginInput,
   AddonSaveInput,
   AdminCreditAdjustInput,
+  AdminCreditDecisionInput,
   AdminCreditRateInput,
   PlanSaveInput,
   PromoInput,
@@ -58,6 +59,7 @@ import { Tokens } from "./lib/tokens.js";
 import { Billing } from "./billing/entitlements.js";
 import { AdminBilling } from "./billing/admin.js";
 import { Invoicing } from "./billing/invoicing.js";
+import { CreditRequests } from "./billing/credit-requests.js";
 import { Credits, type CardCharger } from "./billing/credits.js";
 import { Offers } from "./billing/offer.js";
 import { CreditRates, startRateJob } from "./billing/credit-rate.js";
@@ -115,6 +117,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const click = new ClickMerchant(db, config, invoicing);
   const credits = new Credits(db, config, entitlements, invoicing, deps.cardCharger);
   billing.credits = credits;
+  const creditRequests = new CreditRequests(db, credits, invoicing);
   const offer = new Offers(db, config);
   const creditRates = new CreditRates(db, deps.fetch);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
@@ -193,7 +196,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return reply.status(204).send();
   });
 
-  const billingDeps = { db, credits, offer, billing, invoicing, payme, click, auth };
+  const billingDeps = { db, credits, creditRequests, offer, billing, invoicing, payme, click, auth };
   registerBillingRoutes(app, billingDeps);
   registerSubscriptionRoutes(app, billingDeps);
 
@@ -488,7 +491,45 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   });
   app.get("/v1/admin/credits/by-account/:id", async (req) => {
     await adminAuth(req);
-    return credits.adminAccount(parse(idParam, req.params).id);
+    const { id } = parse(idParam, req.params);
+    return { ...(await credits.adminAccount(id)), requests: (await creditRequests.adminList(id)).requests };
+  });
+  // Customers ask for extra credits on the website; an admin approves or rejects here. "Restart payments" clears a
+  // customer's unfinished payments (unpaid invoices and waiting requests) so they can begin again.
+  app.get("/v1/admin/credits/requests", async (req) => {
+    await adminAuth(req);
+    return creditRequests.adminList();
+  });
+  app.post("/v1/admin/credits/requests/:id/approve", async (req) => {
+    const who = await adminAuth(req);
+    const { id } = parse(idParam, req.params);
+    const { note } = parse(AdminCreditDecisionInput, req.body ?? {});
+    const done = await creditRequests.approve(id, who.id, note);
+    await admin.audit(who.id, "credits.request.approve", `account:${done.accountId}`, {
+      request: id,
+      credits: done.credits,
+      note,
+    });
+    return creditRequests.adminList();
+  });
+  app.post("/v1/admin/credits/requests/:id/reject", async (req) => {
+    const who = await adminAuth(req);
+    const { id } = parse(idParam, req.params);
+    const { note } = parse(AdminCreditDecisionInput, req.body ?? {});
+    const done = await creditRequests.reject(id, who.id, note);
+    await admin.audit(who.id, "credits.request.reject", `account:${done.accountId}`, {
+      request: id,
+      credits: done.credits,
+      note,
+    });
+    return creditRequests.adminList();
+  });
+  app.post("/v1/admin/credits/:id/restart-payments", async (req) => {
+    const who = await adminAuth(req);
+    const { id } = parse(idParam, req.params);
+    const result = await creditRequests.restartPayments(id, who.id);
+    await admin.audit(who.id, "payments.restart", `account:${id}`, result);
+    return result;
   });
   app.post("/v1/admin/credits/:id/adjust", async (req) => {
     const who = await ownerOnly(req);

@@ -293,6 +293,17 @@ export class Invoicing {
 
   // --- invoices ---------------------------------------------------------------------------------
 
+  /** An admin starts a customer's payments over: the unpaid invoices are cancelled. Returns how many. */
+  async cancelPending(accountId: string): Promise<number> {
+    const rows = await this.db
+      .update(invoices)
+      .set({ status: "cancelled" })
+      .where(and(eq(invoices.accountId, accountId), eq(invoices.status, "pending")))
+      .returning({ id: invoices.id });
+    await this.event(accountId, "payments_restarted", { invoices: rows.length });
+    return rows.length;
+  }
+
   async createInvoice(
     accountId: string,
     quote: Quote,

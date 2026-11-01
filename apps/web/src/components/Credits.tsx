@@ -1,7 +1,14 @@
 import type { CheckoutResponse, CreditsView } from "@platform/shared";
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, credits as loadCredits, purchaseCredits, saveAutoRecharge } from "../lib/api";
+import {
+  ApiError,
+  cancelCreditRequest,
+  credits as loadCredits,
+  purchaseCredits,
+  requestCredits,
+  saveAutoRecharge,
+} from "../lib/api";
 import { billingText, money } from "../lib/billing-i18n";
 import { formatDate } from "../lib/dates";
 import type { Locale } from "../lib/i18n";
@@ -97,7 +104,16 @@ export function CreditsSection({
             className="mt-2 flex flex-wrap items-end gap-3 text-sm"
             onSubmit={(e) => {
               e.preventDefault();
-              guard(() => void act(async () => pay(await purchaseCredits({ credits: amount, provider }))));
+              guard(
+                () =>
+                  void act(async () => {
+                    if (view.approvalRequired) {
+                      await requestCredits({ credits: amount });
+                      return c.requestSent;
+                    }
+                    return pay(await purchaseCredits({ credits: amount, provider }));
+                  }),
+              );
             }}
           >
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -111,28 +127,69 @@ export function CreditsSection({
                 onChange={(e) => setAmount(Number(e.target.value))}
               />
             </label>
-            <select
-              className={input}
-              value={provider}
-              onChange={(e) => setProvider(e.target.value as typeof provider)}
-            >
-              {[...cardProviders, "bank" as const].map((p) => (
-                <option key={p} value={p}>
-                  {t.provider[p]}
-                </option>
-              ))}
-            </select>
+            {!view.approvalRequired && (
+              <select
+                className={input}
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as typeof provider)}
+              >
+                {[...cardProviders, "bank" as const].map((p) => (
+                  <option key={p} value={p}>
+                    {t.provider[p]}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               type="submit"
               disabled={busy || amount < view.minPurchaseCredits}
               className="h-9 rounded-lg bg-primary px-4 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
-              {c.buy}
+              {view.approvalRequired ? c.requestBuy : c.buy}
             </button>
             <span className="text-muted-foreground">
               {c.buyTotal.replace("{credits}", nf(amount)).replace("{sum}", sum(amount))}
             </span>
           </form>
+          {view.approvalRequired && <p className="mt-2 text-sm text-muted-foreground">{c.requestNote}</p>}
+          {view.requests.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold">{c.requestsTitle}</h3>
+              <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
+                {view.requests.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+                    <span className="whitespace-nowrap text-muted-foreground">
+                      {formatDate(new Date(r.createdAt), locale)}
+                    </span>
+                    <span className="font-medium">+{nf(r.credits)}</span>
+                    <span className="text-muted-foreground">{money(r.totalSom, locale)}</span>
+                    <span
+                      className={
+                        r.status === "approved"
+                          ? "text-success"
+                          : r.status === "pending"
+                            ? "text-foreground"
+                            : "text-muted-foreground"
+                      }
+                    >
+                      {c.requestStatus[r.status] ?? r.status}
+                    </span>
+                    {r.note && <span className="text-muted-foreground">{r.note}</span>}
+                    {r.status === "pending" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="ml-auto text-primary hover:underline disabled:opacity-50"
+                        onClick={() => void act(async () => (await cancelCreditRequest(r.id), null))}
+                      >
+                        {c.cancelRequest}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <h3 className="mt-5 text-sm font-semibold">{c.autoTitle}</h3>
           <p className="mt-1 text-sm text-muted-foreground">

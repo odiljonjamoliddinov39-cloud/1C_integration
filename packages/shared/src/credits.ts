@@ -72,6 +72,29 @@ export const AutoRechargeSettings = z.object({
 });
 export type AutoRechargeSettings = z.infer<typeof AutoRechargeSettings>;
 
+export const CreditRequestStatus = z.enum(["pending", "approved", "rejected", "cancelled"]);
+export type CreditRequestStatus = z.infer<typeof CreditRequestStatus>;
+
+/** A request to buy more credits, as the customer sees it. */
+export const CreditRequestView = z.object({
+  id: z.string(),
+  credits: z.number(),
+  somPerCredit: z.number(),
+  totalSom: z.number(),
+  status: CreditRequestStatus,
+  /** What the admin wrote when deciding. */
+  note: z.string().nullable(),
+  createdAt: z.string(),
+  decidedAt: z.string().nullable(),
+});
+export type CreditRequestView = z.infer<typeof CreditRequestView>;
+
+/** The customer asks for credits: no payment provider, the admin approves. */
+export const RequestCreditsInput = z.object({
+  credits: z.number().int().min(MIN_PURCHASE_CREDITS).max(ROLLOVER_CAP_CREDITS),
+});
+export type RequestCreditsInput = z.infer<typeof RequestCreditsInput>;
+
 export const CreditsView = z.object({
   balanceCredits: z.number(),
   /** The balance in soum at the current price of a credit. */
@@ -88,6 +111,10 @@ export const CreditsView = z.object({
   canPurchase: z.boolean(),
   minPurchaseCredits: z.number(),
   autoRecharge: AutoRechargeSettings,
+  /** Extra credits are added when an admin approves a request (see CreditRequestView), not paid online. */
+  approvalRequired: z.boolean(),
+  /** The account's latest purchase requests, newest first. */
+  requests: z.array(CreditRequestView),
   history: z.array(CreditTransactionView),
 });
 export type CreditsView = z.infer<typeof CreditsView>;
@@ -170,15 +197,48 @@ export const AdminCreditsReport = z.object({
   rolledOverCredits30d: z.number(),
   accountsAtCap: z.number(),
   totalBalanceCredits: z.number(),
+  /** Requests waiting for an admin. */
+  pendingRequests: z.number(),
   rates: z.array(CreditRateRow),
   failures: z.array(CreditFailureRow),
 });
 export type AdminCreditsReport = z.infer<typeof AdminCreditsReport>;
 
+/** A purchase request in the dashboard. */
+export const AdminCreditRequest = CreditRequestView.extend({
+  accountId: z.string(),
+  accountName: z.string(),
+  /** Whom the request came from. */
+  userEmail: z.string().nullable(),
+  /** The account's balance now, to judge the request by. */
+  balanceCredits: z.number(),
+  decidedBy: z.string().nullable(),
+});
+export type AdminCreditRequest = z.infer<typeof AdminCreditRequest>;
+
+export const AdminCreditRequestsResponse = z.object({
+  pendingCount: z.number(),
+  requests: z.array(AdminCreditRequest),
+});
+export type AdminCreditRequestsResponse = z.infer<typeof AdminCreditRequestsResponse>;
+
+export const AdminCreditDecisionInput = z.object({
+  note: z.string().trim().max(300).optional(),
+});
+export type AdminCreditDecisionInput = z.infer<typeof AdminCreditDecisionInput>;
+
+/** What "Restart payments" cleared for a customer. */
+export const AdminRestartPaymentsResult = z.object({
+  cancelledInvoices: z.number(),
+  cancelledRequests: z.number(),
+});
+export type AdminRestartPaymentsResult = z.infer<typeof AdminRestartPaymentsResult>;
+
 export const AdminAccountCredits = z.object({
   balanceCredits: z.number(),
   somPerCredit: z.number(),
   rolloverCapCredits: z.number(),
+  requests: z.array(AdminCreditRequest),
   history: z.array(CreditTransactionView),
 });
 export type AdminAccountCredits = z.infer<typeof AdminAccountCredits>;

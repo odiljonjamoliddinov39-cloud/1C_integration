@@ -7,6 +7,7 @@ import {
   CatalogResponse,
   ChangePlanResponse,
   CheckoutResponse,
+  CreditRequestView,
   CreditsView,
   AutoRechargeSettings,
   DeviceView,
@@ -216,6 +217,11 @@ export async function openInvoicePrint(id: string): Promise<void> {
 export const credits = () => authorized("GET", "/v1/billing/credits", CreditsView);
 export const purchaseCredits = (input: { credits: number; provider: "payme" | "click" | "bank" }) =>
   authorized("POST", "/v1/billing/credits/purchase", CheckoutResponse, input);
+/** Extra credits are asked for; an admin approves the request and the credits are added. */
+export const requestCredits = (input: { credits: number }) =>
+  authorized("POST", "/v1/billing/credits/request", CreditRequestView, input);
+export const cancelCreditRequest = (id: string) =>
+  authorized("POST", `/v1/billing/credits/requests/${id}/cancel`, CreditRequestView);
 export const saveAutoRecharge = (input: {
   enabled: boolean;
   thresholdCredits: number;

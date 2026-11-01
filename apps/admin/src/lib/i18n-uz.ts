@@ -511,4 +511,24 @@ export const UZ: Record<string, string> = {
   "AI use": "AI sarfi",
   "Carried over": "Ko'chirilgan",
   "Admin adjustment": "Admin tuzatishi",
+  Approved: "Tasdiqlangan",
+  Rejected: "Rad etilgan",
+  "No purchase requests.": "Sotib olish soʻrovlari yoʻq.",
+  Sum: "Summa",
+  "Note (optional)": "Izoh (ixtiyoriy)",
+  "Approve: add {count} credits to {name}?": "Tasdiqlash: {name} hisobiga {count} kredit qoʻshilsinmi?",
+  Approve: "Tasdiqlash",
+  Reject: "Rad etish",
+  "Purchase requests": "Sotib olish soʻrovlari",
+  "{count} waiting": "{count} ta kutmoqda",
+  "A customer asks for more credits on the website. Approve it once the payment is received: the credits are added at the price of the request and an invoice marked paid is kept.":
+    "Mijoz saytda qoʻshimcha kredit soʻraydi. Toʻlov kelganini tekshirib tasdiqlang: kreditlar soʻrov vaqtidagi narxda qoʻshiladi va toʻlangan deb belgilangan hisob-faktura saqlanadi.",
+  Payments: "Toʻlovlar",
+  Restart: "Qayta boshlash",
+  "Restart this customer's payments? Their unpaid invoices and waiting requests are cancelled.":
+    "Mijozning toʻlovlari qayta boshlansinmi? Toʻlanmagan hisob-fakturalar va kutayotgan soʻrovlar bekor qilinadi.",
+  "Done: {invoices} invoice(s) and {requests} request(s) cancelled.":
+    "Tayyor: {invoices} ta hisob-faktura va {requests} ta soʻrov bekor qilindi.",
+  "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
+    "Mijozning toʻlovlarini boshidan boshlaydi: toʻlanmagan hisob-fakturalar va hali kutayotgan kredit soʻrovlari bekor qilinadi, shunda u qaytadan sotib olishi mumkin. Toʻlangani, balans va tarix oʻzgarmaydi.",
 };
