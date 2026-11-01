@@ -6,6 +6,7 @@ import { useApp } from "../context.js";
 import { ApiError } from "../lib/api.js";
 import { errorText } from "../lib/i18n.js";
 import { haptic } from "../lib/telegram.js";
+import { Card } from "./Card.js";
 import { Stage, dateTime, duration } from "./parts.js";
 
 /** One lead: the call button, the result of the call, the stage, the notes and what happened so far. */
@@ -151,6 +152,13 @@ export function LeadCard({ id, onBack }: { id: string; onBack: () => void }) {
               {words.addCallResult}
             </button>
           )}
+
+          <Card
+            key={JSON.stringify(detail.values)}
+            leadId={id}
+            saved={detail.values}
+            onSaved={() => void load()}
+          />
 
           <section className="card stack">
             <strong>{words.stage}</strong>

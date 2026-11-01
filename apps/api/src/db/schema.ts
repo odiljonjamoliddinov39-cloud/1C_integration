@@ -1053,3 +1053,49 @@ export const crmImportJobs = pgTable("crm_import_jobs", {
   createdBy: uuid("created_by").references(() => admins.id, { onDelete: "set null" }),
   createdAt: createdAt(),
 });
+
+/** A section of the client card, made by the admin (docs/crm.md): the card's fields are grouped into sections. */
+export const crmCardSections = pgTable("crm_card_sections", {
+  id: id(),
+  name: text("name").notNull(),
+  position: integer("position").notNull(),
+  createdAt: createdAt(),
+});
+
+/** A field of the client card, in a section: its label, its type, and the choices of a "select". */
+export const crmCardFields = pgTable(
+  "crm_card_fields",
+  {
+    id: id(),
+    sectionId: uuid("section_id")
+      .notNull()
+      .references(() => crmCardSections.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    type: text("type", {
+      enum: ["text", "textarea", "number", "date", "phone", "email", "select", "checkbox"],
+    }).notNull(),
+    options: jsonb("options")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    position: integer("position").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("crm_card_fields_section_idx").on(t.sectionId, t.position)],
+);
+
+/** What a manager wrote in a field of a lead's card. One value per lead and field; a cleared field has no row. */
+export const crmLeadValues = pgTable(
+  "crm_lead_values",
+  {
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => crmLeads.id, { onDelete: "cascade" }),
+    fieldId: uuid("field_id")
+      .notNull()
+      .references(() => crmCardFields.id, { onDelete: "cascade" }),
+    value: text("value").notNull(),
+    updatedBy: uuid("updated_by").references(() => admins.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("crm_lead_values_key").on(t.leadId, t.fieldId)],
+);

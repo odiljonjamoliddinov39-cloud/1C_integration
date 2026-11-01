@@ -124,6 +124,9 @@ body {
   flex-direction: column;
   gap: 12px;
 }
+.stack.tight {
+  gap: 4px;
+}
 .between {
   display: flex;
   justify-content: space-between;

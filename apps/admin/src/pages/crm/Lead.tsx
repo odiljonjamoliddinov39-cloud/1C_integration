@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { href } from "@/lib/router";
+import { CardForm } from "./CardForm";
 import { CALL_RESULT_OPTIONS, StageBadge, callResultLabel, duration } from "./common";
 
 /** The lead's own fields; it starts again from the saved lead when that changes (the key). */
@@ -174,6 +175,8 @@ export function LeadPage({ id, me }: { id: string; me: AdminView }) {
               <ErrorText error={move.error ?? assign.error} />
             </div>
           </Section>
+
+          <CardForm leadId={id} saved={detail.data?.values ?? {}} />
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Section title={t("Calls")}>

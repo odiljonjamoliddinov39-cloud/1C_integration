@@ -35,6 +35,9 @@ import type {
   CreatedAdmin,
   CrmCallInput,
   CrmCallView,
+  CrmCardFieldInput,
+  CrmCardFieldUpdate,
+  CrmCardSection,
   CrmImportFileInput,
   CrmImportJobView,
   CrmLeadDetail,
@@ -239,6 +242,20 @@ export const api = {
   crmMoveLead: (id: string, stageId: string) => crm<CrmLeadRow>("POST", `/leads/${id}/stage`, { stageId }),
   crmAddNote: (id: string, text: string) => crm<CrmNoteView>("POST", `/leads/${id}/notes`, { text }),
   crmAddCall: (id: string, input: CrmCallInput) => crm<CrmCallView>("POST", `/leads/${id}/calls`, input),
+  crmCard: () => crm<CrmCardSection[]>("GET", "/card"),
+  crmAddSection: (name: string) => crm<CrmCardSection[]>("POST", "/card/sections", { name }),
+  crmRenameSection: (id: string, name: string) =>
+    crm<CrmCardSection[]>("PATCH", `/card/sections/${id}`, { name }),
+  crmDeleteSection: (id: string) => crm<CrmCardSection[]>("DELETE", `/card/sections/${id}`),
+  crmReorderSections: (ids: string[]) => crm<CrmCardSection[]>("PUT", "/card/sections/order", { ids }),
+  crmAddField: (input: CrmCardFieldInput) => crm<CrmCardSection[]>("POST", "/card/fields", input),
+  crmUpdateField: (id: string, input: CrmCardFieldUpdate) =>
+    crm<CrmCardSection[]>("PATCH", `/card/fields/${id}`, input),
+  crmDeleteField: (id: string) => crm<CrmCardSection[]>("DELETE", `/card/fields/${id}`),
+  crmReorderFields: (sectionId: string, ids: string[]) =>
+    crm<CrmCardSection[]>("PUT", `/card/sections/${sectionId}/fields/order`, { ids }),
+  crmSaveValues: (leadId: string, values: Record<string, string>) =>
+    crm<Record<string, string>>("PUT", `/leads/${leadId}/values`, { values }),
   crmTeam: () => crm<CrmManagerView[]>("GET", "/team"),
   crmSources: () => crm<string[]>("GET", "/sources"),
   crmImportJobs: () => crm<CrmImportJobView[]>("GET", "/import/jobs"),

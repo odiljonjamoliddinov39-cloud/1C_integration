@@ -27,6 +27,7 @@ import {
   adminAudit,
   admins,
   crmCalls,
+  crmLeadValues,
   crmLeads,
   crmNotes,
   crmPipelines,
@@ -328,8 +329,14 @@ export class Crm {
     return this.rowView(row);
   }
 
+  /** Throws 404 unless the caller may see this lead (another manager's lead looks as if it did not exist). */
+  async assertCanSee(actor: CrmActor, id: string): Promise<void> {
+    await this.leadRow(actor, id);
+  }
+
   async lead(actor: CrmActor, id: string): Promise<CrmLeadDetail> {
     const lead = await this.leadRow(actor, id);
+    const valueRows = await this.db.select().from(crmLeadValues).where(eq(crmLeadValues.leadId, id));
     const notes = await this.db
       .select({
         id: crmNotes.id,
@@ -371,6 +378,7 @@ export class Crm {
       where h.lead_id = ${id} order by h.at desc, h.id desc`);
     return {
       lead,
+      values: Object.fromEntries(valueRows.map((r) => [r.fieldId, r.value])),
       notes: notes.map<CrmNoteView>((n) => ({ ...n, createdAt: n.createdAt.toISOString() })),
       calls: calls.map<CrmCallView>((c) => ({ ...c, startedAt: c.startedAt.toISOString() })),
       history: history.map<CrmHistoryView>((h) => ({

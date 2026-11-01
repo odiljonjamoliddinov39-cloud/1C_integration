@@ -670,4 +670,28 @@ export const UZ: Record<string, string> = {
     "Savdo menejeri faqat CRM boʻlimini va faqat oʻz leadlarini koʻradi. U CRM Mini App’ga shu email va parol bilan kiradi.",
   "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.":
     "Menejerlar «Administratorlar» sahifasida «Savdo menejeri» roli bilan qoʻshiladi. Ular CRM Mini App’ga oʻz emaili va u yerda koʻrsatilgan bir martalik parol bilan kiradi.",
+  "Add a field": "Maydon qoʻshish",
+  "Add a section": "Boʻlim qoʻshish",
+  "Choice from a list": "Roʻyxatdan tanlash",
+  "Choices, separated by commas": "Variantlar, vergul bilan ajratilgan",
+  "Client card": "Mijoz kartochkasi",
+  Date: "Sana",
+  "Delete the field “{label}”? What the managers wrote in it is deleted too.":
+    "«{label}» maydoni oʻchirilsinmi? Menejerlar unga yozgan maʼlumotlar ham oʻchadi.",
+  "Delete the section “{name}” with its {n} fields? What the managers wrote in them is deleted too.":
+    "«{name}» boʻlimi va uning {n} ta maydoni oʻchirilsinmi? Menejerlar ularga yozgan maʼlumotlar ham oʻchadi.",
+  "E-mail": "E-mail",
+  "Every client card has the name, phone, company and source. Make sections and the fields in them here (a text, a number, a date, a choice from a list…): the managers fill them in on each client.":
+    "Har bir mijoz kartochkasida ism, telefon, kompaniya va manba bor. Bu yerda boʻlimlar va ulardagi maydonlarni (matn, son, sana, roʻyxatdan tanlash…) yarating: menejerlar ularni har bir mijoz uchun toʻldiradi.",
+  "Long text": "Uzun matn",
+  "New field name": "Yangi maydon nomi",
+  "New section name": "Yangi boʻlim nomi",
+  No: "Yoʻq",
+  Number: "Son",
+  "Save the card": "Kartochkani saqlash",
+  "Saved.": "Saqlandi.",
+  Section: "Boʻlim",
+  Text: "Matn",
+  Yes: "Ha",
+  "Yes / No": "Ha / Yoʻq",
 };
