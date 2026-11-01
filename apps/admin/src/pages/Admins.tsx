@@ -32,40 +32,6 @@ function OneTimePassword({ who, password, onClose }: { who: string; password: st
   );
 }
 
-function TelegramCell({ admin }: { admin: AdminView }) {
-  const queryClient = useQueryClient();
-  const [value, setValue] = useState(admin.telegramId ?? "");
-  const save = useMutation({
-    mutationFn: () => api.setAdminTelegram(admin.id, value.trim() || null),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admins"] }),
-  });
-  const changed = value.trim() !== (admin.telegramId ?? "");
-  return (
-    <div>
-      <div className="flex gap-1.5">
-        <Input
-          className="h-8 w-32"
-          inputMode="numeric"
-          placeholder="Telegram ID"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-        />
-        {changed && (
-          <Button
-            variant="outline"
-            className="h-8 px-3"
-            disabled={save.isPending}
-            onClick={() => save.mutate()}
-          >
-            {t("Save")}
-          </Button>
-        )}
-      </div>
-      <ErrorText error={save.error} />
-    </div>
-  );
-}
-
 export function AdminsPage({ me }: { me: AdminView }) {
   const queryClient = useQueryClient();
   const admins = useQuery({ queryKey: ["admins"], queryFn: api.admins });
@@ -82,7 +48,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
       void queryClient.invalidateQueries({ queryKey: ["admins"] });
     },
   });
-  const BLANK = { email: "", name: "", password: "", role: "manager" as AdminRole, telegramId: "" };
+  const BLANK = { email: "", name: "", password: "", role: "manager" as AdminRole };
   const [form, setForm] = useState(BLANK);
   const create = useMutation({
     mutationFn: () =>
@@ -91,7 +57,6 @@ export function AdminsPage({ me }: { me: AdminView }) {
         name: form.name,
         role: form.role,
         ...(form.password ? { password: form.password } : {}),
-        ...(form.telegramId.trim() ? { telegramId: form.telegramId.trim() } : {}),
       }),
     onSuccess: (created) => {
       setForm(BLANK);
@@ -106,7 +71,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
           <OneTimePassword who={shown.who} password={shown.password} onClose={() => setShown(null)} />
         )}
         <ErrorText error={admins.error ?? toggle.error ?? reset.error} />
-        <Table head={[t("Email"), t("Name"), t("Role"), "Telegram ID", t("Last sign-in"), ""]}>
+        <Table head={[t("Email"), t("Name"), t("Role"), t("Last sign-in"), ""]}>
           {admins.data?.map((a) => (
             <tr key={a.id}>
               <Td>{a.email}</Td>
@@ -123,9 +88,6 @@ export function AdminsPage({ me }: { me: AdminView }) {
                     <Badge tone="warning">{t("one-time password")}</Badge>
                   </span>
                 )}
-              </Td>
-              <Td>
-                <TelegramCell key={`${a.id}-${a.telegramId}`} admin={a} />
               </Td>
               <Td>{relative(a.lastLoginAt)}</Td>
               <Td className="space-x-2 text-right whitespace-nowrap">
@@ -144,7 +106,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
       </Section>
       <Section title={t("Add an admin")}>
         <form
-          className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+          className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_1fr_auto]"
           onSubmit={(e) => {
             e.preventDefault();
             create.mutate();
@@ -176,13 +138,6 @@ export function AdminsPage({ me }: { me: AdminView }) {
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
-          <Input
-            inputMode="numeric"
-            placeholder={t("Telegram ID (for the CRM Mini App)")}
-            pattern="\d{3,20}"
-            value={form.telegramId}
-            onChange={(e) => setForm({ ...form, telegramId: e.target.value })}
-          />
           <Button disabled={create.isPending}>{t("Add")}</Button>
         </form>
         <ErrorText error={create.error} />
@@ -191,7 +146,7 @@ export function AdminsPage({ me }: { me: AdminView }) {
             "Support can look up customers, extend licenses and manage PCs. Only owners can block accounts and manage admins.",
           )}{" "}
           {t(
-            "A sales manager sees only the CRM, and only their own leads. Their Telegram ID is how the CRM Mini App knows them: they get it from a bot such as @userinfobot.",
+            "A sales manager sees only the CRM, and only their own leads. They sign in to the CRM Mini App with this email and password.",
           )}
         </p>
       </Section>

@@ -1,14 +1,16 @@
-/** The few things the page takes from Telegram's own script (telegram-web-app.js). */
+/**
+ * What the page takes from Telegram's own script (telegram-web-app.js), when it is opened inside Telegram: the app is made to fill
+ * the screen, haptic feedback, and the language. Nothing here is needed to sign in: that is the person's email and password, so the
+ * page works in an ordinary browser too.
+ */
 interface WebApp {
-  initData: string;
   initDataUnsafe?: { user?: { language_code?: string } };
   ready(): void;
   expand(): void;
   HapticFeedback?: { notificationOccurred(type: "success" | "error" | "warning"): void };
 }
 
-export const webApp = (): WebApp | undefined =>
-  (window as { Telegram?: { WebApp?: WebApp } }).Telegram?.WebApp;
+const webApp = (): WebApp | undefined => (window as { Telegram?: { WebApp?: WebApp } }).Telegram?.WebApp;
 
 export function startTelegram(): void {
   const app = webApp();
@@ -16,8 +18,6 @@ export function startTelegram(): void {
   app?.expand();
 }
 
-export const initData = (): string => webApp()?.initData ?? "";
-export const insideTelegram = () => Boolean(webApp()?.initData);
 export const telegramLanguage = () => webApp()?.initDataUnsafe?.user?.language_code ?? null;
 export function haptic(type: "success" | "error" | "warning"): void {
   webApp()?.HapticFeedback?.notificationOccurred(type);

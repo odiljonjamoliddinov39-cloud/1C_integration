@@ -505,18 +505,11 @@ export const admins = pgTable(
     role: text("role", { enum: ["owner", "support", "manager"] }).notNull(),
     disabled: boolean("disabled").notNull().default(false),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
-    /** The Telegram account the CRM Mini App recognises as this person (docs/crm.md). */
-    telegramId: text("telegram_id"),
     /** The password was set by an admin or made by the system: it must be changed at the first sign-in. */
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [
-    uniqueIndex("admins_email_key").on(t.email),
-    uniqueIndex("admins_telegram_id_key")
-      .on(t.telegramId)
-      .where(sql`${t.telegramId} is not null`),
-  ],
+  (t) => [uniqueIndex("admins_email_key").on(t.email)],
 );
 
 /** Every admin action (TD §10 admin_audit). The target names what it touched, e.g. "account:<id>". */

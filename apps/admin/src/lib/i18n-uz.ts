@@ -547,8 +547,6 @@ export const UZ: Record<string, string> = {
     "Lead bosqichlardan shu tartibda oʻtadi. Lead mijozga aylanadigan bosqichni «yutuq», lead yoʻqotiladigan bosqichni «yoʻqotish» deb belgilang: yoʻqotilgan bosqichlar hisobotlarda voronkadan tashqarida qoladi.",
   "A lead with this phone already existed: it was updated.":
     "Bu telefon raqamli lead avval ham bor edi: u yangilandi.",
-  "A sales manager sees only the CRM, and only their own leads. Their Telegram ID is how the CRM Mini App knows them: they get it from a bot such as @userinfobot.":
-    "Savdo menejeri faqat CRM boʻlimini va faqat oʻz leadlarini koʻradi. CRM Mini App uni Telegram ID orqali taniydi: uni @userinfobot kabi botdan olish mumkin.",
   Accounting: "Buxgalteriya",
   "Add a stage": "Bosqich qoʻshish",
   Added: "Qoʻshilgan",
@@ -598,8 +596,6 @@ export const UZ: Record<string, string> = {
   Lost: "Yoʻqotildi",
   "Lost (outside the funnel)": "Yoʻqotish (voronkadan tashqari)",
   Manager: "Menejer",
-  "Managers are added on the Admins page, with the role Manager. Link their Telegram ID there so they can sign in to the CRM Mini App.":
-    "Menejerlar «Administratorlar» sahifasida «Savdo menejeri» roli bilan qoʻshiladi. CRM Mini App’ga kirishi uchun oʻsha yerda ularning Telegram ID’sini bogʻlang.",
   Minutes: "Daqiqa",
   "Move and delete": "Koʻchirish va oʻchirish",
   "Move down": "Pastga",
@@ -644,7 +640,6 @@ export const UZ: Record<string, string> = {
     "Jadvalni {email} bilan ulashing (faqat oʻqish), soʻng havolasini qoʻying. U bir marta oʻqiladi, sinxronlanmaydi.",
   Source: "Manba",
   Stage: "Bosqich",
-  "Telegram ID (for the CRM Mini App)": "Telegram ID (CRM Mini App uchun)",
   "The board shows the newest 500 leads; the Leads page has them all.":
     "Doska eng yangi 500 ta leadni koʻrsatadi; hammasi «Leadlar» sahifasida.",
   "The file is over 5 MB": "Fayl 5 MB dan katta",
@@ -671,4 +666,8 @@ export const UZ: Record<string, string> = {
   "{from}–{to} of {total}": "{from}–{to} / {total}",
   "{n} leads": "{n} ta lead",
   "{pct}% of previous, {first}% of all": "oldingisidan {pct}%, jamidan {first}%",
+  "A sales manager sees only the CRM, and only their own leads. They sign in to the CRM Mini App with this email and password.":
+    "Savdo menejeri faqat CRM boʻlimini va faqat oʻz leadlarini koʻradi. U CRM Mini App’ga shu email va parol bilan kiradi.",
+  "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.":
+    "Menejerlar «Administratorlar» sahifasida «Savdo menejeri» roli bilan qoʻshiladi. Ular CRM Mini App’ga oʻz emaili va u yerda koʻrsatilgan bir martalik parol bilan kiradi.",
 };

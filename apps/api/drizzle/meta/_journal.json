@@ -176,6 +176,13 @@
       "when": 1793565047006,
       "tag": "0024_crm",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793566811733,
+      "tag": "0025_crm_login_by_password",
+      "breakpoints": true
     }
   ]
 }

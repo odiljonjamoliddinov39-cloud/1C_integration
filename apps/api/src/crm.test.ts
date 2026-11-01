@@ -1,4 +1,4 @@
-import { createHmac, generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -20,23 +20,6 @@ const SERVICE_ACCOUNT = JSON.stringify({
   client_email: "crm-reader@project.iam.gserviceaccount.com",
   private_key: google.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
 });
-const CRM_BOT_TOKEN = "123456:crm-bot-token-for-tests";
-
-/** What Telegram gives a Mini App: the user, signed with the bot's token. */
-function initData(telegramId: number, authDate = Math.floor(Date.now() / 1000)): string {
-  const params = new URLSearchParams({
-    auth_date: String(authDate),
-    query_id: "AAH",
-    user: JSON.stringify({ id: telegramId, first_name: "Op", language_code: "uz" }),
-  });
-  const check = [...params.entries()]
-    .map(([k, v]) => `${k}=${v}`)
-    .sort()
-    .join("\n");
-  const secret = createHmac("sha256", "WebAppData").update(CRM_BOT_TOKEN).digest();
-  params.set("hash", createHmac("sha256", secret).update(check).digest("hex"));
-  return params.toString();
-}
 
 describe.skipIf(!available)("CRM", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
@@ -87,7 +70,6 @@ describe.skipIf(!available)("CRM", () => {
       REMOTE_JOBS: "off",
       ADMIN_EMAIL: "boss@platform.uz",
       ADMIN_PASSWORD: "admin-password-123",
-      CRM_BOT_TOKEN,
       GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT,
     });
     app = await buildApp(db.db, config, { fetch: fakeFetch });
@@ -122,7 +104,7 @@ describe.skipIf(!available)("CRM", () => {
       method,
       url,
       ...(payload === undefined ? {} : { payload: payload as object }),
-      headers: token ? { authorization: token.startsWith("tma ") ? token : `Bearer ${token}` } : {},
+      headers: token ? { authorization: `Bearer ${token}` } : {},
     });
   const ok = async (res: ReturnType<typeof call>) => {
     const r = await res;
@@ -131,13 +113,12 @@ describe.skipIf(!available)("CRM", () => {
   };
 
   /** A manager, with the one-time password changed, signed in. */
-  async function manager(email: string, telegramId?: string) {
+  async function manager(email: string) {
     const created = await ok(
       call("POST", "/v1/admin/admins", owner, {
         email,
         name: email.split("@")[0],
         role: "manager",
-        telegramId,
       }),
     );
     const first = await ok(
@@ -334,46 +315,84 @@ describe.skipIf(!available)("CRM", () => {
     expect((await stages(a.token)).reduce((n, s) => n + s.leads, 0)).toBe(0);
   });
 
-  it("the Mini App signs in with Telegram's signed data, only for a person an owner linked", async () => {
-    await manager("tg@platform.uz", "555000111");
-    const unlinked = await call("GET", "/v1/crm/me", `tma ${initData(999)}`);
-    expect(unlinked.statusCode).toBe(403);
-    expect(unlinked.json().code).toBe("NOT_LINKED");
-    // A forged signature and an old one are both refused.
+  it("the Mini App signs in with the person's own email and password, and the token is for the CRM only", async () => {
+    const created = await ok(
+      call("POST", "/v1/admin/admins", owner, { email: "mini@platform.uz", name: "Mini", role: "manager" }),
+    );
+    // A wrong password and an unknown person are the same answer.
     expect(
       (
-        await call(
-          "GET",
-          "/v1/crm/me",
-          `tma ${initData(555000111).replace(/hash=[0-9a-f]+/, "hash=" + "0".repeat(64))}`,
-        )
+        await call("POST", "/v1/crm/login", undefined, {
+          email: "mini@platform.uz",
+          password: "wrong-password",
+        })
       ).statusCode,
     ).toBe(401);
     expect(
-      (await call("GET", "/v1/crm/me", `tma ${initData(555000111, Math.floor(Date.now() / 1000) - 7200)}`))
-        .statusCode,
+      (
+        await call("POST", "/v1/crm/login", undefined, {
+          email: "nobody@platform.uz",
+          password: "wrong-password",
+        })
+      ).statusCode,
     ).toBe(401);
 
-    const session = await ok(call("POST", "/v1/crm/session", `tma ${initData(555000111)}`));
-    expect(session.me.role).toBe("manager");
-    expect(session.me.seesAll).toBe(false);
+    // The first sign-in is with the one-time password: only changing it is allowed.
+    const first = await ok(
+      call("POST", "/v1/crm/login", undefined, { email: "mini@platform.uz", password: created.tempPassword }),
+    );
+    expect(first.mustChangePassword).toBe(true);
+    const stuck = await call("GET", "/v1/crm/leads", first.accessToken);
+    expect(stuck.statusCode).toBe(403);
+    expect(stuck.json().code).toBe("PASSWORD_CHANGE_REQUIRED");
+    expect(
+      (
+        await call("POST", "/v1/crm/password", first.accessToken, {
+          currentPassword: "wrong-password",
+          newPassword: "my-own-password-1",
+        })
+      ).statusCode,
+    ).toBe(401);
+    await ok(
+      call("POST", "/v1/crm/password", first.accessToken, {
+        currentPassword: created.tempPassword,
+        newPassword: "my-own-password-1",
+      }),
+    );
+
+    const session = await ok(
+      call("POST", "/v1/crm/login", undefined, { email: "mini@platform.uz", password: "my-own-password-1" }),
+    );
+    expect(session.mustChangePassword).toBe(false);
+    const me = await ok(call("GET", "/v1/crm/me", session.accessToken));
+    expect(me).toMatchObject({ name: "Mini", role: "manager", seesAll: false });
     expect((await call("GET", "/v1/crm/leads", session.accessToken)).statusCode).toBe(200);
-    // The session is for the CRM only: it opens nothing of the dashboard.
+    // The session is for the CRM only: it opens nothing of the dashboard, even for an owner who signs in on a phone.
     expect((await call("GET", "/v1/admin/me", session.accessToken)).statusCode).toBe(401);
     expect((await call("GET", "/v1/admin/overview", session.accessToken)).statusCode).toBe(401);
-    // Someone who is not signed in gets nothing.
+    const bossSession = await ok(
+      call("POST", "/v1/crm/login", undefined, { email: "boss@platform.uz", password: "admin-password-123" }),
+    );
+    expect((await call("GET", "/v1/admin/overview", bossSession.accessToken)).statusCode).toBe(401);
+    expect((await ok(call("GET", "/v1/crm/me", bossSession.accessToken))).seesAll).toBe(true);
+    // Nobody signed in gets nothing; a customer's token is not an admin's.
     expect((await call("GET", "/v1/crm/leads")).statusCode).toBe(401);
+    expect((await call("GET", "/v1/crm/leads", "not-a-token")).statusCode).toBe(401);
 
-    // Taking the link away signs the person out at once, and one Telegram account cannot belong to two people.
-    const ali = await manager("tg2@platform.uz");
+    // A disabled person is out at once, with the token they already hold.
+    const row = (await ok(call("GET", "/v1/admin/admins", owner))).find(
+      (a: { email: string }) => a.email === "mini@platform.uz",
+    );
+    await ok(call("POST", `/v1/admin/admins/${row.id}/disable`, owner));
+    expect((await call("GET", "/v1/crm/leads", session.accessToken)).statusCode).toBe(401);
     expect(
-      (await call("POST", `/v1/admin/admins/${ali.id}/telegram`, owner, { telegramId: "555000111" }))
-        .statusCode,
-    ).toBe(409);
-    const linked = await ok(call("GET", "/v1/admin/admins", owner));
-    const tg = linked.find((a: { email: string }) => a.email === "tg@platform.uz");
-    await ok(call("POST", `/v1/admin/admins/${tg.id}/telegram`, owner, { telegramId: null }));
-    expect((await call("GET", "/v1/crm/me", `tma ${initData(555000111)}`)).statusCode).toBe(403);
+      (
+        await call("POST", "/v1/crm/login", undefined, {
+          email: "mini@platform.uz",
+          password: "my-own-password-1",
+        })
+      ).statusCode,
+    ).toBe(403);
   });
 
   it("an operator's day: stage moves, notes, calls — all remembered", async () => {

@@ -9,7 +9,7 @@ import { Stage, since } from "./parts.js";
 
 /** The operator's list: a search, the funnel's stages as filters, and the leads (their own, for a manager). */
 export function LeadList({ onOpen, onNew }: { onOpen: (id: string) => void; onNew: () => void }) {
-  const { api, words, funnel, me, lang, setLang } = useApp();
+  const { api, words, funnel, me, lang, setLang, signOut } = useApp();
   const [q, setQ] = useState("");
   const [search, setSearch] = useState("");
   const [stageId, setStageId] = useState("");
@@ -49,9 +49,14 @@ export function LeadList({ onOpen, onNew }: { onOpen: (id: string) => void; onNe
           {words.title}
           <small>{me.name}</small>
         </h1>
-        <button type="button" className="link" onClick={() => setLang(lang === "uz" ? "ru" : "uz")}>
-          {lang === "uz" ? "RU" : "UZ"}
-        </button>
+        <span className="actions">
+          <button type="button" className="link" onClick={() => setLang(lang === "uz" ? "ru" : "uz")}>
+            {lang === "uz" ? "RU" : "UZ"}
+          </button>
+          <button type="button" className="link" onClick={signOut}>
+            {words.signOut}
+          </button>
+        </span>
       </header>
       <div className="pad">
         <input
