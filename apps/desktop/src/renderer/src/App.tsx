@@ -114,7 +114,7 @@ export function App() {
       {splash}
       <div className="flex h-screen">
         {user && (
-          <aside className="flex w-68 shrink-0 flex-col gap-5 overflow-y-auto bg-sidebar p-5 text-sidebar-foreground">
+          <aside className="flex w-68 shrink-0 flex-col gap-5 overflow-y-auto bg-linear-to-b from-sidebar to-[#15123a] p-5 text-sidebar-foreground">
             <div className="flex items-center gap-3">
               <Logo size={40} className="shrink-0" />
               <div className="min-w-0">
@@ -129,10 +129,10 @@ export function App() {
                   type="button"
                   aria-current={screen === name ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition-colors",
+                    "flex items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm font-semibold transition-all duration-150",
                     screen === name
-                      ? "bg-primary text-primary-foreground shadow-lg shadow-primary/30"
-                      : "text-sidebar-foreground/85 hover:bg-white/10",
+                      ? "bg-primary text-primary-foreground shadow-lg ring-1 shadow-primary/30 ring-white/15"
+                      : "text-sidebar-foreground/80 hover:bg-white/10 hover:text-sidebar-foreground",
                   )}
                   onClick={() => {
                     if (name === "assistant") setAssistantFor(null);
@@ -145,7 +145,7 @@ export function App() {
               ))}
             </nav>
             <LicenseCard license={user.license} billing={billing} />
-            <div className="mt-auto space-y-3">
+            <div className="mt-auto space-y-3 border-t border-white/10 pt-4">
               <div>
                 <div className="mb-1.5 px-1 text-xs text-sidebar-muted">{t("header.language")}</div>
                 <LanguageSelect />
@@ -161,7 +161,7 @@ export function App() {
               </div>
               <button
                 type="button"
-                className="h-11 w-full rounded-xl border border-white/15 text-sm font-semibold text-pink-300 hover:bg-white/10"
+                className="h-10 w-full rounded-xl border border-white/15 text-sm font-semibold text-pink-300 transition-colors hover:border-pink-300/40 hover:bg-pink-400/10"
                 onClick={() => signOut.mutate()}
               >
                 {t("header.signOut")}

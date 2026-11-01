@@ -37,10 +37,10 @@ function LimitDialog({ shown, onClose }: { shown: Shown; onClose: () => void }) 
   const cabinet = billing?.cabinetUrl ?? null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center se-fade bg-[#0f0c30]/55 backdrop-blur-sm p-4"
       onMouseDown={onClose}
     >
-      <Card className="w-full max-w-md p-6" onMouseDown={(e) => e.stopPropagation()}>
+      <Card className="se-pop w-full max-w-md p-7 shadow-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold">{known ? t(`${key}.title`) : shown.code}</h2>
         <p className="mt-2 text-sm text-muted-foreground">{known ? t(`${key}.body`) : shown.message}</p>
         {!cabinet && <p className="mt-2 text-xs text-muted-foreground">{t("billing.cabinet")}</p>}

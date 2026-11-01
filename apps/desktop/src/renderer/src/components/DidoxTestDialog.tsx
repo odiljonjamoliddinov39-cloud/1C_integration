@@ -6,7 +6,7 @@ import type { DidoxTestResult } from "../../../shared/ipc";
 import { errorText } from "@/components/ConnectorStatus";
 import { Button } from "@/components/ui/button";
 import { Card, ErrorText } from "@/components/ui/card";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, selectClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /** A first look at Didox: E-IMZO, the key, the sign-in and what Didox answers. Changes nothing. */
@@ -44,11 +44,11 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-20 flex items-center justify-center se-fade bg-[#0f0c30]/55 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
     >
-      <Card className="max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto p-6">
+      <Card className="se-pop max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto p-7 shadow-dialog">
         <div className="flex items-start gap-3">
           <div className="flex-1">
             <h2 className="text-lg font-bold">{t("didox.title")}</h2>
@@ -101,7 +101,7 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
           ) : (
             <select
               id="didox-key"
-              className="h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"
+              className={selectClass}
               value={serialNumber}
               onChange={(e) => setSerialNumber(e.target.value)}
             >
@@ -150,7 +150,7 @@ export function DidoxTestDialog({ onClose }: { onClose: () => void }) {
             <div className="flex flex-wrap items-center gap-2">
               <select
                 aria-label={t("didox.saveCompany")}
-                className="h-9 rounded-lg border border-border bg-card px-2 text-sm"
+                className={selectClass}
                 value={companyId}
                 onChange={(e) => {
                   setCompanyId(e.target.value);

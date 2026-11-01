@@ -420,6 +420,8 @@ describe.skipIf(!available)("AI credits", () => {
     const ent = (await call("GET", "/v1/billing/entitlements", token)).json();
     expect(ent.credits).toMatchObject({ blocked: "daily", extraCredits: 0, extraEnabled: false });
     expect(ent.credits.resetsAt).toBe(view.daily.resetsAt);
+    expect(ent.credits.daily).toMatchObject({ limitCredits: 456, usedCredits: 600 });
+    expect(ent.credits.weekly).toBeNull();
   });
 
   it("stops the plan's credits at the week's limit", async () => {

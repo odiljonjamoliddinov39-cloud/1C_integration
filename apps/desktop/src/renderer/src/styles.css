@@ -22,9 +22,15 @@
   --color-sidebar-panel: #28245a;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+  --shadow-card: 0 1px 2px rgb(27 24 64 / 0.04), 0 8px 24px -12px rgb(27 24 64 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(27 24 64 / 0.05), 0 16px 32px -14px rgb(79 70 229 / 0.28);
+  --shadow-dialog: 0 24px 64px -16px rgb(15 12 48 / 0.5);
 }
 
 @media (prefers-color-scheme: dark) {
+  select:not(.on-dark) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9a7d8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
   :root {
     --color-background: #12102b;
     --color-foreground: #ecebff;
@@ -41,7 +47,41 @@
 
 body {
   @apply bg-background text-foreground antialiased;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-primary) 25%, transparent);
+  }
+  /* One look for every dropdown: no native arrow, the same chevron everywhere. */
+  select {
+    appearance: none;
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 1rem;
+    padding-right: 2.25rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6a8c' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+  select.on-dark {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9a7d8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+  input,
+  select,
+  textarea {
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+  /* Thin scrollbars that suit the panels. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--color-muted-foreground) 40%, transparent) transparent;
+  }
 }
 
 /* Assistant answers (Markdown). */
@@ -103,6 +143,31 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .se-float,
   .se-bar {
+    animation: none;
+  }
+}
+
+/* Dialogs and the update/limit cards come in softly. */
+@keyframes se-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes se-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.se-fade {
+  animation: se-fade 0.18s ease-out;
+}
+.se-pop {
+  animation: se-pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .se-fade,
+  .se-pop {
     animation: none;
   }
 }

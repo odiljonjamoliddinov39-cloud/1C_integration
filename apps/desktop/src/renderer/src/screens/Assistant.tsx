@@ -33,6 +33,7 @@ import { useLimitDialog } from "@/components/Limit";
 import { Card } from "@/components/ui/card";
 import { isLimitCode, useBilling } from "@/lib/billing";
 import { type SuggestLang, suggest } from "@/lib/suggestions";
+import { selectClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type Entry = ChatEntry;
@@ -129,7 +130,7 @@ export function AssistantScreen({ initialCompanyId = null }: { initialCompanyId?
         </div>
         <select
           aria-label={t("assistant.company")}
-          className="ml-auto h-10 rounded-xl border border-warning/70 bg-card px-3 text-sm font-semibold"
+          className={cn(selectClass, "ml-auto w-auto max-w-72 font-semibold")}
           value={company.id}
           onChange={(e) => setSelectedId(e.target.value)}
         >
@@ -322,8 +323,8 @@ function ChatList({
           <div
             key={chat.id}
             className={cn(
-              "group flex items-start gap-1 rounded-xl px-2.5 py-2 text-sm hover:bg-muted",
-              chat.id === transcript.chatId && "bg-primary/10",
+              "group flex items-start gap-1 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-muted",
+              chat.id === transcript.chatId && "bg-primary/10 ring-1 ring-primary/20",
             )}
           >
             <button
@@ -749,11 +750,32 @@ function Chat({
           </div>
         )}
         {transcript.entries.length === 0 && (
-          <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
-            <p>{t("assistant.empty")}</p>
-            <div className="flex flex-wrap justify-center gap-2">
+          <div className="flex flex-col items-center gap-4 py-14 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <svg
+                viewBox="0 0 24 24"
+                width="26"
+                height="26"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+              </svg>
+            </span>
+            <p className="max-w-md text-base font-semibold text-foreground">{t("assistant.empty")}</p>
+            <div className="flex max-w-2xl flex-wrap justify-center gap-2">
               {examples.map((example) => (
-                <Button key={example} variant="outline" size="sm" onClick={() => ask(example)}>
+                <Button
+                  key={example}
+                  variant="outline"
+                  size="sm"
+                  className="h-auto rounded-full px-3.5 py-2 text-left whitespace-normal"
+                  onClick={() => ask(example)}
+                >
                   {example}
                 </Button>
               ))}

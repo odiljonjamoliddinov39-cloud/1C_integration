@@ -7,7 +7,7 @@ import { errorText } from "@/components/ConnectorStatus";
 import { useLimitDialog } from "@/components/Limit";
 import { Button } from "@/components/ui/button";
 import { Card, ErrorText } from "@/components/ui/card";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, selectClass } from "@/components/ui/input";
 import { isLimitCode } from "@/lib/billing";
 
 /** What 1C says when the base has users and the name or password was not given or is wrong. */
@@ -140,11 +140,11 @@ export function ConnectCompanyDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center se-fade bg-[#0f0c30]/55 backdrop-blur-sm p-4"
       onMouseDown={onClose}
     >
       <Card
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto p-6"
+        className="se-pop max-h-[90vh] w-full max-w-lg overflow-y-auto p-7 shadow-dialog"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold">{t("connect.title")}</h2>
@@ -171,7 +171,7 @@ export function ConnectCompanyDialog({
               <Label htmlFor="registered">{t("connect.registered")}</Label>
               <select
                 id="registered"
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                className={selectClass}
                 defaultValue=""
                 onChange={(e) => pickRegistered(e.target.value)}
               >
@@ -314,7 +314,7 @@ export function ConnectCompanyDialog({
                   <Label htmlFor="organization">{t("connect.organization")}</Label>
                   <select
                     id="organization"
-                    className="h-9 w-full rounded-lg border border-border bg-card px-2"
+                    className={selectClass}
                     value={organizationRef}
                     onChange={(e) => setOrganizationRef(e.target.value)}
                   >
