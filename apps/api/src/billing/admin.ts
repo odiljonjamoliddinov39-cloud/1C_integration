@@ -29,9 +29,13 @@ import { HttpError } from "../lib/errors.js";
 import type { Billing } from "./entitlements.js";
 import { type Invoicing, invoiceView } from "./invoicing.js";
 import { addDays, periodEndOf } from "./period.js";
+import type { Credits } from "./credits.js";
 import { planView } from "./service.js";
 
+/** What the dashboard's plan list shows of a plan's AI needs the credits service (set once the app is built). */
 export class AdminBilling {
+  credits: Credits | null = null;
+
   constructor(
     private readonly db: Db,
     private readonly billing: Billing,
@@ -48,7 +52,11 @@ export class AdminBilling {
     const planRows = await this.db.select().from(plans).orderBy(asc(plans.sortOrder), asc(plans.priceUzs));
     const addonRows = await this.db.select().from(addons).orderBy(asc(addons.priceSum));
     return {
-      plans: planRows.map(planView),
+      plans: await Promise.all(
+        planRows.map(async (p) =>
+          planView(p, this.credits?.enabled ? await this.credits.planAi(p) : undefined),
+        ),
+      ),
       addons: addonRows.map((a) => ({
         code: a.code,
         name: a.name,
@@ -75,7 +83,6 @@ export class AdminBilling {
       importsPerMonth: input.importsPerMonth,
       auditsPerMonth: input.auditsPerMonth,
       aiQuestionsPerMonth: input.aiQuestionsPerMonth,
-      monthlyCredits: input.monthlyCredits,
       dailyLimitPct: input.dailyLimitPct,
       weeklyLimitPct: input.weeklyLimitPct,
       isPublic: input.isPublic,

@@ -122,6 +122,7 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   const creditRates = new CreditRates(db, deps.fetch);
   const lifecycle = new Lifecycle(db, config, entitlements, invoicing);
   const adminBilling = new AdminBilling(db, entitlements, invoicing);
+  adminBilling.credits = credits;
   const aiModel = deps.aiModel ?? (config.ANTHROPIC_API_KEY ? claudeModel(config.ANTHROPIC_API_KEY) : null);
   const ai = new AiProxy(db, service, billing, config, aiModel, app.log, credits);
   const reasoner = new Reasoner(db, aiModel, app.log, deps.reasonDelayMs);

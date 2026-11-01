@@ -45,6 +45,10 @@ export function aiCredits(billing: BillingView | null): {
   balance: number;
   monthly: number;
   extra: number;
+  /** The price of a credit in soum, and what a question costs on average (soum) with its tokens (null until there is use to learn from). */
+  somPerCredit: number;
+  questionSom: number;
+  tokensPerQuestion: number | null;
   extraEnabled: boolean;
   daily: { limitCredits: number; usedCredits: number; resetsAt: string } | null;
   weekly: { limitCredits: number; usedCredits: number; resetsAt: string } | null;
@@ -57,6 +61,9 @@ export function aiCredits(billing: BillingView | null): {
         balance: Math.max(0, Math.floor(c.balanceCredits)),
         monthly: c.monthlyCredits,
         extra: Math.max(0, Math.floor(c.extraCredits)),
+        somPerCredit: c.somPerCredit,
+        questionSom: c.questionSom,
+        tokensPerQuestion: c.tokensPerQuestion,
         extraEnabled: c.extraEnabled,
         daily: c.daily,
         weekly: c.weekly,

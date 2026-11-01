@@ -502,7 +502,6 @@ export const RU: Record<string, string> = {
   "No credit history yet.": "Истории кредитов пока нет.",
   Type: "Тип",
   Balance: "Баланс",
-  "AI credits / month": "AI-кредитов / мес",
   "Monthly credits": "Ежемесячные кредиты",
   "Trial credits": "Кредиты пробного периода",
   Purchase: "Покупка",
@@ -529,10 +528,6 @@ export const RU: Record<string, string> = {
     "Готово: отменено счетов — {invoices}, заявок — {requests}.",
   "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
     "Запускает платежи клиента заново: неоплаченные счета и ещё ожидающие заявки на кредиты отменяются, и он может купить с самого начала. Оплаченное, баланс и история остаются как есть.",
-  "Day limit, % of monthly credits": "Дневной лимит, % месячных кредитов",
-  "Week limit, % of monthly credits": "Недельный лимит, % месячных кредитов",
-  "= {count} credits a day": "= {count} кредитов в день",
-  "= {count} credits a week": "= {count} кредитов в неделю",
   "0: no day limit": "0: без дневного лимита",
   "0: no week limit": "0: без недельного лимита",
   Extra: "Дополнительные",
@@ -540,4 +535,11 @@ export const RU: Record<string, string> = {
   "Extra credits": "Дополнительные кредиты",
   "Plan credits": "Кредиты тарифа",
   After: "После",
+  "AI budget / month (by the price)": "AI-запас / мес (от цены)",
+  "{pct}% of the price; the cost never goes over {cap}% = {sum}; about {count} questions":
+    "{pct}% цены; затраты не превышают {cap}% = {sum}; около {count} вопросов",
+  "Day limit, % of the AI budget": "Дневной лимит, % AI-запаса",
+  "Week limit, % of the AI budget": "Недельный лимит, % AI-запаса",
+  "= {sum} a day": "= {sum} в день",
+  "= {sum} a week": "= {sum} в неделю",
 };

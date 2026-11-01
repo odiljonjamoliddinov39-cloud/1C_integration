@@ -26,7 +26,11 @@ type Field = "imports" | "audits" | "ai_questions";
 
 const limitError = (code: string, message: string) => new HttpError(402, code, message);
 
-export function planView(p: typeof plans.$inferSelect): PlanView {
+/** A plan as the price list shows it; `ai` is what its AI comes to by its price (the credits service works it out). */
+export function planView(
+  p: typeof plans.$inferSelect,
+  ai?: Awaited<ReturnType<Credits["planAi"]>>,
+): PlanView {
   return {
     code: p.code,
     name: p.name || p.code,
@@ -37,9 +41,13 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
     importsPerMonth: p.importsPerMonth,
     auditsPerMonth: p.auditsPerMonth,
     aiQuestionsPerMonth: p.aiQuestionsPerMonth,
-    monthlyCredits: p.monthlyCredits,
+    monthlyCredits: ai?.monthlyCredits ?? p.monthlyCredits,
     dailyLimitPct: p.dailyLimitPct,
     weeklyLimitPct: p.weeklyLimitPct,
+    aiBudgetSum: ai?.aiBudgetSum ?? 0,
+    aiCapSum: ai?.aiCapSum ?? 0,
+    estQuestions: ai?.estQuestions ?? 0,
+    estTokens: ai?.estTokens ?? null,
     features: {
       excelExport: p.features.excelExport ?? false,
       prioritySupport: p.features.prioritySupport ?? false,
@@ -73,7 +81,11 @@ export class BillingService {
       .where(eq(addons.isPublic, true))
       .orderBy(asc(addons.priceSum));
     return {
-      plans: planRows.map(planView),
+      plans: await Promise.all(
+        planRows.map(async (p) =>
+          planView(p, this.credits?.enabled ? await this.credits.planAi(p) : undefined),
+        ),
+      ),
       addons: addonRows.map((a) => ({
         code: a.code,
         name: a.name,

@@ -110,7 +110,7 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
     const view = (await call("GET", "/v1/billing/credits", token)).json();
     expect(view.approvalRequired).toBe(true);
     const bought = await call("POST", "/v1/billing/credits/purchase", token, {
-      credits: 1_000,
+      sum: 100_000,
       provider: "bank",
     });
     expect(bought.statusCode).toBe(409);
@@ -119,13 +119,13 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
 
   it("a request waits for the admin; approving adds the credits through a paid invoice, once", async () => {
     const { token, accountId } = await payingCustomer(1_000);
-    const sent = await call("POST", "/v1/billing/credits/request", token, { credits: 2_000 });
+    const sent = await call("POST", "/v1/billing/credits/request", token, { sum: 300_000 });
     expect(sent.statusCode).toBe(200);
     expect(sent.json()).toMatchObject({
-      credits: 2_000,
+      credits: 1_750,
       status: "pending",
       somPerCredit: 120,
-      totalSom: 240_000,
+      totalSom: 300_000,
     });
     // Nothing is added yet, and the customer sees the request.
     expect(await balanceOf(accountId)).toBe(1_000);
@@ -140,7 +140,7 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
       accountId,
       accountName: "Buxgalter MChJ",
       userEmail: "owner@example.com",
-      credits: 2_000,
+      credits: 1_750,
       balanceCredits: 1_000,
     });
     expect((await call("GET", "/v1/admin/credits", a)).json().pendingRequests).toBe(1);
@@ -151,24 +151,24 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
     });
     expect(approved.statusCode).toBe(200);
     expect(approved.json().pendingCount).toBe(0);
-    expect(await balanceOf(accountId)).toBe(3_000);
+    expect(await balanceOf(accountId)).toBe(2_750);
     const row = await db.db.query.creditRequests.findFirst({ where: eq(creditRequests.id, id) });
     expect(row).toMatchObject({ status: "approved", note: "paid by transfer" });
     expect(row?.invoiceId).toBeTruthy();
     const invoice = await db.db.query.invoices.findFirst({ where: eq(invoices.id, row!.invoiceId!) });
-    expect(invoice).toMatchObject({ status: "paid", provider: "bank", totalSum: 240_000 });
+    expect(invoice).toMatchObject({ status: "paid", provider: "bank", totalSum: 300_000 });
 
     // The second approval changes nothing.
     const again = await call("POST", `/v1/admin/credits/requests/${id}/approve`, a, {});
     expect(again.statusCode).toBe(409);
     expect(again.json().code).toBe("NOT_PENDING");
-    expect(await balanceOf(accountId)).toBe(3_000);
+    expect(await balanceOf(accountId)).toBe(2_750);
     expect((await call("GET", "/v1/billing/credits", token)).json().requests[0].status).toBe("approved");
   });
 
   it("a rejected request adds nothing and keeps the admin's note", async () => {
     const { token, accountId } = await payingCustomer(1_000);
-    const sent = (await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).json();
+    const sent = (await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).json();
     const a = await adminToken();
     const rejected = await call("POST", `/v1/admin/credits/requests/${sent.id}/reject`, a, {
       note: "no payment seen",
@@ -181,28 +181,28 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
 
   it("refuses a request on Free, over the cap, below the minimum, and a fourth waiting one", async () => {
     const free = await register("free@example.com");
-    const onFree = await call("POST", "/v1/billing/credits/request", free.token, { credits: 1_000 });
+    const onFree = await call("POST", "/v1/billing/credits/request", free.token, { sum: 100_000 });
     expect(onFree.json().code).toBe("CREDITS_NOT_AVAILABLE");
 
     const { token } = await payingCustomer(49_500);
-    const over = await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 });
+    const over = await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 });
     expect(over.json().code).toBe("CREDIT_CAP");
-    expect((await call("POST", "/v1/billing/credits/request", token, { credits: 10 })).statusCode).toBe(400);
+    expect((await call("POST", "/v1/billing/credits/request", token, { sum: 100 })).statusCode).toBe(400);
 
     await db.db.update(creditAccounts).set({ extraCredits: 0 });
     for (let i = 0; i < 3; i++) {
-      expect((await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).statusCode).toBe(
+      expect((await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).statusCode).toBe(
         200,
       );
     }
-    const fourth = await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 });
+    const fourth = await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 });
     expect(fourth.statusCode).toBe(409);
     expect(fourth.json().code).toBe("TOO_MANY_REQUESTS");
   });
 
   it("the customer can take back a waiting request", async () => {
     const { token } = await payingCustomer();
-    const sent = (await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).json();
+    const sent = (await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).json();
     const cancelled = await call("POST", `/v1/billing/credits/requests/${sent.id}/cancel`, token);
     expect(cancelled.json().status).toBe("cancelled");
     expect((await call("POST", `/v1/billing/credits/requests/${sent.id}/cancel`, token)).json().code).toBe(
@@ -212,7 +212,7 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
 
   it("an approval that cannot be applied leaves the request waiting", async () => {
     const { token, accountId } = await payingCustomer(1_000);
-    const sent = (await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).json();
+    const sent = (await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).json();
     await setPlan(accountId, "free"); // the customer dropped to Free meanwhile
     const a = await adminToken();
     const approved = await call("POST", `/v1/admin/credits/requests/${sent.id}/approve`, a, {});
@@ -226,11 +226,11 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
 
   it("Restart payments cancels unpaid invoices and waiting requests, and keeps what was paid", async () => {
     const { token, accountId } = await payingCustomer(1_000);
-    await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 });
-    const paid = (await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).json();
+    await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 });
+    const paid = (await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).json();
     const a = await adminToken();
     await call("POST", `/v1/admin/credits/requests/${paid.id}/approve`, a, {});
-    expect(await balanceOf(accountId)).toBe(2_000);
+    expect(await balanceOf(accountId)).toBe(1_583);
     // An unpaid invoice left from a payment that was never finished.
     await db.db.insert(invoices).values({
       accountId,
@@ -252,11 +252,9 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
     const all = await db.db.select().from(invoices).where(eq(invoices.accountId, accountId));
     expect(all.map((i) => i.status).sort()).toEqual(["cancelled", "paid"]);
     expect((await call("GET", "/v1/admin/credits/requests", a)).json().pendingCount).toBe(0);
-    expect(await balanceOf(accountId)).toBe(2_000);
+    expect(await balanceOf(accountId)).toBe(1_583);
     // The customer can begin again.
-    expect((await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).statusCode).toBe(
-      200,
-    );
+    expect((await call("POST", "/v1/billing/credits/request", token, { sum: 100_000 })).statusCode).toBe(200);
     // A second restart on a clean account has nothing to clear.
     await call("POST", `/v1/admin/credits/${accountId}/restart-payments`, a);
     expect((await call("POST", `/v1/admin/credits/${accountId}/restart-payments`, a)).json()).toEqual({

@@ -31,7 +31,11 @@ function Meter({
     <div>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-sidebar-muted">{label}</span>
-        <span className={`font-semibold tabular-nums ${low === "out" ? "text-red-300" : ""}`}>{value}</span>
+        <span
+          className={`font-semibold whitespace-nowrap tabular-nums ${low === "out" ? "text-red-300" : ""}`}
+        >
+          {value}
+        </span>
       </div>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
@@ -55,6 +59,18 @@ export function LicenseCard({
   const { t, i18n } = useTranslation();
   const [now] = useState(() => Date.now());
   const credits = aiCredits(billing);
+  /** Credits as soum (the sidebar speaks soum), and what an amount is worth in questions. */
+  const som = (n: number, unit = false) =>
+    `${Math.round(n * (credits?.somPerCredit ?? 0)).toLocaleString(i18n.language)}${unit ? ` ${t("billing.sum")}` : ""}`;
+  const estimate = (n: number) => {
+    if (!credits) return undefined;
+    const questions = Math.round((n * credits.somPerCredit) / credits.questionSom);
+    const tokens =
+      credits.tokensPerQuestion === null
+        ? ""
+        : ` · ${t("billing.estTokens", { n: (questions * credits.tokensPerQuestion).toLocaleString(i18n.language) })}`;
+    return `${t("billing.estQuestions", { n: questions.toLocaleString(i18n.language) })}${tokens}`;
+  };
   // With credits the balance replaces the question count.
   const ai = credits ? null : aiQuestionsLeft(billing);
   const planName = billing ? t(`billing.plan.${billing.entitlements.plan}`) : null;
@@ -103,14 +119,15 @@ export function LicenseCard({
         <div className="mt-3 space-y-3 border-t border-white/10 pt-3 text-xs">
           <Meter
             label={t("billing.planLabel")}
-            value={credits.balance.toLocaleString(i18n.language)}
+            value={som(credits.balance, true)}
             share={credits.balance / Math.max(1, credits.monthly, credits.balance)}
             low={credits.balance === 0 ? "out" : billing?.credits?.low ? "low" : "ok"}
+            hint={estimate(credits.balance)}
           />
           {credits.daily && (
             <Meter
               label={t("billing.dayLabel")}
-              value={`${Math.round(Math.min(credits.daily.usedCredits, credits.daily.limitCredits)).toLocaleString(i18n.language)} / ${credits.daily.limitCredits.toLocaleString(i18n.language)}`}
+              value={`${som(Math.min(credits.daily.usedCredits, credits.daily.limitCredits))} / ${som(credits.daily.limitCredits)}`}
               share={credits.daily.usedCredits / Math.max(1, credits.daily.limitCredits)}
               low={limitTone(credits.daily.usedCredits / Math.max(1, credits.daily.limitCredits))}
               hint={t("billing.limitResets", { when: formatTime(credits.daily.resetsAt, i18n.language) })}
@@ -119,24 +136,24 @@ export function LicenseCard({
           {credits.weekly && (
             <Meter
               label={t("billing.weekLabel")}
-              value={`${Math.round(Math.min(credits.weekly.usedCredits, credits.weekly.limitCredits)).toLocaleString(i18n.language)} / ${credits.weekly.limitCredits.toLocaleString(i18n.language)}`}
+              value={`${som(Math.min(credits.weekly.usedCredits, credits.weekly.limitCredits))} / ${som(credits.weekly.limitCredits)}`}
               share={credits.weekly.usedCredits / Math.max(1, credits.weekly.limitCredits)}
               low={limitTone(credits.weekly.usedCredits / Math.max(1, credits.weekly.limitCredits))}
               hint={t("billing.limitResets", { when: formatTime(credits.weekly.resetsAt, i18n.language) })}
             />
           )}
           {(credits.extra > 0 || credits.extraEnabled) && (
-            <div className="flex items-center justify-between gap-2 rounded-lg bg-white/5 px-2.5 py-2">
-              <span className="text-sidebar-muted">{t("billing.extraLabel")}</span>
-              <span className="flex items-center gap-1.5">
-                <span className="font-semibold tabular-nums">
-                  {credits.extra.toLocaleString(i18n.language)}
+            <div className="rounded-lg bg-white/5 px-2.5 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sidebar-muted">{t("billing.extraLabel")}</span>
+                <span className="font-semibold whitespace-nowrap tabular-nums">
+                  {som(credits.extra, true)}
                 </span>
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase ${credits.extraEnabled ? "bg-emerald-400/20 text-emerald-300" : "bg-white/10 text-sidebar-muted"}`}
-                >
-                  {credits.extraEnabled ? t("billing.extraOn") : t("billing.extraOff")}
-                </span>
+              </div>
+              <span
+                className={`mt-1.5 inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase ${credits.extraEnabled ? "bg-emerald-400/20 text-emerald-300" : "bg-white/10 text-sidebar-muted"}`}
+              >
+                {credits.extraEnabled ? t("billing.extraOn") : t("billing.extraOff")}
               </span>
             </div>
           )}

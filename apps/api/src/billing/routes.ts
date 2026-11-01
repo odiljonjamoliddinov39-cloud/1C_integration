@@ -141,14 +141,14 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
     const input = parse(PurchaseCreditsInput, req.body);
     const { accountId } = await owner(req);
     await deps.offer.require(accountId);
-    return deps.credits.purchase(accountId, input.credits, input.provider);
+    return deps.credits.purchase(accountId, input.sum, input.provider);
   });
   // Extra credits are asked for here and added when an admin approves the request in the dashboard.
   app.post("/v1/billing/credits/request", async (req) => {
     const input = parse(RequestCreditsInput, req.body);
     const { accountId, userId } = await owner(req);
     await deps.offer.require(accountId);
-    return deps.creditRequests.create(accountId, userId, input.credits);
+    return deps.creditRequests.create(accountId, userId, input.sum);
   });
   app.post("/v1/billing/credits/requests/:id/cancel", async (req) => {
     const { accountId } = await owner(req);

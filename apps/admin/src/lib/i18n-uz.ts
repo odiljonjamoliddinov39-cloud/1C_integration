@@ -504,7 +504,6 @@ export const UZ: Record<string, string> = {
   "No credit history yet.": "Kredit tarixi hali yo'q.",
   Type: "Turi",
   Balance: "Balans",
-  "AI credits / month": "AI kreditlari / oy",
   "Monthly credits": "Oylik kreditlar",
   "Trial credits": "Sinov kreditlari",
   Purchase: "Xarid",
@@ -531,10 +530,6 @@ export const UZ: Record<string, string> = {
     "Tayyor: {invoices} ta hisob-faktura va {requests} ta soʻrov bekor qilindi.",
   "Starts the customer's payments over: unpaid invoices and credit requests that are still waiting are cancelled, so they can buy again from the beginning. What was paid, the balance and the history stay as they are.":
     "Mijozning toʻlovlarini boshidan boshlaydi: toʻlanmagan hisob-fakturalar va hali kutayotgan kredit soʻrovlari bekor qilinadi, shunda u qaytadan sotib olishi mumkin. Toʻlangani, balans va tarix oʻzgarmaydi.",
-  "Day limit, % of monthly credits": "Kunlik limit, oylik kreditlarning %",
-  "Week limit, % of monthly credits": "Haftalik limit, oylik kreditlarning %",
-  "= {count} credits a day": "= kuniga {count} kredit",
-  "= {count} credits a week": "= haftasiga {count} kredit",
   "0: no day limit": "0: kunlik limit yoʻq",
   "0: no week limit": "0: haftalik limit yoʻq",
   Extra: "Qoʻshimcha",
@@ -542,4 +537,11 @@ export const UZ: Record<string, string> = {
   "Extra credits": "Qoʻshimcha kreditlar",
   "Plan credits": "Tarif kreditlari",
   After: "Keyin",
+  "AI budget / month (by the price)": "AI zaxira / oy (narxdan)",
+  "{pct}% of the price; the cost never goes over {cap}% = {sum}; about {count} questions":
+    "Narxning {pct}%; xarajat {cap}% = {sum} dan oshmaydi; taxminan {count} savol",
+  "Day limit, % of the AI budget": "Kunlik limit, AI zaxirasining %",
+  "Week limit, % of the AI budget": "Haftalik limit, AI zaxirasining %",
+  "= {sum} a day": "= kuniga {sum}",
+  "= {sum} a week": "= haftasiga {sum}",
 };

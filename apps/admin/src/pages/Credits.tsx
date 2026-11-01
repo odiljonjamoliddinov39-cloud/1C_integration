@@ -308,7 +308,8 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
       title={t("AI credits")}
       actions={
         <Badge tone="info">
-          {t("Plan")}: {number(v.balanceCredits)} · {t("Extra")}: {number(v.extraCredits)} {t("credits")}
+          {t("Plan")}: {number(v.balanceCredits)} · {t("Extra")}: {number(v.extraCredits)} {t("credits")} ·{" "}
+          {number((v.balanceCredits + v.extraCredits) * v.somPerCredit)} {t("sum")}
           {v.extraEnabled ? "" : ` (${t("extra off")})`}
         </Badge>
       }

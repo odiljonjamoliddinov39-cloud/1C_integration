@@ -100,7 +100,7 @@ describe.skipIf(!available)("the public offer", () => {
       .set({ planId: plan!.id, status: "active", endsAt: new Date(Date.now() + 20 * 86_400_000) })
       .where(eq(subscriptions.accountId, accountId));
     const codes = [
-      await call("POST", "/v1/billing/credits/purchase", token, { credits: 1000, provider: "bank" }),
+      await call("POST", "/v1/billing/credits/purchase", token, { sum: 100_000, provider: "bank" }),
       await call("POST", "/v1/billing/change-plan", token, { plan: "business", provider: "bank" }),
       await call("POST", "/v1/billing/invoices/00000000-0000-4000-8000-000000000000/checkout", token, {
         provider: "bank",

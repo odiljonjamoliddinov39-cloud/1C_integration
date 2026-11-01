@@ -20,8 +20,31 @@ export const PLAN_MONTHLY_CREDITS: Record<string, number> = {
 export const TRIAL_CREDITS = 1_500;
 /** The most an account may hold: $500, 6 000 000 soum at the starting price. Purchases and monthly credits stop at it. */
 export const ROLLOVER_CAP_CREDITS = 50_000;
-/** The least a purchase can be (1 000 credits = 120 000 soum at the starting price). */
+/** The least an auto-recharge can buy (credits). */
 export const MIN_PURCHASE_CREDITS = 1_000;
+
+/**
+ * What a plan's AI may cost, by its monthly payment: the normal budget is this share (percent) of the price, and the cost never
+ * goes over the ceiling share. The server's AI_BUDGET_PCT / AI_COST_CAP_PCT can change them.
+ */
+export const AI_BUDGET_PCT = 40;
+export const AI_COST_CAP_PCT = 45;
+/** Free has no price to take a share of: its AI budget is this many soum a month. */
+export const FREE_AI_BUDGET_SUM = 20_000;
+/** An extra top-up: this share of the sum paid becomes AI balance (the rest is the margin). */
+export const TOPUP_BALANCE_SHARE = 0.7;
+/** The least a top-up can be, in soum: any sum from this up. */
+export const MIN_TOPUP_SUM = 10_000;
+export const MAX_TOPUP_SUM = 100_000_000;
+/** Until there is real use to learn from: what a question costs on average, in soum. */
+export const FALLBACK_QUESTION_SOM = 2_800;
+
+/** The AI credits a top-up of `paidSum` soum gives, at `somPerCredit`. */
+export const topupCredits = (paidSum: number, somPerCredit: number): number =>
+  Math.floor((paidSum * TOPUP_BALANCE_SHARE) / somPerCredit);
+/** The soum to pay so that `credits` are added by a top-up (the other way round of topupCredits). */
+export const payForCredits = (credits: number, somPerCredit: number): number =>
+  Math.ceil((credits * somPerCredit) / TOPUP_BALANCE_SHARE);
 /** The starting price of a credit, in soum (the CBU rate of the day it was set was about 11 839). */
 export const START_SOM_PER_CREDIT = 120;
 export const START_CBU_RATE = 11_839;
@@ -93,7 +116,8 @@ export type CreditRequestView = z.infer<typeof CreditRequestView>;
 
 /** The customer asks for credits: no payment provider, the admin approves. */
 export const RequestCreditsInput = z.object({
-  credits: z.number().int().min(MIN_PURCHASE_CREDITS).max(ROLLOVER_CAP_CREDITS),
+  /** The soum the customer pays: any sum from the minimum up. */
+  sum: z.number().int().min(MIN_TOPUP_SUM).max(MAX_TOPUP_SUM),
 });
 export type RequestCreditsInput = z.infer<typeof RequestCreditsInput>;
 
@@ -136,7 +160,15 @@ export const CreditsView = z.object({
   atCap: z.boolean(),
   /** Credits are not added to a Free account's balance by purchase: it has no payment method. */
   canPurchase: z.boolean(),
-  minPurchaseCredits: z.number(),
+  /** A top-up: the least sum in soum, and the share of it that becomes balance. */
+  minTopupSum: z.number().default(MIN_TOPUP_SUM),
+  topupShare: z.number().default(TOPUP_BALANCE_SHARE),
+  /** The ceiling of the plan's credits in a period (the cost never goes over it), and how much is used of it. */
+  capCredits: z.number().default(0),
+  usedPeriodCredits: z.number().default(0),
+  /** What a question costs on average, in soum, and its tokens (null until there is use to learn from). */
+  questionSom: z.number().default(FALLBACK_QUESTION_SOM),
+  tokensPerQuestion: z.number().nullable().default(null),
   autoRecharge: AutoRechargeSettings,
   /** Extra credits are added when an admin approves a request (see CreditRequestView), not paid online. */
   approvalRequired: z.boolean(),
@@ -149,6 +181,9 @@ export type CreditsView = z.infer<typeof CreditsView>;
 /** The short form on the entitlements: enough for the desktop's sidebar and its "no credits" dialog. */
 export const CreditsSummary = z.object({
   balanceCredits: z.number(),
+  /** What a question costs on average, in soum, and its tokens (null until there is use to learn from). */
+  questionSom: z.number().default(FALLBACK_QUESTION_SOM),
+  tokensPerQuestion: z.number().nullable().default(null),
   extraCredits: z.number().default(0),
   extraEnabled: z.boolean().default(false),
   blocked: CreditBlock.default(null),
@@ -164,7 +199,7 @@ export const CreditsSummary = z.object({
 export type CreditsSummary = z.infer<typeof CreditsSummary>;
 
 export const PurchaseCreditsInput = z.object({
-  credits: z.number().int().min(MIN_PURCHASE_CREDITS).max(ROLLOVER_CAP_CREDITS),
+  sum: z.number().int().min(MIN_TOPUP_SUM).max(MAX_TOPUP_SUM),
   provider: z.enum(["payme", "click", "bank"]).default("payme"),
 });
 export type PurchaseCreditsInput = z.infer<typeof PurchaseCreditsInput>;

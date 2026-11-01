@@ -1,7 +1,11 @@
 import {
+  AI_BUDGET_PCT,
+  AI_COST_CAP_PCT,
   type AddonSaveInput,
   type AdminPlansView,
   type AdminView,
+  FALLBACK_QUESTION_SOM,
+  FREE_AI_BUDGET_SUM,
   type PlanSaveInput,
   type PlanView,
   YEAR_PAID_MONTHS,
@@ -23,7 +27,6 @@ const toInput = (p: PlanView): PlanSaveInput => ({
   importsPerMonth: p.importsPerMonth,
   auditsPerMonth: p.auditsPerMonth,
   aiQuestionsPerMonth: p.aiQuestionsPerMonth,
-  monthlyCredits: p.monthlyCredits,
   dailyLimitPct: p.dailyLimitPct,
   weeklyLimitPct: p.weeklyLimitPct,
   features: p.features,
@@ -41,7 +44,6 @@ const NEW_PLAN: PlanSaveInput = {
   importsPerMonth: null,
   auditsPerMonth: null,
   aiQuestionsPerMonth: 1500,
-  monthlyCredits: 19_930,
   dailyLimitPct: 15,
   weeklyLimitPct: 35,
   features: { excelExport: true, prioritySupport: true, support: "manager", telegram: true },
@@ -129,6 +131,14 @@ function PlanEditor({
       [key]: value,
       ...(key === "priceMonthSum" ? { priceYearSum: yearPriceOf(Number(value)) } : {}),
     });
+  /** The plan's AI by the price in the form: a share of it is the budget, a larger one the ceiling (Free: a fixed budget). */
+  const aiBudget =
+    form.priceMonthSum > 0 ? Math.round((form.priceMonthSum * AI_BUDGET_PCT) / 100) : FREE_AI_BUDGET_SUM;
+  const aiCap =
+    form.priceMonthSum > 0
+      ? Math.round((form.priceMonthSum * AI_COST_CAP_PCT) / 100)
+      : Math.round((FREE_AI_BUDGET_SUM * AI_COST_CAP_PCT) / AI_BUDGET_PCT);
+  const fmt = (n: number) => new Intl.NumberFormat(intlLocale()).format(n);
   const field = (label: string, node: React.ReactNode) => (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
@@ -141,7 +151,6 @@ function PlanEditor({
       | "companies"
       | "users"
       | "aiQuestionsPerMonth"
-      | "monthlyCredits"
       | "dailyLimitPct"
       | "weeklyLimitPct"
       | "sortOrder",
@@ -212,37 +221,40 @@ function PlanEditor({
           </>,
         )}
         {field(
-          t("AI credits / month"),
+          t("AI budget / month (by the price)"),
           <>
-            {numeric("monthlyCredits")}
-            {perYear(form.monthlyCredits)}
+            <Input type="text" disabled readOnly value={`${fmt(aiBudget)} ${t("sum")}`} />
+            <span className="text-[11px]">
+              {t("{pct}% of the price; the cost never goes over {cap}% = {sum}; about {count} questions", {
+                pct: AI_BUDGET_PCT,
+                cap: AI_COST_CAP_PCT,
+                sum: fmt(aiCap),
+                count: Math.max(1, Math.round(aiBudget / FALLBACK_QUESTION_SOM)),
+              })}
+            </span>
           </>,
         )}
         {field(
-          t("Day limit, % of monthly credits"),
+          t("Day limit, % of the AI budget"),
           <>
             {numeric("dailyLimitPct")}
             <span className="text-[11px]">
               {form.dailyLimitPct > 0
-                ? t("= {count} credits a day", {
-                    count: new Intl.NumberFormat(intlLocale()).format(
-                      Math.round((form.monthlyCredits * form.dailyLimitPct) / 100),
-                    ),
+                ? t("= {sum} a day", {
+                    sum: `${fmt(Math.round((aiBudget * form.dailyLimitPct) / 100))} ${t("sum")}`,
                   })
                 : t("0: no day limit")}
             </span>
           </>,
         )}
         {field(
-          t("Week limit, % of monthly credits"),
+          t("Week limit, % of the AI budget"),
           <>
             {numeric("weeklyLimitPct")}
             <span className="text-[11px]">
               {form.weeklyLimitPct > 0
-                ? t("= {count} credits a week", {
-                    count: new Intl.NumberFormat(intlLocale()).format(
-                      Math.round((form.monthlyCredits * form.weeklyLimitPct) / 100),
-                    ),
+                ? t("= {sum} a week", {
+                    sum: `${fmt(Math.round((aiBudget * form.weeklyLimitPct) / 100))} ${t("sum")}`,
                   })
                 : t("0: no week limit")}
             </span>

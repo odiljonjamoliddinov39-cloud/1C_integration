@@ -193,30 +193,32 @@ describe.skipIf(!available)("AI credits", () => {
       })
     ).json().accessToken as string;
 
-  it("gives a new account the Free plan's 500 monthly credits, once", async () => {
+  it("gives a new account the Free plan's fixed AI budget (20 000 soum = 167 credits), once", async () => {
     const { token } = await register();
     const view = (await call("GET", "/v1/billing/credits", token)).json();
     expect(view).toMatchObject({
-      balanceCredits: 500,
-      monthlyCredits: 500,
+      balanceCredits: 167,
+      monthlyCredits: 167,
       somPerCredit: 120,
       canPurchase: false,
     });
     expect(view.history.map((h: { type: string }) => h.type)).toEqual(["monthly_grant"]);
     // Asking again adds nothing.
-    expect((await call("GET", "/v1/billing/credits", token)).json().balanceCredits).toBe(500);
+    expect((await call("GET", "/v1/billing/credits", token)).json().balanceCredits).toBe(167);
     // The entitlements carry the balance for the desktop.
     const ent = (await call("GET", "/v1/billing/entitlements", token)).json();
-    expect(ent.credits).toMatchObject({ balanceCredits: 500, somPerCredit: 120 });
+    expect(ent.credits).toMatchObject({ balanceCredits: 167, somPerCredit: 120, questionSom: 2_800 });
   });
 
   it("takes each AI call's real cost from the balance ($2 = 200 credits)", async () => {
     const { token, accountId } = await register();
+    await setPlan(accountId, "start"); // 40% of 590 000 soum = 236 000 soum = 1 967 credits a month
     await call("GET", "/v1/billing/credits", token);
+    expect(await balanceOf(accountId)).toBe(1_967);
     expect((await ask(token)).status).toBe(200);
-    expect(await balanceOf(accountId)).toBe(300);
+    expect(await balanceOf(accountId)).toBe(1_767);
     expect((await ask(token, 2)).status).toBe(200);
-    expect(await balanceOf(accountId)).toBe(100);
+    expect(await balanceOf(accountId)).toBe(1_567);
     const spent = await db.db
       .select()
       .from(creditTransactions)
@@ -240,7 +242,7 @@ describe.skipIf(!available)("AI credits", () => {
   it("warns once when the balance is low", async () => {
     const { token, accountId } = await register();
     await call("GET", "/v1/billing/credits", token);
-    await setBalance(accountId, 90);
+    await setBalance(accountId, 20); // the Free plan's low level is 33 credits (20% of its 167)
     const first = await ask(token);
     expect(first.events.filter((e) => e.type === "warning").map((e) => e.code)).toEqual(["AI_CREDITS_LOW"]);
     expect((await credits.view(accountId)).low).toBe(true);
@@ -299,23 +301,24 @@ describe.skipIf(!available)("AI credits", () => {
   it("sells credits by invoice: price at today's rate (no VAT by default), added once when paid", async () => {
     const { token, accountId } = await register();
     await setPlan(accountId, "start");
+    // The customer pays any sum from 10 000 soum: 70% of it becomes AI balance (100 000 soum: 583 credits, 69 960 soum).
     const bought = await call("POST", "/v1/billing/credits/purchase", token, {
-      credits: 1_000,
+      sum: 100_000,
       provider: "bank",
     });
     expect(bought.statusCode).toBe(200);
     const invoice = bought.json().invoice;
-    expect(invoice.items[0]).toMatchObject({ kind: "credits", quantity: 1_000, amountSum: 120_000 });
-    expect(invoice.totalSum).toBe(120_000 + Math.round((120_000 * config.VAT_PERCENT) / 100));
+    expect(invoice.items[0]).toMatchObject({ kind: "credits", quantity: 583, amountSum: 100_000 });
+    expect(invoice.totalSum).toBe(100_000 + Math.round((100_000 * config.VAT_PERCENT) / 100));
     const planBefore = await balanceOf(accountId);
     await new Invoicing(db.db, config, new Billing(db.db, 0)).applyInvoice(invoice.id);
     // Bought credits are the extra ones: the plan's own credits are not touched.
     const view = await credits.view(accountId);
-    expect(view.extraCredits).toBe(1_000);
+    expect(view.extraCredits).toBe(583);
     expect(view.balanceCredits).toBe(Math.floor(planBefore));
     // Paying twice does not add twice.
     await new Invoicing(db.db, config, new Billing(db.db, 0)).applyInvoice(invoice.id);
-    expect((await credits.view(accountId)).extraCredits).toBe(1_000);
+    expect((await credits.view(accountId)).extraCredits).toBe(583);
     expect(
       (await db.db.select().from(creditTransactions).where(eq(creditTransactions.type, "purchase"))).length,
     ).toBe(1);
@@ -324,18 +327,18 @@ describe.skipIf(!available)("AI credits", () => {
   it("does not sell credits on Free, under the minimum, or over the cap", async () => {
     const { token, accountId } = await register();
     const free = await call("POST", "/v1/billing/credits/purchase", token, {
-      credits: 1_000,
+      sum: 100_000,
       provider: "bank",
     });
     expect(free.json().code).toBe("CREDITS_NOT_AVAILABLE");
     await setPlan(accountId, "start");
     expect(
-      (await call("POST", "/v1/billing/credits/purchase", token, { credits: 500, provider: "bank" }))
+      (await call("POST", "/v1/billing/credits/purchase", token, { sum: 9_999, provider: "bank" }))
         .statusCode,
     ).toBe(400);
-    await setExtra(accountId, 49_500);
+    await setExtra(accountId, 49_800);
     const over = await call("POST", "/v1/billing/credits/purchase", token, {
-      credits: 1_000,
+      sum: 100_000,
       provider: "bank",
     });
     expect(over.json().code).toBe("CREDIT_CAP");
@@ -403,35 +406,35 @@ describe.skipIf(!available)("AI credits", () => {
 
   it("stops the plan's credits at the day's limit and offers the extra credits", async () => {
     const { token, accountId } = await register();
-    await setPlan(accountId, "start"); // 3 040 credits a month: a day's limit of 15% is 456
+    await setPlan(accountId, "start"); // 1 967 credits a month: a day's limit of 15% is 295
     await setLimits(15, 0);
     await call("GET", "/v1/billing/credits", token);
-    // Three calls of 200 credits: the third starts under the limit (400 of 456) and takes the day to 600.
-    for (let i = 1; i <= 3; i++) expect((await ask(token, i)).status).toBe(200);
-    const refused = await ask(token, 4);
+    // Two calls of 200 credits: the second starts under the limit (200 of 295) and takes the day to 400.
+    for (let i = 1; i <= 2; i++) expect((await ask(token, i)).status).toBe(200);
+    const refused = await ask(token, 3);
     expect(refused).toMatchObject({ status: 429, code: "AI_LIMIT_DAILY" });
     const view = (await call("GET", "/v1/billing/credits", token)).json();
     expect(view.blocked).toBe("daily");
-    expect(view.daily).toMatchObject({ limitCredits: 456, usedCredits: 600 });
+    expect(view.daily).toMatchObject({ limitCredits: 295, usedCredits: 400 });
     expect(view.weekly).toBeNull();
-    // The plan's credits are not out: 3 040 - 600 are still there for tomorrow.
-    expect(view.balanceCredits).toBe(2_440);
+    // The plan's credits are not out: 1 967 - 400 are still there for tomorrow.
+    expect(view.balanceCredits).toBe(1_567);
     // The entitlements the desktop reads say the same.
     const ent = (await call("GET", "/v1/billing/entitlements", token)).json();
     expect(ent.credits).toMatchObject({ blocked: "daily", extraCredits: 0, extraEnabled: false });
     expect(ent.credits.resetsAt).toBe(view.daily.resetsAt);
-    expect(ent.credits.daily).toMatchObject({ limitCredits: 456, usedCredits: 600 });
+    expect(ent.credits.daily).toMatchObject({ limitCredits: 295, usedCredits: 400 });
     expect(ent.credits.weekly).toBeNull();
   });
 
   it("stops the plan's credits at the week's limit", async () => {
     const { token, accountId } = await register();
-    await setPlan(accountId, "start"); // a week's limit of 35% is 1 064
+    await setPlan(accountId, "start"); // a week's limit of 35% of 1 967 is 688
     await setLimits(0, 35);
     await call("GET", "/v1/billing/credits", token);
-    // Six calls of 200: the sixth starts at 1 000 and takes the week to 1 200.
-    for (let i = 1; i <= 6; i++) expect((await ask(token, i)).status).toBe(200);
-    expect(await ask(token, 7)).toMatchObject({ status: 429, code: "AI_LIMIT_WEEKLY" });
+    // Four calls of 200: the fourth starts at 600 and takes the week to 800.
+    for (let i = 1; i <= 4; i++) expect((await ask(token, i)).status).toBe(200);
+    expect(await ask(token, 5)).toMatchObject({ status: 429, code: "AI_LIMIT_WEEKLY" });
     expect((await call("GET", "/v1/billing/credits", token)).json().blocked).toBe("weekly");
   });
 
@@ -442,16 +445,16 @@ describe.skipIf(!available)("AI credits", () => {
     await call("GET", "/v1/billing/credits", token);
     await setExtra(accountId, 1_000);
     // Under the limit the plan's credits pay, whatever the extra ones are.
-    for (let i = 1; i <= 3; i++) expect((await ask(token, i)).status).toBe(200);
+    for (let i = 1; i <= 2; i++) expect((await ask(token, i)).status).toBe(200);
     expect(await extraOf(accountId)).toBe(1_000);
     // The day's limit is reached: the extra credits are there but not allowed, so the offer is made.
-    const offer = await ask(token, 4);
+    const offer = await ask(token, 3);
     expect(offer).toMatchObject({ status: 429, code: "AI_LIMIT_DAILY" });
     // The customer turns them on: the next call is paid from them, the plan's credits stay as they are.
     const planBefore = await balanceOf(accountId);
     const on = await call("POST", "/v1/billing/credits/extra", token, { enabled: true });
     expect(on.json()).toMatchObject({ extraEnabled: true, extraCredits: 1_000 });
-    expect((await ask(token, 5)).status).toBe(200);
+    expect((await ask(token, 4)).status).toBe(200);
     expect(await extraOf(accountId)).toBe(800);
     expect(await balanceOf(accountId)).toBe(planBefore);
     const spent = await db.db
@@ -461,7 +464,7 @@ describe.skipIf(!available)("AI credits", () => {
     expect(spent.filter((t) => t.pool === "extra").map((t) => t.amountCredits)).toEqual([-200]);
     // Turned off again: refused again, and the extra credits are kept.
     await call("POST", "/v1/billing/credits/extra", token, { enabled: false });
-    expect((await ask(token, 6)).code).toBe("AI_LIMIT_DAILY");
+    expect((await ask(token, 5)).code).toBe("AI_LIMIT_DAILY");
     expect(await extraOf(accountId)).toBe(800);
   });
 
@@ -497,11 +500,64 @@ describe.skipIf(!available)("AI credits", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(await extraOf(accountId)).toBe(700);
-    // The plan's own credits (the Free plan's 500 of the month) are untouched.
-    expect(await balanceOf(accountId)).toBe(500);
+    // The plan's own credits (the Free plan's 167 of the month) are untouched.
+    expect(await balanceOf(accountId)).toBe(167);
     const account1 = (await call("GET", `/v1/admin/credits/by-account/${accountId}`, admin1)).json();
     expect(account1).toMatchObject({ extraCredits: 700, extraEnabled: false });
     expect(account1.history.find((h: { type: string }) => h.type === "bonus").pool).toBe("extra");
+  });
+
+  it("works out a plan's AI from its price: 40% is the budget, 45% the ceiling; Free is fixed", async () => {
+    const catalog = (await call("GET", "/v1/plans")).json();
+    const byCode = (code: string) => catalog.plans.find((p: { code: string }) => p.code === code);
+    // The test database holds the seeded prices: 590 000, 1 690 000, 4 900 000.
+    expect(byCode("start")).toMatchObject({ aiBudgetSum: 236_000, aiCapSum: 265_500, monthlyCredits: 1_967 });
+    expect(byCode("start").estQuestions).toBe(84);
+    expect(byCode("business")).toMatchObject({ aiBudgetSum: 676_000, aiCapSum: 760_500 });
+    expect(byCode("firm")).toMatchObject({ aiBudgetSum: 1_960_000, aiCapSum: 2_205_000, estQuestions: 700 });
+    expect(byCode("free")).toMatchObject({ aiBudgetSum: 20_000, dailyLimitPct: 0, weeklyLimitPct: 0 });
+    // A price changed in the dashboard changes the budget, with nothing else to edit.
+    await db.db.update(plans).set({ priceUzs: 899_000 }).where(eq(plans.code, "start"));
+    const changed = (await call("GET", "/v1/plans"))
+      .json()
+      .plans.find((p: { code: string }) => p.code === "start");
+    expect(changed).toMatchObject({ aiBudgetSum: 359_600, aiCapSum: 404_550, estQuestions: 128 });
+    await db.db.update(plans).set({ priceUzs: 590_000 }).where(eq(plans.code, "start"));
+  });
+
+  it("never lets the AI cost go over the ceiling of the monthly payment, whatever balance is left", async () => {
+    const { token, accountId } = await register();
+    await setPlan(accountId, "start"); // the ceiling is 265 500 soum = 2 213 credits
+    await call("GET", "/v1/billing/credits", token);
+    await setBalance(accountId, 9_000); // plenty left: only the ceiling can stop the AI
+    const view = (await call("GET", "/v1/billing/credits", token)).json();
+    expect(view.capCredits).toBe(2_213);
+    // The period's AI use is 2 300 credits: over the ceiling.
+    await db.db.insert(creditTransactions).values({
+      accountId,
+      type: "ai_usage",
+      pool: "plan",
+      amountCredits: -2_300,
+      balanceAfter: 6_700,
+      note: "earlier use",
+    });
+    expect(await ask(token)).toMatchObject({ status: 429, code: "AI_BUDGET_EXCEEDED" });
+    const after = (await call("GET", "/v1/billing/credits", token)).json();
+    expect(after.blocked).toBe("plan");
+    expect(after.usedPeriodCredits).toBe(2_300);
+  });
+
+  it("shares a day's limit among the users: one user may use 2 / (users) of it", async () => {
+    const { token, accountId } = await register();
+    await setPlan(accountId, "firm"); // 5 users; 16 333 credits a month: a day is 2 450, one user's share 980
+    await setLimits(15, 0);
+    await call("GET", "/v1/billing/credits", token);
+    // Six calls of 200 by the owner: the sixth starts at 800 (under 980) and takes the user to 1 000.
+    for (let i = 1; i <= 5; i++) expect((await ask(token, i)).status).toBe(200);
+    expect(await ask(token, 6)).toMatchObject({ status: 429, code: "AI_LIMIT_DAILY" });
+    // The account's own day is far from its limit, so a colleague is not stopped.
+    expect((await credits.view(accountId)).daily).toMatchObject({ limitCredits: 2_450, usedCredits: 1_000 });
+    expect(await credits.ensureCanSpend(accountId, "11111111-1111-4111-8111-111111111111")).toBeNull();
   });
 
   it("does not offer auto-recharge on Free", async () => {
@@ -525,7 +581,7 @@ describe.skipIf(!available)("AI credits", () => {
       kind: "bonus",
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().balanceCredits).toBe(750);
+    expect(res.json().balanceCredits).toBe(417);
     const history = (await call("GET", `/v1/admin/credits/by-account/${accountId}`, admin1)).json().history;
     expect(history[0]).toMatchObject({ type: "bonus", amountCredits: 250, note: "Apology for the outage" });
     const below = await call("POST", `/v1/admin/credits/${accountId}/adjust`, admin1, {

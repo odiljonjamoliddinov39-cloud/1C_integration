@@ -81,6 +81,11 @@ export const PlanView = z.object({
   monthlyCredits: z.number().default(0),
   dailyLimitPct: z.number().default(15),
   weeklyLimitPct: z.number().default(35),
+  /** The plan's AI by its price: the budget (percent of the monthly price), the ceiling, and what they come to in questions and tokens. */
+  aiBudgetSum: z.number().default(0),
+  aiCapSum: z.number().default(0),
+  estQuestions: z.number().default(0),
+  estTokens: z.number().nullable().default(null),
   features: z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),

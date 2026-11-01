@@ -80,6 +80,9 @@ const Env = z.object({
   AI_QUESTION_UNIT_USD: z.coerce.number().min(0).default(0.5),
   /** "on": AI use is paid from the account's credits (TZ credit system); "off": the older question quota and dollar budget. */
   AI_CREDITS: z.enum(["on", "off"]).default("on"),
+  /** A plan's AI budget is this share of its monthly price, and the AI never costs more than the ceiling share (percent). */
+  AI_BUDGET_PCT: z.coerce.number().min(1).max(100).default(40),
+  AI_COST_CAP_PCT: z.coerce.number().min(1).max(100).default(45),
   /** A plan, add-on or credits can be bought only after the owner accepted the public offer. */
   OFFER_REQUIRED: z.enum(["on", "off"]).default("on"),
   /** On: extra credits are added after an admin approves a request; off: bought online (Payme, Click, bank). */
