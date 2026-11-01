@@ -559,7 +559,6 @@ export const RU: Record<string, string> = {
   CRM: "CRM",
   "Call back later": "Перезвонить позже",
   Calls: "Звонки",
-  "Choose an .xlsx file": "Выбрать файл .xlsx",
   "Choose your own password": "Выберите свой пароль",
   Colour: "Цвет",
   "Columns used": "Использованные столбцы",
@@ -640,8 +639,6 @@ export const RU: Record<string, string> = {
   "The board shows the newest 500 leads; the Leads page has them all.":
     "Доска показывает 500 новых лидов; все лиды — на странице «Лиды».",
   "The file is over 5 MB": "Файл больше 5 МБ",
-  "The first row is the header. The columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out. A lead whose phone is already here is updated.":
-    "Первая строка — заголовок. Столбцы сопоставляются с полями по названиям (Ism, Telefon, Manba, Kompaniya, Izoh…); не подошедшие пропускаются. Лид, чей телефон уже есть, обновляется.",
   "The leads added in this period are counted.": "Считаются лиды, добавленные в этом периоде.",
   "The passwords differ.": "Пароли не совпадают.",
   "Time in a stage": "Время на этапе",
@@ -663,6 +660,9 @@ export const RU: Record<string, string> = {
   "{from}–{to} of {total}": "{from}–{to} из {total}",
   "{n} leads": "{n} лидов",
   "{pct}% of previous, {first}% of all": "{pct}% от предыдущего, {first}% от всех",
+  "The header is the row with the phone column (it may be under a few empty or title rows). Columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out, and a column with no title but with notes in it becomes the notes. A lead whose phone is already here is updated.":
+    "Заголовок — строка со столбцом телефонов (она может быть под несколькими пустыми или титульными строками). Столбцы сопоставляются с полями по названиям (Ism, Telefon, Manba, Kompaniya, Izoh…); не подошедшие пропускаются, а столбец без названия, но с заметками, становится заметками. Лид, чей телефон уже есть, обновляется.",
+  "Choose an .xlsx or .csv file": "Выбрать файл .xlsx или .csv",
   "A sales manager sees only the CRM, and only their own leads. They sign in to the CRM Mini App with this email and password.":
     "Менеджер по продажам видит только CRM и только свои лиды. В CRM Mini App он входит с этим email и паролем.",
   "Managers are added on the Admins page, with the role Sales manager. They sign in to the CRM Mini App with their email and the one-time password shown there.":

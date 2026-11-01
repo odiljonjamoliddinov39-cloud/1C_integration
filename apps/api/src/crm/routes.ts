@@ -33,7 +33,7 @@ import { readGoogleSheet } from "./google-sheets.js";
 import type { CrmImport } from "./import.js";
 import type { CrmReports } from "./reports.js";
 import { type Crm, type CrmActor, seesAll } from "./service.js";
-import { XLSX_TYPE, readXlsx } from "./xlsx.js";
+import { XLSX_TYPE, readSheetFile } from "./xlsx.js";
 import { eq } from "drizzle-orm";
 
 export interface CrmRouteDeps {
@@ -157,7 +157,7 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
   app.post("/v1/crm/import/file", { bodyLimit: IMPORT_BODY_LIMIT }, async (req) => {
     const actor = await auth(req);
     const input = CrmImportFileInput.parse(req.body);
-    const rows = readXlsx(Buffer.from(input.dataBase64, "base64"));
+    const rows = readSheetFile(Buffer.from(input.dataBase64, "base64"));
     const job = await imports.run(actor, "excel", input.fileName, rows);
     await crm.audit(actor, "crm.import", `crm-import:${job.id}`, { source: "excel", rows: job.rowsTotal });
     return job;

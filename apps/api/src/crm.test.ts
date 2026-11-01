@@ -595,6 +595,81 @@ describe.skipIf(!available)("CRM", () => {
     expect(again).toMatchObject({ rowsCreated: 0, rowsUpdated: 1 });
   });
 
+  it("imports a list as people really keep it: an empty first row, titles in Cyrillic, numbered rows with nothing in them, a note beside", async () => {
+    const job = await ok(
+      call(
+        "POST",
+        "/v1/crm/import/file",
+        owner,
+        xlsxBody([
+          [],
+          ["№", "ким ", "Telefon", "жарайонда", "тулов килди ", "Status", ""],
+          [1, "шахло", 903702628, null, null, "Active", null],
+          [2, "насибахон", 990013888, null, null, null, "тел олмади"],
+          [3, null, 994244554, null, null, null, null],
+          [4, "темур", "+998 91 519 62 89, 71 200 10 10", null, null, null, null],
+          [5, null, null, null, null, null, null],
+          [6, null, null, null, null, null, null],
+        ]),
+      ),
+    );
+    expect(job).toMatchObject({ status: "done", rowsTotal: 4, rowsCreated: 4, rowsFailed: 0, failure: null });
+    expect(job.mapped.map((m: { field: string }) => m.field).sort()).toEqual([
+      "name",
+      "note",
+      "phone",
+      "stage",
+    ]);
+    const leads = (await ok(call("GET", "/v1/crm/leads?limit=10", owner))).leads as {
+      name: string;
+      phone: string;
+      id: string;
+    }[];
+    expect(leads.map((l) => l.phone).sort()).toEqual([
+      "+998903702628",
+      "+998915196289",
+      "+998990013888",
+      "+998994244554",
+    ]);
+    // A lead with no name is called by its number; a stage text that is not one of the funnel's is left alone.
+    expect(leads.find((l) => l.phone === "+998994244554")?.name).toBe("+998994244554");
+    expect(
+      (await ok(call("GET", `/v1/crm/leads/${leads.find((l) => l.phone === "+998903702628")!.id}`, owner)))
+        .lead.stageName,
+    ).toBe("Yangi lead");
+    const noted = leads.find((l) => l.phone === "+998990013888")!;
+    expect(
+      (await ok(call("GET", `/v1/crm/leads/${noted.id}`, owner))).notes.map((n: { text: string }) => n.text),
+    ).toEqual(["тел олмади"]);
+  });
+
+  it("imports a CSV (semicolons, Windows-1251) and tells what to do with an old .xls", async () => {
+    const csv = Buffer.from("Ism;Telefon\r\nAli;901112233\r\nVali;90 222 33 44\r\n");
+    const job = await ok(
+      call("POST", "/v1/crm/import/file", owner, {
+        fileName: "leads.csv",
+        dataBase64: csv.toString("base64"),
+      }),
+    );
+    expect(job).toMatchObject({ status: "done", rowsCreated: 2 });
+    const xls = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]);
+    const old = await call("POST", "/v1/crm/import/file", owner, {
+      fileName: "old.xls",
+      dataBase64: xls.toString("base64"),
+    });
+    expect(old.statusCode).toBe(400);
+    expect(old.json().code).toBe("OLD_XLS");
+    expect(old.json().message).toContain(".xlsx");
+  });
+
+  it("when no column has phones, the failure lists the columns it saw", async () => {
+    const job = await ok(
+      call("POST", "/v1/crm/import/file", owner, xlsxBody([[], ["Ism", "Yosh"], ["Ali", 30]])),
+    );
+    expect(job.status).toBe("failed");
+    expect(job.failure).toContain("Ism, Yosh");
+  });
+
   it("an import with no phone column fails as a whole, and says why; a file that is not xlsx is refused", async () => {
     const job = await ok(
       call(
@@ -610,12 +685,13 @@ describe.skipIf(!available)("CRM", () => {
     expect(job.status).toBe("failed");
     expect(job.failure).toMatch(/phone/i);
     expect(job.rowsCreated).toBe(0);
-    const text = await call("POST", "/v1/crm/import/file", owner, {
+    // A broken zip (it starts like an .xlsx and is not one) is refused; a plain text file is a CSV and is read.
+    const broken = await call("POST", "/v1/crm/import/file", owner, {
       fileName: "leads.xlsx",
-      dataBase64: Buffer.from("name,phone\nAli,901234567").toString("base64"),
+      dataBase64: Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4, 5, 6, 7, 8]).toString("base64"),
     });
-    expect(text.statusCode).toBe(400);
-    expect(text.json().code).toBe("BAD_XLSX");
+    expect(broken.statusCode).toBe(400);
+    expect(broken.json().code).toBe("BAD_XLSX");
   });
 
   it("an import by a manager makes the manager's own leads, and cannot take another's", async () => {

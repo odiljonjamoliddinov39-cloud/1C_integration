@@ -6,6 +6,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 import { HttpError } from "../lib/errors.js";
+import { readCsv } from "./csv.js";
 
 /** The biggest sheet read: a guard against a file that is a zip bomb or a million empty rows. */
 const MAX_ROWS = 20_000;
@@ -52,6 +53,40 @@ function columnName(index: number): string {
     n = Math.floor((n - 1) / 26);
   }
   return out;
+}
+
+/** A number cell as Excel wrote it: 9.98901234567E11 is the phone 998901234567, not text with an "E" in it. */
+function plainNumber(v: string, type: string | undefined): string {
+  if (type !== undefined && type !== "n") return v;
+  if (!/^-?\d+(\.\d+)?[eE][+-]?\d+$/.test(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) && Number.isInteger(n) && Math.abs(n) < 1e21 ? BigInt(n).toString() : v;
+}
+
+/** What a file is, by its first bytes: a zip (an .xlsx), an old Excel .xls (OLE), or text (CSV). */
+export function fileKind(data: Uint8Array): "xlsx" | "xls" | "text" {
+  if (data[0] === 0x50 && data[1] === 0x4b) return "xlsx";
+  if (data[0] === 0xd0 && data[1] === 0xcf && data[2] === 0x11 && data[3] === 0xe0) return "xls";
+  return "text";
+}
+
+/**
+ * The rows of an uploaded file, whatever it is: an .xlsx, or a CSV. The old binary .xls cannot be read: the message says how to
+ * save it as .xlsx.
+ */
+export function readSheetFile(data: Uint8Array): string[][] {
+  switch (fileKind(data)) {
+    case "xlsx":
+      return readXlsx(data);
+    case "xls":
+      throw new HttpError(
+        400,
+        "OLD_XLS",
+        "This is an old Excel file (.xls): open it in Excel and use File → Save As → Excel Workbook (.xlsx), or save it as CSV",
+      );
+    default:
+      return readCsv(data);
+  }
 }
 
 /** The first sheet of the workbook as rows of text (empty cells are ""). Throws 400 for a file that is not a workbook. */
@@ -117,7 +152,7 @@ export function readXlsx(data: Uint8Array): string[][] {
         if (v !== undefined) {
           if (type === "s") value = shared[Number(v)] ?? "";
           else if (type === "b") value = v === "1" ? "TRUE" : "FALSE";
-          else value = unescapeXml(v);
+          else value = plainNumber(unescapeXml(v), type);
         }
       }
       while (cells.length < index) cells.push("");
