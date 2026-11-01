@@ -40,6 +40,7 @@ const DYNAMIC = [
   "expired",
   "owner",
   "support",
+  "manager",
   "member",
   // The types of a credit transaction.
   "Monthly credits",

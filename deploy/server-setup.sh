@@ -84,6 +84,27 @@ if [ -f .telegram-credentials ]; then
   echo "Telegram bot updated."
 fi
 
+# The CRM's bot (docs/crm.md) and the Google key for importing sheets, from the CRM_BOT_TOKEN / CRM_BOT_USERNAME and
+# GOOGLE_SERVICE_ACCOUNT_JSON repository secrets.
+if [ -f .crm-credentials ]; then
+  crm_token=$(sed -n 1p .crm-credentials | tr -d '\r')
+  crm_name=$(sed -n 2p .crm-credentials | tr -d '\r')
+  rm -f .crm-credentials
+  { grep -v -e '^CRM_BOT_TOKEN=' -e '^CRM_BOT_USERNAME=' .env || true
+    echo "CRM_BOT_TOKEN=${crm_token}"
+    echo "CRM_BOT_USERNAME=${crm_name}"; } > .env.new
+  mv .env.new .env
+  echo "CRM bot updated."
+fi
+if [ -f .google-credentials ]; then
+  google_json=$(tr -d '\r\n' < .google-credentials)
+  rm -f .google-credentials
+  { grep -v '^GOOGLE_SERVICE_ACCOUNT_JSON=' .env || true
+    echo "GOOGLE_SERVICE_ACCOUNT_JSON='${google_json}'"; } > .env.new
+  mv .env.new .env
+  echo "Google service account updated."
+fi
+
 if [ -n "${API_IMAGE:-}" ]; then
   grep -q '^API_IMAGE=' .env && sed -i "s#^API_IMAGE=.*#API_IMAGE=${API_IMAGE}#" .env || echo "API_IMAGE=${API_IMAGE}" >> .env
 fi

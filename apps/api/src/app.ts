@@ -9,6 +9,8 @@ import {
   AccountsQuery,
   ActivateDeviceInput,
   AdminLoginInput,
+  ChangePasswordInput,
+  SetTelegramInput,
   AddonSaveInput,
   AdminCreditAdjustInput,
   AdminCreditDecisionInput,
@@ -75,6 +77,10 @@ import { Seal } from "./remote/seal.js";
 import { RemoteService } from "./remote/service.js";
 import { Bot, type TelegramApi, botApi } from "./remote/telegram.js";
 import { Service } from "./service.js";
+import { Crm } from "./crm/service.js";
+import { CrmImport } from "./crm/import.js";
+import { CrmReports } from "./crm/reports.js";
+import { registerCrmRoutes } from "./crm/routes.js";
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   return schema.parse(value);
@@ -89,6 +95,8 @@ export interface AppDeps {
   adminUiDir?: string;
   /** The built Mini App (apps/miniapp/dist), served at /app/ when present. */
   miniappDir?: string;
+  /** The built CRM Mini App (apps/crm-miniapp/dist), served at /crm-app/ when present. */
+  crmMiniappDir?: string;
   /** Replaces the Bot API in tests. */
   telegram?: TelegramApi;
   /** Charges the card saved for auto-recharge; none: every auto-recharge fails and the customer is told. */
@@ -170,10 +178,21 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     return identity;
   }
 
-  async function adminAuth(req: FastifyRequest): Promise<AdminIdentity> {
+  /**
+   * The admin behind the request. A sales manager (who has the CRM only) is turned away from everything but what `options` lets
+   * through, and nobody with a one-time password gets past the change of it.
+   */
+  async function adminAuth(
+    req: FastifyRequest,
+    options: { manager?: boolean; passwordChange?: boolean } = {},
+  ): Promise<AdminIdentity> {
     const header = req.headers.authorization ?? "";
     const identity = header.startsWith("Bearer ") ? await admin.identify(header.slice(7)) : null;
     if (!identity) throw new HttpError(401, "UNAUTHORIZED", "Sign in again");
+    if (identity.mustChangePassword && !options.passwordChange)
+      throw new HttpError(403, "PASSWORD_CHANGE_REQUIRED", "Change your one-time password first");
+    if (identity.role === "manager" && !options.manager)
+      throw new HttpError(403, "FORBIDDEN", "Sales managers have the CRM section only");
     return identity;
   }
 
@@ -327,7 +346,15 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     const { email, password } = parse(AdminLoginInput, req.body);
     return admin.login(email, password);
   });
-  app.get("/v1/admin/me", async (req) => admin.me((await adminAuth(req)).id));
+  app.get("/v1/admin/me", async (req) =>
+    admin.me((await adminAuth(req, { manager: true, passwordChange: true })).id),
+  );
+  app.post("/v1/admin/password", strict, async (req) =>
+    admin.changePassword(
+      (await adminAuth(req, { manager: true, passwordChange: true })).id,
+      parse(ChangePasswordInput, req.body),
+    ),
+  );
   app.get("/v1/admin/overview", async (req) => {
     await adminAuth(req);
     return admin.overview();
@@ -431,6 +458,12 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   app.get("/v1/admin/admins", async (req) => admin.listAdmins(await adminAuth(req)));
   app.post("/v1/admin/admins", async (req) =>
     admin.createAdmin(await adminAuth(req), parse(CreateAdminInput, req.body)),
+  );
+  app.post("/v1/admin/admins/:id/telegram", async (req) =>
+    admin.setTelegram(await adminAuth(req), parse(idParam, req.params).id, parse(SetTelegramInput, req.body)),
+  );
+  app.post("/v1/admin/admins/:id/reset-password", async (req) =>
+    admin.resetPassword(await adminAuth(req), parse(idParam, req.params).id),
   );
   app.post("/v1/admin/admins/:id/disable", async (req) =>
     admin.setAdminDisabled(await adminAuth(req), parse(idParam, req.params).id, true),
@@ -581,6 +614,19 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     ),
   );
 
+  // The CRM (docs/crm.md): leads, the funnel, imports and reports for the owner and the sales managers.
+  const crm = new Crm(db);
+  registerCrmRoutes(app, {
+    db,
+    config,
+    tokens,
+    admin,
+    crm,
+    imports: new CrmImport(db, crm),
+    reports: new CrmReports(db, crm),
+    fetch: deps.fetch,
+  });
+
   // Telegram remote control (docs/remote-control.md): the mailbox, the PCs' WebSockets, the bot and the Mini App's API.
   const seal = new Seal(config.REMOTE_ENCRYPTION_KEY ?? config.JWT_SECRET);
   const remote = new RemoteService(db, seal, entitlements, config);
@@ -613,6 +659,16 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
       decorateReply: false,
     });
     app.get("/app", (_req, reply) => reply.redirect("/app/"));
+  }
+
+  if (deps.crmMiniappDir && existsSync(deps.crmMiniappDir)) {
+    await app.register(fastifyStatic, {
+      root: deps.crmMiniappDir,
+      prefix: "/crm-app/",
+      maxAge: "1h",
+      decorateReply: false,
+    });
+    app.get("/crm-app", (_req, reply) => reply.redirect("/crm-app/"));
   }
 
   // The dashboard itself: static files, routed by the URL hash, so /admin/ is the only page.

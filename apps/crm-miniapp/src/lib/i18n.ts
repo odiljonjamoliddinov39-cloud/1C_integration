@@ -1,0 +1,128 @@
+/** The Mini App's words in Uzbek and Russian. Both languages have every key (i18n.test.ts checks it). */
+export type Lang = "uz" | "ru";
+export const LANGS: Lang[] = ["uz", "ru"];
+
+const uz = {
+  title: "CRM",
+  notTelegram: "Bu ilovani Telegram ichidan oching.",
+  notLinked: "Bu Telegram akkaunti hech kimga bogʻlanmagan. Egasidan Telegram ID’ngizni qoʻshishni soʻrang.",
+  tryAgain: "Qayta urinish",
+  loading: "Yuklanmoqda…",
+  retry: "Qayta urinish",
+  search: "Ism yoki telefon boʻyicha qidirish",
+  all: "Hammasi",
+  noLeads: "Hozircha leadlar yoʻq. «+» tugmasi bilan yangisini qoʻshing.",
+  more: "Yana koʻrsatish",
+  newLead: "Yangi lead",
+  name: "Ism",
+  phone: "Telefon",
+  source: "Manba",
+  company: "Kompaniya",
+  note: "Izoh",
+  save: "Saqlash",
+  saved: "Lead qoʻshildi",
+  updated: "Bu raqam avvaldan bor edi: lead yangilandi",
+  back: "Orqaga",
+  call: "Qoʻngʻiroq qilish",
+  callResult: "Qoʻngʻiroq natijasi",
+  callHint: "Qoʻngʻiroqdan soʻng natijani belgilang:",
+  addCallResult: "Natijani belgilash",
+  minutes: "Daqiqa (ixtiyoriy)",
+  whatSaid: "Nima gaplashildi (ixtiyoriy)",
+  results: {
+    answered: "Javob berdi",
+    no_answer: "Javob bermadi",
+    busy: "Band",
+    callback: "Keyinroq",
+    wrong_number: "Notoʻgʻri raqam",
+  },
+  stage: "Bosqich",
+  stageMoved: "Bosqich oʻzgartirildi",
+  notes: "Eslatmalar",
+  writeNote: "Eslatma yozing…",
+  add: "Qoʻshish",
+  calls: "Qoʻngʻiroqlar",
+  history: "Tarix",
+  lastContact: "Oxirgi aloqa",
+  never: "hali yoʻq",
+  addedTo: "qoʻshildi",
+  noCalls: "Qoʻngʻiroqlar yoʻq",
+  noNotes: "Eslatmalar yoʻq",
+  errors: {
+    BAD_PHONE: "Telefon raqami notoʻgʻri",
+    DUPLICATE_LEAD: "Bu raqam boshqa menejerda",
+    NETWORK: "Aloqa yoʻq",
+    INIT_DATA_EXPIRED: "Telegram kirishi eskirdi: ilovani qayta oching",
+    BAD_INIT_DATA: "Telegram kirishi tasdiqlanmadi: ilovani qayta oching",
+    PASSWORD_CHANGE_REQUIRED: "Avval admin panelda bir martalik parolni oʻzgartiring",
+    UNKNOWN: "Xatolik yuz berdi",
+  } as Record<string, string>,
+};
+
+const ru: typeof uz = {
+  title: "CRM",
+  notTelegram: "Откройте это приложение из Telegram.",
+  notLinked: "Этот Telegram-аккаунт ни к кому не привязан. Попросите владельца добавить ваш Telegram ID.",
+  tryAgain: "Повторить",
+  loading: "Загрузка…",
+  retry: "Повторить",
+  search: "Поиск по имени или телефону",
+  all: "Все",
+  noLeads: "Лидов пока нет. Добавьте первого кнопкой «+».",
+  more: "Показать ещё",
+  newLead: "Новый лид",
+  name: "Имя",
+  phone: "Телефон",
+  source: "Источник",
+  company: "Компания",
+  note: "Заметка",
+  save: "Сохранить",
+  saved: "Лид добавлен",
+  updated: "Этот номер уже был: лид обновлён",
+  back: "Назад",
+  call: "Позвонить",
+  callResult: "Итог звонка",
+  callHint: "После звонка отметьте итог:",
+  addCallResult: "Отметить итог",
+  minutes: "Минуты (необязательно)",
+  whatSaid: "О чём говорили (необязательно)",
+  results: {
+    answered: "Ответил",
+    no_answer: "Не ответил",
+    busy: "Занято",
+    callback: "Позже",
+    wrong_number: "Неверный номер",
+  },
+  stage: "Этап",
+  stageMoved: "Этап изменён",
+  notes: "Заметки",
+  writeNote: "Напишите заметку…",
+  add: "Добавить",
+  calls: "Звонки",
+  history: "История",
+  lastContact: "Последний контакт",
+  never: "ещё не было",
+  addedTo: "добавлен в",
+  noCalls: "Звонков нет",
+  noNotes: "Заметок нет",
+  errors: {
+    BAD_PHONE: "Неверный номер телефона",
+    DUPLICATE_LEAD: "Этот номер у другого менеджера",
+    NETWORK: "Нет связи",
+    INIT_DATA_EXPIRED: "Вход через Telegram устарел: откройте приложение заново",
+    BAD_INIT_DATA: "Вход через Telegram не подтверждён: откройте приложение заново",
+    PASSWORD_CHANGE_REQUIRED: "Сначала смените одноразовый пароль в админ-панели",
+    UNKNOWN: "Произошла ошибка",
+  },
+};
+
+export const DICTIONARIES: Record<Lang, typeof uz> = { uz, ru };
+export type Words = typeof uz;
+
+export const pickLanguage = (saved: string | null, telegram: string | null): Lang =>
+  saved === "uz" || saved === "ru" ? saved : telegram?.startsWith("ru") ? "ru" : "uz";
+
+/** The text for a server error code; the server's own message when the code is not known here. */
+export function errorText(words: Words, code: string, message: string): string {
+  return words.errors[code] ?? (code === "UNKNOWN" ? (words.errors.UNKNOWN ?? message) : message);
+}

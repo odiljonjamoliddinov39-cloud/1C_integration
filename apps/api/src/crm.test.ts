@@ -1,0 +1,679 @@
+import { createHmac, generateKeyPairSync } from "node:crypto";
+
+import postgres from "postgres";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import { buildApp } from "./app.js";
+import { loadConfig } from "./config.js";
+import { readXlsx, writeXlsx } from "./crm/xlsx.js";
+import { createDb, runMigrations } from "./db/client.js";
+
+// Needs PostgreSQL (CI starts one). Each run gets a fresh database.
+const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? "postgres://postgres@127.0.0.1:5432/postgres";
+const TEST_DB = "platform_crm_test";
+const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => undefined });
+const available = await admin`select 1`.then(() => true).catch(() => false);
+
+const { privateKey } = generateKeyPairSync("ed25519");
+const google = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const SERVICE_ACCOUNT = JSON.stringify({
+  client_email: "crm-reader@project.iam.gserviceaccount.com",
+  private_key: google.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+});
+const CRM_BOT_TOKEN = "123456:crm-bot-token-for-tests";
+
+/** What Telegram gives a Mini App: the user, signed with the bot's token. */
+function initData(telegramId: number, authDate = Math.floor(Date.now() / 1000)): string {
+  const params = new URLSearchParams({
+    auth_date: String(authDate),
+    query_id: "AAH",
+    user: JSON.stringify({ id: telegramId, first_name: "Op", language_code: "uz" }),
+  });
+  const check = [...params.entries()]
+    .map(([k, v]) => `${k}=${v}`)
+    .sort()
+    .join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(CRM_BOT_TOKEN).digest();
+  params.set("hash", createHmac("sha256", secret).update(check).digest("hex"));
+  return params.toString();
+}
+
+describe.skipIf(!available)("CRM", () => {
+  let app: Awaited<ReturnType<typeof buildApp>>;
+  let db: ReturnType<typeof createDb>;
+  let owner: string;
+
+  // The Google side, faked: the token endpoint, the sheet's metadata and its values.
+  const sharedSheets = new Set(["1SharedSheetIdAbCdEfGh"]);
+  const fakeFetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.startsWith("https://oauth2.googleapis.com/token"))
+      return new Response(JSON.stringify({ access_token: "g-token" }), { status: 200 });
+    const id = /spreadsheets\/([^/?]+)/.exec(url)?.[1] ?? "";
+    if (!sharedSheets.has(id)) return new Response("{}", { status: 403 });
+    if (url.includes("/values/"))
+      return new Response(
+        JSON.stringify({
+          values: [
+            ["Ism", "Telefon", "Manba"],
+            ["Sheet Lead", "91 111 22 33", "google"],
+          ],
+        }),
+        { status: 200 },
+      );
+    return new Response(
+      JSON.stringify({
+        properties: { title: "Leads sheet" },
+        sheets: [{ properties: { sheetId: 0, title: "List1" } }],
+      }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+
+  beforeAll(async () => {
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB} WITH (FORCE)`);
+    await admin.unsafe(`CREATE DATABASE ${TEST_DB}`);
+    const url = ADMIN_URL.replace(/\/[^/]*$/, `/${TEST_DB}`);
+    db = createDb(url);
+    await runMigrations(db.db);
+    const config = loadConfig({
+      DATABASE_URL: url,
+      JWT_SECRET: "test-secret-that-is-long-enough-1234567890",
+      LICENSE_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      LOG_LEVEL: process.env.TEST_LOG ?? "silent",
+      AUTH_RATE_PER_MINUTE: "1000",
+      ENTITLEMENTS_CACHE_SECONDS: "0",
+      BILLING_JOBS: "off",
+      REMOTE_JOBS: "off",
+      ADMIN_EMAIL: "boss@platform.uz",
+      ADMIN_PASSWORD: "admin-password-123",
+      CRM_BOT_TOKEN,
+      GOOGLE_SERVICE_ACCOUNT_JSON: SERVICE_ACCOUNT,
+    });
+    app = await buildApp(db.db, config, { fetch: fakeFetch });
+    owner = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/admin/login",
+        payload: { email: "boss@platform.uz", password: "admin-password-123" },
+      })
+    ).json().accessToken;
+  });
+
+  beforeEach(async () => {
+    await db.sql`TRUNCATE crm_pipelines, crm_leads, crm_import_jobs CASCADE`;
+    await db.sql`DELETE FROM admins WHERE role = 'manager'`;
+    await db.sql`DELETE FROM admin_audit`;
+  });
+
+  afterAll(async () => {
+    await app?.close();
+    await db?.sql.end();
+    await admin.end();
+  });
+
+  const call = (
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    url: string,
+    token?: string,
+    payload?: unknown,
+  ) =>
+    app.inject({
+      method,
+      url,
+      ...(payload === undefined ? {} : { payload: payload as object }),
+      headers: token ? { authorization: token.startsWith("tma ") ? token : `Bearer ${token}` } : {},
+    });
+  const ok = async (res: ReturnType<typeof call>) => {
+    const r = await res;
+    expect(r.statusCode, r.body).toBeLessThan(300);
+    return r.json();
+  };
+
+  /** A manager, with the one-time password changed, signed in. */
+  async function manager(email: string, telegramId?: string) {
+    const created = await ok(
+      call("POST", "/v1/admin/admins", owner, {
+        email,
+        name: email.split("@")[0],
+        role: "manager",
+        telegramId,
+      }),
+    );
+    const first = await ok(
+      call("POST", "/v1/admin/login", undefined, { email, password: created.tempPassword }),
+    );
+    await ok(
+      call("POST", "/v1/admin/password", first.accessToken, {
+        currentPassword: created.tempPassword,
+        newPassword: "my-own-password-1",
+      }),
+    );
+    const session = await ok(
+      call("POST", "/v1/admin/login", undefined, { email, password: "my-own-password-1" }),
+    );
+    return { id: created.id as string, token: session.accessToken as string };
+  }
+
+  const stages = async (token = owner) =>
+    (await ok(call("GET", "/v1/crm/funnel", token))).stages as {
+      id: string;
+      name: string;
+      isWon: boolean;
+      isLost: boolean;
+      leads: number;
+    }[];
+  const stageId = async (name: string) => (await stages()).find((s) => s.name === name)!.id;
+  const addLead = (token: string, phone: string, extra: object = {}) =>
+    call("POST", "/v1/crm/leads", token, { name: `Lead ${phone}`, phone, ...extra });
+
+  it("starts with a funnel the admin can shape: add, rename, reorder, delete", async () => {
+    const first = await stages();
+    expect(first.map((s) => s.name)).toEqual([
+      "Yangi lead",
+      "Bog'lanildi",
+      "Qiziqish bildirdi",
+      "Kelishuv",
+      "Mijoz bo'ldi",
+      "Rad etildi",
+    ]);
+    expect(first.find((s) => s.name === "Mijoz bo'ldi")?.isWon).toBe(true);
+    expect(first.find((s) => s.name === "Rad etildi")?.isLost).toBe(true);
+
+    await ok(call("POST", "/v1/crm/stages", owner, { name: "Taklif yuborildi", color: "#112233" }));
+    const added = await stages();
+    expect(added.at(-1)?.name).toBe("Taklif yuborildi");
+    const offer = added.at(-1)!.id;
+    await ok(call("PATCH", `/v1/crm/stages/${offer}`, owner, { name: "Taklif" }));
+    // A stage cannot be both won and lost.
+    expect(
+      (await call("PATCH", `/v1/crm/stages/${added[0]!.id}`, owner, { isWon: true, isLost: true }))
+        .statusCode,
+    ).toBe(400);
+
+    const order = added.map((s) => s.id).reverse();
+    expect(
+      (await ok(call("PUT", "/v1/crm/stages/order", owner, { ids: order }))).stages.map(
+        (s: { id: string }) => s.id,
+      ),
+    ).toEqual(order);
+    expect((await call("PUT", "/v1/crm/stages/order", owner, { ids: order.slice(1) })).statusCode).toBe(400);
+
+    await ok(call("DELETE", `/v1/crm/stages/${offer}`, owner));
+    expect((await stages()).map((s) => s.name)).not.toContain("Taklif");
+    expect(await stages()).toHaveLength(6);
+  });
+
+  it("deleting a stage with leads asks where they go, and keeps the history of the stage", async () => {
+    const lead = (await ok(addLead(owner, "901234567"))).lead;
+    const fresh = await stageId("Yangi lead");
+    const next = await stageId("Bog'lanildi");
+    const res = await call("DELETE", `/v1/crm/stages/${fresh}`, owner);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("STAGE_HAS_LEADS");
+    await ok(call("DELETE", `/v1/crm/stages/${fresh}?moveTo=${next}`, owner));
+    const detail = await ok(call("GET", `/v1/crm/leads/${lead.id}`, owner));
+    expect(detail.lead.stageName).toBe("Bog'lanildi");
+    expect(detail.history.map((h: { toStage: string }) => h.toStage)).toEqual(["Bog'lanildi", "Yangi lead"]);
+  });
+
+  it("a lead with the same phone is updated, not added twice", async () => {
+    const created = await addLead(owner, "+998 90 123-45-67", { source: "instagram" });
+    expect(created.statusCode).toBe(201);
+    const again = await addLead(owner, "90 123 45 67", { name: "Ali Valiyev", company: "Ali MChJ" });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().created).toBe(false);
+    expect(again.json().lead.id).toBe(created.json().lead.id);
+    expect(again.json().lead.name).toBe("Ali Valiyev");
+    expect(again.json().lead.source).toBe("instagram");
+    expect(again.json().lead.phone).toBe("+998901234567");
+    expect((await ok(call("GET", "/v1/crm/leads", owner))).total).toBe(1);
+    expect((await addLead(owner, "12345")).statusCode).toBe(400);
+  });
+
+  it("a manager is made with a one-time password, which must be changed before anything else", async () => {
+    const created = await ok(
+      call("POST", "/v1/admin/admins", owner, { email: "ali@platform.uz", name: "Ali", role: "manager" }),
+    );
+    expect(created.tempPassword).toMatch(/^[A-Za-z0-9]{12}$/);
+    expect(created.mustChangePassword).toBe(true);
+    const login = await ok(
+      call("POST", "/v1/admin/login", undefined, {
+        email: "ali@platform.uz",
+        password: created.tempPassword,
+      }),
+    );
+    expect(login.admin.mustChangePassword).toBe(true);
+    const stuck = await call("GET", "/v1/crm/leads", login.accessToken);
+    expect(stuck.statusCode).toBe(403);
+    expect(stuck.json().code).toBe("PASSWORD_CHANGE_REQUIRED");
+    expect((await call("GET", "/v1/admin/me", login.accessToken)).statusCode).toBe(200);
+    expect(
+      (
+        await call("POST", "/v1/admin/password", login.accessToken, {
+          currentPassword: "wrong-password",
+          newPassword: "another-password-1",
+        })
+      ).statusCode,
+    ).toBe(401);
+    await ok(
+      call("POST", "/v1/admin/password", login.accessToken, {
+        currentPassword: created.tempPassword,
+        newPassword: "another-password-1",
+      }),
+    );
+    expect((await call("GET", "/v1/crm/leads", login.accessToken)).statusCode).toBe(200);
+    // The one-time password is gone: only its hash was kept.
+    expect(
+      (
+        await call("POST", "/v1/admin/login", undefined, {
+          email: "ali@platform.uz",
+          password: created.tempPassword,
+        })
+      ).statusCode,
+    ).toBe(401);
+  });
+
+  it("a manager has the CRM only: every other part of the dashboard is closed", async () => {
+    const m = await manager("only-crm@platform.uz");
+    for (const url of [
+      "/v1/admin/overview",
+      "/v1/admin/accounts",
+      "/v1/admin/admins",
+      "/v1/admin/audit",
+      "/v1/admin/billing/plans",
+    ])
+      expect((await call("GET", url, m.token)).statusCode, url).toBe(403);
+    expect((await call("GET", "/v1/crm/leads", m.token)).statusCode).toBe(200);
+    // …and cannot shape the funnel.
+    expect((await call("POST", "/v1/crm/stages", m.token, { name: "Mine" })).statusCode).toBe(403);
+    expect((await call("DELETE", `/v1/crm/stages/${await stageId("Yangi lead")}`, m.token)).statusCode).toBe(
+      403,
+    );
+  });
+
+  it("a manager sees and touches only their own leads", async () => {
+    const a = await manager("a@platform.uz");
+    const b = await manager("b@platform.uz");
+    const leadA = (await ok(addLead(a.token, "901111111"))).lead;
+    const leadB = (await ok(addLead(b.token, "902222222"))).lead;
+    expect(leadA.ownerId).toBe(a.id);
+
+    expect((await ok(call("GET", "/v1/crm/leads", a.token))).leads.map((l: { id: string }) => l.id)).toEqual([
+      leadA.id,
+    ]);
+    expect((await ok(call("GET", "/v1/crm/leads", owner))).total).toBe(2);
+    // Another manager's lead looks as if it did not exist, whatever is done to it.
+    expect((await call("GET", `/v1/crm/leads/${leadB.id}`, a.token)).statusCode).toBe(404);
+    expect((await call("PATCH", `/v1/crm/leads/${leadB.id}`, a.token, { name: "x" })).statusCode).toBe(404);
+    expect(
+      (await call("POST", `/v1/crm/leads/${leadB.id}/stage`, a.token, { stageId: await stageId("Kelishuv") }))
+        .statusCode,
+    ).toBe(404);
+    expect((await call("POST", `/v1/crm/leads/${leadB.id}/notes`, a.token, { text: "x" })).statusCode).toBe(
+      404,
+    );
+    expect(
+      (await call("POST", `/v1/crm/leads/${leadB.id}/calls`, a.token, { result: "answered" })).statusCode,
+    ).toBe(404);
+    // The same phone as someone else's lead is a conflict, not an overwrite.
+    const clash = await addLead(a.token, "902222222", { name: "Stolen" });
+    expect(clash.statusCode).toBe(409);
+    expect(clash.json().code).toBe("DUPLICATE_LEAD");
+    expect((await ok(call("GET", `/v1/crm/leads/${leadB.id}`, owner))).lead.name).toBe("Lead 902222222");
+    // A manager cannot hand a lead to anyone.
+    expect((await call("PATCH", `/v1/crm/leads/${leadA.id}`, a.token, { ownerId: b.id })).statusCode).toBe(
+      403,
+    );
+    // The owner can; then it is the other manager's.
+    await ok(call("PATCH", `/v1/crm/leads/${leadA.id}`, owner, { ownerId: b.id }));
+    expect((await call("GET", `/v1/crm/leads/${leadA.id}`, a.token)).statusCode).toBe(404);
+    expect((await call("GET", `/v1/crm/leads/${leadA.id}`, b.token)).statusCode).toBe(200);
+    // The funnel's counts are the manager's own, too.
+    expect((await stages(b.token)).reduce((n, s) => n + s.leads, 0)).toBe(2);
+    expect((await stages(a.token)).reduce((n, s) => n + s.leads, 0)).toBe(0);
+  });
+
+  it("the Mini App signs in with Telegram's signed data, only for a person an owner linked", async () => {
+    await manager("tg@platform.uz", "555000111");
+    const unlinked = await call("GET", "/v1/crm/me", `tma ${initData(999)}`);
+    expect(unlinked.statusCode).toBe(403);
+    expect(unlinked.json().code).toBe("NOT_LINKED");
+    // A forged signature and an old one are both refused.
+    expect(
+      (
+        await call(
+          "GET",
+          "/v1/crm/me",
+          `tma ${initData(555000111).replace(/hash=[0-9a-f]+/, "hash=" + "0".repeat(64))}`,
+        )
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (await call("GET", "/v1/crm/me", `tma ${initData(555000111, Math.floor(Date.now() / 1000) - 7200)}`))
+        .statusCode,
+    ).toBe(401);
+
+    const session = await ok(call("POST", "/v1/crm/session", `tma ${initData(555000111)}`));
+    expect(session.me.role).toBe("manager");
+    expect(session.me.seesAll).toBe(false);
+    expect((await call("GET", "/v1/crm/leads", session.accessToken)).statusCode).toBe(200);
+    // The session is for the CRM only: it opens nothing of the dashboard.
+    expect((await call("GET", "/v1/admin/me", session.accessToken)).statusCode).toBe(401);
+    expect((await call("GET", "/v1/admin/overview", session.accessToken)).statusCode).toBe(401);
+    // Someone who is not signed in gets nothing.
+    expect((await call("GET", "/v1/crm/leads")).statusCode).toBe(401);
+
+    // Taking the link away signs the person out at once, and one Telegram account cannot belong to two people.
+    const ali = await manager("tg2@platform.uz");
+    expect(
+      (await call("POST", `/v1/admin/admins/${ali.id}/telegram`, owner, { telegramId: "555000111" }))
+        .statusCode,
+    ).toBe(409);
+    const linked = await ok(call("GET", "/v1/admin/admins", owner));
+    const tg = linked.find((a: { email: string }) => a.email === "tg@platform.uz");
+    await ok(call("POST", `/v1/admin/admins/${tg.id}/telegram`, owner, { telegramId: null }));
+    expect((await call("GET", "/v1/crm/me", `tma ${initData(555000111)}`)).statusCode).toBe(403);
+  });
+
+  it("an operator's day: stage moves, notes, calls — all remembered", async () => {
+    const m = await manager("op@platform.uz");
+    const lead = (await ok(addLead(m.token, "903333333", { note: "Called us first" }))).lead;
+    expect(lead.stageName).toBe("Yangi lead");
+    expect(lead.lastContactAt).toBeNull();
+
+    const moved = await ok(
+      call("POST", `/v1/crm/leads/${lead.id}/stage`, m.token, { stageId: await stageId("Bog'lanildi") }),
+    );
+    expect(moved.stageName).toBe("Bog'lanildi");
+    await ok(call("POST", `/v1/crm/leads/${lead.id}/notes`, m.token, { text: "Wants a demo" }));
+    await ok(call("POST", `/v1/crm/leads/${lead.id}/calls`, m.token, { result: "no_answer" }));
+    await ok(
+      call("POST", `/v1/crm/leads/${lead.id}/calls`, m.token, {
+        result: "answered",
+        durationSec: 95,
+        note: "Friday",
+      }),
+    );
+
+    const detail = await ok(call("GET", `/v1/crm/leads/${lead.id}`, m.token));
+    expect(detail.notes.map((n: { text: string }) => n.text).sort()).toEqual([
+      "Called us first",
+      "Wants a demo",
+    ]);
+    expect(detail.calls.map((c: { result: string }) => c.result)).toEqual(["answered", "no_answer"]);
+    expect(detail.calls[0].durationSec).toBe(95);
+    expect(detail.lead.lastContactAt).not.toBeNull();
+    expect(
+      detail.history.map((h: { fromStage: string | null; toStage: string }) => [h.fromStage, h.toStage]),
+    ).toEqual([
+      ["Yangi lead", "Bog'lanildi"],
+      [null, "Yangi lead"],
+    ]);
+    expect(detail.history[0].byName).toBe("op");
+    // Moving to the stage it is already in changes nothing.
+    await ok(
+      call("POST", `/v1/crm/leads/${lead.id}/stage`, m.token, { stageId: await stageId("Bog'lanildi") }),
+    );
+    expect((await ok(call("GET", `/v1/crm/leads/${lead.id}`, m.token))).history).toHaveLength(2);
+  });
+
+  it("filters the lead list and finds a lead by any part of its phone", async () => {
+    await ok(addLead(owner, "904444444", { name: "Sardor", source: "instagram" }));
+    await ok(addLead(owner, "905555555", { name: "Dilnoza", source: "reklama", company: "Dil MChJ" }));
+    const list = (q: string) =>
+      call("GET", `/v1/crm/leads?${q}`, owner).then((r) =>
+        r.json().leads.map((l: { name: string }) => l.name),
+      );
+    expect(await list("q=sardor")).toEqual(["Sardor"]);
+    expect(await list("q=555-55")).toEqual(["Dilnoza"]);
+    expect(await list("q=dil%20mchj")).toEqual(["Dilnoza"]);
+    expect(await list("source=instagram")).toEqual(["Sardor"]);
+    expect(await list("ownerId=none")).toHaveLength(2);
+    expect(await list(`stageId=${await stageId("Kelishuv")}`)).toEqual([]);
+    expect(await list("q=%25")).toEqual([]);
+  });
+
+  it("counts the funnel, the conversion, the sources and the managers", async () => {
+    const a = await manager("rep-a@platform.uz");
+    const b = await manager("rep-b@platform.uz");
+    const s = {
+      new: await stageId("Yangi lead"),
+      talk: await stageId("Bog'lanildi"),
+      interest: await stageId("Qiziqish bildirdi"),
+      deal: await stageId("Kelishuv"),
+      won: await stageId("Mijoz bo'ldi"),
+      lost: await stageId("Rad etildi"),
+    };
+    // Ten leads of manager A (instagram) and two of B (reklama).
+    const leads: string[] = [];
+    for (let i = 0; i < 10; i++)
+      leads.push(
+        (await ok(addLead(a.token, `9100000${String(i).padStart(2, "0")}`, { source: "instagram" }))).lead.id,
+      );
+    const other: string[] = [];
+    for (let i = 0; i < 2; i++)
+      other.push(
+        (await ok(addLead(b.token, `9200000${String(i).padStart(2, "0")}`, { source: "reklama" }))).lead.id,
+      );
+    const move = (token: string, id: string, stage: string) =>
+      ok(call("POST", `/v1/crm/leads/${id}/stage`, token, { stageId: stage }));
+    // A: 8 talked to, 5 interested, 3 reached a deal, 2 won (one straight from "deal"), 1 lost after talking, 2 never moved.
+    for (const id of leads.slice(0, 8)) await move(a.token, id, s.talk);
+    for (const id of leads.slice(0, 5)) await move(a.token, id, s.interest);
+    for (const id of leads.slice(0, 3)) await move(a.token, id, s.deal);
+    for (const id of leads.slice(0, 2)) await move(a.token, id, s.won);
+    await move(a.token, leads[7]!, s.lost);
+    // B: both won, jumping over the middle stages.
+    for (const id of other) await move(b.token, id, s.won);
+
+    const report = await ok(call("GET", "/v1/crm/reports", owner));
+    expect(report.totalLeads).toBe(12);
+    expect(report.won).toBe(4);
+    expect(report.lost).toBe(1);
+    expect(report.conversionPct).toBeCloseTo(33.3, 1);
+    // A funnel counts a lead in every stage it got to or went beyond (a lead that jumped to "won" passed the ones before).
+    expect(report.funnel.map((f: { name: string; reached: number }) => [f.name, f.reached])).toEqual([
+      ["Yangi lead", 12],
+      ["Bog'lanildi", 10],
+      ["Qiziqish bildirdi", 7],
+      ["Kelishuv", 5],
+      ["Mijoz bo'ldi", 4],
+    ]);
+    expect(report.funnel[1].fromPrevPct).toBeCloseTo(83.3, 1);
+    expect(report.funnel[4].fromFirstPct).toBeCloseTo(33.3, 1);
+    expect(report.lostStages).toEqual([{ stageId: s.lost, name: "Rad etildi", leads: 1 }]);
+
+    const instagram = report.bySource.find((x: { source: string }) => x.source === "instagram");
+    expect(instagram).toMatchObject({ leads: 10, won: 2, conversionPct: 20 });
+    expect(report.bySource.find((x: { source: string }) => x.source === "reklama")).toMatchObject({
+      leads: 2,
+      won: 2,
+      conversionPct: 100,
+    });
+    const rep = (name: string) => report.byManager.find((m: { name: string }) => m.name === name);
+    expect(rep("rep-a")).toMatchObject({ leads: 10, won: 2, lost: 1, winRatePct: 66.7 });
+    expect(rep("rep-b")).toMatchObject({ leads: 2, won: 2, lost: 0, winRatePct: 100 });
+    // The time in a stage is counted from the moves.
+    const inStage = report.timeInStage.find((t: { name: string }) => t.name === "Bog'lanildi");
+    expect(inStage.leads).toBeGreaterThan(0);
+    expect(inStage.avgHours).toBeGreaterThanOrEqual(0);
+
+    // A manager's reports hold only their own leads.
+    const mine = await ok(call("GET", "/v1/crm/reports", b.token));
+    expect(mine.totalLeads).toBe(2);
+    expect(mine.byManager.map((m: { name: string }) => m.name)).toEqual(["rep-b"]);
+    // The period: leads made today are in, leads of an earlier day are out.
+    const today = new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10);
+    expect((await ok(call("GET", `/v1/crm/reports?from=${today}&to=${today}`, owner))).totalLeads).toBe(12);
+    expect((await ok(call("GET", "/v1/crm/reports?to=2020-01-01", owner))).totalLeads).toBe(0);
+    expect((await call("GET", "/v1/crm/reports?from=yesterday", owner)).statusCode).toBe(400);
+  });
+
+  const xlsxBody = (rows: (string | number | null)[][]) => ({
+    fileName: "leads.xlsx",
+    dataBase64: Buffer.from(writeXlsx([{ name: "Sheet1", rows }])).toString("base64"),
+  });
+
+  it("imports an Excel file: matched columns, broken rows written down, duplicates updated", async () => {
+    await ok(addLead(owner, "901000001", { name: "Old name" }));
+    const job = await ok(
+      call(
+        "POST",
+        "/v1/crm/import/file",
+        owner,
+        xlsxBody([
+          ["Ism", "Telefon", "Manba", "Izoh", "Yosh"],
+          ["Ali", "90 100 00 02", "instagram", "Wants a quote", 30],
+          ["Vali", "90-abc-00-03", "reklama", null, 41],
+          ["New name", "+998901000001", "tavsiya", null, null],
+          [null, null, null, null, null],
+          ["Sardor", 901000004, null, null, null],
+          ["Nomer yo'q", "", null, null, null],
+          ["Ali again", "90 100 00 02", "instagram", null, null],
+        ]),
+      ),
+    );
+    expect(job).toMatchObject({
+      status: "done",
+      rowsTotal: 6,
+      rowsCreated: 2,
+      rowsUpdated: 2,
+      rowsFailed: 2,
+      failure: null,
+    });
+    expect(job.errors.map((e: { row: number }) => e.row)).toEqual([3, 7]);
+    expect(job.errors[0].reason).toMatch(/not valid/);
+    expect(job.ignored).toEqual(["Yosh"]);
+    expect(job.mapped.map((m: { field: string }) => m.field)).toEqual(["name", "phone", "source", "note"]);
+
+    const all = (await ok(call("GET", "/v1/crm/leads", owner))).leads as {
+      name: string;
+      phone: string;
+      source: string | null;
+    }[];
+    expect(all).toHaveLength(3);
+    expect(all.find((l) => l.phone === "+998901000001")).toMatchObject({
+      name: "New name",
+      source: "tavsiya",
+    });
+    expect(all.find((l) => l.phone === "+998901000004")?.name).toBe("Sardor");
+    // Imported leads are in the funnel's first stage, with their history started, and the note is kept.
+    const ali = all.find((l) => l.phone === "+998901000002") as unknown as { id: string };
+    const detail = await ok(call("GET", `/v1/crm/leads/${ali.id}`, owner));
+    expect(detail.lead.stageName).toBe("Yangi lead");
+    expect(detail.history).toHaveLength(1);
+    expect(detail.notes.map((n: { text: string }) => n.text)).toEqual(["Wants a quote"]);
+    // The job is in the history of imports.
+    expect((await ok(call("GET", "/v1/crm/import/jobs", owner)))[0]).toMatchObject({
+      id: job.id,
+      createdByName: "Owner",
+    });
+    // Importing the same file again changes nothing but counts.
+    const again = await ok(
+      call("POST", "/v1/crm/import/file", owner, xlsxBody([["Telefon"], ["90 100 00 02"]])),
+    );
+    expect(again).toMatchObject({ rowsCreated: 0, rowsUpdated: 1 });
+  });
+
+  it("an import with no phone column fails as a whole, and says why; a file that is not xlsx is refused", async () => {
+    const job = await ok(
+      call(
+        "POST",
+        "/v1/crm/import/file",
+        owner,
+        xlsxBody([
+          ["Ism", "Yosh"],
+          ["Ali", 30],
+        ]),
+      ),
+    );
+    expect(job.status).toBe("failed");
+    expect(job.failure).toMatch(/phone/i);
+    expect(job.rowsCreated).toBe(0);
+    const text = await call("POST", "/v1/crm/import/file", owner, {
+      fileName: "leads.xlsx",
+      dataBase64: Buffer.from("name,phone\nAli,901234567").toString("base64"),
+    });
+    expect(text.statusCode).toBe(400);
+    expect(text.json().code).toBe("BAD_XLSX");
+  });
+
+  it("an import by a manager makes the manager's own leads, and cannot take another's", async () => {
+    const a = await manager("imp-a@platform.uz");
+    const b = await manager("imp-b@platform.uz");
+    await ok(addLead(b.token, "906000001"));
+    const job = await ok(
+      call("POST", "/v1/crm/import/file", a.token, xlsxBody([["Phone"], ["906000001"], ["906000002"]])),
+    );
+    expect(job).toMatchObject({ rowsCreated: 1, rowsFailed: 1 });
+    expect(job.errors[0].reason).toMatch(/another manager/);
+    const mine = (await ok(call("GET", "/v1/crm/leads", a.token))).leads;
+    expect(mine).toHaveLength(1);
+    expect(mine[0].ownerId).toBe(a.id);
+    // Each sees only their own imports.
+    expect(await ok(call("GET", "/v1/crm/import/jobs", b.token))).toHaveLength(0);
+  });
+
+  it("imports a Google Sheet shared with the service account, and says so when it is not shared", async () => {
+    const info = await ok(call("GET", "/v1/crm/import/google", owner));
+    expect(info).toEqual({ enabled: true, serviceEmail: "crm-reader@project.iam.gserviceaccount.com" });
+    const job = await ok(
+      call("POST", "/v1/crm/import/sheet", owner, {
+        url: "https://docs.google.com/spreadsheets/d/1SharedSheetIdAbCdEfGh/edit#gid=0",
+      }),
+    );
+    expect(job).toMatchObject({
+      source: "google_sheet",
+      fileName: "Leads sheet",
+      rowsCreated: 1,
+      status: "done",
+    });
+    expect((await ok(call("GET", "/v1/crm/leads?q=Sheet", owner))).leads[0]).toMatchObject({
+      phone: "+998911112233",
+      source: "google",
+    });
+    const refused = await call("POST", "/v1/crm/import/sheet", owner, {
+      url: "https://docs.google.com/spreadsheets/d/1PrivateSheetIdAbCdEfGh/edit",
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json().code).toBe("SHEET_NOT_SHARED");
+    expect(refused.json().message).toContain("crm-reader@project.iam.gserviceaccount.com");
+    expect(
+      (await call("POST", "/v1/crm/import/sheet", owner, { url: "https://example.com/x" })).statusCode,
+    ).toBe(400);
+  });
+
+  it("exports the leads as they are filtered, and the reports, as .xlsx", async () => {
+    const a = await manager("exp@platform.uz");
+    await ok(addLead(owner, "907000001", { name: "Owner's", source: "x" }));
+    await ok(addLead(a.token, "907000002", { name: "Manager's", source: "y" }));
+    const file = await call("GET", "/v1/crm/leads/export.xlsx?source=y&lang=ru", owner);
+    expect(file.statusCode).toBe(200);
+    expect(file.headers["content-type"]).toContain("spreadsheetml");
+    const rows = readXlsx(file.rawPayload);
+    expect(rows[0]).toEqual([
+      "Имя",
+      "Телефон",
+      "Источник",
+      "Компания",
+      "Этап",
+      "Менеджер",
+      "Последний контакт",
+      "Создан",
+    ]);
+    expect(rows.slice(1).map((r) => r[0])).toEqual(["Manager's"]);
+    // A manager exports only their own.
+    expect(readXlsx((await call("GET", "/v1/crm/leads/export.xlsx", a.token)).rawPayload)).toHaveLength(2);
+    const report = await call("GET", "/v1/crm/reports/export.xlsx?lang=uz", owner);
+    expect(report.statusCode).toBe(200);
+    expect(readXlsx(report.rawPayload)[0]?.[0]).toBe("Bosqich");
+  });
+
+  it("writes the owner's changes to the audit log", async () => {
+    await ok(call("POST", "/v1/crm/stages", owner, { name: "Audit me" }));
+    await ok(call("POST", "/v1/crm/import/file", owner, xlsxBody([["Phone"], ["908000001"]])));
+    const audit = (await ok(call("GET", "/v1/admin/audit", owner))) as { action: string }[];
+    expect(audit.map((e) => e.action)).toEqual(expect.arrayContaining(["crm.stage.add", "crm.import"]));
+  });
+});

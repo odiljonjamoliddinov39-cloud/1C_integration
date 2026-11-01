@@ -7,6 +7,7 @@ import type { Config } from "../config.js";
 
 const ISSUER = "platform-control";
 const ADMIN_ISSUER = "platform-admin";
+const CRM_ISSUER = "platform-crm";
 
 export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -66,6 +67,31 @@ export class Tokens {
         issuer: ADMIN_ISSUER,
         algorithms: ["HS256"],
       });
+      return typeof payload.sub === "string" ? payload.sub : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * A CRM Mini App session: made from a verified Telegram sign-in, good for the working day, and only for /v1/crm (its own
+   * issuer: it never opens the admin dashboard, even for a person who is an owner).
+   */
+  async crmToken(adminId: string): Promise<{ token: string; expiresIn: number }> {
+    const expiresIn = this.config.ADMIN_TOKEN_HOURS * 3600;
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(adminId)
+      .setIssuer(CRM_ISSUER)
+      .setIssuedAt()
+      .setExpirationTime(`${expiresIn}s`)
+      .sign(this.secret);
+    return { token, expiresIn };
+  }
+
+  async verifyCrm(token: string): Promise<string | null> {
+    try {
+      const { payload } = await jwtVerify(token, this.secret, { issuer: CRM_ISSUER, algorithms: ["HS256"] });
       return typeof payload.sub === "string" ? payload.sub : null;
     } catch {
       return null;
