@@ -564,7 +564,6 @@ export const UZ: Record<string, string> = {
   CRM: "CRM",
   "Call back later": "Keyinroq qoʻngʻiroq qilish",
   Calls: "Qoʻngʻiroqlar",
-  "Choose an .xlsx file": ".xlsx fayl tanlash",
   "Choose your own password": "Oʻz parolingizni tanlang",
   Colour: "Rang",
   "Columns used": "Ishlatilgan ustunlar",
@@ -648,8 +647,6 @@ export const UZ: Record<string, string> = {
   "The board shows the newest 500 leads; the Leads page has them all.":
     "Doska eng yangi 500 ta leadni koʻrsatadi; hammasi «Leadlar» sahifasida.",
   "The file is over 5 MB": "Fayl 5 MB dan katta",
-  "The first row is the header. The columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out. A lead whose phone is already here is updated.":
-    "Birinchi qator — sarlavha. Ustunlar nomiga qarab maydonlarga moslanadi (Ism, Telefon, Manba, Kompaniya, Izoh…); mos kelmaganlari eʼtiborsiz qoldiriladi. Telefon raqami allaqachon bor lead yangilanadi.",
   "The leads added in this period are counted.": "Shu davrda qoʻshilgan leadlar hisoblanadi.",
   "The passwords differ.": "Parollar bir xil emas.",
   "Time in a stage": "Bosqichda oʻtkazilgan vaqt",
@@ -671,4 +668,7 @@ export const UZ: Record<string, string> = {
   "{from}–{to} of {total}": "{from}–{to} / {total}",
   "{n} leads": "{n} ta lead",
   "{pct}% of previous, {first}% of all": "oldingisidan {pct}%, jamidan {first}%",
+  "The header is the row with the phone column (it may be under a few empty or title rows). Columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out, and a column with no title but with notes in it becomes the notes. A lead whose phone is already here is updated.":
+    "Sarlavha — telefon ustuni bor qator (u bir necha boʻsh yoki sarlavha qatorlari ostida boʻlishi mumkin). Ustunlar nomiga qarab maydonlarga moslanadi (Ism, Telefon, Manba, Kompaniya, Izoh…); mos kelmaganlari eʼtiborsiz qoldiriladi, nomi yoʻq, lekin ichida izohlar bor ustun esa izoh boʻladi. Telefon raqami allaqachon bor lead yangilanadi.",
+  "Choose an .xlsx or .csv file": ".xlsx yoki .csv fayl tanlash",
 };

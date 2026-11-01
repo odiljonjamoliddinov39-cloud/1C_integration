@@ -11,11 +11,26 @@ export interface Phone {
 }
 
 export function normalizePhone(raw: string): Phone | null {
-  const text = raw.trim();
+  // A spreadsheet's text marker (a leading '), non-breaking spaces and quotes are not part of the number.
+  const text = raw.replace(/[\u00a0\u202f'"`’‘]/g, " ").trim();
   if (!text || /[^\d\s()+\-.]/.test(text)) return null;
   let digits = text.replace(/\D/g, "");
   if (digits.length === 9) digits = `998${digits}`;
   if (digits.length === 10 && digits.startsWith("0")) digits = `998${digits.slice(1)}`;
   if (digits.length < 11 || digits.length > 15) return null;
   return { display: `+${digits}`, key: digits };
+}
+
+/**
+ * The number in a cell that may hold several ("90 123 45 67, 91 222 33 44", "90 123 45 67 / 71 200 10 10"): the first one that is
+ * valid. Null when none is.
+ */
+export function firstPhone(raw: string): Phone | null {
+  const whole = normalizePhone(raw);
+  if (whole) return whole;
+  for (const part of raw.split(/[,;/\n]+/)) {
+    const phone = normalizePhone(part);
+    if (phone) return phone;
+  }
+  return null;
 }

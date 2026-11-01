@@ -51,10 +51,16 @@ A manager's reports hold only their own leads.
 ## Import and export
 
 - **Export**: _Download Excel_ on the leads list (as filtered) and on the reports.
-- **Import**: an `.xlsx` file (up to about 5 MB, 20 000 rows) or a **Google Sheets** link. The first row is the header; columns
-  are matched by name in Uzbek, Russian or English (Ism/Name/Имя, Telefon/Phone/Телефон, Manba/Source/Источник, Kompaniya/Company,
-  Izoh/Note, Bosqich/Stage); other columns are left out. A broken row (bad phone) is written to `crm_import_jobs` with its row
-  number and the reason, and does not stop the rest. Each import is a job with counts (new / updated / failed) and its errors.
+- **Import**: an `.xlsx` file (up to about 5 MB, 20 000 rows), a **CSV** (`;`, `,` or a tab; UTF-8 or Windows-1251) or a **Google
+  Sheets** link. The old binary `.xls` is refused with how to save it as `.xlsx`. The **header** is the first row (of the first 30)
+  that has a phone column, so a list with an empty row or a title above it works. Columns are matched by their titles in Uzbek (Latin
+  and Cyrillic), Russian or English (Ism/ким/Name/Имя/Ф.И.О., Telefon/Tel./Номер телефона, Manba/Источник, Kompaniya/Company,
+  Izoh/Note, Bosqich/Status); a title that could be two fields is the first of: phone, source, company, note, stage, name; other columns
+  are left out, and a column with no title but with text in it (notes written beside a list) becomes the notes. A row with nothing in
+  the used columns is skipped (a list numbered far below its last entry). A cell with several phones takes the first valid one; a
+  stage text that is not one of the funnel's is ignored. A broken row (bad phone) is written to `crm_import_jobs` with its row number
+  and the reason, and does not stop the rest. When no column has phones, the failure lists the columns it saw. Each import is a job
+  with counts (new / updated / failed), the columns used and left out, and its errors.
 - **Google Sheets** is a **one-time read**, no sync: the customer shares the sheet (read only) with the service account's e-mail
   (shown on the import panel) and pastes the link. Needs `GOOGLE_SERVICE_ACCOUNT_JSON`.
 

@@ -103,7 +103,7 @@ export function ImportPanel() {
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         {t(
-          "The first row is the header. The columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out. A lead whose phone is already here is updated.",
+          "The header is the row with the phone column (it may be under a few empty or title rows). Columns are matched to the fields by their names (Ism, Telefon, Manba, Kompaniya, Izoh…); the ones that match nothing are left out, and a column with no title but with notes in it becomes the notes. A lead whose phone is already here is updated.",
         )}
       </p>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -112,7 +112,7 @@ export function ImportPanel() {
           <input
             ref={file}
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.csv"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -121,7 +121,7 @@ export function ImportPanel() {
             }}
           />
           <Button variant="outline" disabled={busy} onClick={() => file.current?.click()}>
-            {upload.isPending ? t("Importing…") : t("Choose an .xlsx file")}
+            {upload.isPending ? t("Importing…") : t("Choose an .xlsx or .csv file")}
           </Button>
           <ErrorText error={upload.error} />
         </div>

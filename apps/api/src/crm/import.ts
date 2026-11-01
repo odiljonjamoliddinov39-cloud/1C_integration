@@ -9,80 +9,99 @@ import { desc, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { admins, crmImportJobs, crmLeads, crmNotes, crmStageHistory } from "../db/schema.js";
 import { type Crm, type CrmActor, seesAll } from "./service.js";
-import { normalizePhone } from "./phone.js";
+import { firstPhone } from "./phone.js";
 
 type Field = "name" | "phone" | "source" | "company" | "note" | "stage";
 
-const NAMES: Record<Field, string[]> = {
-  name: [
-    "name",
-    "full name",
-    "fullname",
-    "client",
-    "customer",
-    "ism",
-    "ismi",
-    "ism familiya",
-    "ism familiyasi",
-    "fio",
-    "f i o",
-    "mijoz",
-    "mijoz nomi",
-    "имя",
-    "фио",
-    "ф и о",
-    "клиент",
-    "контакт",
-    "название",
-  ],
-  phone: [
+/**
+ * What a column's title may say, in Uzbek (Latin and Cyrillic), Russian and English. A title matches when one of its words is one of
+ * these (a short one must be the whole word, so "Telegram" is not "tel"), or starts with one of the longer ones ("telefon raqami",
+ * "Номер телефона"). A title that could be two fields is the first of this list: "Mijoz telefoni" is a phone, "Company name" a company.
+ */
+const KEYWORDS: [Field, string[]][] = [
+  [
     "phone",
-    "phone number",
-    "tel",
-    "telephone",
-    "mobile",
-    "telefon",
-    "telefon raqam",
-    "telefon raqami",
-    "tel raqam",
-    "raqam",
-    "nomer",
-    "номер",
-    "телефон",
-    "тел",
-    "номер телефона",
-    "мобильный",
+    [
+      "tel",
+      "тел",
+      "phone",
+      "telefon",
+      "mobil",
+      "mobile",
+      "cell",
+      "raqam",
+      "nomer",
+      "номер",
+      "телефон",
+      "мобил",
+      "рақам",
+      "раками",
+    ],
   ],
-  source: ["source", "channel", "manba", "kanal", "reklama", "источник", "канал"],
-  company: [
+  ["source", ["manba", "source", "channel", "kanal", "канал", "источник", "манба"]],
+  [
     "company",
-    "organization",
-    "organisation",
-    "firm",
-    "kompaniya",
-    "firma",
-    "tashkilot",
-    "korxona",
-    "компания",
-    "организация",
-    "фирма",
+    [
+      "kompaniya",
+      "company",
+      "firma",
+      "tashkilot",
+      "korxona",
+      "organization",
+      "organisation",
+      "компания",
+      "организация",
+      "фирма",
+      "ташкилот",
+      "корхона",
+    ],
   ],
-  note: [
+  [
     "note",
-    "notes",
-    "comment",
-    "comments",
-    "izoh",
-    "izohlar",
-    "kommentariya",
-    "komment",
-    "примечание",
-    "комментарий",
-    "заметка",
-    "заметки",
+    [
+      "izoh",
+      "note",
+      "notes",
+      "comment",
+      "comments",
+      "komment",
+      "eslatma",
+      "изох",
+      "эслатма",
+      "примечание",
+      "комментарий",
+      "заметка",
+      "заметки",
+    ],
   ],
-  stage: ["stage", "status", "bosqich", "holat", "статус", "этап", "стадия"],
-};
+  ["stage", ["bosqich", "stage", "status", "holat", "статус", "этап", "стадия", "босқич", "холат"]],
+  [
+    "name",
+    [
+      "ism",
+      "ismi",
+      "исм",
+      "name",
+      "fio",
+      "fish",
+      "full",
+      "client",
+      "customer",
+      "mijoz",
+      "contact",
+      "kontakt",
+      "kim",
+      "ким",
+      "мижоз",
+      "имя",
+      "фио",
+      "клиент",
+      "контакт",
+      "фамилия",
+      "familiya",
+    ],
+  ],
+];
 
 const normalizeHeader = (h: string) =>
   h
@@ -90,26 +109,71 @@ const normalizeHeader = (h: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
-/** Which sheet column feeds which field: the first column that matches a field's name wins. */
-export function mapColumns(header: string[]): {
+function fieldOf(title: string): Field | null {
+  const words = normalizeHeader(title).split(" ").filter(Boolean);
+  // "Ф.И.О." and "F.I.O." are three one-letter words: put together they are the title "фио".
+  const joined = words.join("");
+  for (const [field, stems] of KEYWORDS)
+    if (
+      stems.includes(joined) ||
+      words.some((w) => stems.some((stem) => (stem.length <= 3 ? w === stem : w.startsWith(stem))))
+    )
+      return field;
+  return null;
+}
+
+export interface Columns {
   fields: Map<Field, number>;
   mapped: { column: string; field: string }[];
   ignored: string[];
-} {
+}
+
+/**
+ * Which sheet column feeds which field: the first column that matches a field's title wins. A column with no title but with data in
+ * it (the notes someone wrote beside a list) becomes the notes when no column is titled so. `body` is the rows under the header.
+ */
+export function mapColumns(header: string[], body: string[][] = []): Columns {
   const fields = new Map<Field, number>();
   const mapped: { column: string; field: string }[] = [];
   const ignored: string[] = [];
   header.forEach((raw, index) => {
     const column = raw.trim();
     if (!column) return;
-    const key = normalizeHeader(column);
-    const field = (Object.keys(NAMES) as Field[]).find((f) => NAMES[f].includes(key));
+    const field = fieldOf(column);
     if (field && !fields.has(field)) {
       fields.set(field, index);
       mapped.push({ column, field });
     } else ignored.push(column);
   });
+  if (!fields.has("note")) {
+    const width = Math.max(header.length, ...body.map((r) => r.length));
+    let untitled = -1;
+    for (let i = 0; i < width && untitled < 0; i++)
+      if (!(header[i] ?? "").trim() && body.some((r) => (r[i] ?? "").trim() !== "")) untitled = i;
+    if (untitled >= 0) {
+      fields.set("note", untitled);
+      mapped.push({ column: "—", field: "note" });
+    }
+  }
   return { fields, mapped, ignored };
+}
+
+/**
+ * The header is the first row (of the first 30) with a phone column: lists often have a title or an empty row above it. When none
+ * has, the first row with anything in it is reported (for the message). `index` is the row's place in `rows`.
+ */
+export function findHeader(rows: string[][]): { index: number; columns: Columns } {
+  const limit = Math.min(rows.length, 30);
+  let firstFilled = -1;
+  for (let i = 0; i < limit; i++) {
+    const row = rows[i] ?? [];
+    if (row.every((c) => !c.trim())) continue;
+    if (firstFilled < 0) firstFilled = i;
+    const columns = mapColumns(row, rows.slice(i + 1));
+    if (columns.fields.has("phone")) return { index: i, columns };
+  }
+  const index = Math.max(firstFilled, 0);
+  return { index, columns: mapColumns(rows[index] ?? [], rows.slice(index + 1)) };
 }
 
 const MAX_ERRORS = 200;
@@ -186,15 +250,17 @@ export class CrmImport {
     };
 
     try {
-      const header = rows[0] ?? [];
-      const { fields, mapped, ignored } = mapColumns(header);
+      const { index: headerRow, columns: found } = findHeader(rows);
+      const { fields, mapped, ignored } = found;
       const columns = { mapped, ignored };
-      if (!fields.has("phone"))
+      if (!fields.has("phone")) {
+        const seen = (rows[headerRow] ?? []).map((c) => c.trim()).filter(Boolean);
         return await finish({
           status: "failed",
           columns,
-          failure: "No column with phone numbers was found: name it Telefon, Phone or Телефон",
+          failure: `No column with phone numbers was found: name it Telefon, Phone or Телефон. The columns seen: ${seen.join(", ") || "none"}`,
         });
+      }
 
       const stages = await this.crm.stageIdsByName();
       const first = await this.crm.firstStage();
@@ -211,25 +277,25 @@ export class CrmImport {
         failed += 1;
         if (errors.length < MAX_ERRORS) errors.push({ row, reason });
       };
-      for (let i = 1; i < rows.length; i++) {
+      const used = [...fields.values()];
+      for (let i = headerRow + 1; i < rows.length; i++) {
         const row = rows[i] ?? [];
-        if (row.every((c) => !c.trim())) continue;
+        // A row with nothing in the columns that are used is not a row (a list numbered far below its last entry).
+        if (used.every((index) => !(row[index] ?? "").trim())) continue;
         total += 1;
         const rawPhone = cell(row, "phone");
         if (!rawPhone) {
           fail(i + 1, "The phone number is empty");
           continue;
         }
-        const phone = normalizePhone(rawPhone);
+        const phone = firstPhone(rawPhone);
         if (!phone) {
           fail(i + 1, `The phone number is not valid: ${rawPhone.slice(0, 40)}`);
           continue;
         }
-        const stageName = cell(row, "stage");
-        if (stageName && !stages.has(stageName.toLowerCase())) {
-          fail(i + 1, `No such stage: ${stageName.slice(0, 40)}`);
-          continue;
-        }
+        // A stage that is not one of the funnel's is not an error: such a column is often a status of someone else's.
+        const stageText = cell(row, "stage");
+        const stageName = stages.has(stageText.toLowerCase()) ? stageText : "";
         // The same number twice in one file: the later row adds to the earlier one (what it leaves empty stays).
         const before = prepared.get(phone.key);
         if (before) updatedInFile += 1;
