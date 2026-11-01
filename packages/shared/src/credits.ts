@@ -56,6 +56,8 @@ export const CreditTransactionView = z.object({
   amountCredits: z.number(),
   balanceAfter: z.number(),
   note: z.string().nullable(),
+  /** Which balance it moved: the plan's credits or the extra (bought) ones. */
+  pool: z.enum(["plan", "extra"]).default("plan"),
   createdAt: z.string(),
 });
 export type CreditTransactionView = z.infer<typeof CreditTransactionView>;
@@ -95,8 +97,33 @@ export const RequestCreditsInput = z.object({
 });
 export type RequestCreditsInput = z.infer<typeof RequestCreditsInput>;
 
+/** A day's or a week's limit of the plan's credits and how much of it is used. */
+export const CreditLimitView = z.object({
+  limitCredits: z.number(),
+  usedCredits: z.number(),
+  /** When the window starts over. */
+  resetsAt: z.string(),
+});
+export type CreditLimitView = z.infer<typeof CreditLimitView>;
+
+/** What stops the plan's credits now: the day's limit, the week's limit, or nothing left of them (null: nothing). */
+export const CreditBlock = z.enum(["daily", "weekly", "plan"]).nullable();
+export type CreditBlock = z.infer<typeof CreditBlock>;
+
 export const CreditsView = z.object({
+  /** The plan's credits: what the plan gives each month, with what was carried over. */
   balanceCredits: z.number(),
+  /** The extra credits: bought or given as a bonus. Used only when the plan's credits or a limit are out, and only if allowed. */
+  extraCredits: z.number().default(0),
+  /** The customer allowed the extra credits to be used when the plan's credits or a limit are out. */
+  extraEnabled: z.boolean().default(false),
+  /** The day's and the week's limits of the plan's credits (null: the plan has none). */
+  daily: CreditLimitView.nullable().default(null),
+  weekly: CreditLimitView.nullable().default(null),
+  /** Why the plan's credits cannot be used now, if they cannot. */
+  blocked: CreditBlock.default(null),
+  /** When the plan's credits are added again. */
+  planResetsAt: z.string().nullable().default(null),
   /** The balance in soum at the current price of a credit. */
   balanceSom: z.number(),
   somPerCredit: z.number(),
@@ -122,6 +149,11 @@ export type CreditsView = z.infer<typeof CreditsView>;
 /** The short form on the entitlements: enough for the desktop's sidebar and its "no credits" dialog. */
 export const CreditsSummary = z.object({
   balanceCredits: z.number(),
+  extraCredits: z.number().default(0),
+  extraEnabled: z.boolean().default(false),
+  blocked: CreditBlock.default(null),
+  /** When the day's or the week's limit starts over, while it is the one reached. */
+  resetsAt: z.string().nullable().default(null),
   somPerCredit: z.number(),
   monthlyCredits: z.number(),
   low: z.boolean(),
@@ -133,6 +165,10 @@ export const PurchaseCreditsInput = z.object({
   provider: z.enum(["payme", "click", "bank"]).default("payme"),
 });
 export type PurchaseCreditsInput = z.infer<typeof PurchaseCreditsInput>;
+
+/** The customer allows (or stops) the extra credits being used when the plan's credits or a limit are out. */
+export const ExtraCreditsInput = z.object({ enabled: z.boolean() });
+export type ExtraCreditsInput = z.infer<typeof ExtraCreditsInput>;
 
 export const AutoRechargeInput = z.object({
   enabled: z.boolean(),
@@ -156,6 +192,8 @@ export const AdminCreditAdjustInput = z.object({
   reason: z.string().trim().min(3).max(300),
   /** A bonus or promo credit, or a plain correction. */
   kind: z.enum(["bonus", "admin_adjustment"]).default("admin_adjustment"),
+  /** Which balance: the plan's credits or the extra ones. */
+  pool: z.enum(["plan", "extra"]).default("plan"),
 });
 export type AdminCreditAdjustInput = z.infer<typeof AdminCreditAdjustInput>;
 
@@ -236,6 +274,8 @@ export type AdminRestartPaymentsResult = z.infer<typeof AdminRestartPaymentsResu
 
 export const AdminAccountCredits = z.object({
   balanceCredits: z.number(),
+  extraCredits: z.number(),
+  extraEnabled: z.boolean(),
   somPerCredit: z.number(),
   rolloverCapCredits: z.number(),
   requests: z.array(AdminCreditRequest),

@@ -290,8 +290,9 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
   const [credits, setCredits] = useState("");
   const [reason, setReason] = useState("");
   const [kind, setKind] = useState<"bonus" | "admin_adjustment">("bonus");
+  const [pool, setPool] = useState<"plan" | "extra">("extra");
   const adjust = useMutation({
-    mutationFn: () => api.adjustCredits(id, { credits: Number(credits), reason, kind }),
+    mutationFn: () => api.adjustCredits(id, { credits: Number(credits), reason, kind, pool }),
     onSuccess: () => {
       setCredits("");
       setReason("");
@@ -307,7 +308,8 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
       title={t("AI credits")}
       actions={
         <Badge tone="info">
-          {number(v.balanceCredits)} {t("credits")} · {number(v.balanceCredits * v.somPerCredit)} {t("sum")}
+          {t("Plan")}: {number(v.balanceCredits)} · {t("Extra")}: {number(v.extraCredits)} {t("credits")}
+          {v.extraEnabled ? "" : ` (${t("extra off")})`}
         </Badge>
       }
     >
@@ -332,6 +334,13 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
               <Input type="number" value={credits} onChange={(e) => setCredits(e.target.value)} />
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {t("Balance")}
+              <Select value={pool} onChange={(e) => setPool(e.target.value as typeof pool)}>
+                <option value="extra">{t("Extra credits")}</option>
+                <option value="plan">{t("Plan credits")}</option>
+              </Select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               {t("Kind")}
               <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
                 <option value="bonus">{t("Bonus")}</option>
@@ -351,11 +360,12 @@ export function CreditsSection({ id, owner }: { id: string; owner: boolean }) {
       {v.history.length === 0 ? (
         <Empty>{t("No credit history yet.")}</Empty>
       ) : (
-        <Table head={[t("When"), t("Type"), t("Credits"), t("Balance"), t("Note")]}>
+        <Table head={[t("When"), t("Type"), t("Balance"), t("Credits"), t("After"), t("Note")]}>
           {v.history.map((h) => (
             <tr key={h.id}>
               <Td>{dateTime(h.createdAt)}</Td>
               <Td>{t(TYPE_NAMES[h.type])}</Td>
+              <Td>{h.pool === "extra" ? t("Extra") : t("Plan")}</Td>
               <Td className={h.amountCredits < 0 ? "text-destructive" : undefined}>
                 {h.amountCredits > 0 ? "+" : ""}
                 {number(h.amountCredits)}

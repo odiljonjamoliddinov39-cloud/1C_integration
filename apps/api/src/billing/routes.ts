@@ -5,6 +5,7 @@ import {
   ChangePlanInput,
   CheckoutInput,
   CompanyInput,
+  ExtraCreditsInput,
   ImportInput,
   InviteUserInput,
   PaymentProvider,
@@ -152,6 +153,13 @@ export function registerSubscriptionRoutes(app: FastifyInstance, deps: RouteDeps
   app.post("/v1/billing/credits/requests/:id/cancel", async (req) => {
     const { accountId } = await owner(req);
     return deps.creditRequests.cancel(accountId, parse(z.object({ id: z.uuid() }), req.params).id);
+  });
+  // The customer allows the extra credits to be used when the plan's credits or a limit are out (off: the offer is shown).
+  app.post("/v1/billing/credits/extra", async (req) => {
+    const { enabled } = parse(ExtraCreditsInput, req.body);
+    const { accountId } = await owner(req);
+    await deps.credits.setExtraEnabled(accountId, enabled);
+    return deps.credits.view(accountId);
   });
   app.post("/v1/billing/credits/auto-recharge", async (req) =>
     deps.credits.saveAutoRecharge((await owner(req)).accountId, parse(AutoRechargeInput, req.body)),

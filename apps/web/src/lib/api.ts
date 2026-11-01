@@ -222,6 +222,9 @@ export const requestCredits = (input: { credits: number }) =>
   authorized("POST", "/v1/billing/credits/request", CreditRequestView, input);
 export const cancelCreditRequest = (id: string) =>
   authorized("POST", `/v1/billing/credits/requests/${id}/cancel`, CreditRequestView);
+/** The customer allows (or stops) the extra credits being used when the plan's credits or a limit are out. */
+export const setExtraCredits = (input: { enabled: boolean }) =>
+  authorized("POST", "/v1/billing/credits/extra", CreditsView, input);
 export const saveAutoRecharge = (input: {
   enabled: boolean;
   thresholdCredits: number;

@@ -80,14 +80,15 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
       .set({ planId: plan!.id, status: "active", endsAt: new Date(Date.now() + 20 * 86_400_000) })
       .where(eq(subscriptions.accountId, accountId));
   };
-  const setBalance = (accountId: string, balance: number) =>
+  /** Bought credits are the extra balance. */
+  const setBalance = (accountId: string, extra: number) =>
     db.db
       .insert(creditAccounts)
-      .values({ accountId, balanceCredits: balance })
-      .onConflictDoUpdate({ target: creditAccounts.accountId, set: { balanceCredits: balance } });
+      .values({ accountId, extraCredits: extra })
+      .onConflictDoUpdate({ target: creditAccounts.accountId, set: { extraCredits: extra } });
   const balanceOf = async (accountId: string) =>
     (await db.db.query.creditAccounts.findFirst({ where: eq(creditAccounts.accountId, accountId) }))
-      ?.balanceCredits ?? 0;
+      ?.extraCredits ?? 0;
   const adminToken = async () =>
     (
       await call("POST", "/v1/admin/login", undefined, {
@@ -188,7 +189,7 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
     expect(over.json().code).toBe("CREDIT_CAP");
     expect((await call("POST", "/v1/billing/credits/request", token, { credits: 10 })).statusCode).toBe(400);
 
-    await db.db.update(creditAccounts).set({ balanceCredits: 0 });
+    await db.db.update(creditAccounts).set({ extraCredits: 0 });
     for (let i = 0; i < 3; i++) {
       expect((await call("POST", "/v1/billing/credits/request", token, { credits: 1_000 })).statusCode).toBe(
         200,

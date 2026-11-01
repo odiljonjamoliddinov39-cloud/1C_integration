@@ -79,6 +79,8 @@ export const PlanView = z.object({
   aiQuestionsPerMonth: z.number(),
   /** The AI credits the plan adds each month. */
   monthlyCredits: z.number().default(0),
+  dailyLimitPct: z.number().default(15),
+  weeklyLimitPct: z.number().default(35),
   features: z.object({
     excelExport: z.boolean(),
     prioritySupport: z.boolean(),

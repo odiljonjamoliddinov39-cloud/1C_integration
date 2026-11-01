@@ -38,6 +38,8 @@ export function planView(p: typeof plans.$inferSelect): PlanView {
     auditsPerMonth: p.auditsPerMonth,
     aiQuestionsPerMonth: p.aiQuestionsPerMonth,
     monthlyCredits: p.monthlyCredits,
+    dailyLimitPct: p.dailyLimitPct,
+    weeklyLimitPct: p.weeklyLimitPct,
     features: {
       excelExport: p.features.excelExport ?? false,
       prioritySupport: p.features.prioritySupport ?? false,

@@ -78,6 +78,9 @@ export const plans = pgTable("plans", {
   aiQuestionsPerMonth: integer("ai_questions_per_month").notNull().default(0),
   /** The AI credits the plan adds to the account's balance each month (docs/billing.md, "AI credits"). */
   monthlyCredits: integer("monthly_credits").notNull().default(0),
+  /** What share of the monthly credits the plan lets an account use in a day and in a week (0: no limit). */
+  dailyLimitPct: integer("daily_limit_pct").notNull().default(15),
+  weeklyLimitPct: integer("weekly_limit_pct").notNull().default(35),
   /** e.g. {"maxDevicesPerSeat": 2, "excelExport": true}. */
   features: jsonb("features").$type<PlanFeatures>().notNull().default({}),
   isPublic: boolean("is_public").notNull().default(true),
@@ -791,6 +794,9 @@ export const creditAccounts = pgTable("credit_accounts", {
     .notNull()
     .default(0),
   rolloverCapCredits: integer("rollover_cap_credits").notNull().default(50_000),
+  /** The extra credits (bought, or given as a bonus): used only when the plan's credits or a limit are out, and only if `extra_enabled`. */
+  extraCredits: numeric("extra_credits", { precision: 16, scale: 4, mode: "number" }).notNull().default(0),
+  extraEnabled: boolean("extra_enabled").notNull().default(false),
   autoEnabled: boolean("auto_enabled").notNull().default(false),
   autoThreshold: integer("auto_threshold").notNull().default(300),
   autoAmount: integer("auto_amount").notNull().default(1_000),
@@ -813,7 +819,12 @@ export const creditTransactions = pgTable(
       enum: ["monthly_grant", "trial_grant", "purchase", "bonus", "ai_usage", "rollover", "admin_adjustment"],
     }).notNull(),
     amountCredits: numeric("amount_credits", { precision: 16, scale: 4, mode: "number" }).notNull(),
+    /** What the pool's balance is after this entry. */
     balanceAfter: numeric("balance_after", { precision: 16, scale: 4, mode: "number" }).notNull(),
+    /** "plan": the credits the plan gives (monthly, trial, carried over); "extra": bought or bonus credits. */
+    pool: text("pool", { enum: ["plan", "extra"] })
+      .notNull()
+      .default("plan"),
     relatedUsageId: uuid("related_usage_id"),
     periodKey: text("period_key"),
     note: text("note"),

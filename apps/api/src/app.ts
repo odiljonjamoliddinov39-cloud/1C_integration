@@ -535,9 +535,10 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     const who = await ownerOnly(req);
     const { id } = parse(idParam, req.params);
     const input = parse(AdminCreditAdjustInput, req.body);
-    const balance = await credits.adjust(id, input.credits, input.kind, input.reason, who.id);
+    const balance = await credits.adjust(id, input.credits, input.kind, input.reason, who.id, input.pool);
     await admin.audit(who.id, "credits.adjust", `account:${id}`, {
       credits: input.credits,
+      pool: input.pool,
       reason: input.reason,
     });
     return { balanceCredits: balance };

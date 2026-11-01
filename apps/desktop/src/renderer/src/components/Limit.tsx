@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useBilling } from "@/lib/billing";
 
+/** The refusals the extra credits answer: the cabinet is where they are turned on or bought. */
+const AI_CREDIT_CODES = new Set(["AI_BUDGET_EXCEEDED", "AI_LIMIT_DAILY", "AI_LIMIT_WEEKLY"]);
+
 interface Shown {
   code: string;
   message: string;
@@ -52,7 +55,7 @@ function LimitDialog({ shown, onClose }: { shown: Shown; onClose: () => void }) 
                 onClose();
               }}
             >
-              {t("billing.upgrade")}
+              {AI_CREDIT_CODES.has(shown.code) ? t("billing.openCabinet") : t("billing.upgrade")}
             </Button>
           )}
         </div>
