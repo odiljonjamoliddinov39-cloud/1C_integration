@@ -12,7 +12,7 @@ import {
   type AiEvent,
   type QueryTemplateView,
 } from "@platform/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AssistantEvent } from "../shared/ipc.js";
 import { AssistantService, auditToCsv, compactBatch, createdState } from "./assistant.js";
@@ -4492,7 +4492,16 @@ describe("assistant", () => {
       text("Tayyor"),
     ];
 
+    // The learner tells "today" from "the first of the month" by the date in the query: on the 1st both match and
+    // the question is not learned. These two tests need a day in the middle of a month, whatever day it is.
+    const midMonth = () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-15T09:00:00Z"));
+    };
+    afterEach(() => vi.useRealTimers());
+
     it("teaches the engine from the chats saved before: each question once, and what a live question already taught is not repeated", async () => {
+      midMonth();
       const t = setup([...oneQuery(), ...oneQuery()], "active", server({}));
       // Two questions in a chat made before the engine learned from them (no trace log then).
       await ask(t, "Какой остаток в кассе сегодня?");
@@ -4525,6 +4534,7 @@ describe("assistant", () => {
     });
 
     it("sends a trace of every finished question: the steps and how it ended, no data", async () => {
+      midMonth();
       const t = setup([...oneQuery(), text("Salom!")], "active", server({}));
       await ask(t, "Какой остаток в кассе сегодня?");
       await t.assistant.send({ companyId: t.company.id, text: "Привет" });
