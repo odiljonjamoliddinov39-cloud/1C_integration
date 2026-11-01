@@ -165,6 +165,27 @@ const Env = z.object({
     .transform((v) => v?.trim() || undefined),
   /** Where uploaded files and generated outputs wait (sealed, deleted after delivery or 24 hours). */
   REMOTE_BLOB_DIR: z.string().default("/var/lib/platform/remote-blobs"),
+  /**
+   * The CRM Mini App (docs/crm.md) has its own bot, apart from the remote-control one. The token checks the Mini App's
+   * Telegram sign-in; the URL is where the Mini App is served (https://…/crm-app) and goes to the bot's menu button.
+   */
+  CRM_BOT_TOKEN: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
+  CRM_BOT_USERNAME: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().replace(/^@/, "") || undefined),
+  CRM_MINIAPP_URL: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().replace(/\/+$/, "") || undefined),
+  /** The Google service account's JSON key, for importing a Google Sheet (the customer shares the sheet with its e-mail). */
+  GOOGLE_SERVICE_ACCOUNT_JSON: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
   /** The scheduled jobs of the remote channel (expire old commands, delete old files): "off" in tests. */
   REMOTE_JOBS: z.enum(["on", "off"]).default("on"),
 });

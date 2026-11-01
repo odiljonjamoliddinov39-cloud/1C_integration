@@ -57,6 +57,11 @@ services:
       REMOTE_ENCRYPTION_KEY: ${REMOTE_ENCRYPTION_KEY:-}
       # One host: SITE_ADDRESS may list several (server-setup.sh sets PUBLIC_HOST to the first that answers).
       MINIAPP_URL: https://${PUBLIC_HOST:-${SITE_ADDRESS}}/app/
+      # The CRM (docs/crm.md): its own bot for the sales team's Mini App, and the Google key that reads a shared sheet.
+      CRM_BOT_TOKEN: ${CRM_BOT_TOKEN:-}
+      CRM_BOT_USERNAME: ${CRM_BOT_USERNAME:-}
+      CRM_MINIAPP_URL: https://${PUBLIC_HOST:-${SITE_ADDRESS}}/crm-app/
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON:-}
     volumes:
       - remote_blobs:/var/lib/platform/remote-blobs
     depends_on:

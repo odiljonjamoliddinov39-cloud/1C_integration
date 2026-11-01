@@ -502,12 +502,21 @@ export const admins = pgTable(
     email: text("email").notNull(),
     name: text("name").notNull(),
     passwordHash: text("password_hash").notNull(),
-    role: text("role", { enum: ["owner", "support"] }).notNull(),
+    role: text("role", { enum: ["owner", "support", "manager"] }).notNull(),
     disabled: boolean("disabled").notNull().default(false),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    /** The Telegram account the CRM Mini App recognises as this person (docs/crm.md). */
+    telegramId: text("telegram_id"),
+    /** The password was set by an admin or made by the system: it must be changed at the first sign-in. */
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("admins_email_key").on(t.email)],
+  (t) => [
+    uniqueIndex("admins_email_key").on(t.email),
+    uniqueIndex("admins_telegram_id_key")
+      .on(t.telegramId)
+      .where(sql`${t.telegramId} is not null`),
+  ],
 );
 
 /** Every admin action (TD §10 admin_audit). The target names what it touched, e.g. "account:<id>". */
@@ -917,3 +926,137 @@ export const creditRequests = pgTable(
     index("credit_requests_account_idx").on(t.accountId, t.createdAt),
   ],
 );
+
+// --- CRM (docs/crm.md) ------------------------------------------------------------------------------------------------
+
+/** A funnel. One for now; the table lets a later version have one per section or product. */
+export const crmPipelines = pgTable("crm_pipelines", {
+  id: id(),
+  name: text("name").notNull(),
+  createdAt: createdAt(),
+});
+
+/** A step of a funnel, in order. A won stage makes the lead a customer; a lost stage ends it (outside the funnel). */
+export const crmStages = pgTable(
+  "crm_stages",
+  {
+    id: id(),
+    pipelineId: uuid("pipeline_id")
+      .notNull()
+      .references(() => crmPipelines.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    color: text("color").notNull().default("#64748b"),
+    isWon: boolean("is_won").notNull().default(false),
+    isLost: boolean("is_lost").notNull().default(false),
+    /** A deleted stage that has history stays (the old conversions need it) but is out of the funnel and the lists. */
+    archived: boolean("archived").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [index("crm_stages_pipeline_idx").on(t.pipelineId, t.position)],
+);
+
+/** A lead / customer. The phone, reduced to its digits, tells whether it is already here (`phone_key`, unique). */
+export const crmLeads = pgTable(
+  "crm_leads",
+  {
+    id: id(),
+    pipelineId: uuid("pipeline_id")
+      .notNull()
+      .references(() => crmPipelines.id, { onDelete: "cascade" }),
+    stageId: uuid("stage_id")
+      .notNull()
+      .references(() => crmStages.id),
+    name: text("name").notNull(),
+    phone: text("phone").notNull(),
+    phoneKey: text("phone_key").notNull(),
+    source: text("source"),
+    company: text("company"),
+    /** The manager who works with the lead. */
+    ownerId: uuid("owner_id").references(() => admins.id, { onDelete: "set null" }),
+    createdBy: uuid("created_by").references(() => admins.id, { onDelete: "set null" }),
+    lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("crm_leads_phone_key").on(t.phoneKey),
+    index("crm_leads_stage_idx").on(t.stageId),
+    index("crm_leads_owner_idx").on(t.ownerId, t.createdAt),
+    index("crm_leads_created_idx").on(t.createdAt),
+  ],
+);
+
+/** Every move of a lead from stage to stage (the first one, `from_stage_id` null, is its birth): the conversion is counted from it. */
+export const crmStageHistory = pgTable(
+  "crm_stage_history",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => crmLeads.id, { onDelete: "cascade" }),
+    fromStageId: uuid("from_stage_id").references(() => crmStages.id, { onDelete: "set null" }),
+    toStageId: uuid("to_stage_id")
+      .notNull()
+      .references(() => crmStages.id),
+    byAdminId: uuid("by_admin_id").references(() => admins.id, { onDelete: "set null" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("crm_stage_history_lead_idx").on(t.leadId, t.at)],
+);
+
+/** The call log: who called which lead, when, for how long, and what came of it. */
+export const crmCalls = pgTable(
+  "crm_calls",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => crmLeads.id, { onDelete: "cascade" }),
+    byAdminId: uuid("by_admin_id").references(() => admins.id, { onDelete: "set null" }),
+    result: text("result", { enum: ["answered", "no_answer", "busy", "callback", "wrong_number"] }).notNull(),
+    durationSec: integer("duration_sec"),
+    note: text("note"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("crm_calls_lead_idx").on(t.leadId, t.startedAt)],
+);
+
+export const crmNotes = pgTable(
+  "crm_notes",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => crmLeads.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").references(() => admins.id, { onDelete: "set null" }),
+    text: text("text").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("crm_notes_lead_idx").on(t.leadId, t.createdAt)],
+);
+
+/** One import of leads from a file or a Google Sheet, with what came of every row. */
+export const crmImportJobs = pgTable("crm_import_jobs", {
+  id: id(),
+  source: text("source", { enum: ["excel", "google_sheet"] }).notNull(),
+  fileName: text("file_name").notNull(),
+  status: text("status", { enum: ["running", "done", "failed"] })
+    .notNull()
+    .default("running"),
+  rowsTotal: integer("rows_total").notNull().default(0),
+  rowsCreated: integer("rows_created").notNull().default(0),
+  rowsUpdated: integer("rows_updated").notNull().default(0),
+  rowsFailed: integer("rows_failed").notNull().default(0),
+  /** [{row, reason}], the first rows that failed. */
+  errors: jsonb("errors")
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  /** {mapped: [{column, field}], ignored: [column]}. */
+  columns: jsonb("columns")
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  failure: text("failure"),
+  createdBy: uuid("created_by").references(() => admins.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});

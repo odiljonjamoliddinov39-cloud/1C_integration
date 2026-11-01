@@ -1,4 +1,5 @@
-# Control system API, with the admin dashboard (apps/admin) served at /admin/ and the Telegram Mini App (apps/miniapp) at /app/.
+# Control system API, with the admin dashboard (apps/admin) served at /admin/, the Telegram Mini App (apps/miniapp) at /app/
+# and the CRM Mini App (apps/crm-miniapp) at /crm-app/.
 # Build from the repo root:  docker build -f apps/api/Dockerfile -t platform-api .
 FROM node:22-slim AS build
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true
@@ -8,15 +9,18 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/admin/package.json apps/admin/
 COPY apps/miniapp/package.json apps/miniapp/
+COPY apps/crm-miniapp/package.json apps/crm-miniapp/
 COPY packages/shared/package.json packages/shared/
-RUN pnpm install --frozen-lockfile --filter @platform/api... --filter @platform/admin... --filter @platform/miniapp...
+RUN pnpm install --frozen-lockfile --filter @platform/api... --filter @platform/admin... --filter @platform/miniapp... --filter @platform/crm-miniapp...
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 COPY apps/admin apps/admin
 COPY apps/miniapp apps/miniapp
+COPY apps/crm-miniapp apps/crm-miniapp
 RUN pnpm --filter @platform/api build \
  && pnpm --filter @platform/admin build \
  && pnpm --filter @platform/miniapp build \
+ && pnpm --filter @platform/crm-miniapp build \
  && pnpm --filter @platform/api deploy --prod --legacy /out
 
 FROM node:22-slim
@@ -28,6 +32,7 @@ COPY --from=build /repo/apps/api/dist ./dist
 COPY --from=build /repo/apps/api/drizzle ./drizzle
 COPY --from=build /repo/apps/admin/dist ./admin
 COPY --from=build /repo/apps/miniapp/dist ./miniapp
+COPY --from=build /repo/apps/crm-miniapp/dist ./crm-miniapp
 # Files travelling between a phone and a PC (docs/remote-control.md); a named volume keeps them across restarts.
 RUN mkdir -p /var/lib/platform/remote-blobs && chown node:node /var/lib/platform/remote-blobs
 USER node

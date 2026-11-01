@@ -14,7 +14,9 @@ await seedTemplates(db);
 // The Docker image puts the built admin dashboard next to the server (apps/api/Dockerfile).
 const adminUiDir = process.env.ADMIN_UI_DIR ?? fileURLToPath(new URL("../admin", import.meta.url));
 const miniappDir = process.env.MINIAPP_DIR ?? fileURLToPath(new URL("../miniapp", import.meta.url));
-const app = await buildApp(db, config, { adminUiDir, miniappDir });
+const crmMiniappDir =
+  process.env.CRM_MINIAPP_DIR ?? fileURLToPath(new URL("../crm-miniapp", import.meta.url));
+const app = await buildApp(db, config, { adminUiDir, miniappDir, crmMiniappDir });
 
 const close = async () => {
   await app.close();
@@ -36,5 +38,15 @@ if (config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_WEBHOOK_SECRET && config.MINIAP
     app.log.info({ webhook }, "Telegram webhook set");
   } catch (error) {
     app.log.error(error, "Telegram webhook could not be set");
+  }
+}
+
+// The CRM bot has no chat of its own: its menu button opens the CRM Mini App.
+if (config.CRM_BOT_TOKEN && config.CRM_MINIAPP_URL) {
+  try {
+    await botApi(config.CRM_BOT_TOKEN).setMenuButton?.("CRM", config.CRM_MINIAPP_URL);
+    app.log.info("CRM bot menu button set");
+  } catch (error) {
+    app.log.error(error, "The CRM bot's menu button could not be set");
   }
 }

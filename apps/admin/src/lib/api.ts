@@ -32,6 +32,24 @@ import type {
   AuditEntry,
   CostReport,
   CreateAdminInput,
+  CreatedAdmin,
+  CrmCallInput,
+  CrmCallView,
+  CrmImportFileInput,
+  CrmImportJobView,
+  CrmLeadDetail,
+  CrmLeadInput,
+  CrmLeadRow,
+  CrmLeadSaved,
+  CrmLeadUpdate,
+  CrmLeadsQuery,
+  CrmLeadsResponse,
+  CrmManagerView,
+  CrmNoteView,
+  CrmPipelineView,
+  CrmReport,
+  CrmStageInput,
+  CrmStageUpdate,
   Overview,
   QueryTemplateInput,
   QueryTemplateView,
@@ -77,15 +95,16 @@ export function onTokenChange(listener: () => void): () => void {
 }
 
 async function request<T>(
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
+  base = "/v1/admin",
 ): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {};
   if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers["content-type"] = "application/json";
-  const res = await fetch(`/v1/admin${path}`, {
+  const res = await fetch(`${base}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -94,10 +113,39 @@ async function request<T>(
   const data = text ? (JSON.parse(text) as unknown) : null;
   if (!res.ok) {
     const error = (data ?? {}) as { code?: string; message?: string };
-    if (res.status === 401 && path !== "/login") setToken(null);
+    if (res.status === 401 && path !== "/login" && !path.endsWith("/password")) setToken(null);
     throw new ApiError(res.status, error.code ?? `HTTP_${res.status}`, error.message ?? res.statusText);
   }
   return data as T;
+}
+
+const crm = <T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown) =>
+  request<T>(method, path, body, "/v1/crm");
+
+/** Fetches a file (an .xlsx export) with the session's token and hands it to the browser as a download. */
+export async function downloadFile(path: string, fileName: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/v1/crm${path}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const error = (await res.json().catch(() => ({}))) as { code?: string; message?: string };
+    throw new ApiError(res.status, error.code ?? `HTTP_${res.status}`, error.message ?? res.statusText);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** The query string of the lead filters (also used for the export). */
+export function leadParams(query: Partial<CrmLeadsQuery>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query))
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  return params.toString();
 }
 
 export const api = {
@@ -170,7 +218,37 @@ export const api = {
   setPromoDisabled: (code: string, disabled: boolean) =>
     request<PromoView[]>("POST", `/promo-codes/${code}/${disabled ? "disable" : "enable"}`),
   admins: () => request<AdminView[]>("GET", "/admins"),
-  createAdmin: (input: CreateAdminInput) => request<AdminView>("POST", "/admins", input),
+  createAdmin: (input: CreateAdminInput) => request<CreatedAdmin>("POST", "/admins", input),
+  setAdminTelegram: (id: string, telegramId: string | null) =>
+    request<AdminView>("POST", `/admins/${id}/telegram`, { telegramId }),
+  resetAdminPassword: (id: string) =>
+    request<{ tempPassword: string }>("POST", `/admins/${id}/reset-password`),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<AdminView>("POST", "/password", { currentPassword, newPassword }),
+
+  // --- CRM ---
+  crmFunnel: () => crm<CrmPipelineView>("GET", "/funnel"),
+  crmAddStage: (input: Partial<CrmStageInput>) => crm<CrmPipelineView>("POST", "/stages", input),
+  crmUpdateStage: (id: string, input: CrmStageUpdate) =>
+    crm<CrmPipelineView>("PATCH", `/stages/${id}`, input),
+  crmReorderStages: (ids: string[]) => crm<CrmPipelineView>("PUT", "/stages/order", { ids }),
+  crmDeleteStage: (id: string, moveTo?: string) =>
+    crm<CrmPipelineView>("DELETE", `/stages/${id}${moveTo ? `?moveTo=${moveTo}` : ""}`),
+  crmLeads: (query: Partial<CrmLeadsQuery>) => crm<CrmLeadsResponse>("GET", `/leads?${leadParams(query)}`),
+  crmLead: (id: string) => crm<CrmLeadDetail>("GET", `/leads/${id}`),
+  crmAddLead: (input: CrmLeadInput) => crm<CrmLeadSaved>("POST", "/leads", input),
+  crmUpdateLead: (id: string, input: CrmLeadUpdate) => crm<CrmLeadRow>("PATCH", `/leads/${id}`, input),
+  crmMoveLead: (id: string, stageId: string) => crm<CrmLeadRow>("POST", `/leads/${id}/stage`, { stageId }),
+  crmAddNote: (id: string, text: string) => crm<CrmNoteView>("POST", `/leads/${id}/notes`, { text }),
+  crmAddCall: (id: string, input: CrmCallInput) => crm<CrmCallView>("POST", `/leads/${id}/calls`, input),
+  crmTeam: () => crm<CrmManagerView[]>("GET", "/team"),
+  crmSources: () => crm<string[]>("GET", "/sources"),
+  crmImportJobs: () => crm<CrmImportJobView[]>("GET", "/import/jobs"),
+  crmImportFile: (input: CrmImportFileInput) => crm<CrmImportJobView>("POST", "/import/file", input),
+  crmImportSheet: (url: string) => crm<CrmImportJobView>("POST", "/import/sheet", { url }),
+  crmGoogle: () => crm<{ enabled: boolean; serviceEmail: string | null }>("GET", "/import/google"),
+  crmReport: (from: string, to: string) =>
+    crm<CrmReport>("GET", `/reports?${leadParams({ from, to } as Partial<CrmLeadsQuery>)}`),
   setAdminDisabled: (id: string, disabled: boolean) =>
     request<AdminView>("POST", `/admins/${id}/${disabled ? "disable" : "enable"}`),
 };

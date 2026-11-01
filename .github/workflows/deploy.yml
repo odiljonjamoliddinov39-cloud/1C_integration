@@ -7,6 +7,8 @@ name: Deploy server
 # Optional: DEPLOY_USER (default root), ANTHROPIC_API_KEY (the Claude API key for the AI assistant),
 # ADMIN_EMAIL and ADMIN_PASSWORD (the owner's sign-in for the admin dashboard at https://<site>/admin/).
 # TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME (the bot for remote control from a phone, docs/remote-control.md).
+# CRM_BOT_TOKEN and CRM_BOT_USERNAME (the CRM's own bot for the sales team's Mini App, docs/crm.md), and
+# GOOGLE_SERVICE_ACCOUNT_JSON (the service account's key, to import Google Sheets into the CRM).
 # They are written to the server's .env on each deploy.
 on:
   workflow_dispatch:
@@ -17,6 +19,7 @@ on:
         apps/api/**,
         apps/admin/**,
         apps/miniapp/**,
+        apps/crm-miniapp/**,
         packages/shared/**,
         deploy/**,
         pnpm-lock.yaml,
@@ -78,6 +81,9 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_BOT_USERNAME: ${{ secrets.TELEGRAM_BOT_USERNAME }}
+          CRM_BOT_TOKEN: ${{ secrets.CRM_BOT_TOKEN }}
+          CRM_BOT_USERNAME: ${{ secrets.CRM_BOT_USERNAME }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
@@ -95,6 +101,13 @@ jobs:
           fi
           if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
             printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_USERNAME" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.telegram-credentials"
+          fi
+          if [ -n "$CRM_BOT_TOKEN" ]; then
+            printf '%s\n%s\n' "$CRM_BOT_TOKEN" "$CRM_BOT_USERNAME" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.crm-credentials"
+          fi
+          if [ -n "$GOOGLE_SERVICE_ACCOUNT_JSON" ]; then
+            # One line: the key's own line breaks are escaped inside its strings, the ones between fields are only layout.
+            printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n' | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.google-credentials"
           fi
           # The registry token only lives for this job; it goes in on stdin, is used to pull, then logged out.
           printf '%s' "$GHCR_TOKEN" | ssh $ssh_opts "$target" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
