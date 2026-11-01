@@ -4,9 +4,10 @@ import { useTranslation } from "react-i18next";
 
 import type { ReportRunInput } from "../../../shared/ipc";
 import { errorText } from "@/components/ConnectorStatus";
+import { Page, PageHeader } from "@/components/Page";
 import { Button } from "@/components/ui/button";
 import { Card, ErrorText } from "@/components/ui/card";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, selectClass } from "@/components/ui/input";
 import { reportTables, toCsv } from "@/lib/report-tables";
 
 const REPORTS = [
@@ -91,11 +92,8 @@ export function ReportsScreen() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-8">
-      <div>
-        <h1 className="text-3xl font-extrabold tracking-tight">{t("reports.title")}</h1>
-        <p className="mt-1 text-muted-foreground">{t("reports.subtitle")}</p>
-      </div>
+    <Page className="space-y-5">
+      <PageHeader title={t("reports.title")} subtitle={t("reports.subtitle")} />
 
       {companies.data?.length === 0 ? (
         <Card className="p-6 text-muted-foreground">{t("reports.noCompanies")}</Card>
@@ -106,7 +104,7 @@ export function ReportsScreen() {
               <Label htmlFor="report-company">{t("reports.company")}</Label>
               <select
                 id="report-company"
-                className="h-10 w-full rounded-lg border border-border bg-card px-2"
+                className={selectClass}
                 value={selected}
                 onChange={(e) => setCompanyId(e.target.value)}
               >
@@ -121,7 +119,7 @@ export function ReportsScreen() {
               <Label htmlFor="report-kind">{t("reports.report")}</Label>
               <select
                 id="report-kind"
-                className="h-10 w-full rounded-lg border border-border bg-card px-2"
+                className={selectClass}
                 value={report}
                 onChange={(e) => setReport(e.target.value as Kind)}
               >
@@ -157,7 +155,7 @@ export function ReportsScreen() {
                 <Label htmlFor="report-method">{t("reports.method")}</Label>
                 <select
                   id="report-method"
-                  className="h-10 w-full rounded-lg border border-border bg-card px-2"
+                  className={selectClass}
                   value={method}
                   onChange={(e) => setMethod(e.target.value as typeof method)}
                 >
@@ -229,6 +227,6 @@ export function ReportsScreen() {
           <pre className="font-sans text-sm leading-relaxed whitespace-pre-wrap">{result.text}</pre>
         </Card>
       )}
-    </div>
+    </Page>
   );
 }

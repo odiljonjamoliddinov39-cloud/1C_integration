@@ -45,6 +45,9 @@ export function aiCredits(billing: BillingView | null): {
   balance: number;
   monthly: number;
   extra: number;
+  extraEnabled: boolean;
+  daily: { limitCredits: number; usedCredits: number; resetsAt: string } | null;
+  weekly: { limitCredits: number; usedCredits: number; resetsAt: string } | null;
   blocked: "daily" | "weekly" | "plan" | null;
   resetsAt: string | null;
 } | null {
@@ -54,6 +57,9 @@ export function aiCredits(billing: BillingView | null): {
         balance: Math.max(0, Math.floor(c.balanceCredits)),
         monthly: c.monthlyCredits,
         extra: Math.max(0, Math.floor(c.extraCredits)),
+        extraEnabled: c.extraEnabled,
+        daily: c.daily,
+        weekly: c.weekly,
         blocked: c.blocked,
         resetsAt: c.resetsAt,
       }

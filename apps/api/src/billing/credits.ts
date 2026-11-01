@@ -340,6 +340,8 @@ export class Credits {
       extraCredits: Math.floor(row?.extraCredits ?? 0),
       extraEnabled: row?.extraEnabled ?? false,
       blocked: gate.blocked,
+      daily: gate.daily,
+      weekly: gate.weekly,
       resetsAt:
         gate.blocked === "daily"
           ? (gate.daily?.resetsAt ?? null)

@@ -152,6 +152,9 @@ export const CreditsSummary = z.object({
   extraCredits: z.number().default(0),
   extraEnabled: z.boolean().default(false),
   blocked: CreditBlock.default(null),
+  /** The day's and the week's limits of the plan's credits, with how much is used (null: the plan has none). */
+  daily: CreditLimitView.nullable().default(null),
+  weekly: CreditLimitView.nullable().default(null),
   /** When the day's or the week's limit starts over, while it is the one reached. */
   resetsAt: z.string().nullable().default(null),
   somPerCredit: z.number(),

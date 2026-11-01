@@ -5,7 +5,8 @@ import { useTranslation } from "react-i18next";
 import type { CompanyView } from "../../../shared/ipc";
 import { ConnectCompanyDialog } from "@/components/ConnectCompanyDialog";
 import { DidoxTestDialog } from "@/components/DidoxTestDialog";
-import { ConnectorStatusBadge } from "@/components/ConnectorStatus";
+import { ConnectorStatusBadge, ConnectorStatusDetail } from "@/components/ConnectorStatus";
+import { Page, PageHeader } from "@/components/Page";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { describeInfobase, formatTime } from "@/lib/format";
@@ -14,17 +15,29 @@ import { cn } from "@/lib/utils";
 
 /** Company avatars cycle through the palette. */
 const AVATARS = [
-  "bg-amber-200 text-amber-900",
-  "bg-teal-100 text-teal-800",
-  "bg-violet-100 text-violet-800",
-  "bg-rose-100 text-rose-800",
+  "bg-amber-200 text-amber-900 dark:bg-amber-400/25 dark:text-amber-200",
+  "bg-teal-100 text-teal-800 dark:bg-teal-400/20 dark:text-teal-200",
+  "bg-violet-100 text-violet-800 dark:bg-violet-400/20 dark:text-violet-200",
+  "bg-rose-100 text-rose-800 dark:bg-rose-400/20 dark:text-rose-200",
 ];
 
 /** The three steps of how it works, in the colors of the design. */
 const STEPS = [
-  { key: "connect", card: "bg-indigo-100 text-indigo-950", badge: "bg-indigo-700" },
-  { key: "ask", card: "bg-teal-100 text-teal-950", badge: "bg-teal-700" },
-  { key: "confirm", card: "bg-orange-100 text-orange-950", badge: "bg-orange-700" },
+  {
+    key: "connect",
+    card: "bg-indigo-100 text-indigo-950 dark:bg-indigo-400/15 dark:text-indigo-100",
+    badge: "bg-indigo-700",
+  },
+  {
+    key: "ask",
+    card: "bg-teal-100 text-teal-950 dark:bg-teal-400/15 dark:text-teal-100",
+    badge: "bg-teal-700",
+  },
+  {
+    key: "confirm",
+    card: "bg-orange-100 text-orange-950 dark:bg-orange-400/15 dark:text-orange-100",
+    badge: "bg-orange-700",
+  },
 ] as const;
 
 export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (companyId: string) => void }) {
@@ -59,30 +72,35 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
       .join("");
 
   return (
-    <div className="mx-auto max-w-6xl p-8">
-      <div className="mb-6 flex flex-wrap items-end gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{t("companies.title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("companies.subtitle")}</p>
-        </div>
-        <Button variant="outline" className="ml-auto h-11 px-5" onClick={() => setDidoxOpen(true)}>
-          {t("didox.button")}
-        </Button>
-        <Button
-          className="h-11 px-5 shadow-lg shadow-primary/25"
-          disabled={readOnly}
-          onClick={() => setConnecting(true)}
-        >
-          <span aria-hidden="true" className="text-lg leading-none">
-            +
-          </span>
-          {t("companies.connect")}
-        </Button>
-      </div>
+    <Page>
+      <PageHeader
+        title={t("companies.title")}
+        subtitle={t("companies.subtitle")}
+        actions={
+          <>
+            <Button variant="outline" className="h-11 px-5" onClick={() => setDidoxOpen(true)}>
+              {t("didox.button")}
+            </Button>
+            <Button
+              className="h-11 px-5 shadow-lg shadow-primary/25"
+              disabled={readOnly}
+              onClick={() => setConnecting(true)}
+            >
+              <span aria-hidden="true" className="text-lg leading-none">
+                +
+              </span>
+              {t("companies.connect")}
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid gap-4 min-[1100px]:grid-cols-2 2xl:grid-cols-3">
         {companies.data?.map((company, index) => (
-          <Card key={company.id} className="flex flex-col gap-4 p-5">
+          <Card
+            key={company.id}
+            className="flex flex-col gap-4 p-5 transition-shadow duration-200 hover:shadow-lift"
+          >
             <div className="flex items-center gap-3">
               <span
                 className={cn(
@@ -103,23 +121,26 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-start gap-2">
-              <ConnectorStatusBadge status={company.lastStatus} />
-              {billing?.readOnlyCompanies.includes(company.inn) && (
-                <span
-                  className="inline-flex items-center rounded-full bg-warning/25 px-2 py-0.5 text-xs font-medium"
-                  title={t("billing.readOnlyCompany")}
-                >
-                  {t("billing.limit.COMPANY_READ_ONLY.title")}
-                </span>
-              )}
-              {company.aiEnabled && (
-                <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                  {t("companies.assistantOn")}
-                </span>
-              )}
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <ConnectorStatusBadge status={company.lastStatus} />
+                {billing?.readOnlyCompanies.includes(company.inn) && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-warning/25 px-2.5 py-0.5 text-xs font-semibold"
+                    title={t("billing.readOnlyCompany")}
+                  >
+                    {t("billing.limit.COMPANY_READ_ONLY.title")}
+                  </span>
+                )}
+                {company.aiEnabled && (
+                  <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
+                    {t("companies.assistantOn")}
+                  </span>
+                )}
+              </div>
+              <ConnectorStatusDetail status={company.lastStatus} />
             </div>
-            <div className="space-y-0.5 text-xs text-muted-foreground">
+            <div className="space-y-0.5 border-t border-border pt-3 text-xs text-muted-foreground">
               <div>
                 {t("companies.inn")}: {company.inn || "—"} · {t("companies.user")}: {company.user || "—"}
               </div>
@@ -152,7 +173,7 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
           type="button"
           disabled={readOnly}
           onClick={() => setConnecting(true)}
-          className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-6 text-center transition-colors hover:bg-primary/10 disabled:opacity-50"
+          className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 p-6 text-center transition-all duration-200 hover:border-primary/60 hover:bg-primary/10 disabled:opacity-50"
         >
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/15 text-3xl text-primary">
             +
@@ -193,6 +214,6 @@ export function CompaniesScreen({ onOpenAssistant }: { onOpenAssistant: (company
           }}
         />
       )}
-    </div>
+    </Page>
   );
 }

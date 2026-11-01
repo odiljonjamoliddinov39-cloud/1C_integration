@@ -38,13 +38,21 @@ export function SignInScreen() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-linear-to-b from-indigo-50 to-background p-6">
-      <div className="flex items-center gap-3">
-        <Logo size={44} />
-        <span className="text-2xl font-bold tracking-tight">{t("appName")}</span>
+    <div className="relative flex min-h-screen flex-col items-center justify-center gap-6 overflow-hidden bg-linear-to-b from-indigo-50 to-background p-6 dark:from-[#17143a]">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 -left-24 h-96 w-96 rounded-full bg-primary/20 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -right-24 -bottom-32 h-96 w-96 rounded-full bg-teal/20 blur-3xl"
+      />
+      <div className="relative flex items-center gap-3">
+        <Logo size={48} />
+        <span className="text-3xl font-extrabold tracking-tight">{t("appName")}</span>
       </div>
-      <Card className="w-full max-w-sm p-6 shadow-lg">
-        <h1 className="text-xl font-semibold">{creating ? t("signIn.createTitle") : t("signIn.title")}</h1>
+      <Card className="se-pop relative w-full max-w-sm p-7 shadow-dialog">
+        <h1 className="text-xl font-bold">{creating ? t("signIn.createTitle") : t("signIn.title")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{t("signIn.subtitle")}</p>
         <form onSubmit={onSubmit} className="mt-5 space-y-3">
           {creating && (
@@ -100,7 +108,7 @@ export function SignInScreen() {
             />
           </details>
           {error && <ErrorText>{error}</ErrorText>}
-          <Button className="w-full" disabled={submit.isPending}>
+          <Button className="h-11 w-full text-base shadow-lg shadow-primary/25" disabled={submit.isPending}>
             {creating ? t("signIn.create") : t("signIn.submit")}
           </Button>
         </form>
@@ -108,8 +116,8 @@ export function SignInScreen() {
           {creating ? t("signIn.haveAccount") : t("signIn.noAccount")}
         </button>
       </Card>
-      <div className="w-40">
-        <LanguageSelect className="border-border bg-card text-foreground" />
+      <div className="relative w-40">
+        <LanguageSelect variant="light" />
       </div>
     </div>
   );
