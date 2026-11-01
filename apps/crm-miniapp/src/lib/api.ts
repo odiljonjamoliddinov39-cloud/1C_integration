@@ -1,6 +1,7 @@
 /**
- * The Mini App's calls to the server. The page proves who it is once, with Telegram's signed initData, and gets a session token for
- * the working day; if the token is refused (a restart, a day passed) it asks again with the same initData.
+ * The Mini App's calls to the server. A person signs in with their own email and password and gets a session token for the working
+ * day (good for the CRM only); it is kept on the phone, and when the server refuses it (a day passed, the person was disabled)
+ * the app asks for the password again.
  */
 import type {
   CallResult,
@@ -13,6 +14,7 @@ import type {
   CrmMe,
   CrmNoteView,
   CrmPipelineView,
+  CrmSession,
 } from "@platform/shared";
 
 export class ApiError extends Error {
@@ -27,19 +29,54 @@ export class ApiError extends Error {
 
 type Fetch = typeof fetch;
 
-export class Api {
-  private token: string | null = null;
+/** Where the session token waits between visits (the phone's local storage; a test hands in its own). */
+export interface TokenStore {
+  get(): string | null;
+  set(token: string | null): void;
+}
 
+const KEY = "crm-token";
+export const browserStore: TokenStore = {
+  get() {
+    try {
+      return localStorage.getItem(KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(token) {
+    try {
+      if (token) localStorage.setItem(KEY, token);
+      else localStorage.removeItem(KEY);
+    } catch {
+      // Not kept: the person signs in again next time.
+    }
+  },
+};
+
+export class Api {
   constructor(
-    private readonly initData: () => string,
+    private readonly store: TokenStore = browserStore,
     private readonly http: Fetch = (...args) => fetch(...args),
   ) {}
 
-  private async send(path: string, init: RequestInit, auth: string): Promise<Response> {
+  get signedIn(): boolean {
+    return this.store.get() !== null;
+  }
+
+  signOut(): void {
+    this.store.set(null);
+  }
+
+  private async send(path: string, init: RequestInit): Promise<Response> {
+    const token = this.store.get();
     try {
       return await this.http(path, {
         ...init,
-        headers: { authorization: auth, ...(init.headers as Record<string, string> | undefined) },
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
       });
     } catch {
       throw new ApiError("NETWORK", "No connection");
@@ -51,21 +88,24 @@ export class Api {
     throw new ApiError(body.code ?? "UNKNOWN", body.message ?? `HTTP ${res.status}`, res.status);
   }
 
-  /** Trades Telegram's initData for a session token. */
-  async session(): Promise<CrmMe> {
-    const res = await this.send("/v1/crm/session", { method: "POST" }, `tma ${this.initData()}`);
+  /** Signs in with the person's email and password; the token is kept. */
+  async login(email: string, password: string): Promise<CrmSession> {
+    const res = await this.send("/v1/crm/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
     if (!res.ok) return this.fail(res);
-    const body = (await res.json()) as { accessToken: string; me: CrmMe };
-    this.token = body.accessToken;
-    return body.me;
+    const session = (await res.json()) as CrmSession;
+    this.store.set(session.accessToken);
+    return session;
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.token) await this.session();
-    let res = await this.send(path, init, `Bearer ${this.token}`);
+    const res = await this.send(path, init);
     if (res.status === 401) {
-      await this.session();
-      res = await this.send(path, init, `Bearer ${this.token}`);
+      this.store.set(null);
+      return this.fail(res);
     }
     if (!res.ok) return this.fail(res);
     return (await res.json()) as T;
@@ -79,6 +119,9 @@ export class Api {
     });
   }
 
+  /** Replaces a one-time password with the person's own. */
+  changePassword = (currentPassword: string, newPassword: string) =>
+    this.json<unknown>("POST", "/v1/crm/password", { currentPassword, newPassword });
   me = () => this.request<CrmMe>("/v1/crm/me");
   funnel = () => this.request<CrmPipelineView>("/v1/crm/funnel");
   leads = (q: string, stageId: string, offset = 0) => {

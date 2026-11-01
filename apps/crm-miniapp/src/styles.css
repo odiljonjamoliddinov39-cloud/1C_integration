@@ -91,8 +91,21 @@ body {
   font-weight: 500;
   color: var(--hint);
 }
-.bar .link:last-child {
+.actions {
+  display: flex;
+  gap: 14px;
   justify-self: end;
+}
+.signin {
+  width: min(100%, 360px);
+  text-align: center;
+}
+.signin h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.signin p {
+  margin: 0;
 }
 .link {
   background: none;

@@ -219,8 +219,6 @@ export const api = {
     request<PromoView[]>("POST", `/promo-codes/${code}/${disabled ? "disable" : "enable"}`),
   admins: () => request<AdminView[]>("GET", "/admins"),
   createAdmin: (input: CreateAdminInput) => request<CreatedAdmin>("POST", "/admins", input),
-  setAdminTelegram: (id: string, telegramId: string | null) =>
-    request<AdminView>("POST", `/admins/${id}/telegram`, { telegramId }),
   resetAdminPassword: (id: string) =>
     request<{ tempPassword: string }>("POST", `/admins/${id}/reset-password`),
   changePassword: (currentPassword: string, newPassword: string) =>

@@ -24,8 +24,6 @@ export const AdminView = z.object({
   role: AdminRole,
   disabled: z.boolean(),
   lastLoginAt: z.string().nullable(),
-  /** The Telegram account the CRM Mini App recognises as this person; null: not linked yet. */
-  telegramId: z.string().nullable(),
   /** The password was given by an admin: it must be changed at the first sign-in. */
   mustChangePassword: z.boolean(),
 });
@@ -40,13 +38,17 @@ export const CreateAdminInput = z.object({
   /** Empty: the system makes a one-time password and shows it once; it must be changed at the first sign-in. */
   password: Password.optional(),
   role: AdminRole,
-  telegramId: z
-    .string()
-    .trim()
-    .regex(/^\d{3,20}$/, "digits only")
-    .optional(),
 });
 export type CreateAdminInput = z.infer<typeof CreateAdminInput>;
+
+/** The CRM Mini App signs in with the person's own email and password; the answer is a session token for the CRM only. */
+export const CrmSession = z.object({
+  accessToken: z.string(),
+  expiresIn: z.number(),
+  /** The password is a one-time one: only changing it is allowed until then. */
+  mustChangePassword: z.boolean(),
+});
+export type CrmSession = z.infer<typeof CrmSession>;
 
 /** The new admin, and the one-time password when the system made it (shown once, never stored in plain text). */
 export const CreatedAdmin = AdminView.extend({ tempPassword: z.string().nullable() });
@@ -57,16 +59,6 @@ export const ChangePasswordInput = z.object({
   newPassword: Password,
 });
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInput>;
-
-/** Links (or, with null, unlinks) the Telegram account a person uses in the CRM Mini App. */
-export const SetTelegramInput = z.object({
-  telegramId: z
-    .string()
-    .trim()
-    .regex(/^\d{3,20}$/, "digits only")
-    .nullable(),
-});
-export type SetTelegramInput = z.infer<typeof SetTelegramInput>;
 
 export const ExtendInput = z.object({
   days: z.number().int().min(1).max(366),

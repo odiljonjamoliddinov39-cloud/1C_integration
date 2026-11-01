@@ -10,7 +10,6 @@ import {
   ActivateDeviceInput,
   AdminLoginInput,
   ChangePasswordInput,
-  SetTelegramInput,
   AddonSaveInput,
   AdminCreditAdjustInput,
   AdminCreditDecisionInput,
@@ -459,9 +458,6 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   app.post("/v1/admin/admins", async (req) =>
     admin.createAdmin(await adminAuth(req), parse(CreateAdminInput, req.body)),
   );
-  app.post("/v1/admin/admins/:id/telegram", async (req) =>
-    admin.setTelegram(await adminAuth(req), parse(idParam, req.params).id, parse(SetTelegramInput, req.body)),
-  );
   app.post("/v1/admin/admins/:id/reset-password", async (req) =>
     admin.resetPassword(await adminAuth(req), parse(idParam, req.params).id),
   );
@@ -619,7 +615,6 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   registerCrmRoutes(app, {
     db,
     config,
-    tokens,
     admin,
     crm,
     imports: new CrmImport(db, crm),
