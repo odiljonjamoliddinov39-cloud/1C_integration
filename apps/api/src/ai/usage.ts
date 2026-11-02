@@ -3,7 +3,7 @@
  * one per answer that never reached the model, so the dashboard counts every question. The month's
  * spend of the account is added as each row is written.
  */
-import { AI_PROPOSAL_TOOLS, type AiMessage, CONTINUE_NOTE } from "@platform/shared";
+import { AI_PROPOSAL_TOOLS, type AiMessage, CONTINUE_NOTE, GO_ON_NOTE } from "@platform/shared";
 
 import type { Db } from "../db/client.js";
 import { aiUsage } from "../db/schema.js";
@@ -50,7 +50,7 @@ export function questionStart(messages: AiMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message?.role !== "user" || isResultsMessage(message)) continue;
-    if (textOf(message).startsWith(CONTINUE_NOTE)) continue;
+    if (textOf(message).startsWith(CONTINUE_NOTE) || textOf(message).startsWith(GO_ON_NOTE)) continue;
     return i;
   }
   return 0;

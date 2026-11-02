@@ -4,7 +4,13 @@ import { describe, expect, it } from "vitest";
 const textOf = (m: AiMessage | undefined) =>
   ((m?.content ?? []) as unknown as { content: string }[])[0]?.content ?? "";
 
-import { OLD_RESULT_CHARS, compactOlderTurns, trimOlderResults } from "./history.js";
+import {
+  CHAIN_RESULT_CHARS,
+  OLD_RESULT_CHARS,
+  compactOlderTurns,
+  isGoAhead,
+  trimOlderResults,
+} from "./history.js";
 
 const result = (id: string, text: string): AiMessage => ({
   role: "user",
@@ -116,5 +122,71 @@ describe("the chat as it is sent", () => {
     expect(sizes[99]).toBeLessThan(sizes[1]! + 100 * 200);
     expect(sizes[99]).toBeLessThan(30_000);
     expect(JSON.stringify(chat).length).toBeGreaterThan(12_000_000);
+  });
+});
+
+describe("a go-ahead goes on with the work before it", () => {
+  const said = (text: string): AiMessage => ({ role: "assistant", content: [{ type: "text", text }] });
+
+  it("knows a go-ahead from a task, however short the task is", () => {
+    for (const reply of ["davom et", "1", "2", "o'tkazib yubor", "Davom et", "да"])
+      expect(isGoAhead(ask(reply)), reply).toBe(true);
+    expect(isGoAhead(ask("Write the sales invoices for the payments of 27-30 October"))).toBe(false);
+  });
+
+  it("keeps what the earlier steps read, so 'davom et' has something to go on with", () => {
+    const data = "payments: " + "row\n".repeat(200);
+    const chat = [
+      ask("Enter the sales for the bank receipts of 27-30.10.2026"),
+      use("a"),
+      result("a", data),
+      said("I read the payments. Write 'davom et' and I enter them."),
+      ask("davom et"),
+    ];
+    const sent = compactOlderTurns(chat);
+    // The task, the call, its result and the answer are all still there.
+    expect(sent.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "user"]);
+    expect(textOf(sent[2])).toBe(data);
+  });
+
+  it("keeps the whole chain of go-aheads back to the task, and reduces what is older than the task", () => {
+    const chat = [
+      ask("an older task"),
+      use("old"),
+      result("old", "old data"),
+      said("old answer"),
+      ask("the real task: enter the receipts"),
+      use("a"),
+      result("a", "data a"),
+      said("read them; say davom et"),
+      ask("davom et"),
+      use("b"),
+      result("b", "data b"),
+      said("read more; say 1"),
+      ask("1"),
+    ];
+    const sent = compactOlderTurns(chat);
+    const results = sent
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .filter((b) => b.type === "tool_result");
+    // The older task lost its result; the chain kept its two.
+    expect(results.map((b) => (b as unknown as { content: string }).content)).toEqual(["data a", "data b"]);
+    expect(sent[0]).toBe(chat[0]);
+  });
+
+  it("cuts a long kept result, and reduces as before when the new question is a task", () => {
+    const big = "z".repeat(CHAIN_RESULT_CHARS * 3);
+    const chat = [ask("task"), use("a"), result("a", big), said("done"), ask("davom et")];
+    const kept = textOf(compactOlderTurns(chat)[2]);
+    expect(kept.length).toBeLessThan(CHAIN_RESULT_CHARS + 200);
+    expect(kept).toContain("older result cut");
+    const task = [
+      ask("task"),
+      use("a"),
+      result("a", big),
+      said("done"),
+      ask("Now write the invoices for the whole of September please"),
+    ];
+    expect(compactOlderTurns(task).map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 });
