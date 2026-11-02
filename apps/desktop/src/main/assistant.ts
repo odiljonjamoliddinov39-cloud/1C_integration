@@ -16,6 +16,7 @@ import {
   AUDIT_TOOLS,
   CHAT_TOOLS,
   CONTINUE_NOTE,
+  GO_ON_NOTE,
   type AiChatInput,
   type AiContentBlock,
   type AiMessage,
@@ -160,7 +161,7 @@ import { readDeclaration } from "./gtd/run.js";
 import { gtdReport } from "./gtd/report.js";
 import { describeCached, newScaffoldCache } from "./bank/scaffold.js";
 import { gapsOf, gapsText } from "./bank/gaps.js";
-import { compactOlderTurns } from "./ai/history.js";
+import { compactOlderTurns, currentIsGoAhead } from "./ai/history.js";
 import {
   balancesText,
   batchText,
@@ -228,6 +229,13 @@ const MAX_TURNS_IMPORT = 24;
 const LAST_STEP_NOTE =
   "Step limit: this is your last step. Do not call any more tools. Answer now with what you have " +
   "found so far, and say clearly what is still unchecked and how the accountant can check it.";
+/**
+ * An answer that only promises the next step and asks the user to write "go on" again: the words of the loop that kept a long job
+ * from moving (the user said "davom et", the assistant planned, asked for "davom et", planned again).
+ */
+const DEFERS =
+  /(davom\s+et|давом\s+эт|продолж|continue|go\s+on|keyingi\s+(xabar|bosqich|qadam)|кейинги\s+(хабар|босқич|қадам)|следующ\w*\s+(сообщени|шаг|этап)|next\s+(message|step|stage))/iu;
+
 /** Tool results are cut to this many characters before they go to the model. */
 const MAX_RESULT_CHARS = 20_000;
 
@@ -1175,6 +1183,9 @@ export class AssistantService {
     const maxTurns = this.deps.maxTurns ?? (run.import ? MAX_TURNS_IMPORT : MAX_TURNS);
     // How the company works, from its own 1C: with every question, so the practice is followed, not guessed.
     const learned = (await this.policyOf(chat.companyId)).text;
+    // A go-ahead answered with a plan and no work is sent back once, with a note to do the step.
+    let workedThisQuestion = false;
+    let nudged = false;
     for (let turn = 0; turn < maxTurns; turn++) {
       const stepStarted = Date.now();
       // Read again each step: a rule the model has just saved is in force for the rest of this question.
@@ -1218,6 +1229,24 @@ export class AssistantService {
                 ]
               : [{ type: "text", text: CONTINUE_NOTE }],
         });
+        this.save(chat);
+        continue;
+      }
+      if (toolUses.length > 0) workedThisQuestion = true;
+      if (
+        !workedThisQuestion &&
+        !nudged &&
+        toolUses.length === 0 &&
+        answer.stopReason !== "refusal" &&
+        currentIsGoAhead(history.slice(0, -1)) &&
+        DEFERS.test(
+          answer.content
+            .map((b) => (b.type === "text" ? String((b as { text?: unknown }).text ?? "") : ""))
+            .join(" "),
+        )
+      ) {
+        nudged = true;
+        history.push({ role: "user", content: [{ type: "text", text: GO_ON_NOTE }] });
         this.save(chat);
         continue;
       }

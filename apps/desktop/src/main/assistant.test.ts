@@ -8,6 +8,7 @@ import {
   AUDIT_TOOLS,
   CHAT_TOOLS,
   DEFAULT_AI_POLICY,
+  GO_ON_NOTE,
   type AiChatInput,
   type AiEvent,
   type QueryTemplateView,
@@ -216,6 +217,73 @@ describe("assistant", () => {
 
     expect(events.map((e) => e.type)).toEqual(["text", "tool", "text", "done", "elapsed"]);
     expect(events[1]).toMatchObject({ type: "tool", name: "run_query", companyId: company.id });
+  });
+
+  describe("a go-ahead answered with a plan", () => {
+    const answer = (text: string) => () => [
+      { type: "text" as const, text },
+      { type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text }] },
+    ];
+    const lastUserText = (input: AiChatInput) => {
+      const last = input.messages[input.messages.length - 1];
+      return Array.isArray(last?.content)
+        ? last.content.map((b) => String((b as { text?: unknown }).text ?? "")).join(" ")
+        : String(last?.content);
+    };
+
+    it("is sent back once with a note to do the step, so a long job moves", async () => {
+      const { assistant, store, company, proxy } = setup([
+        answer("I will read the 37 payments. Write 'davom et' and I begin."),
+        // The go-ahead: first a plan again, then (after the note) the work.
+        answer("Next message: write 'davom et' and I read the payments."),
+        () => [
+          {
+            type: "message",
+            stopReason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_1",
+                name: "run_query",
+                input: { query: "ВЫБРАТЬ 1 КАК Один" },
+              },
+            ],
+          },
+        ],
+        answer("Read 37 payments: 59 013 235 so'm."),
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({
+        companyId: company.id,
+        text: "Enter the sales for the receipts of 27-30.10.2026",
+      });
+      const result = await assistant.send({ companyId: company.id, text: "davom et" });
+      expect(result).toEqual({ ok: true, data: null });
+      // The plan answer was followed by the app's note, not by the user.
+      expect(proxy.requests).toHaveLength(4);
+      expect(lastUserText(proxy.requests[2]!)).toBe(GO_ON_NOTE);
+      expect(lastUserText(proxy.requests[1]!)).toBe("davom et");
+    });
+
+    it("is not sent back when the model went on with its tools, or when the user asked a new question", async () => {
+      const { assistant, store, company, proxy } = setup([
+        answer("Plan. Write 'davom et'."),
+        answer("Done. To continue write 'davom et' for the next part."),
+        answer("Another plan. Write 'davom et'."),
+        answer("Still only a plan: write 'davom et'."),
+      ]);
+      store.setAiEnabled(company.id, true);
+      await assistant.send({ companyId: company.id, text: "Enter the sales for October" });
+      // A new question, not a go-ahead: the answer stands, with no note.
+      await assistant.send({
+        companyId: company.id,
+        text: "How much cash is in 5010 at the end of October?",
+      });
+      expect(proxy.requests).toHaveLength(2);
+      await assistant.send({ companyId: company.id, text: "davom et" });
+      // A go-ahead answered with a plan: one note, then the answer stands.
+      expect(proxy.requests).toHaveLength(4);
+    });
   });
 
   describe("the accounting knowledge of the engine", () => {

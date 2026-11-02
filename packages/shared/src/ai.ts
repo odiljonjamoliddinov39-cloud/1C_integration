@@ -1164,6 +1164,15 @@ export const CONTINUE_NOTE =
   "Your answer reached the output limit and was cut off. Continue exactly where it stopped, without " +
   "repeating what you already wrote.";
 
+/**
+ * Sent by the app (never typed by the user) when the user said "go on" and the assistant answered with a plan and asked for
+ * "go on" again, with no work done. The service does not count it as a new question.
+ */
+export const GO_ON_NOTE =
+  "[App note] The user has already asked you to go on. Do not answer with a plan or ask them to write 'continue' again, " +
+  "and do not promise a next step: do the next step now with your tools (if the results of the earlier steps are not in " +
+  "the chat, read them again), then answer with what you did and found. Only if something is truly missing, say exactly what.";
+
 export const AiChatInput = z.object({
   /** The company the questions are about (its 1C organization name). */
   company: z.string().trim().min(1).max(200),
