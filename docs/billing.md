@@ -144,7 +144,11 @@ requests wait at once). The request is a row of `credit_requests` and shows in t
 (with a count in the menu) and on the customer's page. An admin checks that the payment came and presses **Approve**: the credits are
 added at the price of the request through an invoice that is created and marked paid (`bank`, ref `request:<id>`), so the invoice
 list and the revenue are right. **Reject** adds nothing; both keep the admin's note and are written to the audit log. The customer can
-cancel a request that still waits (`POST /v1/billing/credits/requests/:id/cancel`). `POST /v1/billing/credits/purchase` answers
+cancel a request that still waits (`POST /v1/billing/credits/requests/:id/cancel`). Approving (like any paid purchase) also turns on
+**using the extra credits** for that account, so they take over as soon as the plan's own credits run out, with no step in the
+cabinet (the customer can turn it off there); while extra credits are left, the "credits are running low" warning is not raised. The
+desktop app's **AI zaxira** line shows the plan's credits and the extra ones together, and the app re-reads the balance every 5
+minutes and when its window is used again. `POST /v1/billing/credits/purchase` answers
 `APPROVAL_REQUIRED` in this mode. `CREDIT_APPROVAL=off` brings back buying by Payme, Click or bank invoice. Auto-recharge (the saved
 card) is not affected.
 

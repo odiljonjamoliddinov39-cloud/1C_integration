@@ -13,6 +13,8 @@ export const RegisterInput = z.object({
   name: z.string().trim().min(1).max(120),
   /** Firm or company name shown on invoices from us. */
   accountName: z.string().trim().min(1).max(200),
+  /** The phone of the person who signs up: the website asks for it, and the sales team gets a lead with it. */
+  phone: z.string().max(40).optional(),
 });
 export type RegisterInput = z.infer<typeof RegisterInput>;
 

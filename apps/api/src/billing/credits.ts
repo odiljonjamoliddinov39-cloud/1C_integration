@@ -129,7 +129,11 @@ const post = (tx: Tx, accountId: string, balance: number, entry: Entry) =>
 const postExtra = (tx: Tx, accountId: string, balance: number, entry: Entry) =>
   write(tx, accountId, "extra", balance, entry);
 
-/** Credits bought (an invoice paid): added to the extra credits whole, even over the cap, as they are already paid for. */
+/**
+ * Credits bought (an invoice paid, or a request an admin approved): added to the extra credits whole, even over the cap, as they
+ * are already paid for. A customer who bought credits means to use them, so using the extra credits is turned on with them (the
+ * cabinet can turn it off again); otherwise the plan's last credits would run out and the bought ones would sit unused.
+ */
 export async function grantPurchase(
   tx: Tx,
   accountId: string,
@@ -137,7 +141,13 @@ export async function grantPurchase(
   note: string,
 ): Promise<number> {
   const row = await lockRow(tx, accountId);
-  return postExtra(tx, accountId, row.extraCredits, { type: "purchase", credits, note });
+  const balance = await postExtra(tx, accountId, row.extraCredits, { type: "purchase", credits, note });
+  if (!row.extraEnabled)
+    await tx
+      .update(creditAccounts)
+      .set({ extraEnabled: true, updatedAt: new Date() })
+      .where(eq(creditAccounts.accountId, accountId));
+  return balance;
 }
 
 export const lowLevel = (monthlyCredits: number): number =>
@@ -482,7 +492,7 @@ export class Credits {
               : null,
       somPerCredit: (await this.price()).somPerCredit,
       monthlyCredits: monthly,
-      low: balance < lowLevel(monthly),
+      low: balance < lowLevel(monthly) && Math.floor(row?.extraCredits ?? 0) <= 0,
     };
   }
 
@@ -516,7 +526,7 @@ export class Credits {
       usedPeriodCredits: Math.round(gate.usedPeriod * 100) / 100,
       ...(await this.estimates()),
       rolloverCapCredits: cap,
-      low: balance < lowLevel(monthly),
+      low: balance < lowLevel(monthly) && Math.floor(row?.extraCredits ?? 0) <= 0,
       atCap: balance >= cap,
       canPurchase: r.effectivePlan.code !== "free",
       minTopupSum: MIN_TOPUP_SUM,
@@ -561,7 +571,8 @@ export class Credits {
       throw this.refusal(gate, row);
     }
     const balance = row?.balanceCredits ?? 0;
-    if (balance < lowLevel(gate.budget.budgetCredits)) {
+    // Extra credits (bought or given) are there to take over when the plan's run out: no warning to buy while there are some.
+    if (balance < lowLevel(gate.budget.budgetCredits) && Math.floor(row?.extraCredits ?? 0) <= 0) {
       const warned = await this.markLow(accountId, balance);
       if (warned)
         return {

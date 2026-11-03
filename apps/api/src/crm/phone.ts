@@ -15,6 +15,8 @@ export function normalizePhone(raw: string): Phone | null {
   const text = raw.replace(/[\u00a0\u202f'"`’‘]/g, " ").trim();
   if (!text || /[^\d\s()+\-.]/.test(text)) return null;
   let digits = text.replace(/\D/g, "");
+  // "00" is the international prefix of a number dialled from a landline or a phone book: 00 998 90 ... is +998 90 ...
+  if (digits.startsWith("00") && !text.startsWith("+")) digits = digits.slice(2);
   if (digits.length === 9) digits = `998${digits}`;
   if (digits.length === 10 && digits.startsWith("0")) digits = `998${digits.slice(1)}`;
   if (digits.length < 11 || digits.length > 15) return null;

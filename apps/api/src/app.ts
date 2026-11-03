@@ -118,7 +118,10 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
   });
   const tokens = new Tokens(config);
   const entitlements = new Billing(db, config.ENTITLEMENTS_CACHE_SECONDS * 1000);
-  const service = new Service(db, tokens, config, entitlements);
+  // The CRM (docs/crm.md): leads, the funnel, imports and reports for the owner and the sales managers.
+  const crm = new Crm(db);
+  // Everyone who signs up on the website with a phone is a new lead for the sales team.
+  const service = new Service(db, tokens, config, entitlements, (info) => crm.leadFromSignup(info));
   const invoicing = new Invoicing(db, config, entitlements);
   const billing = new BillingService(db, config, entitlements, invoicing.providers());
   const payme = new PaymeMerchant(db, config, invoicing);
@@ -611,8 +614,6 @@ export async function buildApp(db: Db, config: Config, deps: AppDeps = {}) {
     ),
   );
 
-  // The CRM (docs/crm.md): leads, the funnel, imports and reports for the owner and the sales managers.
-  const crm = new Crm(db);
   registerCrmRoutes(app, {
     db,
     config,

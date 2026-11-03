@@ -29,6 +29,7 @@ export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "l
         await register({
           name: value("name"),
           accountName: value("accountName"),
+          phone: value("phone"),
           email: value("email"),
           password: value("password"),
         });
@@ -54,6 +55,21 @@ export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "l
           <label className="block space-y-1 text-sm">
             <span>{t.accountName}</span>
             <input name="accountName" required autoComplete="organization" className={field} />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span>{t.phone}</span>
+            <input
+              name="phone"
+              type="tel"
+              required
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="+998 90 123 45 67"
+              pattern="[+0-9 ()\-.]{9,20}"
+              title={t.phoneHint}
+              className={field}
+            />
+            <span className="text-xs text-muted-foreground">{t.phoneHint}</span>
           </label>
         </>
       )}

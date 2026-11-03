@@ -45,6 +45,9 @@ export interface CrmActor {
 /** Owner and support see everything; a manager only their own leads. */
 export const seesAll = (actor: CrmActor) => actor.role !== "manager";
 
+/** The source of a lead that signed up on the website. */
+export const SIGNUP_SOURCE = "Sayt (ro'yxatdan o'tish)";
+
 /** The funnel a new installation starts with; the admin reshapes it in the settings. */
 export const DEFAULT_STAGES = [
   { name: "Yangi lead", color: "#3b82f6", isWon: false, isLost: false },
@@ -451,6 +454,65 @@ export class Crm {
     if (input.note)
       await this.db.insert(crmNotes).values({ leadId: created.id, authorId: actor.id, text: input.note });
     return { lead: await this.leadRow(actor, created.id), created: true };
+  }
+
+  /**
+   * Someone signed up on the website with a phone: they are a new lead in the first open stage, with no manager yet. A phone that is
+   * already a lead is not added twice; that lead is not changed (the number is not verified), it only gets a note about the sign-up.
+   */
+  async leadFromSignup(info: {
+    name: string;
+    accountName: string;
+    email: string;
+    phone: { display: string; key: string };
+  }): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const existing = await this.db.query.crmLeads.findFirst({
+        where: eq(crmLeads.phoneKey, info.phone.key),
+      });
+      if (existing) {
+        // Nobody has shown they own this number, so a sign-up changes nothing of an existing lead: staff only get a note saying so.
+        await this.db.insert(crmNotes).values({
+          leadId: existing.id,
+          authorId: null,
+          text: `Shu raqam bilan saytda ro'yxatdan o'tishdi (raqam tasdiqlanmagan). Pochta: ${info.email}. Firma: ${info.accountName}.`,
+        });
+        return;
+      }
+      // A new lead goes to an open stage; with only won/lost stages left there is no right place for it, so none is made.
+      const pipeline = await this.pipeline();
+      const stage = (await this.stageRows(pipeline.id)).find((s) => !s.isWon && !s.isLost);
+      if (!stage) {
+        console.error("A sign-up was not added to the CRM: the funnel has no open stage");
+        return;
+      }
+      const [created] = await this.db
+        .insert(crmLeads)
+        .values({
+          pipelineId: stage.pipelineId,
+          stageId: stage.id,
+          name: info.name,
+          phone: info.phone.display,
+          phoneKey: info.phone.key,
+          source: SIGNUP_SOURCE,
+          company: info.accountName,
+          ownerId: null,
+          createdBy: null,
+        })
+        .onConflictDoNothing({ target: crmLeads.phoneKey })
+        .returning();
+      // The same number came in at the same moment from elsewhere: the second pass finds it and adds the note.
+      if (!created) continue;
+      await this.db
+        .insert(crmStageHistory)
+        .values({ leadId: created.id, toStageId: stage.id, byAdminId: null });
+      await this.db.insert(crmNotes).values({
+        leadId: created.id,
+        authorId: null,
+        text: `Saytda ro'yxatdan o'tdi. Pochta: ${info.email}. Firma: ${info.accountName}.`,
+      });
+      return;
+    }
   }
 
   async updateLead(actor: CrmActor, id: string, input: CrmLeadUpdate): Promise<CrmLeadRow> {

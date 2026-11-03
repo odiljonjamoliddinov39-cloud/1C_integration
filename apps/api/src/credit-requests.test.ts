@@ -152,6 +152,9 @@ describe.skipIf(!available)("credit purchase requests and Restart payments", () 
     expect(approved.statusCode).toBe(200);
     expect(approved.json().pendingCount).toBe(0);
     expect(await balanceOf(accountId)).toBe(2_750);
+    // Credits the customer asked for are used when the plan's run out, with no step in the cabinet in between.
+    const after = (await call("GET", "/v1/billing/credits", token)).json();
+    expect(after).toMatchObject({ extraCredits: 2_750, extraEnabled: true, low: false });
     const row = await db.db.query.creditRequests.findFirst({ where: eq(creditRequests.id, id) });
     expect(row).toMatchObject({ status: "approved", note: "paid by transfer" });
     expect(row?.invoiceId).toBeTruthy();
