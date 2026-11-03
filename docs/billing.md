@@ -178,7 +178,7 @@ its period keeps Business until that date, one that ended goes to Free (no trial
 when `PLAN_LIMITS=on`**, which is now the deploy default (set `PLAN_LIMITS=off` in the server's `.env`
 to stop enforcing; use is still counted):
 
-1. `SITE_URL` (default `https://1c-integration.vercel.app` in `deploy/docker-compose.yml`; override it in
+1. `SITE_URL` (default `https://aibuxgalter.com` in `deploy/docker-compose.yml`; set the `SITE_URL` repository variable, or override it in
    the server's `.env`) is where the Upgrade button leads: `SITE_URL/cabinet`.
 2. For card payments set `PAYME_MERCHANT_ID`, `PAYME_KEY` and `PAYME_TEST=true` (sandbox). Without them
    only bank transfer is offered; set `BANK_REQUISITES` (lines separated by `|`) for the printed invoice.
