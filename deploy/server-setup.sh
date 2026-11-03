@@ -85,17 +85,21 @@ if [ -f .telegram-credentials ]; then
 fi
 
 # The website's address (the SITE_URL repository variable): where "Open the cabinet" in the app and the card payments' return
-# lead. A SITE_URL left in .env by an older default that was not the real site is dropped, so the address in docker-compose.yml
-# (or the variable) applies.
+# lead. Without the variable a SITE_URL already in .env is left alone (an address set by hand there keeps working), except the old
+# example address, which was never the real site and is dropped, so the address in docker-compose.yml applies.
 if [ -f .site-url ]; then
-  site_url=$(sed -n 1p .site-url | tr -d '\r' | sed 's#/*$##')
+  site_url=$(sed -n 1p .site-url | tr -d '\r' | sed -e 's#^[[:space:]]*##' -e 's#[[:space:]]*$##' -e 's#/*$##')
   rm -f .site-url
+  if ! printf '%s' "$site_url" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]"'"'"']*)?$'; then
+    echo "The SITE_URL variable must be an address like https://example.uz (got: '${site_url}'). Fix it under Settings -> Secrets and variables -> Actions -> Variables." >&2
+    exit 1
+  fi
   { grep -v '^SITE_URL=' .env || true
     echo "SITE_URL=${site_url}"; } > .env.new
   mv .env.new .env
   echo "Site address updated."
-elif grep -q '^SITE_URL=https://1c-integration.vercel.app/*$' .env; then
-  grep -v '^SITE_URL=' .env > .env.new || true
+elif grep -Eq '^SITE_URL=["'"'"']?https://1c-integration\.vercel\.app/*["'"'"']?[[:space:]]*$' .env; then
+  { grep -v '^SITE_URL=' .env || true; } > .env.new
   mv .env.new .env
   echo "Dropped an old SITE_URL that was not the real site."
 fi

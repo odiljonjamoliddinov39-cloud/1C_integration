@@ -121,7 +121,9 @@ The marketing site and customer cabinet (`apps/web`, Astro) are static pages on 
    deploys again.
 4. Tell the server the address: it is where the app's **Open the cabinet** button and the card payments' return lead
    (`SITE_URL/cabinet`). `deploy/docker-compose.yml` has the default; to use another address (a domain you bought), set a
-   repository **variable** `SITE_URL` (Settings → Secrets and variables → Actions → _Variables_) and run the deploy again.
+   repository **variable** `SITE_URL` (Settings → Secrets and variables → Actions → _Variables_; an address like
+   `https://example.uz`, a malformed one fails the deploy with a message) and run the deploy again. Without the variable, a
+   `SITE_URL` set by hand in the server's `.env` is left alone; to go back to the default, delete that line from `.env`.
 
 The Download page links to `https://<server>/download/AI-Accounting-Assistant-Setup.exe` (the old name `1C-Platform-Setup.exe` still works). The **Desktop app
 (Windows .exe)** workflow puts the installer there after each build (it uses the same deploy secrets).
