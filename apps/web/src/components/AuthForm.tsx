@@ -115,11 +115,20 @@ export function AuthForm({ locale, mode }: { locale: Locale; mode: "signup" | "l
           .
         </p>
       )}
-      <p className="text-center text-sm">
-        <a className="text-primary underline" href={href(locale, mode === "signup" ? "/login" : "/signup")}>
-          {mode === "signup" ? t.haveAccount : t.noAccount}
-        </a>
-      </p>
+      {mode === "signup" ? (
+        <div className="space-y-2 border-t border-border pt-4 text-center text-sm">
+          <p className="text-muted-foreground">{t.haveAccountText}</p>
+          <a className="btn btn-ghost h-10 w-full text-sm" href={href(locale, "/login")}>
+            {t.loginLink}
+          </a>
+        </div>
+      ) : (
+        <p className="text-center text-sm">
+          <a className="text-primary underline" href={href(locale, "/signup")}>
+            {t.noAccount}
+          </a>
+        </p>
+      )}
     </form>
   );
 }
