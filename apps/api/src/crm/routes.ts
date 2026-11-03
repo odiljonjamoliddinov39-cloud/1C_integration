@@ -15,6 +15,7 @@ import {
   CrmImportFileInput,
   CrmImportSheetInput,
   CrmLeadInput,
+  CrmAssignInput,
   CrmLeadUpdate,
   CrmLeadsQuery,
   CrmNoteInput,
@@ -136,6 +137,9 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
     const saved = await crm.createLead(await auth(req), CrmLeadInput.parse(req.body));
     return reply.status(saved.created ? 201 : 200).send(saved);
   });
+  app.post("/v1/crm/leads/assign", async (req) =>
+    crm.assignLeads(await auth(req), CrmAssignInput.parse(req.body)),
+  );
   app.get("/v1/crm/leads/:id", async (req) => crm.lead(await auth(req), idParam.parse(req.params).id));
   app.patch("/v1/crm/leads/:id", async (req) =>
     crm.updateLead(await auth(req), idParam.parse(req.params).id, CrmLeadUpdate.parse(req.body)),

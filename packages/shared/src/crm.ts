@@ -79,6 +79,39 @@ export const CrmLeadUpdate = z.object({
 });
 export type CrmLeadUpdate = z.infer<typeof CrmLeadUpdate>;
 
+/** The list's filters (a bulk assignment can use them to name its leads). */
+export const CrmLeadsQueryBase = z.object({
+  q: Text(100).optional(),
+  stageId: Id.optional(),
+  source: Text(60).optional(),
+  ownerId: z.union([Id, z.literal("none")]).optional(),
+});
+
+/** Most leads one bulk assignment may name by id. */
+export const MAX_BULK_ASSIGN = 1000;
+
+/**
+ * Gives many leads to one manager (or takes them from one: ownerId null), staff only. Either the leads picked by id, or every
+ * lead that matches a filter (the list's search, stage, source and manager) - never both.
+ */
+export const CrmAssignInput = z
+  .object({
+    ownerId: Id.nullable(),
+    ids: z.array(Id).min(1).max(MAX_BULK_ASSIGN).optional(),
+    filter: CrmLeadsQueryBase.optional(),
+  })
+  .refine((v) => (v.ids === undefined) !== (v.filter === undefined), {
+    message: "Give either ids or a filter",
+  });
+export type CrmAssignInput = z.infer<typeof CrmAssignInput>;
+
+export interface CrmAssignResult {
+  /** Leads the request named or matched. */
+  matched: number;
+  /** Of them, the ones that changed hands (those already with this manager are left alone). */
+  assigned: number;
+}
+
 export const CrmStageMoveInput = z.object({ stageId: Id });
 export type CrmStageMoveInput = z.infer<typeof CrmStageMoveInput>;
 
@@ -97,11 +130,7 @@ export const CrmCallInput = z.object({
 });
 export type CrmCallInput = z.infer<typeof CrmCallInput>;
 
-export const CrmLeadsQuery = z.object({
-  q: Text(100).optional(),
-  stageId: Id.optional(),
-  source: Text(60).optional(),
-  ownerId: z.union([Id, z.literal("none")]).optional(),
+export const CrmLeadsQuery = CrmLeadsQueryBase.extend({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });

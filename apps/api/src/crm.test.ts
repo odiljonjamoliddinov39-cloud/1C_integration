@@ -296,6 +296,73 @@ describe.skipIf(!available)("CRM", () => {
     expect(await ok(call("GET", "/v1/crm/leads?limit=20", owner))).toMatchObject({ leads: [] });
   });
 
+  it("staff give many leads to a manager at once: by id or by the list's filters; a manager cannot", async () => {
+    const a = await manager("bulk-a@x.uz");
+    const b = await manager("bulk-b@x.uz");
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++)
+      ids.push((await ok(addLead(owner, `90100000${i}`, { source: i < 3 ? "google" : "telegram" }))).lead.id);
+    const ownersOf = async () =>
+      new Map(
+        (
+          (await ok(call("GET", "/v1/crm/leads?limit=20", owner))).leads as {
+            id: string;
+            ownerId: string | null;
+          }[]
+        ).map((l) => [l.id, l.ownerId]),
+      );
+    const assign = (token: string, body: object) => call("POST", "/v1/crm/leads/assign", token, body);
+
+    // Three picked leads go to A; the others stay with nobody.
+    expect(await ok(assign(owner, { ownerId: a.id, ids: ids.slice(0, 3) }))).toEqual({
+      matched: 3,
+      assigned: 3,
+    });
+    let owners = await ownersOf();
+    expect(ids.map((id) => owners.get(id))).toEqual([a.id, a.id, a.id, null, null]);
+
+    // Again with a lead A already has: it is matched, not counted as changed.
+    expect(await ok(assign(owner, { ownerId: a.id, ids: ids.slice(0, 4) }))).toEqual({
+      matched: 4,
+      assigned: 1,
+    });
+
+    // Every lead without a manager (the list's filter) goes to B.
+    expect(await ok(assign(owner, { ownerId: b.id, filter: { ownerId: "none" } }))).toEqual({
+      matched: 1,
+      assigned: 1,
+    });
+    // By source: the telegram ones go to A.
+    expect(await ok(assign(owner, { ownerId: a.id, filter: { source: "telegram" } }))).toMatchObject({
+      matched: 2,
+    });
+    owners = await ownersOf();
+    expect(ids.map((id) => owners.get(id))).toEqual([a.id, a.id, a.id, a.id, a.id]);
+
+    // Taking leads back (no manager).
+    expect(await ok(assign(owner, { ownerId: null, ids: [ids[0]!, ids[1]!] }))).toMatchObject({
+      assigned: 2,
+    });
+    owners = await ownersOf();
+    expect(owners.get(ids[0]!)).toBeNull();
+
+    // The audit says how many changed hands.
+    const [audit] =
+      await db.sql`select payload from admin_audit where action = 'crm.lead.assign_bulk' limit 1`;
+    expect(audit?.payload).toMatchObject({ ownerId: a.id, by: "ids" });
+
+    // Refused: a manager, an unknown or disabled manager, both ids and a filter, neither, too many.
+    expect((await assign(a.token, { ownerId: b.id, ids })).statusCode).toBe(403);
+    expect((await assign(owner, { ownerId: "00000000-0000-4000-8000-000000000000", ids })).statusCode).toBe(
+      400,
+    );
+    expect((await assign(owner, { ownerId: a.id, ids, filter: {} })).statusCode).toBe(400);
+    expect((await assign(owner, { ownerId: a.id })).statusCode).toBe(400);
+    expect((await assign(owner, { ownerId: a.id, ids: [] })).statusCode).toBe(400);
+    await ok(call("POST", `/v1/admin/admins/${b.id}/disable`, owner));
+    expect((await assign(owner, { ownerId: b.id, ids })).statusCode).toBe(400);
+  });
+
   it("a manager is made with a one-time password, which must be changed before anything else", async () => {
     const created = await ok(
       call("POST", "/v1/admin/admins", owner, { email: "ali@platform.uz", name: "Ali", role: "manager" }),

@@ -20,6 +20,11 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
   const [source, setSource] = useState("");
   const [ownerId, setOwnerId] = useState("");
   const [offset, setOffset] = useState(0);
+  // Leads picked for a bulk assignment (staff): by id, or "all in this list" by its filters.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [allMatching, setAllMatching] = useState(false);
+  const [newOwner, setNewOwner] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const search = useDebounced(q);
   const query: Partial<CrmLeadsQuery> = {
     q: search.trim() || undefined,
@@ -39,13 +44,67 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
     mutationFn: () =>
       downloadFile(`/leads/export.xlsx?${leadParams({ ...query })}&lang=${getLocale()}`, "leads.xlsx"),
   });
+  const clearPicked = () => {
+    setPicked(new Set());
+    setAllMatching(false);
+  };
   const reset =
     <T,>(set: (v: T) => void) =>
     (v: T) => {
       set(v);
       setOffset(0);
+      clearPicked();
     };
   const total = leads.data?.total ?? 0;
+  const queryClient = useQueryClient();
+  const pageIds = leads.data?.leads.map((l) => l.id) ?? [];
+  const pageAllPicked = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const count = allMatching ? total : picked.size;
+  const ownerName = newOwner === "none" ? "" : (team.data?.find((m) => m.id === newOwner)?.name ?? "");
+  const assign = useMutation({
+    mutationFn: () => {
+      const ownerId = newOwner === "none" ? null : newOwner;
+      return api.crmAssignLeads(
+        allMatching
+          ? { ownerId, filter: Object.fromEntries(Object.entries(query).filter(([, v]) => v !== undefined)) }
+          : { ownerId, ids: [...picked] },
+      );
+    },
+    onSuccess: (result) => {
+      setNotice(
+        t("{assigned} of {matched} leads changed hands.", {
+          assigned: result.assigned,
+          matched: result.matched,
+        }),
+      );
+      clearPicked();
+      void queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
+      void queryClient.invalidateQueries({ queryKey: ["crm-funnel"] });
+    },
+  });
+  const togglePage = () => {
+    const next = new Set(picked);
+    for (const id of pageIds) {
+      if (pageAllPicked) next.delete(id);
+      else next.add(id);
+    }
+    setPicked(next);
+    setAllMatching(false);
+  };
+  const toggleOne = (id: string) => {
+    const next = new Set(picked);
+    if (!next.delete(id)) next.add(id);
+    setPicked(next);
+    setAllMatching(false);
+  };
+  const doAssign = () => {
+    const question =
+      newOwner === "none"
+        ? t("Take {n} leads back from their managers?", { n: count })
+        : t("Give {n} leads to {name}?", { n: count, name: ownerName });
+    if (window.confirm(question)) assign.mutate();
+  };
+  const selecting = staff && !compact;
 
   return (
     <Section
@@ -91,15 +150,76 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
           </Select>
         )}
       </div>
-      <ErrorText error={leads.error ?? exportFile.error} />
+      {selecting && count > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+          <span className="font-medium">
+            {allMatching
+              ? t("All {total} leads in this list are selected", { total })
+              : t("{n} selected", { n: count })}
+          </span>
+          {!allMatching && pageAllPicked && total > pageIds.length && (
+            <button type="button" className="text-primary underline" onClick={() => setAllMatching(true)}>
+              {t("Select all {total} leads in this list", { total })}
+            </button>
+          )}
+          <button type="button" className="text-muted-foreground underline" onClick={clearPicked}>
+            {t("Clear selection")}
+          </button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Select value={newOwner} onChange={(e) => setNewOwner(e.target.value)}>
+              <option value="">{t("Choose a manager")}</option>
+              <option value="none">{t("No manager")}</option>
+              {team.data?.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
+            <Button disabled={!newOwner || assign.isPending} onClick={doAssign}>
+              {t("Assign")}
+            </Button>
+          </div>
+        </div>
+      )}
+      {notice && <div className="mb-2 text-sm text-success">{notice}</div>}
+      <ErrorText error={leads.error ?? exportFile.error ?? assign.error} />
       {leads.data && leads.data.leads.length === 0 ? (
         <Empty>{t("No leads yet.")}</Empty>
       ) : (
         <Table
-          head={[t("Name"), t("Phone"), t("Stage"), t("Source"), t("Manager"), t("Last contact"), t("Added")]}
+          head={[
+            ...(selecting
+              ? [
+                  <input
+                    key="pick"
+                    type="checkbox"
+                    aria-label={t("Select all leads on this page")}
+                    checked={pageAllPicked}
+                    onChange={togglePage}
+                  />,
+                ]
+              : []),
+            t("Name"),
+            t("Phone"),
+            t("Stage"),
+            t("Source"),
+            t("Manager"),
+            t("Last contact"),
+            t("Added"),
+          ]}
         >
           {leads.data?.leads.map((l) => (
             <tr key={l.id}>
+              {selecting && (
+                <Td>
+                  <input
+                    type="checkbox"
+                    aria-label={t("Select lead")}
+                    checked={allMatching || picked.has(l.id)}
+                    onChange={() => toggleOne(l.id)}
+                  />
+                </Td>
+              )}
               <Td>
                 <a className="font-medium text-primary hover:underline" href={href(leadLink(l))}>
                   {l.name}
