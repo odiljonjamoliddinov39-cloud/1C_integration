@@ -18,6 +18,7 @@ import type { Db } from "./db/client.js";
 import { accounts, devices, licenses, plans, refreshTokens, subscriptions, users } from "./db/schema.js";
 import type { Billing } from "./billing/entitlements.js";
 import { FREE_END } from "./billing/period.js";
+import { normalizePhone } from "./crm/phone.js";
 import { HttpError } from "./lib/errors.js";
 import { type Tokens, newRefreshToken, sha256 } from "./lib/tokens.js";
 
@@ -40,12 +41,22 @@ export function effectiveStatus(
   return now.getTime() <= endsAt.getTime() + GRACE_DAYS * DAY ? "grace" : "free";
 }
 
+/** Told after an account is made, so the sales team can be given the person as a lead. */
+export interface SignupInfo {
+  name: string;
+  accountName: string;
+  email: string;
+  phone: { display: string; key: string };
+}
+
 export class Service {
   constructor(
     private readonly db: Db,
     private readonly tokens: Tokens,
     private readonly config: Config,
     readonly billing: Billing,
+    /** Called once the account exists and has a phone; a failure here never fails the sign-up. */
+    private readonly onSignup?: (info: SignupInfo) => Promise<void>,
   ) {}
 
   // --- auth -----------------------------------------------------------------------------------
@@ -53,6 +64,9 @@ export class Service {
   async register(input: RegisterInput): Promise<TokenPair & { me: Me }> {
     if (!this.config.ALLOW_REGISTRATION)
       throw new HttpError(403, "REGISTRATION_CLOSED", "Sign-up is on the website");
+    const phone = input.phone === undefined ? null : normalizePhone(input.phone);
+    if (input.phone !== undefined && !phone)
+      throw new HttpError(400, "BAD_PHONE", "This phone number is not valid");
     const existing = await this.db.query.users.findFirst({ where: eq(users.email, input.email) });
     if (existing) throw new HttpError(409, "EMAIL_TAKEN", "An account with this email already exists");
     const free = await this.db.query.plans.findFirst({ where: eq(plans.code, "free") });
@@ -64,7 +78,14 @@ export class Service {
       if (!account) throw new HttpError(500, "INTERNAL", "Account was not created");
       const [user] = await tx
         .insert(users)
-        .values({ accountId: account.id, email: input.email, name: input.name, passwordHash, role: "owner" })
+        .values({
+          accountId: account.id,
+          email: input.email,
+          phone: phone?.display ?? null,
+          name: input.name,
+          passwordHash,
+          role: "owner",
+        })
         .returning();
       if (!user) throw new HttpError(500, "INTERNAL", "User was not created");
       // Every account starts on Free; the Business trial is started on purpose (POST /v1/billing/trial).
@@ -77,6 +98,15 @@ export class Service {
       });
       return user.id;
     });
+    if (phone && this.onSignup) {
+      // The person is already registered: a lead that cannot be made is logged, never held against them.
+      await this.onSignup({
+        name: input.name,
+        accountName: input.accountName,
+        email: input.email,
+        phone,
+      }).catch((e: unknown) => console.error("The sign-up could not be added to the CRM", e));
+    }
     return { ...(await this.issueTokens(userId)), me: await this.me(userId) };
   }
 

@@ -317,6 +317,14 @@ void app.whenReady().then(async () => {
     () => void session.refreshLicense().then(() => billing.refresh()),
     LICENSE_CHECK_HOURS * 3600 * 1000,
   );
+  // Credits an admin approves, or a plan that changes, show within minutes and when the window is used again, not 6 hours later.
+  setInterval(() => void billing.refresh(), 5 * 60 * 1000);
+  let lastFocusRefresh = 0;
+  app.on("browser-window-focus", () => {
+    if (Date.now() - lastFocusRefresh < 60_000) return;
+    lastFocusRefresh = Date.now();
+    void billing.refresh();
+  });
   updates.start();
 
   createWindow();

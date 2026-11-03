@@ -45,6 +45,9 @@ export interface CrmActor {
 /** Owner and support see everything; a manager only their own leads. */
 export const seesAll = (actor: CrmActor) => actor.role !== "manager";
 
+/** The source of a lead that signed up on the website. */
+export const SIGNUP_SOURCE = "Sayt (ro'yxatdan o'tish)";
+
 /** The funnel a new installation starts with; the admin reshapes it in the settings. */
 export const DEFAULT_STAGES = [
   { name: "Yangi lead", color: "#3b82f6", isWon: false, isLost: false },
@@ -451,6 +454,60 @@ export class Crm {
     if (input.note)
       await this.db.insert(crmNotes).values({ leadId: created.id, authorId: actor.id, text: input.note });
     return { lead: await this.leadRow(actor, created.id), created: true };
+  }
+
+  /**
+   * Someone signed up on the website with a phone: they are a new lead in the first open stage, with no manager yet. A phone that is
+   * already a lead is not added twice; that lead gets a note about the sign-up (and the name and company if it had none).
+   */
+  async leadFromSignup(info: {
+    name: string;
+    accountName: string;
+    email: string;
+    phone: { display: string; key: string };
+  }): Promise<void> {
+    const note = `Saytda ro'yxatdan o'tdi. Pochta: ${info.email}. Firma: ${info.accountName}.`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const existing = await this.db.query.crmLeads.findFirst({
+        where: eq(crmLeads.phoneKey, info.phone.key),
+      });
+      if (existing) {
+        await this.db
+          .update(crmLeads)
+          .set({
+            name: existing.name || info.name,
+            company: existing.company || info.accountName,
+            source: existing.source || SIGNUP_SOURCE,
+            updatedAt: new Date(),
+          })
+          .where(eq(crmLeads.id, existing.id));
+        await this.db.insert(crmNotes).values({ leadId: existing.id, authorId: null, text: note });
+        return;
+      }
+      const stage = await this.startStage();
+      const [created] = await this.db
+        .insert(crmLeads)
+        .values({
+          pipelineId: stage.pipelineId,
+          stageId: stage.id,
+          name: info.name,
+          phone: info.phone.display,
+          phoneKey: info.phone.key,
+          source: SIGNUP_SOURCE,
+          company: info.accountName,
+          ownerId: null,
+          createdBy: null,
+        })
+        .onConflictDoNothing({ target: crmLeads.phoneKey })
+        .returning();
+      // The same number came in at the same moment from elsewhere: the second pass finds it and adds the note.
+      if (!created) continue;
+      await this.db
+        .insert(crmStageHistory)
+        .values({ leadId: created.id, toStageId: stage.id, byAdminId: null });
+      await this.db.insert(crmNotes).values({ leadId: created.id, authorId: null, text: note });
+      return;
+    }
   }
 
   async updateLead(actor: CrmActor, id: string, input: CrmLeadUpdate): Promise<CrmLeadRow> {

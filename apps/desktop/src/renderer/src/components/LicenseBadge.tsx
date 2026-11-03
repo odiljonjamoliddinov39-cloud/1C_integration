@@ -121,12 +121,15 @@ export function LicenseCard({
       )}
       {credits && (
         <div className="mt-3 space-y-3 border-t border-white/10 pt-3 text-xs">
+          {/* What can be spent: the plan's credits and the extra ones (bought or approved) together, so a top-up shows here at once. */}
           <Meter
             label={t("billing.planLabel")}
-            value={t("billing.leftPct", { pct: percent(credits.balance, credits.monthly) })}
-            share={credits.balance / Math.max(1, credits.monthly, credits.balance)}
-            low={credits.balance === 0 ? "out" : billing?.credits?.low ? "low" : "ok"}
-            hint={estimate(credits.balance)}
+            value={t("billing.leftPct", {
+              pct: Math.round(((credits.balance + credits.extra) / Math.max(1, credits.monthly)) * 100),
+            })}
+            share={(credits.balance + credits.extra) / Math.max(1, credits.monthly)}
+            low={credits.balance + credits.extra === 0 ? "out" : billing?.credits?.low ? "low" : "ok"}
+            hint={estimate(credits.balance + credits.extra)}
           />
           {credits.daily && (
             <Meter

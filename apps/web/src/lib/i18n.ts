@@ -184,6 +184,8 @@ const uz = {
     loginSubtitle: "Tarif, kompyuterlar va yuklab olish.",
     name: "Ismingiz",
     accountName: "Firma yoki kompaniya nomi",
+    phone: "Telefon raqamingiz",
+    phoneHint: "Biz siz bilan shu raqam orqali bogʻlanamiz. Masalan: +998 90 123 45 67",
     email: "Elektron pochta",
     password: "Parol",
     passwordHint: "Kamida 10 ta belgi",
@@ -194,6 +196,7 @@ const uz = {
     working: "Kuting…",
     errors: {
       EMAIL_TAKEN: "Bu pochta bilan akkaunt allaqachon bor.",
+      BAD_PHONE: "Telefon raqami notoʻgʻri. Masalan: +998 90 123 45 67",
       INVALID_CREDENTIALS: "Pochta yoki parol notoʻgʻri.",
       VALIDATION: "Maydonlarni tekshiring.",
       RATE_LIMITED: "Juda koʻp urinish, bir daqiqa kuting.",
@@ -401,6 +404,8 @@ const ru: Dict = {
     loginSubtitle: "Тариф, компьютеры и загрузка приложения.",
     name: "Ваше имя",
     accountName: "Название фирмы или компании",
+    phone: "Ваш номер телефона",
+    phoneHint: "Мы свяжемся с вами по этому номеру. Например: +998 90 123 45 67",
     email: "Эл. почта",
     password: "Пароль",
     passwordHint: "Не меньше 10 символов",
@@ -411,6 +416,7 @@ const ru: Dict = {
     working: "Подождите…",
     errors: {
       EMAIL_TAKEN: "Аккаунт с этой почтой уже есть.",
+      BAD_PHONE: "Номер телефона неверный. Например: +998 90 123 45 67",
       INVALID_CREDENTIALS: "Неверная почта или пароль.",
       VALIDATION: "Проверьте поля.",
       RATE_LIMITED: "Слишком много попыток, подождите минуту.",

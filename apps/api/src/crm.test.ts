@@ -212,6 +212,61 @@ describe.skipIf(!available)("CRM", () => {
     expect((await addLead(owner, "12345")).statusCode).toBe(400);
   });
 
+  it("someone who signs up on the website with a phone is a new lead; the same phone is not added twice", async () => {
+    const signup = (email: string, phone?: string) =>
+      call("POST", "/v1/auth/register", undefined, {
+        email,
+        password: "correct-horse-battery",
+        name: "Yangi Mijoz",
+        accountName: "Yangi MChJ",
+        ...(phone === undefined ? {} : { phone }),
+      });
+    const leadsOf = async () =>
+      (await ok(call("GET", "/v1/crm/leads?limit=20", owner))).leads as {
+        id: string;
+        name: string;
+        phone: string;
+        company: string | null;
+        source: string | null;
+        stageId: string;
+        ownerId: string | null;
+      }[];
+
+    // A bad phone is refused and makes no account.
+    const bad = await signup("bad-phone@example.com", "12ab");
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe("BAD_PHONE");
+    expect(await leadsOf()).toHaveLength(0);
+
+    // Without a phone there is no lead.
+    expect((await signup("no-phone@example.com")).statusCode).toBe(200);
+    expect(await leadsOf()).toHaveLength(0);
+
+    // With a phone: the person is a user with that phone, and a lead in the first stage with no manager.
+    const reg = await signup("lead-signup@example.com", "+998 90 123-45-67");
+    expect(reg.statusCode).toBe(200);
+    const [user] = await db.sql`select phone from users where email = 'lead-signup@example.com'`;
+    expect(user?.phone).toBe("+998901234567");
+    const [lead, ...rest] = await leadsOf();
+    expect(rest).toHaveLength(0);
+    expect(lead).toMatchObject({
+      name: "Yangi Mijoz",
+      phone: "+998901234567",
+      company: "Yangi MChJ",
+      source: "Sayt (ro'yxatdan o'tish)",
+      ownerId: null,
+    });
+    expect(lead?.stageId).toBe((await stages())[0]?.id);
+    const detail = await ok(call("GET", `/v1/crm/leads/${lead!.id}`, owner));
+    expect(detail.notes[0].text).toContain("lead-signup@example.com");
+
+    // The same number written another way is the same lead: it gets a note, not a second row.
+    expect((await signup("second@example.com", "90 123 45 67")).statusCode).toBe(200);
+    expect(await leadsOf()).toHaveLength(1);
+    const again = await ok(call("GET", `/v1/crm/leads/${lead!.id}`, owner));
+    expect(again.notes).toHaveLength(2);
+  });
+
   it("a manager is made with a one-time password, which must be changed before anything else", async () => {
     const created = await ok(
       call("POST", "/v1/admin/admins", owner, { email: "ali@platform.uz", name: "Ali", role: "manager" }),

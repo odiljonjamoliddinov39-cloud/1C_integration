@@ -105,6 +105,7 @@ export async function register(input: {
   password: string;
   name: string;
   accountName: string;
+  phone: string;
 }) {
   const result = await request("POST", "/v1/auth/register", SignedIn, input);
   save(result);
