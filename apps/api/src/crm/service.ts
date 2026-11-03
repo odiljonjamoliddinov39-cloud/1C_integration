@@ -458,7 +458,7 @@ export class Crm {
 
   /**
    * Someone signed up on the website with a phone: they are a new lead in the first open stage, with no manager yet. A phone that is
-   * already a lead is not added twice; that lead gets a note about the sign-up (and the name and company if it had none).
+   * already a lead is not added twice; that lead is not changed (the number is not verified), it only gets a note about the sign-up.
    */
   async leadFromSignup(info: {
     name: string;
@@ -466,25 +466,26 @@ export class Crm {
     email: string;
     phone: { display: string; key: string };
   }): Promise<void> {
-    const note = `Saytda ro'yxatdan o'tdi. Pochta: ${info.email}. Firma: ${info.accountName}.`;
     for (let attempt = 0; attempt < 2; attempt++) {
       const existing = await this.db.query.crmLeads.findFirst({
         where: eq(crmLeads.phoneKey, info.phone.key),
       });
       if (existing) {
-        await this.db
-          .update(crmLeads)
-          .set({
-            name: existing.name || info.name,
-            company: existing.company || info.accountName,
-            source: existing.source || SIGNUP_SOURCE,
-            updatedAt: new Date(),
-          })
-          .where(eq(crmLeads.id, existing.id));
-        await this.db.insert(crmNotes).values({ leadId: existing.id, authorId: null, text: note });
+        // Nobody has shown they own this number, so a sign-up changes nothing of an existing lead: staff only get a note saying so.
+        await this.db.insert(crmNotes).values({
+          leadId: existing.id,
+          authorId: null,
+          text: `Shu raqam bilan saytda ro'yxatdan o'tishdi (raqam tasdiqlanmagan). Pochta: ${info.email}. Firma: ${info.accountName}.`,
+        });
         return;
       }
-      const stage = await this.startStage();
+      // A new lead goes to an open stage; with only won/lost stages left there is no right place for it, so none is made.
+      const pipeline = await this.pipeline();
+      const stage = (await this.stageRows(pipeline.id)).find((s) => !s.isWon && !s.isLost);
+      if (!stage) {
+        console.error("A sign-up was not added to the CRM: the funnel has no open stage");
+        return;
+      }
       const [created] = await this.db
         .insert(crmLeads)
         .values({
@@ -505,7 +506,11 @@ export class Crm {
       await this.db
         .insert(crmStageHistory)
         .values({ leadId: created.id, toStageId: stage.id, byAdminId: null });
-      await this.db.insert(crmNotes).values({ leadId: created.id, authorId: null, text: note });
+      await this.db.insert(crmNotes).values({
+        leadId: created.id,
+        authorId: null,
+        text: `Saytda ro'yxatdan o'tdi. Pochta: ${info.email}. Firma: ${info.accountName}.`,
+      });
       return;
     }
   }

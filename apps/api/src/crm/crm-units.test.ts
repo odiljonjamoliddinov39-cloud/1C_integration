@@ -16,6 +16,12 @@ describe("phone numbers", () => {
     expect(normalizePhone("90 123 45 67")?.display).toBe("+998901234567");
   });
 
+  it("reads the international prefix 00 as +", () => {
+    expect(normalizePhone("00 998 90 123-45-67")?.key).toBe("998901234567");
+    expect(normalizePhone("00998901234567")?.display).toBe("+998901234567");
+    expect(normalizePhone("0090")).toBeNull();
+  });
+
   it("takes an international number as it is", () => {
     expect(normalizePhone("+7 495 123-45-67")?.key).toBe("74951234567");
   });

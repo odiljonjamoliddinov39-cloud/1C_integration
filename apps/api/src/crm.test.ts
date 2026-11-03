@@ -238,6 +238,9 @@ describe.skipIf(!available)("CRM", () => {
     expect(bad.json().code).toBe("BAD_PHONE");
     expect(await leadsOf()).toHaveLength(0);
 
+    // A phone of only spaces is a bad phone (not a generic validation error).
+    expect((await signup("blank-phone@example.com", "   ")).json().code).toBe("BAD_PHONE");
+
     // Without a phone there is no lead.
     expect((await signup("no-phone@example.com")).statusCode).toBe(200);
     expect(await leadsOf()).toHaveLength(0);
@@ -260,11 +263,37 @@ describe.skipIf(!available)("CRM", () => {
     const detail = await ok(call("GET", `/v1/crm/leads/${lead!.id}`, owner));
     expect(detail.notes[0].text).toContain("lead-signup@example.com");
 
-    // The same number written another way is the same lead: it gets a note, not a second row.
-    expect((await signup("second@example.com", "90 123 45 67")).statusCode).toBe(200);
-    expect(await leadsOf()).toHaveLength(1);
+    // The same number written another way (even with the 00 prefix) is the same lead: it gets a note, not a second row, and
+    // nothing of the lead changes (nobody has shown the number is theirs).
+    const second = await call("POST", "/v1/auth/register", undefined, {
+      email: "second@example.com",
+      password: "correct-horse-battery",
+      name: "Someone Else",
+      accountName: "Other MChJ",
+      phone: "00 998 90 123 45 67",
+    });
+    expect(second.statusCode).toBe(200);
+    const after = await leadsOf();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ name: "Yangi Mijoz", company: "Yangi MChJ" });
     const again = await ok(call("GET", `/v1/crm/leads/${lead!.id}`, owner));
     expect(again.notes).toHaveLength(2);
+    expect(JSON.stringify(again.notes)).toContain("tasdiqlanmagan");
+  });
+
+  it("a sign-up is not put into a won or lost stage when the funnel has no open one", async () => {
+    await stages(); // makes the default funnel
+    await db.sql`UPDATE crm_stages SET is_lost = true WHERE is_won = false`;
+    const res = await call("POST", "/v1/auth/register", undefined, {
+      email: "closed-funnel@example.com",
+      password: "correct-horse-battery",
+      name: "Yangi",
+      accountName: "Yangi MChJ",
+      phone: "+998 91 000 11 22",
+    });
+    // The person is registered all the same; there is just no lead.
+    expect(res.statusCode).toBe(200);
+    expect(await ok(call("GET", "/v1/crm/leads?limit=20", owner))).toMatchObject({ leads: [] });
   });
 
   it("a manager is made with a one-time password, which must be changed before anything else", async () => {
