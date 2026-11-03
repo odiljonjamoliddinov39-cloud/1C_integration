@@ -32,7 +32,7 @@ const uz = {
     security: "Xavfsizlik",
     download: "Yuklab olish",
     login: "Kirish",
-    signup: "Bepul sinash",
+    signup: "Roʻyxatdan oʻtish",
     cabinet: "Kabinet",
   },
   home: {
@@ -191,7 +191,8 @@ const uz = {
     passwordHint: "Kamida 10 ta belgi",
     submitSignup: "Akkaunt yaratish",
     submitLogin: "Kirish",
-    haveAccount: "Akkauntingiz bormi? Kirish",
+    haveAccountText: "Akkauntingiz bormi? Unda pochta va parolingizni terib kiring.",
+    loginLink: "Kirish",
     noAccount: "Akkauntingiz yoʻqmi? Roʻyxatdan oʻtish",
     working: "Kuting…",
     errors: {
@@ -252,7 +253,7 @@ const ru: Dict = {
     security: "Безопасность",
     download: "Скачать",
     login: "Войти",
-    signup: "Попробовать бесплатно",
+    signup: "Зарегистрироваться",
     cabinet: "Кабинет",
   },
   home: {
@@ -411,7 +412,8 @@ const ru: Dict = {
     passwordHint: "Не меньше 10 символов",
     submitSignup: "Создать аккаунт",
     submitLogin: "Войти",
-    haveAccount: "Уже есть аккаунт? Войти",
+    haveAccountText: "Уже есть аккаунт? Тогда войдите, введя почту и пароль.",
+    loginLink: "Войти",
     noAccount: "Нет аккаунта? Зарегистрироваться",
     working: "Подождите…",
     errors: {
