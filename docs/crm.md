@@ -66,6 +66,15 @@ is `BAD_PHONE`, no account) and, at the same moment, a lead in the first open st
 company from the form, no manager, and a note with the e-mail. A phone that is already a lead is not added twice: that lead gets a
 note about the sign-up. A failure to make the lead never fails the sign-up (it is logged).
 
+## Giving leads to a manager in bulk
+
+On the dashboard's **Leads** list the owner and support tick leads (the box in the header ticks the page; "select all N leads in this
+list" takes every lead the current search and filters match, not only the page), choose a manager - or _No manager_ to take them back -
+and press **Assign**. `POST /v1/crm/leads/assign` takes `{ ownerId, ids }` (up to 1000 ids) or `{ ownerId, filter }` (the list's
+`q`, `stageId`, `source`, `ownerId`), never both, and answers `{ matched, assigned }`: a lead already with that manager is matched but
+not counted as changed. A manager cannot do it (403); an unknown or disabled manager is `BAD_OWNER`. One audit row
+(`crm.lead.assign_bulk`) says how many changed hands. A single lead is still given from its own page.
+
 ## Import and export
 
 - **Export**: _Download Excel_ on the leads list (as filtered) and on the reports.
@@ -107,7 +116,7 @@ Environment (apps/api): `CRM_BOT_TOKEN`, `CRM_BOT_USERNAME`, `CRM_MINIAPP_URL`, 
 ## API (`/v1/crm`, `Authorization: Bearer <admin or CRM session token>`)
 
 `GET /me`, `GET /funnel`, `POST /stages`, `PATCH|DELETE /stages/:id`, `PUT /stages/order` (owner/support), `GET|POST /leads`,
-`GET /leads/export.xlsx`, `GET|PATCH /leads/:id`, `POST /leads/:id/stage|notes|calls`, `GET /team`, `GET /sources`,
+`GET /leads/export.xlsx`, `POST /leads/assign` (owner/support), `GET|PATCH /leads/:id`, `POST /leads/:id/stage|notes|calls`, `GET /team`, `GET /sources`,
 `POST /import/file|sheet`, `GET /import/jobs`, `GET /import/google`, `GET /reports`, `GET /reports/export.xlsx`, `POST /login`, `POST /password`.
 Owner-only on the admin side: `POST /v1/admin/admins/:id/reset-password`; every signed-in admin: `POST /v1/admin/password`.
 

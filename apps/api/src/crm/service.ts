@@ -7,6 +7,7 @@ import type {
   CrmCallInput,
   CrmCallView,
   CrmHistoryView,
+  CrmAssignInput,
   CrmLeadDetail,
   CrmLeadInput,
   CrmLeadRow,
@@ -20,6 +21,7 @@ import type {
   CrmStageInput,
   CrmStageUpdate,
 } from "@platform/shared";
+import { CrmAssignResult } from "@platform/shared";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
@@ -542,6 +544,36 @@ export class Crm {
     if (input.ownerId !== undefined)
       await this.audit(actor, "crm.lead.assign", `crm-lead:${id}`, { ownerId: input.ownerId });
     return this.leadRow(actor, id);
+  }
+
+  /**
+   * Gives many leads to one manager (or none), staff only: the leads named by id, or all that match the list's filters. A lead
+   * that is already with that manager is left as it is (no change to its date). One audit row says how many changed hands.
+   */
+  async assignLeads(actor: CrmActor, input: CrmAssignInput): Promise<CrmAssignResult> {
+    this.requireStaff(actor);
+    if (input.ownerId) {
+      const owner = await this.db.query.admins.findFirst({ where: eq(admins.id, input.ownerId) });
+      if (!owner || owner.disabled) throw new HttpError(400, "BAD_OWNER", "No such manager");
+    }
+    const target = input.ids ? inArray(crmLeads.id, input.ids) : this.filters(actor, input.filter ?? {});
+    const matched = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(crmLeads)
+      .where(target);
+    const changed = await this.db
+      .update(crmLeads)
+      .set({ ownerId: input.ownerId, updatedAt: new Date() })
+      .where(and(target, sql`${crmLeads.ownerId} is distinct from ${input.ownerId}`))
+      .returning({ id: crmLeads.id });
+    const result = CrmAssignResult.parse({ matched: matched[0]?.n ?? 0, assigned: changed.length });
+    await this.audit(actor, "crm.lead.assign_bulk", `crm-leads:${result.assigned}`, {
+      ownerId: input.ownerId,
+      matched: result.matched,
+      assigned: result.assigned,
+      by: input.ids ? "ids" : "filter",
+    });
+    return result;
   }
 
   /** Moves a lead to another stage; the move is written to the history, which the conversion is counted from. */
