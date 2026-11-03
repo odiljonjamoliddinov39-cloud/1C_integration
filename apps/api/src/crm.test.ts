@@ -353,14 +353,14 @@ describe.skipIf(!available)("CRM", () => {
 
     // Refused: a manager, an unknown or disabled manager, both ids and a filter, neither, too many.
     expect((await assign(a.token, { ownerId: b.id, ids })).statusCode).toBe(403);
-    expect((await assign(owner, { ownerId: "00000000-0000-4000-8000-000000000000", ids })).statusCode).toBe(
-      400,
-    );
+    const unknown = await assign(owner, { ownerId: "00000000-0000-4000-8000-000000000000", ids });
+    expect([unknown.statusCode, unknown.json().code]).toEqual([400, "BAD_OWNER"]);
     expect((await assign(owner, { ownerId: a.id, ids, filter: {} })).statusCode).toBe(400);
     expect((await assign(owner, { ownerId: a.id })).statusCode).toBe(400);
     expect((await assign(owner, { ownerId: a.id, ids: [] })).statusCode).toBe(400);
     await ok(call("POST", `/v1/admin/admins/${b.id}/disable`, owner));
-    expect((await assign(owner, { ownerId: b.id, ids })).statusCode).toBe(400);
+    const disabled = await assign(owner, { ownerId: b.id, ids });
+    expect([disabled.statusCode, disabled.json().code]).toEqual([400, "BAD_OWNER"]);
   });
 
   it("a manager is made with a one-time password, which must be changed before anything else", async () => {

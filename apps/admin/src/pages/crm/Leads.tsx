@@ -1,4 +1,4 @@
-import type { AdminView, CrmLeadsQuery } from "@platform/shared";
+import { type AdminView, type CrmLeadsQuery, MAX_BULK_ASSIGN } from "@platform/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -62,13 +62,23 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
   const count = allMatching ? total : picked.size;
   const ownerName = newOwner === "none" ? "" : (team.data?.find((m) => m.id === newOwner)?.name ?? "");
   const assign = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const ownerId = newOwner === "none" ? null : newOwner;
-      return api.crmAssignLeads(
-        allMatching
-          ? { ownerId, filter: Object.fromEntries(Object.entries(query).filter(([, v]) => v !== undefined)) }
-          : { ownerId, ids: [...picked] },
-      );
+      if (allMatching)
+        return api.crmAssignLeads({
+          ownerId,
+          filter: Object.fromEntries(Object.entries(query).filter(([, v]) => v !== undefined)),
+        });
+      // One request takes at most MAX_BULK_ASSIGN ids: a bigger pick (ticked over many pages) goes in turns.
+      const ids = [...picked];
+      let matched = 0;
+      let assigned = 0;
+      for (let i = 0; i < ids.length; i += MAX_BULK_ASSIGN) {
+        const part = await api.crmAssignLeads({ ownerId, ids: ids.slice(i, i + MAX_BULK_ASSIGN) });
+        matched += part.matched;
+        assigned += part.assigned;
+      }
+      return { matched, assigned };
     },
     onSuccess: (result) => {
       setNotice(
@@ -80,8 +90,13 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
       clearPicked();
       void queryClient.invalidateQueries({ queryKey: ["crm-leads"] });
       void queryClient.invalidateQueries({ queryKey: ["crm-funnel"] });
+      // A lead's own page shows its manager too: do not show the old one from the cache.
+      void queryClient.invalidateQueries({ queryKey: ["crm-lead"] });
     },
   });
+  // No ticking while the rows are the old page's (a new search is loading), while an assignment is on its way (what is ticked is
+  // what it takes), or when "all N in this list" is chosen (that is one choice: clear it to pick rows).
+  const frozen = leads.isPlaceholderData || assign.isPending;
   const togglePage = () => {
     const next = new Set(picked);
     for (const id of pageIds) {
@@ -194,7 +209,8 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
                     key="pick"
                     type="checkbox"
                     aria-label={t("Select all leads on this page")}
-                    checked={pageAllPicked}
+                    checked={allMatching || pageAllPicked}
+                    disabled={allMatching || frozen}
                     onChange={togglePage}
                   />,
                 ]
@@ -216,6 +232,7 @@ export function LeadsTable({ me, compact = false }: { me: AdminView; compact?: b
                     type="checkbox"
                     aria-label={t("Select lead")}
                     checked={allMatching || picked.has(l.id)}
+                    disabled={allMatching || frozen}
                     onChange={() => toggleOne(l.id)}
                   />
                 </Td>

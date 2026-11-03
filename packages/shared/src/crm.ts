@@ -105,12 +105,13 @@ export const CrmAssignInput = z
   });
 export type CrmAssignInput = z.infer<typeof CrmAssignInput>;
 
-export interface CrmAssignResult {
+export const CrmAssignResult = z.object({
   /** Leads the request named or matched. */
-  matched: number;
+  matched: z.number().int().min(0),
   /** Of them, the ones that changed hands (those already with this manager are left alone). */
-  assigned: number;
-}
+  assigned: z.number().int().min(0),
+});
+export type CrmAssignResult = z.infer<typeof CrmAssignResult>;
 
 export const CrmStageMoveInput = z.object({ stageId: Id });
 export type CrmStageMoveInput = z.infer<typeof CrmStageMoveInput>;

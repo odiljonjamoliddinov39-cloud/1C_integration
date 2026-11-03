@@ -8,7 +8,6 @@ import type {
   CrmCallView,
   CrmHistoryView,
   CrmAssignInput,
-  CrmAssignResult,
   CrmLeadDetail,
   CrmLeadInput,
   CrmLeadRow,
@@ -22,6 +21,7 @@ import type {
   CrmStageInput,
   CrmStageUpdate,
 } from "@platform/shared";
+import { CrmAssignResult } from "@platform/shared";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
@@ -566,7 +566,7 @@ export class Crm {
       .set({ ownerId: input.ownerId, updatedAt: new Date() })
       .where(and(target, sql`${crmLeads.ownerId} is distinct from ${input.ownerId}`))
       .returning({ id: crmLeads.id });
-    const result = { matched: matched[0]?.n ?? 0, assigned: changed.length };
+    const result = CrmAssignResult.parse({ matched: matched[0]?.n ?? 0, assigned: changed.length });
     await this.audit(actor, "crm.lead.assign_bulk", `crm-leads:${result.assigned}`, {
       ownerId: input.ownerId,
       matched: result.matched,
