@@ -30,7 +30,7 @@ services:
       # "on": the plans' limits are enforced (docs/billing.md); "off": only counted. Override in .env.
       PLAN_LIMITS: ${PLAN_LIMITS:-on}
       # The website, where the desktop's "Upgrade" button leads (https://<site>).
-      SITE_URL: ${SITE_URL:-https://1cintegration-web.vercel.app}
+      SITE_URL: ${SITE_URL:-https://aibuxgalter.com}
       AI_DAILY_TOKENS: ${AI_DAILY_TOKENS:-1000000}
       # How much the assistant thinks before each step: low (fastest) | medium | high.
       AI_EFFORT: ${AI_EFFORT:-high}
