@@ -116,8 +116,12 @@ The marketing site and customer cabinet (`apps/web`, Astro) are static pages on 
    `1C_integration` (allow Vercel access to the repository if it asks).
 2. Set **Root Directory** to `apps/web`. Vercel detects Astro; the install and build commands come from
    `vercel.json`. Leave the environment variables empty.
-3. Click **Deploy**. The site gets an address such as `https://1c-integration.vercel.app`; every push
-   to the production branch (the repository's default branch) deploys again.
+3. Click **Deploy**. The site gets an address such as `https://1cintegration-web.vercel.app` (the one Vercel shows on the project;
+   it is also the repository's website field); every push to the production branch (the repository's default branch)
+   deploys again.
+4. Tell the server the address: it is where the app's **Open the cabinet** button and the card payments' return lead
+   (`SITE_URL/cabinet`). `deploy/docker-compose.yml` has the default; to use another address (a domain you bought), set a
+   repository **variable** `SITE_URL` (Settings → Secrets and variables → Actions → _Variables_) and run the deploy again.
 
 The Download page links to `https://<server>/download/AI-Accounting-Assistant-Setup.exe` (the old name `1C-Platform-Setup.exe` still works). The **Desktop app
 (Windows .exe)** workflow puts the installer there after each build (it uses the same deploy secrets).

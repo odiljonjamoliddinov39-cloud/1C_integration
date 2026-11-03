@@ -7,6 +7,8 @@ name: Deploy server
 # Optional: DEPLOY_USER (default root), ANTHROPIC_API_KEY (the Claude API key for the AI assistant),
 # ADMIN_EMAIL and ADMIN_PASSWORD (the owner's sign-in for the admin dashboard at https://<site>/admin/).
 # TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME (the bot for remote control from a phone, docs/remote-control.md).
+# SITE_URL (a repository *variable*, Settings → Secrets and variables → Actions → Variables): the website's address, where the app's
+# "Open the cabinet" and the card payments' return lead; empty: the address in deploy/docker-compose.yml.
 # CRM_BOT_TOKEN and CRM_BOT_USERNAME (the CRM's own bot for the sales team's Mini App, docs/crm.md), and
 # GOOGLE_SERVICE_ACCOUNT_JSON (the service account's key, to import Google Sheets into the CRM).
 # They are written to the server's .env on each deploy.
@@ -81,6 +83,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_BOT_USERNAME: ${{ secrets.TELEGRAM_BOT_USERNAME }}
+          SITE_URL: ${{ vars.SITE_URL }}
           CRM_BOT_TOKEN: ${{ secrets.CRM_BOT_TOKEN }}
           CRM_BOT_USERNAME: ${{ secrets.CRM_BOT_USERNAME }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
@@ -101,6 +104,9 @@ jobs:
           fi
           if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
             printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_USERNAME" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.telegram-credentials"
+          fi
+          if [ -n "$SITE_URL" ]; then
+            printf '%s\n' "$SITE_URL" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.site-url"
           fi
           if [ -n "$CRM_BOT_TOKEN" ]; then
             printf '%s\n%s\n' "$CRM_BOT_TOKEN" "$CRM_BOT_USERNAME" | ssh $ssh_opts "$target" "umask 077 && cat > /opt/platform/.crm-credentials"

@@ -84,6 +84,22 @@ if [ -f .telegram-credentials ]; then
   echo "Telegram bot updated."
 fi
 
+# The website's address (the SITE_URL repository variable): where "Open the cabinet" in the app and the card payments' return
+# lead. A SITE_URL left in .env by an older default that was not the real site is dropped, so the address in docker-compose.yml
+# (or the variable) applies.
+if [ -f .site-url ]; then
+  site_url=$(sed -n 1p .site-url | tr -d '\r' | sed 's#/*$##')
+  rm -f .site-url
+  { grep -v '^SITE_URL=' .env || true
+    echo "SITE_URL=${site_url}"; } > .env.new
+  mv .env.new .env
+  echo "Site address updated."
+elif grep -q '^SITE_URL=https://1c-integration.vercel.app/*$' .env; then
+  grep -v '^SITE_URL=' .env > .env.new || true
+  mv .env.new .env
+  echo "Dropped an old SITE_URL that was not the real site."
+fi
+
 # The CRM's bot (docs/crm.md) and the Google key for importing sheets, from the CRM_BOT_TOKEN / CRM_BOT_USERNAME and
 # GOOGLE_SERVICE_ACCOUNT_JSON repository secrets.
 if [ -f .crm-credentials ]; then
