@@ -249,3 +249,10 @@ export const TRIAL_AI_QUESTIONS = 30;
 export const TRIAL_DAYS = 14;
 /** Days of full access after a missed payment. */
 export const GRACE_DAYS = 3;
+/**
+ * Free's first stretch is softer than its steady state (docs/free-tier-tz.md): a trial or a paid
+ * plan ending on Free is a real drop, so the newly-landed account gets a few extra AI questions
+ * for a while rather than the full drop on day one.
+ */
+export const FREE_ONBOARDING_BONUS_DAYS = 30;
+export const FREE_ONBOARDING_BONUS_AI_QUESTIONS = 5;

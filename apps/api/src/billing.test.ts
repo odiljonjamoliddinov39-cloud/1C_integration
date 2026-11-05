@@ -141,9 +141,10 @@ describe.skipIf(!available)("tariffs", () => {
       aiQuestionsPerMonth: 80,
       importsPerMonth: null,
     });
-    expect(catalog.plans[0]).toMatchObject({ priceMonthSum: 0, importsPerMonth: 30, auditsPerMonth: 1 });
+    expect(catalog.plans[0]).toMatchObject({ priceMonthSum: 0, importsPerMonth: 10, auditsPerMonth: 1 });
     expect(catalog.addons.map((a: { code: string }) => a.code).sort()).toEqual([
       "addon_ai_100",
+      "addon_ai_5",
       "addon_company",
       "addon_user",
     ]);
@@ -159,7 +160,7 @@ describe.skipIf(!available)("tariffs", () => {
       periodEnd: null,
       companies: 1,
       users: 1,
-      importsPerMonth: 30,
+      importsPerMonth: 10,
       auditsPerMonth: 1,
       aiQuestionsPerMonth: 10,
       features: { excelExport: false, prioritySupport: false },
