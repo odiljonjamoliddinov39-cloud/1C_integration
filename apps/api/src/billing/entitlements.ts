@@ -5,6 +5,8 @@
 import {
   type BillingStatus,
   type Entitlements,
+  FREE_ONBOARDING_BONUS_AI_QUESTIONS,
+  FREE_ONBOARDING_BONUS_DAYS,
   GRACE_DAYS,
   TRIAL_AI_QUESTIONS,
   type UsageView,
@@ -84,23 +86,45 @@ export class Billing {
     let usersLimit = effective.seats;
     let aiQuestions = effective.aiQuestionsPerMonth;
     if (state === "trial") aiQuestions = Math.min(aiQuestions, TRIAL_AI_QUESTIONS);
-    if (state === "active" || state === "grace") {
-      const bought = await this.db
-        .select({ addon: subscriptionAddons })
-        .from(subscriptionAddons)
-        .where(
-          and(
-            eq(subscriptionAddons.subscriptionId, subscription.id),
-            lte(subscriptionAddons.validFrom, now),
-            gte(subscriptionAddons.validTo, now),
-          ),
-        );
+
+    // Onboarding bonus: an account that just fell from the trial (or a paid plan) to Free gets a
+    // softer limit for a while, so the drop is not a cliff (docs/free-tier-tz.md). A brand-new
+    // signup that never trialed has nothing to fall from, so it stays on the plain 10 -- trialUsed
+    // is the one stored signal for "this account has been through something richer than Free".
+    if (
+      state === "free" &&
+      subscription.trialUsed &&
+      now.getTime() - subscription.startsAt.getTime() < FREE_ONBOARDING_BONUS_DAYS * DAY_MS
+    ) {
+      aiQuestions += FREE_ONBOARDING_BONUS_AI_QUESTIONS;
+    }
+
+    const bought = await this.db
+      .select({ addon: subscriptionAddons })
+      .from(subscriptionAddons)
+      .where(
+        and(
+          eq(subscriptionAddons.subscriptionId, subscription.id),
+          lte(subscriptionAddons.validFrom, now),
+          gte(subscriptionAddons.validTo, now),
+        ),
+      );
+    if (bought.length > 0) {
       const catalog = await this.db.query.addons.findMany();
       for (const { addon } of bought) {
-        const grants = catalog.find((a) => a.code === addon.addonCode)?.grants ?? {};
-        companiesLimit += (grants.companies ?? 0) * addon.quantity;
-        usersLimit += (grants.users ?? 0) * addon.quantity;
-        aiQuestions += (grants.aiQuestions ?? 0) * addon.quantity;
+        const found = catalog.find((a) => a.code === addon.addonCode);
+        const grants = found?.grants ?? {};
+        // A one-off credit top-up (AI questions only) applies whatever state the account is in,
+        // Free included. A recurring add-on (extra company/user) could only have been bought
+        // while active/grace (invoicing.ts's quote()), and a stale grant must not survive a fall
+        // back to Free, so it is only counted there.
+        if (found?.kind === "one_off") {
+          aiQuestions += (grants.aiQuestions ?? 0) * addon.quantity;
+        } else if (state === "active" || state === "grace") {
+          companiesLimit += (grants.companies ?? 0) * addon.quantity;
+          usersLimit += (grants.users ?? 0) * addon.quantity;
+          aiQuestions += (grants.aiQuestions ?? 0) * addon.quantity;
+        }
       }
     }
 

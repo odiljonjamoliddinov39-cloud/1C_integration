@@ -12,17 +12,28 @@ Four plans, in the `plans` table (the admin dashboard edits them: **Plans**; no 
 | Price / month, sum         | 0     | 590 000   | 1 690 000  | 4 900 000  |
 | Price / year (12 for 10)   | 0     | 5 900 000 | 16 900 000 | 49 000 000 |
 | Companies / users          | 1 / 1 | 1 / 1     | 3 / 2      | 10 / 5     |
-| Imported documents / month | 30    | unlimited | unlimited  | unlimited  |
+| Imported documents / month | 10    | unlimited | unlimited  | unlimited  |
 | Audit reports / month      | 1     | unlimited | unlimited  | unlimited  |
 | AI questions / month       | 10    | 80        | 250        | 700        |
 | Excel export               | no    | yes       | yes        | yes        |
 
+Free's imports-per-month matches its AI-questions-per-month (not a bigger number): an import is
+itself an AI question, so a bigger import quota was never reachable in practice and only read as
+inconsistent. See `docs/free-tier-tz.md` for the cost math behind these numbers and the two that
+follow.
+
 Prices exclude VAT (`VAT_PERCENT`, 12): invoices show it as its own line. Add-ons: extra company
-390 000 / month, extra user 150 000 / month, extra 100 AI questions 390 000 (one-off, valid to the end
-of the period). Over 10 companies: a `custom` plan made by hand in the dashboard (hidden from the
+390 000 / month, extra user 150 000 / month, extra 100 AI questions 390 000, extra 5 AI questions
+25 000 (all one-off except the first two, valid to the end of the period, or 30 days when bought
+on Free/trial). Over 10 companies: a `custom` plan made by hand in the dashboard (hidden from the
 pricing page, then put on an account from **Subscriptions**).
 
-Free never ends: an unpaid plan lands on Free, and no data is deleted.
+Free never ends: an unpaid plan lands on Free, and no data is deleted. An account whose trial (or
+paid plan) just ended gets a `FREE_ONBOARDING_BONUS_AI_QUESTIONS` (+5) top-up on Free for its first
+`FREE_ONBOARDING_BONUS_DAYS` (30) there, so the drop is not a cliff; a brand-new signup that never
+trialed stays on the plain 10. A one-off add-on (a credit top-up) is buyable and applies on every
+plan, Free included; a recurring add-on (extra company/user) still needs a paid plan, since it has
+no period to run alongside on Free.
 
 ## Where the code is
 

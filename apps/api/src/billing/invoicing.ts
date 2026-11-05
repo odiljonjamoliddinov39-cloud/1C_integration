@@ -174,10 +174,13 @@ export class Invoicing {
     if (input.addon) {
       const addon = await this.db.query.addons.findFirst({ where: eq(addons.code, input.addon) });
       if (!addon) throw refuse(404, "NOT_FOUND", "No such add-on");
-      if (state === "free" || state === "trial") {
+      if (state === "grace") throw refuse(409, "PAY_OVERDUE_FIRST", "Pay the overdue invoice first");
+      // A one-off credit top-up (e.g. addon_ai_5) works on any plan, Free included. A recurring
+      // add-on (extra company/user) only makes sense once there is a paid period for it to run
+      // alongside, so that one still needs a plan first.
+      if (addon.kind === "recurring" && (state === "free" || state === "trial")) {
         throw refuse(409, "ADDON_NOT_AVAILABLE", "Add-ons extend a paid plan: choose a plan first");
       }
-      if (state === "grace") throw refuse(409, "PAY_OVERDUE_FIRST", "Pay the overdue invoice first");
       if (!addon.allowedPlans.includes(r.plan.code)) {
         throw refuse(409, "ADDON_NOT_AVAILABLE", `${addon.name} is not available on ${r.plan.name}`);
       }
