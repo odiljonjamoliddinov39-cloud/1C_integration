@@ -47,6 +47,8 @@ import type {
   CrmAssignInput,
   CrmAssignResult,
   CrmLeadUpdate,
+  CrmSettings,
+  CrmSettingsInput,
   CrmLeadsQuery,
   CrmLeadsResponse,
   CrmManagerView,
@@ -259,6 +261,8 @@ export const api = {
     crm<CrmCardSection[]>("PUT", `/card/sections/${sectionId}/fields/order`, { ids }),
   crmSaveValues: (leadId: string, values: Record<string, string>) =>
     crm<Record<string, string>>("PUT", `/leads/${leadId}/values`, { values }),
+  crmSettings: () => crm<CrmSettings>("GET", "/settings"),
+  crmUpdateSettings: (input: CrmSettingsInput) => crm<CrmSettings>("PUT", "/settings", input),
   crmTeam: () => crm<CrmManagerView[]>("GET", "/team"),
   crmSources: () => crm<string[]>("GET", "/sources"),
   crmImportJobs: () => crm<CrmImportJobView[]>("GET", "/import/jobs"),

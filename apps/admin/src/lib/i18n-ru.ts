@@ -702,4 +702,11 @@ export const RU: Record<string, string> = {
   "Give {n} leads to {name}?": "Назначить {n} лидов менеджеру {name}?",
   "Take {n} leads back from their managers?": "Забрать {n} лидов у менеджеров?",
   "{assigned} of {matched} leads changed hands.": "Передано {assigned} из {matched} лидов.",
+  "New leads": "Новые лиды",
+  "Give new leads to the sales managers in turn": "Передавать новые лиды менеджерам по продажам по очереди",
+  "Every new lead (added by hand, imported, or from a sign-up on the website) goes to the next sales manager, so each gets the same number. Leads a manager adds stay with that manager. Turned off, new leads have no manager until you give them one.":
+    "Каждый новый лид (добавленный вручную, импортированный или пришедший с регистрации на сайте) достаётся следующему менеджеру по продажам, поэтому всем поровну. Лиды, которые менеджер добавил сам, остаются у него. Если выключить, у новых лидов не будет менеджера, пока вы его не назначите.",
+  "{n} sales managers are in the turn.": "В очереди менеджеров по продажам: {n}.",
+  "There is no active sales manager yet, so new leads have no manager.":
+    "Активных менеджеров по продажам пока нет, поэтому у новых лидов нет менеджера.",
 };

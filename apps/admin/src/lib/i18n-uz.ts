@@ -705,4 +705,11 @@ export const UZ: Record<string, string> = {
   "Give {n} leads to {name}?": "{n} ta leadni {name} ga biriktiraysizmi?",
   "Take {n} leads back from their managers?": "{n} ta leadni menejerlardan qaytarib olasizmi?",
   "{assigned} of {matched} leads changed hands.": "{matched} tadan {assigned} tasi yangi menejerga oʻtdi.",
+  "New leads": "Yangi leadlar",
+  "Give new leads to the sales managers in turn": "Yangi leadlarni sotuv menejerlariga navbat bilan berish",
+  "Every new lead (added by hand, imported, or from a sign-up on the website) goes to the next sales manager, so each gets the same number. Leads a manager adds stay with that manager. Turned off, new leads have no manager until you give them one.":
+    "Har bir yangi lead (qoʻlda qoʻshilgan, import qilingan yoki saytda roʻyxatdan oʻtgan) keyingi sotuv menejeriga beriladi, shunda hammasiga teng boʻladi. Menejer oʻzi qoʻshgan lead oʻzida qoladi. Oʻchirilsa, yangi leadlar siz biriktirmaguningizcha menejersiz turadi.",
+  "{n} sales managers are in the turn.": "Navbatda {n} ta sotuv menejeri bor.",
+  "There is no active sales manager yet, so new leads have no manager.":
+    "Faol sotuv menejeri hali yoʻq, shuning uchun yangi leadlar menejersiz qoladi.",
 };

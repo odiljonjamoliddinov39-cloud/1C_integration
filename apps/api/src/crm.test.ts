@@ -86,6 +86,7 @@ describe.skipIf(!available)("CRM", () => {
     await db.sql`TRUNCATE crm_pipelines, crm_leads, crm_import_jobs CASCADE`;
     await db.sql`DELETE FROM admins WHERE role = 'manager'`;
     await db.sql`DELETE FROM admin_audit`;
+    await db.sql`DELETE FROM app_settings WHERE key = 'crm'`;
   });
 
   afterAll(async () => {
@@ -147,6 +148,9 @@ describe.skipIf(!available)("CRM", () => {
   const stageId = async (name: string) => (await stages()).find((s) => s.name === name)!.id;
   const addLead = (token: string, phone: string, extra: object = {}) =>
     call("POST", "/v1/crm/leads", token, { name: `Lead ${phone}`, phone, ...extra });
+
+  /** New leads go to the managers in turn by default; most tests want leads with no owner. */
+  const autoAssign = (on: boolean) => ok(call("PUT", "/v1/crm/settings", owner, { autoAssign: on }));
 
   it("starts with a funnel the admin can shape: add, rename, reorder, delete", async () => {
     const first = await stages();
@@ -297,6 +301,7 @@ describe.skipIf(!available)("CRM", () => {
   });
 
   it("staff give many leads to a manager at once: by id or by the list's filters; a manager cannot", async () => {
+    await autoAssign(false);
     const a = await manager("bulk-a@x.uz");
     const b = await manager("bulk-b@x.uz");
     const ids: string[] = [];
@@ -361,6 +366,81 @@ describe.skipIf(!available)("CRM", () => {
     await ok(call("POST", `/v1/admin/admins/${b.id}/disable`, owner));
     const disabled = await assign(owner, { ownerId: b.id, ids });
     expect([disabled.statusCode, disabled.json().code]).toEqual([400, "BAD_OWNER"]);
+  });
+
+  it("new leads go to the sales managers in turn: by hand, from a sign-up, from an import; it can be turned off", async () => {
+    const ownerOf = async (phone: string) =>
+      (
+        (await ok(call("GET", "/v1/crm/leads?limit=50", owner))).leads as {
+          phone: string;
+          ownerId: string | null;
+        }[]
+      ).find((l) => l.phone === phone)?.ownerId;
+
+    // No manager yet: no owner, as before.
+    await ok(addLead(owner, "905000001"));
+    expect(await ownerOf("+998905000001")).toBeNull();
+
+    const a = await manager("turn-a@x.uz");
+    const b = await manager("turn-b@x.uz");
+    const c = await manager("turn-c@x.uz");
+    expect(await ok(call("GET", "/v1/crm/settings", owner))).toEqual({ autoAssign: true, managers: 3 });
+
+    // By hand (staff): a, b, c, a ...
+    for (let i = 2; i <= 5; i++) await ok(addLead(owner, `90500000${i}`));
+    const handOwners = await Promise.all([2, 3, 4, 5].map((i) => ownerOf(`+99890500000${i}`)));
+    expect(handOwners).toEqual([a.id, b.id, c.id, a.id]);
+
+    // A manager's own lead stays with the manager and does not use a turn.
+    await ok(addLead(b.token, "905000010"));
+    expect(await ownerOf("+998905000010")).toBe(b.id);
+
+    // A disabled manager is out of the turn: the turns go on between a and b (b is next after the four above).
+    await ok(call("POST", `/v1/admin/admins/${c.id}/disable`, owner));
+    await ok(addLead(owner, "905000011"));
+    await ok(addLead(owner, "905000012"));
+    expect([await ownerOf("+998905000011"), await ownerOf("+998905000012")]).toEqual([b.id, a.id]);
+
+    // An import by staff shares its new rows out in turn.
+    await ok(
+      call(
+        "POST",
+        "/v1/crm/import/file",
+        owner,
+        xlsxBody([
+          ["Ism", "Telefon"],
+          ["I1", "906000001"],
+          ["I2", "906000002"],
+          ["I3", "906000003"],
+          ["I4", "906000004"],
+        ]),
+      ),
+    );
+    // The import's rows go in the exact order of the turn (b is next, then a, ...), and so does the sign-up that follows.
+    const imported = await Promise.all([1, 2, 3, 4].map((i) => ownerOf(`+99890600000${i}`)));
+    expect(imported).toEqual([b.id, a.id, b.id, a.id]);
+
+    // A sign-up on the website is a lead for the next manager in the turn too.
+    await ok(
+      call("POST", "/v1/auth/register", undefined, {
+        email: "turn-signup@example.com",
+        password: "correct-horse-battery",
+        name: "Yangi",
+        accountName: "Yangi MChJ",
+        phone: "+998 91 777 88 99",
+      }),
+    );
+    expect(await ownerOf("+998917778899")).toBe(b.id);
+
+    // Off: new leads have no owner again. A manager cannot read or change the setting.
+    expect(await autoAssign(false)).toEqual({ autoAssign: false, managers: 2 });
+    await ok(addLead(owner, "905000020"));
+    expect(await ownerOf("+998905000020")).toBeNull();
+    expect((await call("GET", "/v1/crm/settings", a.token)).statusCode).toBe(403);
+    expect((await call("PUT", "/v1/crm/settings", a.token, { autoAssign: true })).statusCode).toBe(403);
+    const [audit] =
+      await db.sql`select payload from admin_audit where action = 'crm.settings.auto_assign' limit 1`;
+    expect(audit?.payload).toMatchObject({ autoAssign: expect.any(Boolean) });
   });
 
   it("a manager is made with a one-time password, which must be changed before anything else", async () => {
@@ -1017,6 +1097,7 @@ describe.skipIf(!available)("CRM", () => {
   });
 
   it("exports the leads as they are filtered, and the reports, as .xlsx", async () => {
+    await autoAssign(false);
     const a = await manager("exp@platform.uz");
     await ok(addLead(owner, "907000001", { name: "Owner's", source: "x" }));
     await ok(addLead(a.token, "907000002", { name: "Manager's", source: "y" }));

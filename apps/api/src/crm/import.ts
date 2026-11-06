@@ -343,10 +343,12 @@ export class CrmImport {
       }
       for (let i = 0; i < fresh.length; i += 500) {
         const part = fresh.slice(i, i + 500);
+        // Staff's new leads go to the sales managers in turn; a manager's own import stays with the manager.
+        const owners = seesAll(actor) ? await this.crm.nextOwners(part.length) : [];
         const inserted = await this.db
           .insert(crmLeads)
           .values(
-            part.map((p) => ({
+            part.map((p, n) => ({
               pipelineId: first.pipelineId,
               stageId: (p.stageName ? stages.get(p.stageName.toLowerCase())?.id : undefined) ?? first.id,
               name: p.name,
@@ -354,7 +356,7 @@ export class CrmImport {
               phoneKey: p.phone.key,
               source: p.source,
               company: p.company,
-              ownerId: seesAll(actor) ? null : actor.id,
+              ownerId: seesAll(actor) ? (owners[n] ?? null) : actor.id,
               createdBy: actor.id,
             })),
           )
