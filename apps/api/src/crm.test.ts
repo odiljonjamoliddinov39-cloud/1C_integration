@@ -416,11 +416,11 @@ describe.skipIf(!available)("CRM", () => {
         ]),
       ),
     );
+    // The import's rows go in the exact order of the turn (b is next, then a, ...), and so does the sign-up that follows.
     const imported = await Promise.all([1, 2, 3, 4].map((i) => ownerOf(`+99890600000${i}`)));
-    expect(imported.filter((o) => o === a.id)).toHaveLength(2);
-    expect(imported.filter((o) => o === b.id)).toHaveLength(2);
+    expect(imported).toEqual([b.id, a.id, b.id, a.id]);
 
-    // A sign-up on the website is a lead for a manager too.
+    // A sign-up on the website is a lead for the next manager in the turn too.
     await ok(
       call("POST", "/v1/auth/register", undefined, {
         email: "turn-signup@example.com",
@@ -430,7 +430,7 @@ describe.skipIf(!available)("CRM", () => {
         phone: "+998 91 777 88 99",
       }),
     );
-    expect([a.id, b.id]).toContain(await ownerOf("+998917778899"));
+    expect(await ownerOf("+998917778899")).toBe(b.id);
 
     // Off: new leads have no owner again. A manager cannot read or change the setting.
     expect(await autoAssign(false)).toEqual({ autoAssign: false, managers: 2 });

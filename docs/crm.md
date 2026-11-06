@@ -63,7 +63,7 @@ A manager's reports hold only their own leads.
 
 The sign-up form on the website asks for a **phone**. The person is made a user (`users.phone`, written as `+998…`; a broken number
 is `BAD_PHONE`, no account) and, at the same moment, a lead in the first open stage with the source `Sayt (ro'yxatdan o'tish)`, the
-company from the form, no manager, and a note with the e-mail. A phone that is already a lead is not added twice: that lead gets a
+company from the form, the next sales manager in the turn (below; no manager when the turn is off or empty), and a note with the e-mail. A phone that is already a lead is not added twice: that lead gets a
 note about the sign-up. A failure to make the lead never fails the sign-up (it is logged).
 
 ## New leads go to the managers in turn

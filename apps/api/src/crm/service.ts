@@ -483,7 +483,7 @@ export class Crm {
   }
 
   /**
-   * Someone signed up on the website with a phone: they are a new lead in the first open stage, with no manager yet. A phone that is
+   * Someone signed up on the website with a phone: they are a new lead in the first open stage, for the next sales manager in the turn (no manager when the turn is off or there is none). A phone that is
    * already a lead is not added twice; that lead is not changed (the number is not verified), it only gets a note about the sign-up.
    */
   async leadFromSignup(info: {
