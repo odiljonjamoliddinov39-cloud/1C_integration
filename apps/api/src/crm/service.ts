@@ -13,6 +13,8 @@ import type {
   CrmLeadRow,
   CrmLeadSaved,
   CrmLeadUpdate,
+  CrmSettings,
+  CrmSettingsInput,
   CrmLeadsQuery,
   CrmLeadsResponse,
   CrmManagerView,
@@ -37,6 +39,7 @@ import {
   crmStages,
 } from "../db/schema.js";
 import { HttpError } from "../lib/errors.js";
+import { AutoAssign } from "./auto-assign.js";
 import { normalizePhone } from "./phone.js";
 
 export interface CrmActor {
@@ -71,7 +74,28 @@ type LeadListRow = Omit<CrmLeadRow, "lastContactAt" | "createdAt"> & {
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
 export class Crm {
-  constructor(private readonly db: Db) {}
+  private readonly turns: AutoAssign;
+
+  constructor(private readonly db: Db) {
+    this.turns = new AutoAssign(db);
+  }
+
+  /** The owners of the next `count` new leads that no one picked a manager for: the sales managers in turn (none when off). */
+  nextOwners(count: number): Promise<(string | null)[]> {
+    return this.turns.next(count);
+  }
+
+  async settings(actor: CrmActor): Promise<CrmSettings> {
+    this.requireStaff(actor);
+    return this.turns.state();
+  }
+
+  async updateSettings(actor: CrmActor, input: CrmSettingsInput): Promise<CrmSettings> {
+    this.requireStaff(actor);
+    await this.turns.setEnabled(input.autoAssign, actor.id);
+    await this.audit(actor, "crm.settings.auto_assign", "crm-settings", { autoAssign: input.autoAssign });
+    return this.turns.state();
+  }
 
   // --- the funnel -----------------------------------------------------------------------------
 
@@ -443,7 +467,7 @@ export class Crm {
         phoneKey: phone.key,
         source: input.source || null,
         company: input.company || null,
-        ownerId: seesAll(actor) ? null : actor.id,
+        ownerId: seesAll(actor) ? ((await this.turns.next(1))[0] ?? null) : actor.id,
         createdBy: actor.id,
       })
       .onConflictDoNothing({ target: crmLeads.phoneKey })
@@ -498,7 +522,7 @@ export class Crm {
           phoneKey: info.phone.key,
           source: SIGNUP_SOURCE,
           company: info.accountName,
-          ownerId: null,
+          ownerId: (await this.turns.next(1))[0] ?? null,
           createdBy: null,
         })
         .onConflictDoNothing({ target: crmLeads.phoneKey })

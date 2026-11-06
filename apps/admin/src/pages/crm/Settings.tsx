@@ -122,6 +122,46 @@ function StageRow({
   );
 }
 
+/** New leads go to the sales managers in turn: the switch, and how many managers share them. */
+function AutoAssignSection() {
+  const queryClient = useQueryClient();
+  const settings = useQuery({ queryKey: ["crm-settings"], queryFn: api.crmSettings });
+  const save = useMutation({
+    mutationFn: (autoAssign: boolean) => api.crmUpdateSettings({ autoAssign }),
+    onSuccess: (data) => queryClient.setQueryData(["crm-settings"], data),
+  });
+  const on = settings.data?.autoAssign ?? true;
+  return (
+    <Section title={t("New leads")}>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={on}
+          disabled={!settings.data || save.isPending}
+          onChange={(e) => save.mutate(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium">{t("Give new leads to the sales managers in turn")}</span>
+          <span className="mt-1 block text-muted-foreground">
+            {t(
+              "Every new lead (added by hand, imported, or from a sign-up on the website) goes to the next sales manager, so each gets the same number. Leads a manager adds stay with that manager. Turned off, new leads have no manager until you give them one.",
+            )}
+          </span>
+        </span>
+      </label>
+      {settings.data && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {settings.data.managers > 0
+            ? t("{n} sales managers are in the turn.", { n: settings.data.managers })
+            : t("There is no active sales manager yet, so new leads have no manager.")}
+        </p>
+      )}
+      <ErrorText error={settings.error ?? save.error} />
+    </Section>
+  );
+}
+
 /** The funnel's settings (owner and support): add, rename, colour, reorder and delete the stages, and say which is won and which is lost. */
 export function CrmSettingsPage({ me }: { me: AdminView }) {
   const queryClient = useQueryClient();
@@ -172,6 +212,7 @@ export function CrmSettingsPage({ me }: { me: AdminView }) {
           <ErrorText error={add.error} />
         </div>
       </Section>
+      <AutoAssignSection />
       <CardBuilder />
       {me.role === "owner" && (
         <Section title={t("Sales managers")}>

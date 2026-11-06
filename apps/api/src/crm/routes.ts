@@ -17,6 +17,7 @@ import {
   CrmLeadInput,
   CrmAssignInput,
   CrmLeadUpdate,
+  CrmSettingsInput,
   CrmLeadsQuery,
   CrmNoteInput,
   CrmReportQuery,
@@ -197,6 +198,10 @@ export function registerCrmRoutes(app: FastifyInstance, deps: CrmRouteDeps): voi
     card.saveValues(await auth(req), idParam.parse(req.params).id, CrmCardValuesInput.parse(req.body).values),
   );
 
+  app.get("/v1/crm/settings", async (req) => crm.settings(await auth(req)));
+  app.put("/v1/crm/settings", async (req) =>
+    crm.updateSettings(await auth(req), CrmSettingsInput.parse(req.body)),
+  );
   app.get("/v1/crm/team", async (req) => crm.team(await auth(req)));
   app.get("/v1/crm/sources", async (req) => crm.sources(await auth(req)));
 

@@ -66,6 +66,17 @@ is `BAD_PHONE`, no account) and, at the same moment, a lead in the first open st
 company from the form, no manager, and a note with the e-mail. A phone that is already a lead is not added twice: that lead gets a
 note about the sign-up. A failure to make the lead never fails the sign-up (it is logged).
 
+## New leads go to the managers in turn
+
+By default every **new** lead is given to a sales manager, in turn: the first to the first manager, the next to the second, and round
+again, so each gets the same number (`apps/api/src/crm/auto-assign.ts`). It applies to a lead added by the owner or support by hand,
+to the new rows of an import by them, and to a sign-up from the website. A lead a manager adds (or imports) themselves stays with that
+manager and does not use a turn. Only active managers (role _Sales manager_, not disabled) are in the turn, oldest first; with none,
+or with the switch off, a new lead has no manager as before. The place in the turn is kept in `app_settings` (key `crm`) under a row
+lock, so two leads that arrive together do not get the same manager out of turn. Leads that already exist are not changed (give them
+with the bulk assignment below). The switch is on **CRM → Settings → New leads** (`GET|PUT /v1/crm/settings`, owner and support;
+every change is in the audit log as `crm.settings.auto_assign`).
+
 ## Giving leads to a manager in bulk
 
 On the dashboard's **Leads** list the owner and support tick leads (the box in the header ticks the page; "select all N leads in this
@@ -115,7 +126,7 @@ Environment (apps/api): `CRM_BOT_TOKEN`, `CRM_BOT_USERNAME`, `CRM_MINIAPP_URL`, 
 
 ## API (`/v1/crm`, `Authorization: Bearer <admin or CRM session token>`)
 
-`GET /me`, `GET /funnel`, `POST /stages`, `PATCH|DELETE /stages/:id`, `PUT /stages/order` (owner/support), `GET|POST /leads`,
+`GET /me`, `GET|PUT /settings` (owner/support), `GET /funnel`, `POST /stages`, `PATCH|DELETE /stages/:id`, `PUT /stages/order` (owner/support), `GET|POST /leads`,
 `GET /leads/export.xlsx`, `POST /leads/assign` (owner/support), `GET|PATCH /leads/:id`, `POST /leads/:id/stage|notes|calls`, `GET /team`, `GET /sources`,
 `POST /import/file|sheet`, `GET /import/jobs`, `GET /import/google`, `GET /reports`, `GET /reports/export.xlsx`, `POST /login`, `POST /password`.
 Owner-only on the admin side: `POST /v1/admin/admins/:id/reset-password`; every signed-in admin: `POST /v1/admin/password`.

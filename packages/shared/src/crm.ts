@@ -113,6 +113,18 @@ export const CrmAssignResult = z.object({
 });
 export type CrmAssignResult = z.infer<typeof CrmAssignResult>;
 
+/** The CRM's switches (owner and support change them). */
+export const CrmSettings = z.object({
+  /** New leads go to the sales managers in turn. */
+  autoAssign: z.boolean(),
+  /** Active sales managers in that turn. */
+  managers: z.number().int().min(0),
+});
+export type CrmSettings = z.infer<typeof CrmSettings>;
+
+export const CrmSettingsInput = z.object({ autoAssign: z.boolean() });
+export type CrmSettingsInput = z.infer<typeof CrmSettingsInput>;
+
 export const CrmStageMoveInput = z.object({ stageId: Id });
 export type CrmStageMoveInput = z.infer<typeof CrmStageMoveInput>;
 
