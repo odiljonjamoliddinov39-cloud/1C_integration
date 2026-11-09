@@ -21,12 +21,21 @@ describe("fillFromSale", () => {
     expect(notes[0]).toContain("04818001002000000");
   });
 
-  it("keeps a line that has its own code, and the unit of a goods line", () => {
+  it("keeps a line that has its own code; a goods line takes the code of the same item, never of another", () => {
     const own = { ...advance, name: "Салфетки", catalogCode: "111", unit: "кг" };
-    const goods = { ...advance, name: "Салфетки" };
-    const { lines } = fillFromSale([own, goods], sold);
+    const same = { ...advance, name: 'Салфетки "Elma"', unit: "шт" };
+    const { lines } = fillFromSale([own, same], [{ ...sold[1]!, name: "салфетки elma" }, ...sold]);
     expect(lines[0]).toEqual(own);
     expect(lines[1]).toMatchObject({ catalogCode: "04818001002000000", unit: "шт" });
+  });
+
+  it("leaves a goods line the buyer was never sold without a code, and says so (the shampoo must not get the napkins' code)", () => {
+    const shampoo = { ...advance, name: 'Шампунь детский "Kippers" 250 мл' };
+    const { lines, notes } = fillFromSale([shampoo], sold);
+    expect(lines[0]).toEqual(shampoo);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("no IKPU");
+    expect(notes[0]).toContain("Шампунь");
   });
 
   it("invents nothing when the buyer has no coded sale", () => {

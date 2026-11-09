@@ -1,6 +1,6 @@
 /**
- * What the program finds for an outgoing invoice before the model is asked: the IKPU code and unit a line lacks (an
- * advance line has no item) from what the buyer was last sold, and the buyer's INN from the company's own Didox
+ * What the program finds for an outgoing invoice before the model is asked: the IKPU code a line lacks, from what the
+ * buyer was sold (the same item; an advance line, which has no item, also takes the unit), and the buyer's INN from the company's own Didox
  * documents when 1C holds none. Nothing here is invented: a value is read from the company's own records, shown on the
  * card or offered for confirmation, and left empty when there is none.
  */
@@ -20,26 +20,59 @@ export interface SoldLine {
 const ADVANCE = /аванс|avans|advance/i;
 const IKPU = /^\d{17}$/;
 
-/**
- * The lines with the IKPU code (and name) filled where they have none, from the line of the buyer's earlier sale with the
- * largest sum that has a code. An advance line also takes that line's unit, as it has no unit of its own that Didox knows.
- * `notes` says what was filled, for the card and the answer.
- */
-export function fillFromSale(lines: Line[], sold: SoldLine[]): { lines: Line[]; notes: string[] } {
-  const base = sold
-    .filter((s) => IKPU.test(s.ikpu.trim()))
+/** A name as the buyer's sales and the invoice may write it differently: lower case, no quotes or signs, one space. */
+const plain = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+
+/** The line of the buyer's earlier sale that is this very item (one name holds the other), the biggest if several. */
+function sameItem(line: Line, coded: SoldLine[]): SoldLine | undefined {
+  const name = plain(line.name);
+  if (!name) return undefined;
+  return coded
+    .filter((s) => {
+      const sold = plain(s.name);
+      return sold.length > 0 && (sold === name || sold.includes(name) || name.includes(sold));
+    })
     .sort((a, b) => b.sum - a.sum)
     .at(0);
-  if (!base) return { lines, notes: [] };
+}
+
+/**
+ * The lines with the IKPU code (and name) filled where they have none, only from what is true of that line: a line of
+ * goods takes the code of the same item in the buyer's earlier sales; an advance line (it has no item) takes the code and
+ * the unit of the earlier sale's line with the largest sum that has a code. A goods line whose item the buyer was never
+ * sold keeps no code and is named in `notes` (another item's code would put it in the wrong class of goods, with the
+ * wrong tax treatment): the accountant gives the code. `notes` says what was filled and what is left, for the card and the answer.
+ */
+export function fillFromSale(lines: Line[], sold: SoldLine[]): { lines: Line[]; notes: string[] } {
+  const coded = sold.filter((s) => IKPU.test(s.ikpu.trim()));
+  const biggest = [...coded].sort((a, b) => b.sum - a.sum).at(0);
   const notes: string[] = [];
   const filled = lines.map((line, i) => {
     if (line.catalogCode) return line;
-    const unit = ADVANCE.test(line.name) && base.unit.trim() ? base.unit.trim() : line.unit;
+    if (ADVANCE.test(line.name)) {
+      if (!biggest) return line;
+      const unit = biggest.unit.trim() ? biggest.unit.trim() : line.unit;
+      notes.push(
+        `Line ${i + 1}: IKPU ${biggest.ikpu.trim()} (${biggest.name}) from the buyer's last sale` +
+          (unit !== line.unit ? `, unit "${unit}"` : ""),
+      );
+      return { ...line, unit, catalogCode: biggest.ikpu.trim(), catalogName: biggest.name };
+    }
+    const same = sameItem(line, coded);
+    if (!same) {
+      notes.push(
+        `Line ${i + 1}: no IKPU: 1C has none for "${line.name}" and the buyer was never sold this item, so none was borrowed from another item`,
+      );
+      return line;
+    }
     notes.push(
-      `Line ${i + 1}: IKPU ${base.ikpu.trim()} (${base.name}) from the buyer's last sale` +
-        (unit !== line.unit ? `, unit "${unit}"` : ""),
+      `Line ${i + 1}: IKPU ${same.ikpu.trim()} (${same.name}) from the buyer's earlier sale of this item`,
     );
-    return { ...line, unit, catalogCode: base.ikpu.trim(), catalogName: base.name };
+    return { ...line, catalogCode: same.ikpu.trim(), catalogName: same.name };
   });
   return { lines: filled, notes };
 }
