@@ -13,6 +13,8 @@ type Line = DraftInput["lines"][number];
 export interface SoldLine {
   ikpu: string;
   name: string;
+  /** The item's full name, when 1C has one (the invoice line may carry it instead of the short name). */
+  fullName?: string;
   unit: string;
   sum: number;
 }
@@ -27,17 +29,17 @@ const plain = (name: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
-/** The line of the buyer's earlier sale that is this very item (one name holds the other), the biggest if several. */
+/**
+ * The line of the buyer's earlier sale that is this very item: the same name (case, quotes and signs aside), whole, never one
+ * name inside another (two products can differ by a word or a size). `coded` is as 1C gave it, newest sale first, so the first
+ * match is the code in use now.
+ */
 function sameItem(line: Line, coded: SoldLine[]): SoldLine | undefined {
   const name = plain(line.name);
   if (!name) return undefined;
-  return coded
-    .filter((s) => {
-      const sold = plain(s.name);
-      return sold.length > 0 && (sold === name || sold.includes(name) || name.includes(sold));
-    })
-    .sort((a, b) => b.sum - a.sum)
-    .at(0);
+  return coded.find(
+    (s) => plain(s.name) === name || (s.fullName !== undefined && plain(s.fullName) === name),
+  );
 }
 
 /**
@@ -45,7 +47,8 @@ function sameItem(line: Line, coded: SoldLine[]): SoldLine | undefined {
  * goods takes the code of the same item in the buyer's earlier sales; an advance line (it has no item) takes the code and
  * the unit of the earlier sale's line with the largest sum that has a code. A goods line whose item the buyer was never
  * sold keeps no code and is named in `notes` (another item's code would put it in the wrong class of goods, with the
- * wrong tax treatment): the accountant gives the code. `notes` says what was filled and what is left, for the card and the answer.
+ * wrong tax treatment): the accountant gives the code. `sold` is the buyer's earlier sale lines, newest first. `notes` says
+ * what was filled and what is left (only that none was found in those sales, not that none exists), for the card and the answer.
  */
 export function fillFromSale(lines: Line[], sold: SoldLine[]): { lines: Line[]; notes: string[] } {
   const coded = sold.filter((s) => IKPU.test(s.ikpu.trim()));
@@ -65,7 +68,7 @@ export function fillFromSale(lines: Line[], sold: SoldLine[]): { lines: Line[]; 
     const same = sameItem(line, coded);
     if (!same) {
       notes.push(
-        `Line ${i + 1}: no IKPU: 1C has none for "${line.name}" and the buyer was never sold this item, so none was borrowed from another item`,
+        `Line ${i + 1}: no IKPU found for "${line.name}" in the buyer's recent sales (none was borrowed from another item): give the code`,
       );
       return line;
     }

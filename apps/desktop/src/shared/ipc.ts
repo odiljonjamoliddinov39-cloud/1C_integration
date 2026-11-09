@@ -314,7 +314,7 @@ export interface DidoxDraftPreview {
     catalogCode?: string;
   }[];
   totals: { amount: string; vat: string; total: string };
-  /** What the program filled in on its own (the IKPU of a line, its unit) and where it took it from. */
+  /** What the program filled in on its own (the IKPU of a line, its unit) and where it took it from, and what it could not find (a line's IKPU) and the accountant is to give. */
   notes?: string[];
 }
 

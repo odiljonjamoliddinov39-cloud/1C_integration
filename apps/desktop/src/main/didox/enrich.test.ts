@@ -21,12 +21,49 @@ describe("fillFromSale", () => {
     expect(notes[0]).toContain("04818001002000000");
   });
 
-  it("keeps a line that has its own code; a goods line takes the code of the same item, never of another", () => {
+  it("keeps a line that has its own code; a goods line takes the code of the same item, never the biggest line's", () => {
     const own = { ...advance, name: "Салфетки", catalogCode: "111", unit: "кг" };
-    const same = { ...advance, name: 'Салфетки "Elma"', unit: "шт" };
-    const { lines } = fillFromSale([own, same], [{ ...sold[1]!, name: "салфетки elma" }, ...sold]);
+    const wipes = { ...advance, name: 'Салфетки влажные "Kippers"', unit: "шт" };
+    const stock = [
+      // The biggest coded line is another item with another code; the wipes sold earlier are smaller.
+      { ikpu: "04818001002000000", name: "Туалетная бумага Elma", unit: "дона", sum: 9000 },
+      { ikpu: "04803001001000000", name: "салфетки влажные kippers", unit: "дона", sum: 100 },
+    ];
+    const { lines } = fillFromSale([own, wipes], stock);
     expect(lines[0]).toEqual(own);
-    expect(lines[1]).toMatchObject({ catalogCode: "04818001002000000", unit: "шт" });
+    expect(lines[1]).toMatchObject({ catalogCode: "04803001001000000", unit: "шт" });
+  });
+
+  it("takes the newest sale's code when an item was sold with two, and matches by the full name too", () => {
+    const line = { ...advance, name: 'Шампунь "Kippers" 250 мл полное' };
+    const newestFirst = [
+      {
+        ikpu: "03305001001000000",
+        name: "Шампунь Kippers",
+        fullName: 'Шампунь "Kippers" 250 мл полное',
+        unit: "шт",
+        sum: 10,
+      },
+      {
+        ikpu: "03305009009000000",
+        name: "Шампунь Kippers",
+        fullName: 'Шампунь "Kippers" 250 мл полное',
+        unit: "шт",
+        sum: 900,
+      },
+    ];
+    expect(fillFromSale([line], newestFirst).lines[0]?.catalogCode).toBe("03305001001000000");
+  });
+
+  it("does not match one name inside another: a different size or product gets no code", () => {
+    const small = { ...advance, name: "Салфетки Kippers 72 шт" };
+    const stock = [{ ikpu: "04803001001000000", name: "Салфетки Kippers 720 шт", unit: "шт", sum: 5 }];
+    expect(fillFromSale([small], stock).lines[0]).toEqual(small);
+    const word = { ...advance, name: "Салфетки" };
+    expect(
+      fillFromSale([word], [{ ikpu: "04803001001000000", name: "Салфетки влажные", unit: "шт", sum: 5 }])
+        .lines[0],
+    ).toEqual(word);
   });
 
   it("leaves a goods line the buyer was never sold without a code, and says so (the shampoo must not get the napkins' code)", () => {
@@ -34,7 +71,7 @@ describe("fillFromSale", () => {
     const { lines, notes } = fillFromSale([shampoo], sold);
     expect(lines[0]).toEqual(shampoo);
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain("no IKPU");
+    expect(notes[0]).toContain("no IKPU found");
     expect(notes[0]).toContain("Шампунь");
   });
 
