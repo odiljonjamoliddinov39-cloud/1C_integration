@@ -22,8 +22,20 @@ export interface FetchResult {
   documents: DidoxDocument[];
   /** Documents the lists named, before the dates were applied. */
   listed: number;
-  /** Documents that are not an invoice, an act or another kind the app reads, or fall outside the dates. */
+  /** Documents that are not an invoice, an act or another kind the app reads, or fall outside the dates (the two below together). */
   skipped: number;
+  /** Of `skipped`: documents of a kind the app does not read (or whose JSON Didox did not give). */
+  unreadable: number;
+  /** Of `skipped`: documents read, but dated outside the period. */
+  outsidePeriod: number;
+  /** List entries left out unread because their own date is after the period (they do not use up the limit). */
+  newerThanPeriod: number;
+  /** The oldest and the newest date seen in Didox's list ("" when a list gave none): shows how far back the walk got. */
+  oldestListed: string;
+  newestListed: string;
+  /** Pages of the list read, and whether the walk stopped at the most pages it reads (older documents may lie further back). */
+  pagesRead: number;
+  stoppedAtPageLimit: boolean;
   /** Documents Didox would not give (id and why). */
   failed: { id: string; message: string }[];
   /** The limit was reached: there are more in this period. */
@@ -107,6 +119,11 @@ export async function fetchDidoxDocuments(
   const owners = options.direction === "incoming" ? [0] : options.direction === "outgoing" ? [1] : [0, 1];
   const entries = new Map<string, Record<string, unknown>>();
   let truncated = false;
+  let newerThanPeriod = 0;
+  let oldestListed = "";
+  let newestListed = "";
+  let pagesRead = 0;
+  let stoppedAtPageLimit = false;
 
   for (const owner of owners) {
     for (let page = 1; page <= MAX_PAGES; page++) {
@@ -122,11 +139,16 @@ export async function fetchDidoxDocuments(
         }),
       );
       if (items.length === 0) break;
+      pagesRead += 1;
       let older = 0;
       for (const item of items) {
         const id = idOf(item);
         if (!id || entries.has(id)) continue;
         const { day, exact } = dayOf(item);
+        if (day) {
+          if (!oldestListed || day < oldestListed) oldestListed = day;
+          if (day > newestListed) newestListed = day;
+        }
         // Lists come newest first; an entry last changed before the period began is not read.
         if (day && options.from && day < options.from) {
           older += 1;
@@ -134,7 +156,10 @@ export async function fetchDidoxDocuments(
         }
         // A document dated after the period is not one of it, and must not use up the limit: a month two years back
         // lies behind everything issued since.
-        if (exact && day && options.to && day > options.to) continue;
+        if (exact && day && options.to && day > options.to) {
+          newerThanPeriod += 1;
+          continue;
+        }
         entries.set(id, item);
       }
       if (items.length < PAGE || older === items.length) break;
@@ -142,6 +167,7 @@ export async function fetchDidoxDocuments(
         truncated = true;
         break;
       }
+      if (page === MAX_PAGES) stoppedAtPageLimit = true;
     }
   }
 
@@ -155,7 +181,8 @@ export async function fetchDidoxDocuments(
 
   const documents: DidoxDocument[] = [];
   const failed: FetchResult["failed"] = [];
-  let skipped = 0;
+  let unreadable = 0;
+  let outsidePeriod = 0;
   await inParallel(ids, async (id) => {
     if (signal?.aborted) return;
     try {
@@ -164,11 +191,11 @@ export async function fetchDidoxDocuments(
       if (json === null) json = documentJson(await client.documentInfo(id));
       const parsed = json === null ? null : parseDidoxDocument(json);
       if (!parsed) {
-        skipped += 1;
+        unreadable += 1;
         return;
       }
       if ((options.from && parsed.date < options.from) || (options.to && parsed.date > options.to)) {
-        skipped += 1;
+        outsidePeriod += 1;
         return;
       }
       documents.push({ ...parsed, id: parsed.id || id });
@@ -177,5 +204,51 @@ export async function fetchDidoxDocuments(
     }
   });
   documents.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number));
-  return { documents, listed, skipped, failed, truncated };
+  return {
+    documents,
+    listed,
+    skipped: unreadable + outsidePeriod,
+    unreadable,
+    outsidePeriod,
+    newerThanPeriod,
+    oldestListed,
+    newestListed,
+    pagesRead,
+    stoppedAtPageLimit,
+    failed,
+    truncated,
+  };
+}
+
+/**
+ * Why a read gave no document, in plain words from the numbers (so the answer never has to guess: "Didox is not connected" is
+ * said only by the connection check, never by this). Empty when something was read.
+ */
+export function explainEmpty(result: FetchResult, from: string, to: string): string {
+  if (result.documents.length > 0) return "";
+  const parts: string[] = [];
+  if (result.pagesRead === 0)
+    parts.push("Didox's list for this direction was empty (it gave no document at all).");
+  if (result.newerThanPeriod > 0)
+    parts.push(`${result.newerThanPeriod} listed documents are dated after ${to} and were not read.`);
+  if (result.unreadable > 0)
+    parts.push(
+      `${result.unreadable} documents were found in the period but are of a kind the app does not read (or Didox gave no JSON for them).`,
+    );
+  if (result.outsidePeriod > 0)
+    parts.push(`${result.outsidePeriod} documents were read but are dated outside ${from} - ${to}.`);
+  if (result.failed.length > 0)
+    parts.push(`${result.failed.length} documents Didox would not give (see failed).`);
+  if (result.truncated)
+    parts.push("The limit was reached before the period was; ask for one month at a time.");
+  if (result.stoppedAtPageLimit)
+    parts.push(
+      `The walk stopped at the most pages it reads, back to ${result.oldestListed || "an unknown date"}: documents older than that were not reached; ask for a shorter, more recent period, or attach Didox's archive.`,
+    );
+  else if (result.pagesRead > 0 && result.oldestListed && result.oldestListed > from)
+    parts.push(
+      `Didox's list goes back only to ${result.oldestListed}: it holds nothing older for this company through its API; for ${from} attach Didox's archive.`,
+    );
+  if (parts.length === 0) parts.push(`Didox holds no document of this company for ${from} - ${to}.`);
+  return parts.join(" ");
 }

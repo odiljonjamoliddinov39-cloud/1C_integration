@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DidoxClient } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
-import { documentJson, fetchDidoxDocuments, itemsOf } from "./fetch.js";
+import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf } from "./fetch.js";
 
 /** An ЭСФ as Didox gives it, cut down to the fields that matter. */
 function invoice(number: string, date: string, sellerTin: string, buyerTin: string, total = "1000.00") {
@@ -107,6 +107,78 @@ describe("Didox documents read through the API", () => {
     });
     expect(result.documents.map((d) => d.number)).toEqual(["J1", "J2", "J3"]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("says why nothing was read: how far back Didox's list goes, what it could not read, what is newer", async () => {
+    const { server, client } = setup();
+    // Didox holds this company's documents of 2025-2026 only, plus one of a kind the app does not read.
+    const recent = Array.from({ length: 3 }, (_, i) => ({
+      id: `r${i}`,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      updated: "2025-03-01 10:00:00",
+      docdate: "2025-03-01",
+      json: invoice(`R${i}`, "2025-03-01", "111111111", "302936161"),
+    }));
+    server.documents = recent;
+
+    // 2020-2023: nothing older than 2025 in Didox's list: the answer says so (and not "not connected").
+    const old = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2023-12-31",
+      limit: 50,
+    });
+    expect(old.documents).toEqual([]);
+    expect(old.newerThanPeriod).toBe(3);
+    expect(old.oldestListed).toBe("2025-03-01");
+    const why = explainEmpty(old, "2020-01-01", "2023-12-31");
+    expect(why).toContain("3 listed documents are dated after 2023-12-31");
+    expect(why).toContain("goes back only to 2025-03-01");
+    expect(why).toContain("archive");
+    expect(why).not.toMatch(/not connected/i);
+
+    // A period Didox does hold: nothing to explain.
+    const now = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2025-01-01",
+      to: "2025-12-31",
+      limit: 50,
+    });
+    expect(now.documents).toHaveLength(3);
+    expect(explainEmpty(now, "2025-01-01", "2025-12-31")).toBe("");
+  });
+
+  it("tells an empty list and documents it cannot read apart", async () => {
+    const empty = {
+      documents: [],
+      listed: 0,
+      skipped: 0,
+      unreadable: 0,
+      outsidePeriod: 0,
+      newerThanPeriod: 0,
+      oldestListed: "",
+      newestListed: "",
+      pagesRead: 0,
+      stoppedAtPageLimit: false,
+      failed: [],
+      truncated: false,
+    };
+    expect(explainEmpty(empty, "2020-01-01", "2020-12-31")).toContain("list for this direction was empty");
+    const unread = {
+      ...empty,
+      pagesRead: 1,
+      listed: 19,
+      unreadable: 19,
+      skipped: 19,
+      oldestListed: "2020-02-01",
+    };
+    expect(explainEmpty(unread, "2020-01-01", "2020-12-31")).toContain(
+      "19 documents were found in the period",
+    );
+    const deep = { ...empty, pagesRead: 100, stoppedAtPageLimit: true, oldestListed: "2024-05-01" };
+    expect(explainEmpty(deep, "2020-01-01", "2023-12-31")).toContain("stopped at the most pages");
   });
 
   it("reads both directions, oldest first, and stops at the limit", async () => {

@@ -150,7 +150,7 @@ import {
   money,
   parseDidoxDocument,
 } from "./didox/document.js";
-import { fetchDidoxDocuments } from "./didox/fetch.js";
+import { explainEmpty, fetchDidoxDocuments } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { previewOfBank, rowIsOfKind } from "./bank/preview.js";
 import { compareText, compareWithBooks } from "./bank/compare.js";
@@ -2793,6 +2793,25 @@ export class AssistantService {
         outgoingCount: outgoing.length,
         ...(other > 0 ? { otherCompanies: other } : {}),
         skipped: read.skipped,
+        unreadable: read.unreadable,
+        outsidePeriod: read.outsidePeriod,
+        newerThanPeriod: read.newerThanPeriod,
+        listed: read.listed,
+        oldestListed: read.oldestListed,
+        pagesRead: read.pagesRead,
+        ...(read.documents.length === 0
+          ? {
+              why:
+                explainEmpty(read, from, to) +
+                " Didox IS connected (it answered); do not tell the accountant to reconnect it, and do not call propose_didox_invoices: nothing was read to enter.",
+            }
+          : incoming.length === 0 && outgoing.length === 0
+            ? {
+                why:
+                  `${read.documents.length} documents were read but none names this company (INN ${own}) as buyer or seller, ` +
+                  "so none can be entered: check the company's INN under Companies.",
+              }
+            : {}),
         ...(read.failed.length > 0 ? { failed: read.failed.slice(0, 10) } : {}),
         ...(read.truncated
           ? {
