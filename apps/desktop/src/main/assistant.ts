@@ -150,7 +150,7 @@ import {
   money,
   parseDidoxDocument,
 } from "./didox/document.js";
-import { fetchDidoxDocuments } from "./didox/fetch.js";
+import { explainEmpty, fetchDidoxDocuments, partialNote } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { previewOfBank, rowIsOfKind } from "./bank/preview.js";
 import { compareText, compareWithBooks } from "./bank/compare.js";
@@ -2793,6 +2793,29 @@ export class AssistantService {
         outgoingCount: outgoing.length,
         ...(other > 0 ? { otherCompanies: other } : {}),
         skipped: read.skipped,
+        unreadable: read.unreadable,
+        outsidePeriod: read.outsidePeriod,
+        newerThanPeriod: read.newerThanPeriod,
+        listed: read.listed,
+        seen: read.seen,
+        oldestListed: read.oldestListed,
+        newestListed: read.newestListed,
+        pagesRead: read.pagesRead,
+        ...(read.stoppedAtPageLimit ? { stoppedAtPageLimit: true } : {}),
+        ...(partialNote(read, from) ? { incomplete: partialNote(read, from) } : {}),
+        ...(read.documents.length === 0
+          ? {
+              why:
+                explainEmpty(read, from, to) +
+                " This read gave no connection error, so do not tell the accountant to reconnect Didox, and do not call propose_didox_invoices: nothing was read to enter.",
+            }
+          : incoming.length === 0 && outgoing.length === 0
+            ? {
+                why:
+                  `${read.documents.length} documents were read but none names this company (INN ${own}) as buyer or seller, ` +
+                  "so none can be entered: check the company's INN under Companies.",
+              }
+            : {}),
         ...(read.failed.length > 0 ? { failed: read.failed.slice(0, 10) } : {}),
         ...(read.truncated
           ? {
@@ -3475,7 +3498,8 @@ export class AssistantService {
         ok: false,
         code: "NO_DIDOX",
         message:
-          "No Didox documents were read from the files attached to this chat. Attach the Didox archive (or its JSON files), or enter the invoices with propose_invoices_received.",
+          "No Didox documents are in this chat. If Didox was just read for this period (fetch_didox_documents), its `why` says what happened: report that, not a broken connection. " +
+          "Otherwise attach the Didox archive (or its JSON files), or enter the invoices with propose_invoices_received.",
       };
     }
     emit({ type: "tool", name: "propose_didox_invoices", detail: describe("propose_didox_invoices", input) });

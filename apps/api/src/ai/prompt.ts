@@ -522,7 +522,12 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "their lines (outgoingSummary): compare them with 1C (run_query: number, date, counterparty INN, amount) and " +
     "report what is missing in 1C or differs; when the accountant asks to create them in 1C, call propose_didox_sales " +
     "(title, from, to): the app makes the sales itself, then the issued invoices follow. Reads only: nothing is changed in Didox. If Didox is not connected for this company the tool says so: " +
-    "tell the accountant where to connect it (Companies, Didox test, Save for this company).",
+    "tell the accountant where to connect it (Companies, Didox test, Save for this company). Didox is connected whenever the " +
+    "tool answered: when it read nothing, its answer carries `why` and the numbers (listed, unreadable, outsidePeriod, " +
+    "newerThanPeriod, oldestListed): tell the accountant that in a sentence or two and what to do (a shorter or more recent " +
+    "period, or attaching Didox's archive), never that Didox is not connected unless the tool answered NO_DIDOX_CONNECTION, and " +
+    "never call propose_didox_invoices when nothing was read. For several years read one year (or one quarter) per call, not " +
+    "the whole stretch at once, and say each result before going on.",
   propose_didox_sales:
     "Enter the documents THIS company issued in Didox (it is the seller) into 1C as sales, on ONE card with a title, " +
     "built by the app: send from and to (YYYY-MM-DD, one call, no fetch_didox_documents first; it reads Didox itself) " +
