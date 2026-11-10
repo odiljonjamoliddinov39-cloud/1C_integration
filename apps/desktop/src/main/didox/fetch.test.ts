@@ -217,6 +217,133 @@ describe("Didox documents read through the API", () => {
     expect(result.skipped + result.failed.length).toBe(2);
   });
 
+  it("finds the way Didox takes a date, and reaches documents older than the window it falls back to", async () => {
+    const { server, client } = setup();
+    // Didox takes DD.MM.YYYY; a date written otherwise is dropped and its list holds only the current year.
+    server.dateFormat = "dmy";
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
+      {
+        id: "old",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2020-04-13 10:00:00",
+        json: invoice("1", "2020-04-12", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.dateFilter).toBe(true);
+    expect(result.documents.map((d) => d.number)).toEqual(["1"]);
+  });
+
+  it("says so when no way of writing the date changes Didox's answer", async () => {
+    const { server } = setup();
+    // A server that takes DD.MM.YYYY, asked through a connection whose dates are garbled: it takes neither way.
+    server.dateFormat = "dmy";
+    server.defaultFrom = "2026-01-01";
+    const strange = new DidoxClient(
+      {
+        baseUrl: "https://didox.test/",
+        fetch: (input, init) =>
+          server.fetch(String(input).replace(/dateFrom=[^&]*/, "dateFrom=garbage"), init),
+      },
+      new FakeSigner(),
+    );
+    server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(strange, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.dateFilter).toBe(false);
+    expect(explainEmpty(result, "2020-01-01", "2020-12-31")).toContain("did not take the date");
+  });
+
+  it("does not remember a date probe that failed, and goes on without the date", async () => {
+    let probes = 0;
+    const client = {
+      listDocuments: async (query: { dateFrom?: string }) => {
+        if (query.dateFrom) {
+          probes += 1;
+          throw new Error("connection reset");
+        }
+        return { data: [] };
+      },
+    } as unknown as DidoxClient;
+    const options = { direction: "incoming" as const, from: "2020-01-01", limit: 10 };
+    const first = await fetchDidoxDocuments(client, options);
+    expect(first.dateFilter).toBeUndefined();
+    await fetchDidoxDocuments(client, options);
+    expect(probes).toBe(4); // asked again, not taken as "Didox ignores dates"
+  });
+
+  it("is not stopped by a page wholly older than the period when the date bounds the list", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    server.pageCap = 2;
+    const entry = (id: string, date: string, updated: string) => ({
+      id,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      updated,
+      docdate: date,
+      json: invoice(id, date, "1", "302936161"),
+    });
+    // The list is not in the order of the documents' own dates: old ones changed lately come first.
+    server.documents = [
+      entry("1", "2019-12-01", "2026-05-01 10:00:00"),
+      entry("2", "2019-11-01", "2026-05-01 10:00:00"),
+      entry("3", "2020-03-01", "2026-04-01 10:00:00"),
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.documents.map((d) => d.number)).toEqual(["3"]);
+  });
+
+  it("walks every page when Didox gives fewer entries than the limit asked", async () => {
+    const { server, client } = setup();
+    server.pageCap = 20;
+    server.documents = Array.from({ length: 95 }, (_, i) => ({
+      id: `d${i}`,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      json: invoice(String(i + 1), "2020-05-01", "1", "302936161"),
+    }));
+    const result = await fetchDidoxDocuments(client, { direction: "incoming", limit: 300 });
+    expect(result.documents).toHaveLength(95);
+    expect(result.pagesRead).toBe(5);
+  });
+
   it("does not mistake an error answer for an empty list", async () => {
     const client = {
       listDocuments: async () => ({ success: false, error: "token expired" }),

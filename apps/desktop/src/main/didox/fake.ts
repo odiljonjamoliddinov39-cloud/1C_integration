@@ -55,6 +55,14 @@ export class FakeDidox {
     /** The document's own date, when the list carries it. */
     docdate?: string;
   }[] = [];
+  /**
+   * How the real list takes `dateFrom`: only in this format; a date written otherwise is not an error, it is dropped and the list
+   * falls back to `defaultFrom` (when set), as the real one gives only a window of its own.
+   */
+  dateFormat: "iso" | "dmy" = "iso";
+  defaultFrom: string | undefined;
+  /** The most entries a page holds, whatever limit is asked (the real list gives fewer than asked). */
+  pageCap: number | undefined;
   /** Tokens that were issued and have not been revoked. */
   private readonly tokens = new Set<string>();
   private issued = 0;
@@ -148,9 +156,17 @@ export class FakeDidox {
     if (path === "/v1/documents") {
       const owner = url.searchParams.get("owner");
       const doctypes = url.searchParams.get("doctype")?.split(",");
-      const limit = Number(url.searchParams.get("limit") ?? 20);
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 20), this.pageCap ?? Infinity);
       const page = Number(url.searchParams.get("page") ?? 1);
-      const dateFrom = url.searchParams.get("dateFrom");
+      const asked = url.searchParams.get("dateFrom");
+      const understood = asked
+        ? this.dateFormat === "dmy"
+          ? /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(asked)?.slice(1).reverse().join("-")
+          : /^\d{4}-\d{2}-\d{2}$/.test(asked)
+            ? asked
+            : undefined
+        : undefined;
+      const dateFrom = understood ?? this.defaultFrom ?? null;
       const matching = this.documents.filter(
         (d) =>
           (owner === null || d.owner === Number(owner)) &&

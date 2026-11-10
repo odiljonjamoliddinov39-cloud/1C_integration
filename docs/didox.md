@@ -212,7 +212,10 @@ Not wired into the app yet: no settings screen, no assistant tool.
    the JSON the list entry carries) and keeps those dated in the period. The ones where the company is the
    buyer join the chat exactly as attached Didox files do, so `propose_didox_invoices`, the checks and the
    resolver work on them unchanged; the ones where it is the seller are listed to be compared with 1C. No
-   files from the accountant are needed. `dateTo` is not sent to Didox (it filters by the update date, which can
+   files from the accountant are needed. Didox does not say when it does not understand a `dateFrom`: it falls back to a window of its
+   own (a 2020 read then gave only 2026 documents), so the reader first asks for a date far in the future in each way of writing it
+   (DD.MM.YYYY, then YYYY-MM-DD) and keeps the way that gives an empty list; the walk goes on until an empty page, a page with nothing new,
+   or one wholly before the period (Didox gives fewer entries per page than asked). `dateTo` is not sent to Didox (it filters by the update date, which can
    be later than the document's own), the period end is applied to the document's own date.
 4. **Outgoing**: step 1 is built: the tool `propose_didox_draft` makes an invoice that exists in 1C a **draft** in
    Didox, after the accountant confirms a card (seller, buyer, lines and the sums the app worked out). It never

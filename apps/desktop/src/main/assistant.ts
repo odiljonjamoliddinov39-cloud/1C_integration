@@ -2802,6 +2802,12 @@ export class AssistantService {
         newestListed: read.newestListed,
         pagesRead: read.pagesRead,
         ...(read.stoppedAtPageLimit ? { stoppedAtPageLimit: true } : {}),
+        ...(read.dateFilter === false
+          ? {
+              dateFilter:
+                "Didox's list did not take the date asked of it, so it may not give documents older than the window it chooses itself: say so if the period is older than the oldest listed.",
+            }
+          : {}),
         ...(partialNote(read, from) ? { incomplete: partialNote(read, from) } : {}),
         ...(read.documents.length === 0
           ? {
