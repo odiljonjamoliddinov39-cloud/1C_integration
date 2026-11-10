@@ -212,11 +212,15 @@ Not wired into the app yet: no settings screen, no assistant tool.
    the JSON the list entry carries) and keeps those dated in the period. The ones where the company is the
    buyer join the chat exactly as attached Didox files do, so `propose_didox_invoices`, the checks and the
    resolver work on them unchanged; the ones where it is the seller are listed to be compared with 1C. No
-   files from the accountant are needed. Didox does not say when it does not understand a `dateFrom`: it falls back to a window of its
-   own (a 2020 read then gave only 2026 documents), so the reader first asks for a date far in the future in each way of writing it
-   (DD.MM.YYYY, then YYYY-MM-DD) and keeps the way that gives an empty list; the walk goes on until an empty page, a page with nothing new,
-   or one wholly before the period (Didox gives fewer entries per page than asked). `dateTo` is not sent to Didox (it filters by the update date, which can
-   be later than the document's own), the period end is applied to the document's own date.
+   files from the accountant are needed. Didox does not say when it does not understand a period: it falls back to a window of its
+   own (a 2020 read then gave 299 documents, all of 2026). So the reader first finds how the list wants a period, by asking: a year in
+   2000 must give an empty list and 2000 to 2099 must give documents. It tries the query names `dateFrom`/`dateTo`, `from`/`to`,
+   `fromDate`/`toDate`, `startDate`/`endDate`, each with DD.MM.YYYY and YYYY-MM-DD, and always sends both ends (some lists take a
+   period only so). The period is then asked in windows of a year, newest first, from its start to today (a document can be changed
+   long after its date, and Didox may filter by that day); each window is walked until an empty page or a page with nothing new
+   (Didox gives fewer entries per page than asked), up to 400 pages, and the period end is applied to the document's own date. When no
+   way works, the answer carries what each gave (`dateProbe`) and the field names of the first entry (`entryFields`), and says the
+   list holds only the window Didox chooses.
 4. **Outgoing**: step 1 is built: the tool `propose_didox_draft` makes an invoice that exists in 1C a **draft** in
    Didox, after the accountant confirms a card (seller, buyer, lines and the sums the app worked out). It never
    signs and never sends. The body follows Didox's own 1C library (`FacturaDoc`, `ContractDoc`, `Seller` and

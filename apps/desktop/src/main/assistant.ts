@@ -2802,6 +2802,8 @@ export class AssistantService {
         newestListed: read.newestListed,
         pagesRead: read.pagesRead,
         ...(read.stoppedAtPageLimit ? { stoppedAtPageLimit: true } : {}),
+        ...(read.dateProbe && read.dateProbe.length > 0 ? { dateProbe: read.dateProbe } : {}),
+        ...(read.entryFields ? { entryFields: read.entryFields } : {}),
         ...(read.dateFilter === false
           ? {
               dateFilter:

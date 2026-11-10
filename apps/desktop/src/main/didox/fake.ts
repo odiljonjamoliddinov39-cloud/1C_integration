@@ -61,6 +61,9 @@ export class FakeDidox {
    */
   dateFormat: "iso" | "dmy" = "iso";
   defaultFrom: string | undefined;
+  /** The query names the real list takes a period under, and whether it takes a period only with both ends. */
+  dateNames: [string, string] = ["dateFrom", "dateTo"];
+  needsBothDates = false;
   /** The most entries a page holds, whatever limit is asked (the real list gives fewer than asked). */
   pageCap: number | undefined;
   /** Tokens that were issued and have not been revoked. */
@@ -158,20 +161,30 @@ export class FakeDidox {
       const doctypes = url.searchParams.get("doctype")?.split(",");
       const limit = Math.min(Number(url.searchParams.get("limit") ?? 20), this.pageCap ?? Infinity);
       const page = Number(url.searchParams.get("page") ?? 1);
-      const asked = url.searchParams.get("dateFrom");
-      const understood = asked
-        ? this.dateFormat === "dmy"
+      const take = (name: string): string | undefined => {
+        const asked = url.searchParams.get(name);
+        if (!asked) return undefined;
+        return this.dateFormat === "dmy"
           ? /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(asked)?.slice(1).reverse().join("-")
           : /^\d{4}-\d{2}-\d{2}$/.test(asked)
             ? asked
-            : undefined
-        : undefined;
-      const dateFrom = understood ?? this.defaultFrom ?? null;
+            : undefined;
+      };
+      let understoodFrom = take(this.dateNames[0]);
+      let understoodTo = take(this.dateNames[1]);
+      // Some lists take a period only with both ends: with one, the period is dropped.
+      if (this.needsBothDates && !(understoodFrom && understoodTo)) {
+        understoodFrom = undefined;
+        understoodTo = undefined;
+      }
+      const dateFrom = understoodFrom ?? (understoodTo ? null : (this.defaultFrom ?? null));
+      const dateTo = understoodTo ?? null;
       const matching = this.documents.filter(
         (d) =>
           (owner === null || d.owner === Number(owner)) &&
           (!doctypes || doctypes.includes(d.doctype)) &&
-          (!dateFrom || !d.updated || d.updated.slice(0, 10) >= dateFrom),
+          (!dateFrom || !d.updated || d.updated.slice(0, 10) >= dateFrom) &&
+          (!dateTo || !d.updated || d.updated.slice(0, 10) <= dateTo),
       );
       return json(matching.slice((page - 1) * limit, page * limit).map(({ json: _json, ...entry }) => entry));
     }

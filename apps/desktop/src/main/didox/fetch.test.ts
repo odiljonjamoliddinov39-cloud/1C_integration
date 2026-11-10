@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DidoxClient } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
-import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf, partialNote } from "./fetch.js";
+import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf, partialNote, windowsOf } from "./fetch.js";
 
 /** An ЭСФ as Didox gives it, cut down to the fields that matter. */
 function invoice(number: string, date: string, sellerTin: string, buyerTin: string, total = "1000.00") {
@@ -259,7 +259,7 @@ describe("Didox documents read through the API", () => {
       {
         baseUrl: "https://didox.test/",
         fetch: (input, init) =>
-          server.fetch(String(input).replace(/dateFrom=[^&]*/, "dateFrom=garbage"), init),
+          server.fetch(String(input).replace(/(dateFrom|dateTo)=[^&]*/g, "$1=garbage"), init),
       },
       new FakeSigner(),
     );
@@ -281,6 +281,98 @@ describe("Didox documents read through the API", () => {
     });
     expect(result.dateFilter).toBe(false);
     expect(explainEmpty(result, "2020-01-01", "2020-12-31")).toContain("did not take the date");
+  });
+
+  it("asks with both ends of a year when the list takes a period only that way", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    server.needsBothDates = true;
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
+      {
+        id: "old",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2020-04-13 10:00:00",
+        json: invoice("1", "2020-04-12", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.dateFilter).toBe(true);
+    expect(result.documents.map((d) => d.number)).toEqual(["1"]);
+  });
+
+  it("finds a period under other query names", async () => {
+    const { server, client } = setup();
+    server.dateNames = ["fromDate", "toDate"];
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "old",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2020-04-13 10:00:00",
+        json: invoice("1", "2020-04-12", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.dateFilter).toBe(true);
+    expect(result.documents).toHaveLength(1);
+  });
+
+  it("says what each way of asking gave and which fields the list carries when none works", async () => {
+    const { server } = setup();
+    server.dateNames = ["somethingElse", "another"];
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
+    ];
+    const client = new DidoxClient({ baseUrl: "https://didox.test/", fetch: server.fetch }, new FakeSigner());
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+    });
+    expect(result.dateFilter).toBe(false);
+    expect(result.dateProbe?.length).toBe(8);
+    expect(result.dateProbe?.[0]).toContain("dateFrom/dateTo DD.MM.YYYY");
+    expect(result.entryFields).toContain("id");
+  });
+
+  it("cuts a period into windows of a year, newest first, up to today", () => {
+    expect(windowsOf("2020-01-01", "2021-06-30")).toEqual([
+      { from: "2020-12-31", to: "2021-06-30" },
+      { from: "2020-01-01", to: "2020-12-30" }, // 2020 has 366 days
+    ]);
+    expect(windowsOf("2026-05-01", "2026-05-01")).toEqual([{ from: "2026-05-01", to: "2026-05-01" }]);
   });
 
   it("does not remember a date probe that failed, and goes on without the date", async () => {
