@@ -42,11 +42,54 @@ export interface FetchResult {
   failed: { id: string; message: string }[];
   /** The limit was reached: there are more in this period. */
   truncated: boolean;
+  /**
+   * The date Didox's list took: false when none of the formats tried changed its answer, so its list is only the window it
+   * chooses itself (the documents are then not asked by date, and older ones may not be given at all).
+   */
+  dateFilter?: boolean;
+}
+
+/** YYYY-MM-DD as Didox's own screens write it: DD.MM.YYYY. */
+const dmy = (day: string): string => day.split("-").reverse().join(".");
+
+/** Which way of writing the `dateFrom` of Didox's list it understands, found once per connection. */
+const dateWays = new WeakMap<DidoxClient, { write: (day: string) => string; works: boolean }>();
+
+/**
+ * Didox does not say it did not understand a date: it falls back to a window of its own (the answer then holds only the
+ * current year, say). A date far in the future shows whether a way of writing it is taken: an answer with nothing in it, where
+ * a date that was ignored would still give the newest documents.
+ */
+async function dateWay(
+  client: DidoxClient,
+  owner: 0 | 1,
+): Promise<{ write: (day: string) => string; works: boolean }> {
+  const known = dateWays.get(client);
+  if (known) return known;
+  const tries = [(day: string) => dmy(day), (day: string) => day];
+  let found = { write: tries[1] as (day: string) => string, works: false };
+  for (const write of tries) {
+    try {
+      const list = await client.listDocuments({ owner, page: 1, limit: 1, dateFrom: write("2099-01-01") });
+      listError(list);
+      if (itemsOf(list).length === 0) {
+        found = { write, works: true };
+        break;
+      }
+    } catch {
+      // this way is refused or not understood: the next
+    }
+  }
+  dateWays.set(client, found);
+  return found;
 }
 
 const PAGE = 100;
-/** Pages of one list read at most (the dates cannot always be asked of Didox, so this bounds the walk). */
-const MAX_PAGES = 100;
+/**
+ * Pages of one list read at most (bounds the walk). Didox may give fewer entries per page than asked (its own screen shows 20),
+ * so this is high enough for thousands of documents even then.
+ */
+const MAX_PAGES = 400;
 const PARALLEL = 4;
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -135,6 +178,7 @@ export async function fetchDidoxDocuments(
   signal?: AbortSignal,
 ): Promise<FetchResult> {
   const owners = options.direction === "incoming" ? [0] : options.direction === "outgoing" ? [1] : [0, 1];
+  const way = options.from ? await dateWay(client, owners[0] as 0 | 1) : undefined;
   const entries = new Map<string, Record<string, unknown>>();
   let truncated = false;
   let newerThanPeriod = 0;
@@ -153,15 +197,17 @@ export async function fetchDidoxDocuments(
         limit: PAGE,
         // Didox filters by the update date: a document is never updated before its own date, so
         // `dateFrom` is safe, but `dateTo` would lose documents signed after the period ends.
-        ...(options.from ? { dateFrom: options.from } : {}),
+        ...(options.from && way ? { dateFrom: way.write(options.from) } : {}),
       });
       listError(list);
       const items = itemsOf(list);
       if (items.length === 0) break;
       pagesRead += 1;
       let older = 0;
+      let fresh = 0;
       for (const item of items) {
         const id = idOf(item);
+        if (id && !seenIds.has(id)) fresh += 1;
         if (id) seenIds.add(id);
         if (!id || entries.has(id)) continue;
         const { day, exact } = dayOf(item);
@@ -182,7 +228,9 @@ export async function fetchDidoxDocuments(
         }
         entries.set(id, item);
       }
-      if (items.length < PAGE || older === items.length) break;
+      // Only an empty page, a page that gave nothing new (Didox repeating one) or one wholly older than the period ends the
+      // walk: a page shorter than asked is not the last (Didox gives fewer than the limit it was asked for).
+      if (fresh === 0 || older === items.length) break;
       if (entries.size >= options.limit) {
         truncated = true;
         break;
@@ -238,6 +286,7 @@ export async function fetchDidoxDocuments(
     stoppedAtPageLimit,
     failed,
     truncated,
+    ...(way ? { dateFilter: way.works } : {}),
   };
 }
 
@@ -269,6 +318,10 @@ export function explainEmpty(result: FetchResult, from: string, to: string): str
   else if (!result.truncated && result.pagesRead > 0 && result.oldestListed && result.oldestListed > from)
     parts.push(
       `Didox's list (read to its end) goes back only to ${result.oldestListed}: it holds nothing older for this company through its API; for ${from} attach Didox's archive.`,
+    );
+  if (result.dateFilter === false)
+    parts.push(
+      "Didox's list did not take the date asked of it (neither DD.MM.YYYY nor YYYY-MM-DD changed its answer), so it gives only the window it chooses itself.",
     );
   if (parts.length === 0) parts.push(`Didox holds no document of this company for ${from} - ${to}.`);
   return parts.join(" ");

@@ -130,7 +130,7 @@ export interface DocumentQuery {
   owner?: 0 | 1;
   page?: number;
   limit?: number;
-  /** YYYY-MM-DD, by the document's update date. */
+  /** By the document's update date; the way to write it (DD.MM.YYYY or YYYY-MM-DD) is found by the reader (see `fetch.ts`). */
   dateFrom?: string;
   dateTo?: string;
   /** The partner's tax number. */
