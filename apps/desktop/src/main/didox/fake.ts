@@ -64,6 +64,9 @@ export class FakeDidox {
   /** The query names the real list takes a period under, and whether it takes a period only with both ends. */
   dateNames: [string, string] = ["dateFrom", "dateTo"];
   needsBothDates = false;
+  /** A list that honours only one end of a period. */
+  ignoresDateFrom = false;
+  ignoresDateTo = false;
   /** The most entries a page holds, whatever limit is asked (the real list gives fewer than asked). */
   pageCap: number | undefined;
   /** Tokens that were issued and have not been revoked. */
@@ -170,8 +173,8 @@ export class FakeDidox {
             ? asked
             : undefined;
       };
-      let understoodFrom = take(this.dateNames[0]);
-      let understoodTo = take(this.dateNames[1]);
+      let understoodFrom = this.ignoresDateFrom ? undefined : take(this.dateNames[0]);
+      let understoodTo = this.ignoresDateTo ? undefined : take(this.dateNames[1]);
       // Some lists take a period only with both ends: with one, the period is dropped.
       if (this.needsBothDates && !(understoodFrom && understoodTo)) {
         understoodFrom = undefined;

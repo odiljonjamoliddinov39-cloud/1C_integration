@@ -214,11 +214,14 @@ Not wired into the app yet: no settings screen, no assistant tool.
    resolver work on them unchanged; the ones where it is the seller are listed to be compared with 1C. No
    files from the accountant are needed. Didox does not say when it does not understand a period: it falls back to a window of its
    own (a 2020 read then gave 299 documents, all of 2026). So the reader first finds how the list wants a period, by asking: a year in
-   2000 must give an empty list and 2000 to 2099 must give documents. It tries the query names `dateFrom`/`dateTo`, `from`/`to`,
-   `fromDate`/`toDate`, `startDate`/`endDate`, each with DD.MM.YYYY and YYYY-MM-DD, and always sends both ends (some lists take a
+   2000 and a year in 2099 must both give an empty list and the last year must give documents (a longer period may be refused; both
+   directions are asked when both are read; a rate limit or server error ends the probing). It tries the query names `dateFrom`/`dateTo`,
+   `from`/`to`, `fromDate`/`toDate`, `startDate`/`endDate`, each with DD.MM.YYYY and YYYY-MM-DD, and always sends both ends (some lists take a
    period only so). The period is then asked in windows of a year, newest first, from its start to today (a document can be changed
    long after its date, and Didox may filter by that day); each window is walked until an empty page or a page with nothing new
-   (Didox gives fewer entries per page than asked), up to 400 pages, and the period end is applied to the document's own date. When no
+   (Didox gives fewer entries per page than asked), up to 400 pages, and the period end is applied to the document's own date. The limit counts
+   the documents read, not the entries listed: an entry with no date of its own (the list gives only the day it was changed) may be of
+   any year, so the ones changed near the period are read first, after those known to be in it. When no
    way works, the answer carries what each gave (`dateProbe`) and the field names of the first entry (`entryFields`), and says the
    list holds only the window Didox chooses.
 4. **Outgoing**: step 1 is built: the tool `propose_didox_draft` makes an invoice that exists in 1C a **draft** in

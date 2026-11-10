@@ -4,7 +4,7 @@
  * same `DidoxDocument` that the archives give, so everything built on those (the summary, the checks, entering
  * into 1C) works on them unchanged. Reads only: nothing is changed in Didox.
  */
-import type { DidoxClient } from "./client.js";
+import { DidoxError, type DidoxClient } from "./client.js";
 import { type DidoxDocument, isDidoxJson, parseDidoxDocument } from "./document.js";
 
 export type Direction = "incoming" | "outgoing" | "both";
@@ -16,6 +16,8 @@ export interface FetchOptions {
   direction: Direction;
   /** The most documents to read (each one is a request to Didox). */
   limit: number;
+  /** Today as YYYY-MM-DD (for tests; the clock otherwise). */
+  today?: string;
 }
 
 export interface FetchResult {
@@ -81,18 +83,28 @@ const addDays = (day: string, days: number): string => {
   return date.toISOString().slice(0, 10);
 };
 
+/** A real calendar day written YYYY-MM-DD (not just a string of that shape). */
+export const isDay = (day: string | undefined): day is string =>
+  typeof day === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+  !Number.isNaN(Date.parse(`${day}T00:00:00Z`)) &&
+  new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day;
+
+const todayOf = (): string => new Date().toISOString().slice(0, 10);
+
+/** Didox did not exist before this: a period is not asked of it from earlier (so a mistaken year costs a few requests, not hundreds). */
+const EARLIEST = "2000-01-01";
+
 /**
  * The windows a period is asked of Didox in, newest first: a year each, from the period's start to today (a document can be
  * changed long after its date, and Didox may filter by that). Some Didox lists want both ends of a period and take no more
  * than a year; a window of a year with both ends is what any of them gives.
  */
-export function windowsOf(
-  from: string,
-  today = new Date().toISOString().slice(0, 10),
-): { from: string; to: string }[] {
-  const end = today > from ? today : from;
+export function windowsOf(from: string, today = todayOf()): { from: string; to: string }[] {
+  const first = from < EARLIEST ? EARLIEST : from;
+  const end = today > first ? today : first;
   const list: { from: string; to: string }[] = [];
-  for (let start = from; start <= end;) {
+  for (let start = first; start <= end;) {
     const stop = addDays(start, 364) < end ? addDays(start, 364) : end;
     list.push({ from: start, to: stop });
     start = addDays(stop, 1);
@@ -100,15 +112,26 @@ export function windowsOf(
   return list.reverse();
 }
 
+/** A failure that says the way of asking was refused (a 4xx but not a rate limit), not that Didox or the connection is in trouble. */
+const refusal = (e: unknown): boolean =>
+  e instanceof DidoxError && e.status !== undefined && e.status >= 400 && e.status < 500 && e.status !== 429;
+
 /**
  * Didox does not say it did not understand a date: it falls back to a window of its own (a read of 2020 then gave only the
- * current year). So which way of asking works is found by asking: a year in 2000 must give an empty list (an ignored date would
- * give the newest documents anyway) and 2000 to 2099 must give documents. Names (dateFrom/dateTo, from/to, ...) and the way a
- * date is written (DD.MM.YYYY, YYYY-MM-DD) are tried in turn; both ends are always sent, as some lists take neither alone. A way
- * that gave no such evidence is not a verdict: a probe that failed or found nothing at all is not remembered, so the next read
- * asks again. `probes` says what each way gave, to be shown when none works.
+ * current year). So which way of asking works is found by asking, for each name pair (dateFrom/dateTo, from/to, ...) and way of
+ * writing a date (DD.MM.YYYY, YYYY-MM-DD), always with both ends (some lists take neither alone): a year in 2000 and a year in
+ * 2099 must both give an empty list (an ignored date gives the newest documents; a list honouring only one end gives them for
+ * one of the two) and the last year to today must give documents (within a year: a list may refuse longer periods). Both
+ * directions are asked when both are read. A way that gave no such evidence is not a verdict: a failed probe, or one that found
+ * nothing at all, is not remembered, and a rate limit or a server error ends the probing instead of asking more of Didox. A
+ * verdict is cached once (never replaced by a later one, never taken from a cancelled read). `probes` says what each way gave.
  */
-async function dateWay(client: DidoxClient, owner: 0 | 1, signal?: AbortSignal): Promise<DateWay> {
+async function dateWay(
+  client: DidoxClient,
+  owners: number[],
+  today: string,
+  signal?: AbortSignal,
+): Promise<DateWay> {
   const known = dateWays.get(client);
   if (known) return known;
   const probes: string[] = [];
@@ -121,36 +144,42 @@ async function dateWay(client: DidoxClient, owner: 0 | 1, signal?: AbortSignal):
     const label = `${way.names.join("/")} ${way.write("2000-01-31") === "31.01.2000" ? "DD.MM.YYYY" : "YYYY-MM-DD"}`;
     try {
       const ask = async (from: string, to: string) => {
-        const list = await client.listDocuments({
-          owner,
-          page: 1,
-          limit: 1,
-          [way.names[0]]: way.write(from),
-          [way.names[1]]: way.write(to),
-        });
-        listError(list);
-        return itemsOf(list).length;
+        let count = 0;
+        for (const owner of owners) {
+          const list = await client.listDocuments({
+            owner: owner as 0 | 1,
+            page: 1,
+            limit: 1,
+            [way.names[0]]: way.write(from),
+            [way.names[1]]: way.write(to),
+          });
+          listError(list);
+          count += itemsOf(list).length;
+        }
+        return count;
       };
-      const narrow = await ask("2000-01-01", "2000-12-31");
-      if (narrow > 0) {
-        probes.push(`${label}: a year in 2000 still gave documents (the dates were ignored)`);
+      if ((await ask("2000-01-01", "2000-12-31")) > 0 || (await ask("2099-01-01", "2099-12-31")) > 0) {
+        probes.push(
+          `${label}: a year in 2000 or 2099 still gave documents (the dates were not both honoured)`,
+        );
         continue;
       }
-      if ((await ask("2000-01-01", "2099-12-31")) > 0) {
+      if ((await ask(addDays(today, -364), today)) > 0) {
         probes.push(`${label}: taken`);
         const found = { ...way, works: true };
-        dateWays.set(client, found);
+        if (!signal?.aborted) dateWays.set(client, found);
         return found;
       }
-      probes.push(`${label}: nothing at all answered`);
+      probes.push(`${label}: no document in the last year answered`);
       verdict = false;
     } catch (e) {
       probes.push(`${label}: failed (${e instanceof Error ? e.message : String(e)})`);
       verdict = false;
+      if (!refusal(e)) break; // Didox or the connection is in trouble: no more asking
     }
   }
   const none = { ...(ways[1] as DateWay), works: verdict ? false : undefined, probes };
-  if (verdict) dateWays.set(client, none);
+  if (verdict && !signal?.aborted && !dateWays.has(client)) dateWays.set(client, none);
   return none;
 }
 
@@ -248,8 +277,9 @@ export async function fetchDidoxDocuments(
   signal?: AbortSignal,
 ): Promise<FetchResult> {
   const owners = options.direction === "incoming" ? [0] : options.direction === "outgoing" ? [1] : [0, 1];
+  const today = options.today ?? todayOf();
   const way =
-    options.from && !signal?.aborted ? await dateWay(client, owners[0] as 0 | 1, signal) : undefined;
+    isDay(options.from) && !signal?.aborted ? await dateWay(client, owners, today, signal) : undefined;
   // Only a way of asking Didox is known to take is used: asking with one it refuses would fail the read. A date that bounds the
   // list also makes the end of the list the end of the walk, whatever order the list is in.
   const bounded = way?.works === true;
@@ -263,7 +293,7 @@ export async function fetchDidoxDocuments(
   let stoppedAtPageLimit = false;
   let entryFields: string[] | undefined;
   const periods: ({ from: string; to: string } | undefined)[] =
-    bounded && options.from ? windowsOf(options.from) : [undefined];
+    bounded && isDay(options.from) ? windowsOf(options.from, today) : [undefined];
 
   walking: for (const owner of owners) {
     for (const period of periods) {
@@ -310,17 +340,23 @@ export async function fetchDidoxDocuments(
         // Only an empty page, a page that gave nothing new (Didox repeating one) or, when the date does not bound the list,
         // one wholly older than the period ends the walk: a page shorter than asked is not the last.
         if (fresh === 0 || (!bounded && older === items.length)) break;
-        if (entries.size >= options.limit) {
-          truncated = true;
-          break walking;
-        }
         if (page === MAX_PAGES) stoppedAtPageLimit = true;
       }
     }
   }
 
+  // The limit counts the documents read, not the entries listed: an entry whose own date the list does not give (only the day it
+  // was last changed) may be of any year, so those changed near the period are read first, after the entries known to be in it.
+  const near = options.to && isDay(options.to) ? addDays(options.to, 400) : today;
+  const rank = (item: Record<string, unknown> | undefined): number => {
+    const { day, exact } = dayOf(item ?? {});
+    return exact ? 0 : day && day <= near ? 1 : 2;
+  };
   let listed = entries.size;
-  let ids = [...entries.keys()];
+  let ids = [...entries.keys()]
+    .map((id, order) => ({ id, order, rank: rank(entries.get(id)) }))
+    .sort((a, b) => a.rank - b.rank || a.order - b.order)
+    .map((entry) => entry.id);
   if (ids.length > options.limit) {
     truncated = true;
     ids = ids.slice(0, options.limit);

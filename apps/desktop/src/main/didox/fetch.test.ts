@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DidoxClient } from "./client.js";
+import { DidoxClient, DidoxError } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
-import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf, partialNote, windowsOf } from "./fetch.js";
+import {
+  documentJson,
+  explainEmpty,
+  fetchDidoxDocuments,
+  isDay,
+  itemsOf,
+  partialNote,
+  windowsOf,
+} from "./fetch.js";
 
 /** An ЭСФ as Didox gives it, cut down to the fields that matter. */
 function invoice(number: string, date: string, sellerTin: string, buyerTin: string, total = "1000.00") {
@@ -245,6 +253,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.dateFilter).toBe(true);
     expect(result.documents.map((d) => d.number)).toEqual(["1"]);
@@ -278,6 +287,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.dateFilter).toBe(false);
     expect(explainEmpty(result, "2020-01-01", "2020-12-31")).toContain("did not take the date");
@@ -311,6 +321,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.dateFilter).toBe(true);
     expect(result.documents.map((d) => d.number)).toEqual(["1"]);
@@ -321,6 +332,14 @@ describe("Didox documents read through the API", () => {
     server.dateNames = ["fromDate", "toDate"];
     server.defaultFrom = "2026-01-01";
     server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
       {
         id: "old",
         doctype: "002",
@@ -335,6 +354,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.dateFilter).toBe(true);
     expect(result.documents).toHaveLength(1);
@@ -360,6 +380,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.dateFilter).toBe(false);
     expect(result.dateProbe?.length).toBe(8);
@@ -375,7 +396,7 @@ describe("Didox documents read through the API", () => {
     expect(windowsOf("2026-05-01", "2026-05-01")).toEqual([{ from: "2026-05-01", to: "2026-05-01" }]);
   });
 
-  it("does not remember a date probe that failed, and goes on without the date", async () => {
+  it("does not remember a date probe that failed, stops probing at it, and goes on without the date", async () => {
     let probes = 0;
     const client = {
       listDocuments: async (query: { dateFrom?: string }) => {
@@ -386,11 +407,152 @@ describe("Didox documents read through the API", () => {
         return { data: [] };
       },
     } as unknown as DidoxClient;
-    const options = { direction: "incoming" as const, from: "2020-01-01", limit: 10 };
+    const options = { direction: "incoming" as const, from: "2020-01-01", limit: 10, today: "2026-11-10" };
     const first = await fetchDidoxDocuments(client, options);
     expect(first.dateFilter).toBeUndefined();
     await fetchDidoxDocuments(client, options);
-    expect(probes).toBe(4); // asked again, not taken as "Didox ignores dates"
+    expect(probes).toBe(2); // asked again, not taken as "Didox ignores dates"; and the probing stopped at the first failure
+  });
+
+  it("goes on to the next way only when a way was refused, not when Didox is in trouble", async () => {
+    let probes = 0;
+    const refuse = {
+      listDocuments: async (query: Record<string, string>) => {
+        if (Object.keys(query).some((key) => /from|start/i.test(key) && key !== "owner")) {
+          probes += 1;
+          throw new DidoxError("DIDOX_HTTP", "bad request", 400);
+        }
+        return { data: [] };
+      },
+    } as unknown as DidoxClient;
+    const result = await fetchDidoxDocuments(refuse, {
+      direction: "incoming",
+      from: "2020-01-01",
+      limit: 10,
+      today: "2026-11-10",
+    });
+    expect(probes).toBe(8); // every way was tried, each refused at its first request
+    expect(result.dateFilter).toBeUndefined();
+    let limited = 0;
+    const busy = {
+      listDocuments: async (query: Record<string, string>) => {
+        if (query.dateFrom) {
+          limited += 1;
+          throw new DidoxError("DIDOX_HTTP", "slow down", 429);
+        }
+        return { data: [] };
+      },
+    } as unknown as DidoxClient;
+    await fetchDidoxDocuments(busy, {
+      direction: "incoming",
+      from: "2020-01-01",
+      limit: 10,
+      today: "2026-11-10",
+    });
+    expect(limited).toBe(1);
+  });
+
+  it("does not take a list that honours only one end of a period", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    server.ignoresDateFrom = true;
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "new",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+      today: "2026-11-10",
+    });
+    expect(result.dateFilter).toBe(false);
+  });
+
+  it("finds the way with the outgoing list when the incoming one has nothing in the last year", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    server.defaultFrom = "2026-01-01";
+    server.documents = [
+      {
+        id: "out",
+        doctype: "002",
+        status: 3,
+        owner: 1,
+        updated: "2026-03-02 10:00:00",
+        json: invoice("9", "2026-03-01", "302936161", "1"),
+      },
+      {
+        id: "old",
+        doctype: "002",
+        status: 3,
+        owner: 0,
+        updated: "2020-04-13 10:00:00",
+        json: invoice("1", "2020-04-12", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "both",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+      today: "2026-11-10",
+    });
+    expect(result.dateFilter).toBe(true);
+    expect(result.documents.map((d) => d.number)).toEqual(["1"]);
+  });
+
+  it("reads the documents changed near the period first, so entries without their own date do not use up the limit", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    // Newer entries come first and carry only the day they were changed; the one that is of 2020 comes last.
+    server.documents = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `n${i}`,
+        doctype: "002",
+        status: 3,
+        owner: 0 as const,
+        updated: "2026-03-02 10:00:00",
+        json: invoice(`n${i}`, "2026-03-01", "1", "302936161"),
+      })),
+      {
+        id: "old",
+        doctype: "002",
+        status: 3,
+        owner: 0 as const,
+        updated: "2020-04-13 10:00:00",
+        json: invoice("1", "2020-04-12", "1", "302936161"),
+      },
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 3,
+      today: "2026-11-10",
+    });
+    expect(result.documents.map((d) => d.number)).toEqual(["1"]);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not fail on a date that is not a real day", async () => {
+    const { client } = setup();
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-13-45",
+      limit: 10,
+    });
+    expect(result.dateFilter).toBeUndefined();
+    expect(isDay("2020-02-30")).toBe(false);
+    expect(isDay("2020-02-29")).toBe(true);
   });
 
   it("is not stopped by a page wholly older than the period when the date bounds the list", async () => {
@@ -417,6 +579,7 @@ describe("Didox documents read through the API", () => {
       from: "2020-01-01",
       to: "2020-12-31",
       limit: 100,
+      today: "2026-11-10",
     });
     expect(result.documents.map((d) => d.number)).toEqual(["3"]);
   });
