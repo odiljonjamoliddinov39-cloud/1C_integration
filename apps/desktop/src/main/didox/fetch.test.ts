@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DidoxClient } from "./client.js";
 import { FakeDidox, FakeSigner } from "./fake.js";
-import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf } from "./fetch.js";
+import { documentJson, explainEmpty, fetchDidoxDocuments, itemsOf, partialNote } from "./fetch.js";
 
 /** An ЭСФ as Didox gives it, cut down to the fields that matter. */
 function invoice(number: string, date: string, sellerTin: string, buyerTin: string, total = "1000.00") {
@@ -158,6 +158,7 @@ describe("Didox documents read through the API", () => {
       unreadable: 0,
       outsidePeriod: 0,
       newerThanPeriod: 0,
+      seen: 0,
       oldestListed: "",
       newestListed: "",
       pagesRead: 0,
@@ -214,6 +215,55 @@ describe("Didox documents read through the API", () => {
     // The first is not a document the app reads; the second is listed and then refused.
     expect(result.documents).toHaveLength(0);
     expect(result.skipped + result.failed.length).toBe(2);
+  });
+
+  it("does not mistake an error answer for an empty list", async () => {
+    const client = {
+      listDocuments: async () => ({ success: false, error: "token expired" }),
+    } as unknown as DidoxClient;
+    await expect(fetchDidoxDocuments(client, { direction: "incoming", limit: 10 })).rejects.toThrow(
+      /token expired/,
+    );
+    const empty = { listDocuments: async () => ({ data: [] }) } as unknown as DidoxClient;
+    const result = await fetchDidoxDocuments(empty, { direction: "incoming", limit: 10 });
+    expect(result.pagesRead).toBe(0);
+  });
+
+  it("counts a document with no date as unreadable and keeps the listed range to real document dates", async () => {
+    const { server, client } = setup();
+    server.documents = [
+      { id: "a", doctype: "002", status: 3, owner: 0, json: invoice("1", "2026-10-09", "1", "302936161") },
+      { id: "b", doctype: "002", status: 3, owner: 0, json: invoice("2", "", "1", "302936161") },
+    ];
+    const result = await fetchDidoxDocuments(client, { direction: "incoming", limit: 10 });
+    expect(result.seen).toBe(2);
+    expect(result.documents).toHaveLength(1);
+    expect(result.unreadable).toBe(1);
+  });
+
+  it("only says the list ends at a date when it was read to its end", () => {
+    const base = {
+      documents: [],
+      listed: 0,
+      seen: 100,
+      skipped: 0,
+      unreadable: 0,
+      outsidePeriod: 0,
+      newerThanPeriod: 0,
+      oldestListed: "2024-05-01",
+      newestListed: "2026-01-01",
+      pagesRead: 1,
+      stoppedAtPageLimit: false,
+      failed: [],
+      truncated: true,
+    };
+    expect(explainEmpty(base, "2020-01-01", "2023-12-31")).not.toContain("goes back only");
+    expect(explainEmpty({ ...base, truncated: false }, "2020-01-01", "2023-12-31")).toContain(
+      "goes back only to 2024-05-01",
+    );
+    const deep = { ...base, truncated: false, stoppedAtPageLimit: true, documents: [{}] as never[] };
+    expect(partialNote(deep, "2020-01-01")).toContain("stopped at the most pages");
+    expect(partialNote({ ...deep, stoppedAtPageLimit: false }, "2020-01-01")).toBe("");
   });
 });
 
