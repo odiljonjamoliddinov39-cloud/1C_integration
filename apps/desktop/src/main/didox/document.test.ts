@@ -382,6 +382,18 @@ describe("batchOf and describeBatch", () => {
     expect(batch.postable[0]?.issues.map((i) => i.code)).toEqual(["ACT_DIFFERS"]);
   });
 
+  it("does not take an act for the invoice of another day and another total that has the same number", () => {
+    // Numbers are the sellers' own: act 24 of September is not invoice 24 of January.
+    const september = { ...act("24", "90"), actdoc: { actno: "24", actdate: "2026-09-01" } };
+    const batch = batchOf([noVat("24", "100"), september].map((j) => parseDidoxDocument(j)!));
+    expect(batch.pairedActs).toBe(0);
+    expect(batch.postable.map((d) => `${d.kind} ${d.number}`)).toEqual(["invoice 24", "act 24"]);
+    expect(batch.postable.every((d) => d.issues.length === 0)).toBe(true);
+    // The same number and the same total, even far apart, is still the same transaction.
+    const twin = { ...act("24", "100"), actdoc: { actno: "24", actdate: "2026-09-01" } };
+    expect(batchOf([noVat("24", "100"), twin].map((j) => parseDidoxDocument(j)!)).pairedActs).toBe(1);
+  });
+
   it("describes the batch briefly: the buyer once, one line per goods line, the result of the checks", () => {
     const docs = [
       invoice(),

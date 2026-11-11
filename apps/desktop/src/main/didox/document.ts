@@ -321,14 +321,21 @@ export function batchOf(documents: DidoxDocument[]): DidoxBatch {
     invoices.set(base(d), [...same, d]);
     postable.push(d);
   }
-  const nearest = (list: DidoxDocument[], date: string) =>
-    [...list].sort(
-      (a, b) =>
-        Math.abs(Date.parse(a.date) - Date.parse(date)) - Math.abs(Date.parse(b.date) - Date.parse(date)),
-    )[0];
+  // An act and an invoice are numbered by their own sellers' books: the same number can be two transactions. They are one when the
+  // totals agree, or when they are dated within a week of each other (then a different total is a difference to look at).
+  const apart = (a: DidoxDocument, date: string) => Math.abs(Date.parse(a.date) - Date.parse(date));
+  const WEEK = 7 * 24 * 3_600_000;
+  const twin = (list: DidoxDocument[], act: DidoxDocument) =>
+    [...list]
+      .filter((x) => x.totals.total === act.totals.total || apart(x, act.date) <= WEEK)
+      .sort(
+        (a, b) =>
+          Number(b.totals.total === act.totals.total) - Number(a.totals.total === act.totals.total) ||
+          apart(a, act.date) - apart(b, act.date),
+      )[0];
   for (const d of documents) {
     if (d.kind === "act") {
-      const invoice = nearest(invoices.get(base(d)) ?? [], d.date);
+      const invoice = twin(invoices.get(base(d)) ?? [], d);
       if (invoice) {
         pairedActs += 1;
         if (invoice.totals.total !== d.totals.total) {
