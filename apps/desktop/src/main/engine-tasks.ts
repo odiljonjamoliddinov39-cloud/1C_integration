@@ -270,6 +270,8 @@ const T = {
     rates: "Курсы валют не загружены:",
     declined: "Карточка отклонена: ничего не записано.",
     nothing: "Вводить нечего: всё уже в 1С или вне периода.",
+    didoxRead: (n: number, mine: number, year: string) =>
+      `Didox дал: документов ${n}, этой компании ${mine}. Список по годам: ${year || "пусто"}.`,
     next: "Что осталось — напишите, как поступить (модель разберёт), или проведите введённое командой «проведи».",
     failedHead: "Ошибки 1С:",
     problem: "Ошибка:",
@@ -299,6 +301,8 @@ const T = {
     rates: "Valyuta kurslari yuklanmadi:",
     declined: "Kartochka rad etildi: hech narsa yozilmadi.",
     nothing: "Kiritadigan narsa yo'q: hammasi 1C da bor yoki davrdan tashqarida.",
+    didoxRead: (n: number, mine: number, year: string) =>
+      `Didox bergan: ${n} ta hujjat, shu kompaniyaniki ${mine} ta. Yillar bo'yicha ro'yxat: ${year || "bo'sh"}.`,
     next: "Qolganini qanday hal qilishni yozing (model ko'radi) yoki kiritilganlarni «проведи» buyrug'i bilan provedit qiling.",
     failedHead: "1C xatolari:",
     problem: "Xato:",
@@ -327,6 +331,8 @@ const T = {
     rates: "Exchange rates not loaded:",
     declined: "Card declined: nothing was written.",
     nothing: "Nothing to enter: it is all in 1C already or outside the period.",
+    didoxRead: (n: number, mine: number, year: string) =>
+      `Didox gave: ${n} documents, ${mine} of this company. The list by year: ${year || "empty"}.`,
     next: "Tell me how to settle the rest (the model will look), or post what was entered with «post them».",
     failedHead: "1C errors:",
     problem: "Error:",
@@ -359,6 +365,7 @@ interface BatchData {
   notes?: unknown[];
   ratesNotLoaded?: string;
   counts?: { applied?: number };
+  didoxRead?: { read?: number; ofThisCompany?: number; audit?: { seenByYear?: string } };
 }
 
 /** What a job that entered documents did, in the accountant's language: counts, what failed and why, what is left. */
@@ -395,6 +402,11 @@ export function batchText(data: unknown, lang: Lang): string {
   if (d.notes?.length) lines.push(w.notes(d.notes.length));
   if (d.ratesNotLoaded) lines.push(`${w.rates} ${d.ratesNotLoaded}`);
   if (lines.length === 0) lines.push(w.nothing);
+  // What Didox's list gave, when nothing was entered from it: so "nothing" can be told from "Didox gave nothing".
+  if (entered === 0 && d.didoxRead)
+    lines.push(
+      w.didoxRead(d.didoxRead.read ?? 0, d.didoxRead.ofThisCompany ?? 0, d.didoxRead.audit?.seenByYear ?? ""),
+    );
   if (left > 0 || failed.length > 0 || transfersLeft > 0) lines.push(w.next);
   lines.push(w.sources);
   return lines.join("\n");

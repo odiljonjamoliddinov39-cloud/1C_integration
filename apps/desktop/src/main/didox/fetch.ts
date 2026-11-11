@@ -54,7 +54,28 @@ export interface FetchResult {
   dateProbe?: string[];
   /** The field names of the first list entry (no values), to see which date fields Didox's list carries. */
   entryFields?: string[];
+  /**
+   * What the list gave, before anything was kept or dropped, in plain words for the answer: how many entries by year (a "~" year is
+   * the day an entry was last changed, the list giving no date of its own, "?" none), by document type, by status, and what each
+   * window of the period gave. To tell Didox withholding documents from the program dropping them.
+   */
+  audit?: { seenByYear: string; byDoctype: string; byStatus: string; windows: string[] };
 }
+
+const tally = (map: Map<string, number>): string =>
+  [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(0, 24)
+    .map(([key, count]) => `${key}:${count}`)
+    .join(", ");
+
+const fieldOf = (item: Record<string, unknown>, keys: string[]): string => {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "string" || typeof value === "number") return String(value);
+  }
+  return "?";
+};
 
 /** YYYY-MM-DD as Didox's own screens write it: DD.MM.YYYY. */
 const dmy = (day: string): string => day.split("-").reverse().join(".");
@@ -292,13 +313,28 @@ export async function fetchDidoxDocuments(
   let pagesRead = 0;
   let stoppedAtPageLimit = false;
   let entryFields: string[] | undefined;
+  const byYear = new Map<string, number>();
+  const byDoctype = new Map<string, number>();
+  const byStatus = new Map<string, number>();
+  const windows: string[] = [];
   const periods: ({ from: string; to: string } | undefined)[] =
     bounded && isDay(options.from) ? windowsOf(options.from, today) : [undefined];
 
   walking: for (const owner of owners) {
     for (const period of periods) {
+      let windowPages = 0;
+      let windowEntries = 0;
+      const closeWindow = () => {
+        if (windows.length < 14)
+          windows.push(
+            `${owner === 0 ? "in" : "out"} ${period ? `${period.from}..${period.to}` : "no date"}: ${windowPages} pages, ${windowEntries} entries`,
+          );
+      };
       for (let page = 1; page <= MAX_PAGES; page++) {
-        if (signal?.aborted) break walking;
+        if (signal?.aborted) {
+          closeWindow();
+          break walking;
+        }
         const list = await client.listDocuments({
           owner: owner as 0 | 1,
           page,
@@ -311,12 +347,23 @@ export async function fetchDidoxDocuments(
         const items = itemsOf(list);
         if (items.length === 0) break;
         pagesRead += 1;
+        windowPages += 1;
+        windowEntries += items.length;
         entryFields ??= Object.keys(items[0] ?? {}).slice(0, 40);
         let older = 0;
         let fresh = 0;
         for (const item of items) {
           const id = idOf(item);
-          if (id && !seenIds.has(id)) fresh += 1;
+          if (id && !seenIds.has(id)) {
+            fresh += 1;
+            const own = dayOf(item);
+            const year = own.day ? `${own.exact ? "" : "~"}${own.day.slice(0, 4)}` : "?";
+            byYear.set(year, (byYear.get(year) ?? 0) + 1);
+            const type = fieldOf(item, ["doctype", "doc_type", "type"]);
+            byDoctype.set(type, (byDoctype.get(type) ?? 0) + 1);
+            const status = fieldOf(item, ["status", "doc_status"]);
+            byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
+          }
           if (id) seenIds.add(id);
           if (!id || entries.has(id)) continue;
           const { day, exact } = dayOf(item);
@@ -342,6 +389,7 @@ export async function fetchDidoxDocuments(
         if (fresh === 0 || (!bounded && older === items.length)) break;
         if (page === MAX_PAGES) stoppedAtPageLimit = true;
       }
+      closeWindow();
     }
   }
 
@@ -405,6 +453,7 @@ export async function fetchDidoxDocuments(
     ...(way?.works !== undefined ? { dateFilter: way.works } : {}),
     ...(way && way.works !== true ? { dateProbe: way.probes } : {}),
     ...(entryFields ? { entryFields } : {}),
+    audit: { seenByYear: tally(byYear), byDoctype: tally(byDoctype), byStatus: tally(byStatus), windows },
   };
 }
 

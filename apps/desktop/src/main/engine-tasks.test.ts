@@ -106,6 +106,16 @@ describe("the jobs the program does by itself", () => {
       expect(uz).toContain(part);
     expect(batchText(data, "ru")).toContain("Введено документов: 40");
     expect(batchText({ status: "nothing_to_enter" }, "en")).toContain("Nothing to enter");
+    const withRead = batchText(
+      {
+        status: "all_entered",
+        didoxRead: { read: 2, ofThisCompany: 2, audit: { seenByYear: "2020:2, ~2026:700" } },
+      },
+      "en",
+    );
+    expect(withRead).toContain(
+      "Didox gave: 2 documents, 2 of this company. The list by year: 2020:2, ~2026:700.",
+    );
     expect(batchText({ status: "declined_by_user" }, "uz")).toContain("rad etildi");
   });
 

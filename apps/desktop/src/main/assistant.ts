@@ -2802,6 +2802,7 @@ export class AssistantService {
         newestListed: read.newestListed,
         pagesRead: read.pagesRead,
         ...(read.stoppedAtPageLimit ? { stoppedAtPageLimit: true } : {}),
+        ...(read.audit ? { audit: read.audit } : {}),
         ...(read.dateProbe && read.dateProbe.length > 0 ? { dateProbe: read.dateProbe } : {}),
         ...(read.entryFields ? { entryFields: read.entryFields } : {}),
         ...(read.dateFilter === false
@@ -3610,6 +3611,7 @@ export class AssistantService {
     const own = this.deps.store.company(chat.companyId).inn;
     emit({ type: "tool", name: "propose_didox_sales", detail: describe("propose_didox_sales", input) });
     const found = new Map<string, DidoxDocument>();
+    let didoxRead: Record<string, unknown> | undefined;
     for (const d of chat.didox ?? []) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
     if (input.from || input.to) {
       const client = this.didoxClient(chat.companyId);
@@ -3635,6 +3637,19 @@ export class AssistantService {
           signal,
         );
         for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+        didoxRead = {
+          read: read.documents.length,
+          ofThisCompany: read.documents.filter((d) => d.seller.tin === own).length,
+          listed: read.listed,
+          seen: read.seen,
+          unreadable: read.unreadable,
+          outsidePeriod: read.outsidePeriod,
+          newerThanPeriod: read.newerThanPeriod,
+          truncated: read.truncated,
+          failed: read.failed.length,
+          ...(read.dateFilter === undefined ? {} : { dateFilter: read.dateFilter }),
+          ...(read.audit ? { audit: read.audit } : {}),
+        };
       } catch (e) {
         return this.didoxFailure(e);
       }
@@ -3656,6 +3671,7 @@ export class AssistantService {
         data: {
           status: done.size > 0 ? "all_entered" : "nothing_to_enter",
           note: "No documents issued by this company were found for this request: send from and to (YYYY-MM-DD) to read them from Didox, or attach the files.",
+          ...(didoxRead ? { didoxRead } : {}),
         },
       };
     }
@@ -3684,6 +3700,7 @@ export class AssistantService {
     const attention = {
       needsAttention: summarizeProblems(resolved.problems),
       ...(resolved.alreadyIn1c.length > 0 ? { alreadyIn1c: resolved.alreadyIn1c } : {}),
+      ...(didoxRead ? { didoxRead } : {}),
     };
     if (resolved.ready.length === 0) {
       return {
