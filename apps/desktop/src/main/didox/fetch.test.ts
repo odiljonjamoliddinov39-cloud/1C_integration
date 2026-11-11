@@ -388,6 +388,61 @@ describe("Didox documents read through the API", () => {
     expect(result.entryFields).toContain("id");
   });
 
+  it("tells what the list gave by year, type and status, and what each window gave", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    const entry = (id: string, date: string, doctype: string, status: number, updated: string) => ({
+      id,
+      doctype,
+      status,
+      owner: 1 as const,
+      updated,
+      docdate: date,
+      json: invoice(id, date, "302936161", "1"),
+    });
+    server.documents = [
+      entry("a", "2026-03-01", "002", 3, "2026-03-02 10:00:00"),
+      entry("b", "2020-04-12", "002", 3, "2020-04-13 10:00:00"),
+      entry("c", "2020-05-01", "005", 1, "2020-05-02 10:00:00"),
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "outgoing",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 100,
+      today: "2026-11-10",
+    });
+    expect(result.audit?.seenByYear).toBe("2020:2, 2026:1");
+    expect(result.audit?.byDoctype).toBe("002:2, 005:1");
+    expect(result.audit?.byStatus).toBe("1:1, 3:2");
+    expect(
+      result.audit?.windows.some((w) => w.startsWith("out 2020-01-01..2020-12-30: 1 pages, 2 entries")),
+    ).toBe(true);
+  });
+
+  it("counts an entry without an id in the audit, says when the audit was cut short, and when the list was read", async () => {
+    const client = {
+      listDocuments: async (query: { page?: number }) =>
+        query.page === 1
+          ? {
+              data: [
+                { docdate: "2020-02-02", doctype: "002", status: 3 },
+                ...Array.from({ length: 45 }, (_, i) => ({
+                  id: `k${i}`,
+                  docdate: `${1970 + i}-01-01`,
+                  status: i,
+                })),
+              ],
+            }
+          : { data: [] },
+    } as unknown as DidoxClient;
+    const result = await fetchDidoxDocuments(client, { direction: "incoming", limit: 5 });
+    // 46 kinds (the entry without an id counted too), 40 shown: the other 6, 6 entries, are said to be cut.
+    expect(result.audit?.seenByYear).toContain("1970:1");
+    expect(result.audit?.seenByYear).toContain("…(6 more kinds, 6 entries)");
+    expect(result.audit?.readAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
   it("cuts a period into windows of a year, newest first, up to today", () => {
     expect(windowsOf("2020-01-01", "2021-06-30")).toEqual([
       { from: "2020-12-31", to: "2021-06-30" },

@@ -270,6 +270,8 @@ const T = {
     rates: "Курсы валют не загружены:",
     declined: "Карточка отклонена: ничего не записано.",
     nothing: "Вводить нечего: всё уже в 1С или вне периода.",
+    didoxRead: (seen: number, read: number, mine: number | undefined, year: string, at: string) =>
+      `Didox: записей в списке ${seen}, прочитано документов ${read}${mine === undefined ? "" : `, этой компании ${mine}`}. По годам: ${year || "пусто"}${at ? ` (прочитано ${at})` : ""}.`,
     next: "Что осталось — напишите, как поступить (модель разберёт), или проведите введённое командой «проведи».",
     failedHead: "Ошибки 1С:",
     problem: "Ошибка:",
@@ -299,6 +301,8 @@ const T = {
     rates: "Valyuta kurslari yuklanmadi:",
     declined: "Kartochka rad etildi: hech narsa yozilmadi.",
     nothing: "Kiritadigan narsa yo'q: hammasi 1C da bor yoki davrdan tashqarida.",
+    didoxRead: (seen: number, read: number, mine: number | undefined, year: string, at: string) =>
+      `Didox: ro'yxatda ${seen} ta yozuv, o'qilgan hujjat ${read} ta${mine === undefined ? "" : `, shu kompaniyaniki ${mine} ta`}. Yillar bo'yicha: ${year || "bo'sh"}${at ? ` (o'qilgan vaqt ${at})` : ""}.`,
     next: "Qolganini qanday hal qilishni yozing (model ko'radi) yoki kiritilganlarni «проведи» buyrug'i bilan provedit qiling.",
     failedHead: "1C xatolari:",
     problem: "Xato:",
@@ -327,6 +331,8 @@ const T = {
     rates: "Exchange rates not loaded:",
     declined: "Card declined: nothing was written.",
     nothing: "Nothing to enter: it is all in 1C already or outside the period.",
+    didoxRead: (seen: number, read: number, mine: number | undefined, year: string, at: string) =>
+      `Didox: ${seen} entries in the list, ${read} documents read${mine === undefined ? "" : `, ${mine} of this company`}. By year: ${year || "empty"}${at ? ` (read ${at})` : ""}.`,
     next: "Tell me how to settle the rest (the model will look), or post what was entered with «post them».",
     failedHead: "1C errors:",
     problem: "Error:",
@@ -359,6 +365,12 @@ interface BatchData {
   notes?: unknown[];
   ratesNotLoaded?: string;
   counts?: { applied?: number };
+  didoxRead?: {
+    seen?: number;
+    read?: number;
+    ofThisCompany?: number;
+    audit?: { seenByYear?: string; readAt?: string };
+  };
 }
 
 /** What a job that entered documents did, in the accountant's language: counts, what failed and why, what is left. */
@@ -395,6 +407,17 @@ export function batchText(data: unknown, lang: Lang): string {
   if (d.notes?.length) lines.push(w.notes(d.notes.length));
   if (d.ratesNotLoaded) lines.push(`${w.rates} ${d.ratesNotLoaded}`);
   if (lines.length === 0) lines.push(w.nothing);
+  // What Didox's list gave, when nothing was entered from it: so "nothing" can be told from "Didox gave nothing".
+  if (entered === 0 && d.didoxRead)
+    lines.push(
+      w.didoxRead(
+        d.didoxRead.seen ?? 0,
+        d.didoxRead.read ?? 0,
+        d.didoxRead.ofThisCompany,
+        d.didoxRead.audit?.seenByYear ?? "",
+        d.didoxRead.audit?.readAt?.slice(0, 16).replace("T", " ") ?? "",
+      ),
+    );
   if (left > 0 || failed.length > 0 || transfersLeft > 0) lines.push(w.next);
   lines.push(w.sources);
   return lines.join("\n");
