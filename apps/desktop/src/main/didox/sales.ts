@@ -463,6 +463,9 @@ function buildSale(
     fields[warehouseKey] = refTo(template.fields[warehouseKey], ctx.warehouse, "Справочник.Склады");
   const commentKey = firstKey(["Комментарий"], template.fields);
   if (commentKey) fields[commentKey] = `Didox ${doc.kind} ${doc.number}${figuresNote(doc)}`;
+  // The number the sale was issued under in Didox: the issued invoice, and the check for a sale already entered, go by it.
+  const outgoingKey = firstKey(["НомерИсходящегоДокумента"], template.fields);
+  if (outgoingKey) fields[outgoingKey] = doc.number;
   const totalKey = firstKey(["СуммаДокумента"], template.fields);
   if (totalKey) fields[totalKey] = sum(doc.totals.total);
   // Whether the line's amount already holds the VAT is the company's own setting of the sale.
