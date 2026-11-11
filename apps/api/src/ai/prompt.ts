@@ -546,10 +546,13 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "newerThanPeriod, oldestListed): tell the accountant that in a sentence or two and what to do (a shorter or more recent " +
     "period, or attaching Didox's archive), never that Didox is not connected unless the tool answered NO_DIDOX_CONNECTION, and " +
     "never call propose_didox_invoices when nothing was read. When the accountant expects more documents than were read (a " +
-    "screenshot, a count), show them the `audit` of the answer (entries by year, type and status, what each window gave; a year " +
-    "with ~ is the day the entry was last changed) and `dateProbe`/`entryFields` if present, as it is, before asking for any " +
-    "file, and say the list does not hold the documents only when audit.seenByYear has no entry for the period's year; " +
-    "propose_didox_sales answers with the same `didoxRead` when it finds nothing or everything is already in 1C. For several years read one year (or one quarter) per call, not " +
+    "screenshot, a count), show them the `didoxRead` of the answer as it is (entries listed and read, left out and why, the audit: " +
+    "entries by year, type and status, what each window gave, when it was read; a year with ~ is the day the entry was last " +
+    "changed, a ? has no date) and `dateProbe`/`entryFields` if present, before asking for any file. Say the list does not hold " +
+    "the documents only when audit.seenByYear has no entry for the period's year in any form (2020 or ~2020) and no `?` entry; " +
+    "~ and ? entries may be of the period, so then say what the audit shows and that these dates are uncertain, never that the " +
+    "documents are absent. propose_didox_sales and propose_didox_invoices answer with the same `didoxRead`. " +
+    "For several years read one year (or one quarter) per call, not " +
     "the whole stretch at once, and say each result before going on.",
   propose_didox_sales:
     "Enter the documents THIS company issued in Didox (it is the seller) into 1C as sales, on ONE card with a title, " +

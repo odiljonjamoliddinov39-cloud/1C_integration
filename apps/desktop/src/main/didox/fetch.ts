@@ -59,15 +59,18 @@ export interface FetchResult {
    * the day an entry was last changed, the list giving no date of its own, "?" none), by document type, by status, and what each
    * window of the period gave. To tell Didox withholding documents from the program dropping them.
    */
-  audit?: { seenByYear: string; byDoctype: string; byStatus: string; windows: string[] };
+  audit?: { seenByYear: string; byDoctype: string; byStatus: string; windows: string[]; readAt: string };
 }
 
-const tally = (map: Map<string, number>): string =>
-  [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(0, 24)
-    .map(([key, count]) => `${key}:${count}`)
-    .join(", ");
+const TALLY_KEYS = 40;
+const tally = (map: Map<string, number>): string => {
+  const keys = [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const shown = keys.slice(0, TALLY_KEYS).map(([key, count]) => `${key}:${count}`);
+  const more = keys.slice(TALLY_KEYS).reduce((sum, [, count]) => sum + count, 0);
+  return more > 0
+    ? `${shown.join(", ")}, …(${keys.length - TALLY_KEYS} more kinds, ${more} entries)`
+    : shown.join(", ");
+};
 
 const fieldOf = (item: Record<string, unknown>, keys: string[]): string => {
   for (const key of keys) {
@@ -317,6 +320,7 @@ export async function fetchDidoxDocuments(
   const byDoctype = new Map<string, number>();
   const byStatus = new Map<string, number>();
   const windows: string[] = [];
+  let windowCount = 0;
   const periods: ({ from: string; to: string } | undefined)[] =
     bounded && isDay(options.from) ? windowsOf(options.from, today) : [undefined];
 
@@ -325,6 +329,7 @@ export async function fetchDidoxDocuments(
       let windowPages = 0;
       let windowEntries = 0;
       const closeWindow = () => {
+        windowCount += 1;
         if (windows.length < 14)
           windows.push(
             `${owner === 0 ? "in" : "out"} ${period ? `${period.from}..${period.to}` : "no date"}: ${windowPages} pages, ${windowEntries} entries`,
@@ -354,8 +359,10 @@ export async function fetchDidoxDocuments(
         let fresh = 0;
         for (const item of items) {
           const id = idOf(item);
-          if (id && !seenIds.has(id)) {
-            fresh += 1;
+          const isNew = !id || !seenIds.has(id);
+          if (id && isNew) fresh += 1;
+          // Every entry the list gave is counted here, one without an id too (it cannot be told from another, so it counts each time).
+          if (isNew) {
             const own = dayOf(item);
             const year = own.day ? `${own.exact ? "" : "~"}${own.day.slice(0, 4)}` : "?";
             byYear.set(year, (byYear.get(year) ?? 0) + 1);
@@ -453,7 +460,16 @@ export async function fetchDidoxDocuments(
     ...(way?.works !== undefined ? { dateFilter: way.works } : {}),
     ...(way && way.works !== true ? { dateProbe: way.probes } : {}),
     ...(entryFields ? { entryFields } : {}),
-    audit: { seenByYear: tally(byYear), byDoctype: tally(byDoctype), byStatus: tally(byStatus), windows },
+    audit: {
+      seenByYear: tally(byYear),
+      byDoctype: tally(byDoctype),
+      byStatus: tally(byStatus),
+      windows:
+        windowCount > windows.length
+          ? [...windows, `…${windowCount - windows.length} more windows`]
+          : windows,
+      readAt: new Date().toISOString(),
+    },
   };
 }
 
@@ -506,4 +522,25 @@ export function partialNote(result: FetchResult, from: string): string {
   if (result.stoppedAtPageLimit)
     return `The walk stopped at the most pages it reads, back to ${result.oldestListed || "an unknown date"}: documents older than that, down to ${from}, were not reached. Say so, and ask for a shorter, more recent period.`;
   return "";
+}
+
+/**
+ * What a read gave, for the answers that tell the accountant why documents are missing: the numbers (listed, read, left out and why),
+ * the audit of the list, and what the date probes and the first entry's fields were when the date did not work.
+ */
+export function readSummary(result: FetchResult) {
+  return {
+    seen: result.seen,
+    listed: result.listed,
+    read: result.documents.length,
+    unreadable: result.unreadable,
+    outsidePeriod: result.outsidePeriod,
+    newerThanPeriod: result.newerThanPeriod,
+    truncated: result.truncated,
+    failed: result.failed.length,
+    ...(result.dateFilter === undefined ? {} : { dateFilter: result.dateFilter }),
+    ...(result.audit ? { audit: result.audit } : {}),
+    ...(result.dateProbe && result.dateProbe.length > 0 ? { dateProbe: result.dateProbe } : {}),
+    ...(result.entryFields ? { entryFields: result.entryFields } : {}),
+  };
 }

@@ -150,7 +150,7 @@ import {
   money,
   parseDidoxDocument,
 } from "./didox/document.js";
-import { explainEmpty, fetchDidoxDocuments, partialNote } from "./didox/fetch.js";
+import { explainEmpty, fetchDidoxDocuments, partialNote, readSummary } from "./didox/fetch.js";
 import { type Classified, UNTAXED, type Unclassified, effectiveTable, gate } from "./bank/classify.js";
 import { previewOfBank, rowIsOfKind } from "./bank/preview.js";
 import { compareText, compareWithBooks } from "./bank/compare.js";
@@ -2802,9 +2802,7 @@ export class AssistantService {
         newestListed: read.newestListed,
         pagesRead: read.pagesRead,
         ...(read.stoppedAtPageLimit ? { stoppedAtPageLimit: true } : {}),
-        ...(read.audit ? { audit: read.audit } : {}),
-        ...(read.dateProbe && read.dateProbe.length > 0 ? { dateProbe: read.dateProbe } : {}),
-        ...(read.entryFields ? { entryFields: read.entryFields } : {}),
+        didoxRead: readSummary(read),
         ...(read.dateFilter === false
           ? {
               dateFilter:
@@ -3483,6 +3481,7 @@ export class AssistantService {
     signal: AbortSignal,
   ): Promise<ToolResult> {
     // A period: the documents are read from Didox here, in the same step, instead of by a step of the model first.
+    let didoxRead: unknown;
     if (input.from || input.to) {
       emit({
         type: "tool",
@@ -3500,6 +3499,7 @@ export class AssistantService {
         signal,
       );
       if (!got.ok) return got;
+      didoxRead = (got.data as { didoxRead?: unknown } | null)?.didoxRead;
     }
     const read = chat.didox ?? [];
     if (read.length === 0) {
@@ -3532,6 +3532,7 @@ export class AssistantService {
           status: done.size > 0 ? "all_entered" : "nothing_to_enter",
           alreadyEntered: [...done],
           ...(unknown.length > 0 ? { unknownDocuments: unknown } : {}),
+          ...(didoxRead ? { didoxRead } : {}),
         },
       };
     }
@@ -3565,7 +3566,12 @@ export class AssistantService {
     if (resolved.ready.length === 0) {
       return {
         ok: true,
-        data: { status: "needs_attention", ...attention, next: DIDOX_NEXT },
+        data: {
+          status: "needs_attention",
+          ...attention,
+          ...(didoxRead ? { didoxRead } : {}),
+          next: DIDOX_NEXT,
+        },
       };
     }
     const result = await this.propose(
@@ -3593,7 +3599,11 @@ export class AssistantService {
     const hasAttention = resolved.problems.length > 0 || unknown.length > 0;
     return {
       ok: true,
-      data: { ...(data ?? {}), ...(hasAttention ? { ...attention, next: DIDOX_NEXT } : {}) },
+      data: {
+        ...(data ?? {}),
+        ...(hasAttention ? { ...attention, next: DIDOX_NEXT } : {}),
+        ...(didoxRead ? { didoxRead } : {}),
+      },
     };
   }
 
@@ -3638,17 +3648,8 @@ export class AssistantService {
         );
         for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
         didoxRead = {
-          read: read.documents.length,
+          ...readSummary(read),
           ofThisCompany: read.documents.filter((d) => d.seller.tin === own).length,
-          listed: read.listed,
-          seen: read.seen,
-          unreadable: read.unreadable,
-          outsidePeriod: read.outsidePeriod,
-          newerThanPeriod: read.newerThanPeriod,
-          truncated: read.truncated,
-          failed: read.failed.length,
-          ...(read.dateFilter === undefined ? {} : { dateFilter: read.dateFilter }),
-          ...(read.audit ? { audit: read.audit } : {}),
         };
       } catch (e) {
         return this.didoxFailure(e);
@@ -3738,6 +3739,7 @@ export class AssistantService {
       data: {
         ...(data ?? {}),
         ...(resolved.problems.length > 0 || resolved.alreadyIn1c.length > 0 ? { ...attention } : {}),
+        ...(didoxRead ? { didoxRead } : {}),
         ...(resolved.problems.length > 0 ? { next: DIDOX_SALES_NEXT } : {}),
         notes,
         after:
