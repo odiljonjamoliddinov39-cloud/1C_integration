@@ -64,15 +64,7 @@ export interface ResolverCache {
 }
 
 /** Problems of the supplier's own figures stop a document; an unusual VAT rate is only shown. */
-const BLOCKING = new Set([
-  "LINE_AMOUNT",
-  "LINE_VAT",
-  "LINE_TOTAL",
-  "NO_LINES",
-  "NO_NUMBER",
-  "ACT_DIFFERS",
-  "TIN_FORMAT",
-]);
+const BLOCKING = new Set(["LINE_AMOUNT", "LINE_VAT", "LINE_TOTAL", "NO_LINES", "NO_NUMBER", "TIN_FORMAT"]);
 
 // --- Matching the supplier's name to an item -------------------------------------------------
 
@@ -176,6 +168,14 @@ export function accountFor(line: DidoxLine, kind: "goods" | "service", rules: Li
   return rules.accounts?.[kind];
 }
 
+/** Lines whose quantity × price is not the amount, when the document was entered with its own amounts: said in the comment. */
+export function figuresNote(doc: DidoxDocument): string {
+  const lines = doc.issues.filter((i) => i.code === "LINE_AMOUNT" && i.line !== null).map((i) => i.line);
+  return lines.length > 0
+    ? `; line ${lines.join(", ")}: quantity × price is not the amount, the document's own amounts are entered`
+    : "";
+}
+
 export function draftOf(
   doc: DidoxDocument,
   counterparty: { ref: string } | { inn: string },
@@ -205,7 +205,7 @@ export function draftOf(
         ...(account ? { account } : {}),
       };
     }),
-    comment: `Didox ${doc.kind} ${doc.number}`,
+    comment: `Didox ${doc.kind} ${doc.number}${figuresNote(doc)}`,
     // An act of services has no supplier's invoice: the receipt only.
     ...(doc.kind === "act" ? { withoutInvoice: true } : {}),
   } as InvoiceReceivedDraft;
@@ -389,7 +389,13 @@ export function itemFor(
  */
 export async function resolveDocuments(
   docs: DidoxDocument[],
-  options: { companyInn?: string; overrides?: Overrides; cache?: ResolverCache; rules?: LineRules },
+  options: {
+    companyInn?: string;
+    overrides?: Overrides;
+    cache?: ResolverCache;
+    rules?: LineRules;
+    acceptFigures?: boolean | undefined;
+  },
   deps: ResolverDeps,
 ): Promise<Resolved> {
   const problems: Problem[] = [];
@@ -413,7 +419,9 @@ export async function resolveDocuments(
       );
       continue;
     }
-    const blocking = doc.issues.filter((i) => BLOCKING.has(i.code));
+    const blocking = doc.issues.filter(
+      (i) => BLOCKING.has(i.code) && !(options.acceptFigures && i.code === "LINE_AMOUNT"),
+    );
     if (blocking.length > 0) {
       problem(
         doc,

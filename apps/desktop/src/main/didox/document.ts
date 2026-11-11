@@ -339,12 +339,11 @@ export function batchOf(documents: DidoxDocument[]): DidoxBatch {
       const invoice = twin(invoices.get(base(d)) ?? [], d);
       if (invoice) {
         pairedActs += 1;
+        // The invoice stands on its own figures: a different act is something to look at, not a reason to stop it.
         if (invoice.totals.total !== d.totals.total) {
-          invoice.issues.push({
-            line: null,
-            code: "ACT_DIFFERS",
-            message: `the act with the same number comes to ${money(d.totals.total)}, the invoice to ${money(invoice.totals.total)}`,
-          });
+          invoice.notes.push(
+            `the act with the same number comes to ${money(d.totals.total)}, the invoice to ${money(invoice.totals.total)}`,
+          );
         }
         continue;
       }

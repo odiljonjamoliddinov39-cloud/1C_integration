@@ -318,3 +318,14 @@ app (`didox/sales.ts`), not by the model and not by the 1C extension:
    candidates; the model answers with references and calls again.
 5. After the accountant checks and posts the sales (`propose_post_created`), the issued invoices follow with
    `propose_invoices_issued`.
+
+## Entering documents whose figures differ (acceptFigures)
+
+A line whose quantity × price is not its amount stops the document (`CHECK`, "the document says …") because the supplier's own
+figures do not agree. When the accountant says to enter the documents as Didox has them, the tools `propose_didox_invoices` and
+`propose_didox_sales` take `acceptFigures: true`: the amount, VAT and total are written as the document gives them and the comment
+of the 1C document names the lines. A document whose VAT or total does not add up stays stopped. An act whose total differs from the
+invoice of the same seller and number (within a month) no longer stops the invoice: it is a note. A sale already in 1C is the same
+buyer, day and amount within a sum (more for a long document), so a total 1C added up a few tiyin differently is not entered again.
+A message with no period means the period of the last Didox read in the chat; "issued" and "outgoing" (chiqarilgan, чикарилган,
+чикувчи, исходящ…) mean the company's own documents.

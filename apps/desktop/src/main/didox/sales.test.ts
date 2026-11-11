@@ -112,6 +112,19 @@ describe("sales from the company's own Didox documents", () => {
     expect(out.ready).toEqual([]);
   });
 
+  it("takes a sale 1C added up a few tiyin differently for the same one, not for a new one", async () => {
+    // 1C's own total is 112.00 against Didox's 112.42 (rounding of a line): the same sale.
+    const same = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11199.58]],
+    });
+    expect(same.alreadyIn1c).toEqual([`${OWN_INN}/24`]);
+    // 5 sum apart is another sale.
+    const other = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11195]],
+    });
+    expect(other.alreadyIn1c).toEqual([]);
+  });
+
   it("applies the accountant's VAT map when the base lacks the rate", async () => {
     const doc = invoice([line("Жидкое мыло", { vatrate: 12 })]);
     const missing = await run([doc], { vat: ["Без НДС", "15%"] });

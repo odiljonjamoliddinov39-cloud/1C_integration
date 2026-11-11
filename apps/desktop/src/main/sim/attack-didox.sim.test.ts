@@ -85,9 +85,10 @@ describe("attack: Didox batches", () => {
       const batch = batchOf(rng.shuffle([invoice, paired, alone]));
       expect(batch.pairedActs).toBe(1);
       expect(batch.postable.map((d) => d.kind).sort()).toEqual(["act", "invoice"]);
-      // The paired act's different total is said, not lost.
+      // The paired act's different total is said (a note), not lost, and does not stop the invoice.
       if (paired.totals.total !== invoice.totals.total)
-        expect(invoice.issues.some((x) => x.code === "ACT_DIFFERS")).toBe(true);
+        expect(invoice.notes.some((x) => x.includes("the act with the same number comes to"))).toBe(true);
+      expect(invoice.issues.some((x) => x.code === "ACT_DIFFERS")).toBe(false);
     }
   });
 

@@ -50,6 +50,27 @@ describe("the jobs the program does by itself", () => {
       to: "2024-12-31",
     });
     expect(readEngineTask("Didox sotuvlarini 2024 yil kirit", noBank)).toMatchObject({ kind: "didox_sales" });
+    // "Issued", "outgoing" and the sale as the accountants spell them (no accents, a typo) are the company's own documents.
+    for (const text of [
+      "чикарилган фактураларни дидоксдан кирит",
+      "Didoxdan chiqarilgan fakturalarni kirit",
+      "чикувчи хужжатларни дидоксдан кирит",
+      "2020 йилдаги реалиця хужжатларини 1 с га кирит дидокдан",
+    ])
+      expect(readEngineTask(text, noBank)).toMatchObject({ kind: "didox_sales" });
+    // No period in the message: the one of the last Didox read in this chat; a period named wins.
+    expect(
+      readEngineTask("чикарилган фактураларни дидоксдан кирит", {
+        ...noBank,
+        lastDidox: { from: "2020-01-01", to: "2020-12-31" },
+      }),
+    ).toEqual({ kind: "didox_sales", from: "2020-01-01", to: "2020-12-31" });
+    expect(
+      readEngineTask("2024 йил чикарилган фактураларни дидоксдан кирит", {
+        ...noBank,
+        lastDidox: { from: "2020-01-01", to: "2020-12-31" },
+      }),
+    ).toEqual({ kind: "didox_sales", from: "2024-01-01", to: "2024-12-31" });
     expect(readEngineTask("USD va RUB kurslarini 2024 yil yukla", noBank)).toEqual({
       kind: "rates",
       from: "2024-01-01",
@@ -113,13 +134,24 @@ describe("the jobs the program does by itself", () => {
           seen: 712,
           read: 2,
           ofThisCompany: 2,
-          audit: { seenByYear: "2020:2, ~2026:700", readAt: "2026-11-11T10:15:00.000Z" },
+          byKind: "invoice:2",
+          outsidePeriod: 5,
+          entryFields: ["id", "doctype", "updated"],
+          audit: {
+            seenByYear: "2020:2, ~2026:700",
+            byDoctype: "002:700, 000:12",
+            byStatus: "3:712",
+            readAt: "2026-11-11T10:15:00.000Z",
+          },
         },
       },
       "en",
     );
     expect(withRead).toContain(
       "Didox: 712 entries in the list, 2 documents read, 2 of this company. By year: 2020:2, ~2026:700 (read 2026-11-11 10:15).",
+    );
+    expect(withRead).toContain(
+      "types 002:700, 000:12; statuses 3:712; read as invoice:2; outside the period 5; list fields id,doctype,updated.",
     );
     expect(batchText({ status: "declined_by_user" }, "uz")).toContain("rad etildi");
   });

@@ -19,6 +19,7 @@ import {
   type Overrides,
   type Problem,
   type ResolverCache,
+  figuresNote,
   isService,
   itemFor,
   lookup,
@@ -134,6 +135,7 @@ export async function resolveSales(
     cache?: SalesCache;
     rules?: LineRules;
     warehouse?: string;
+    acceptFigures?: boolean | undefined;
   },
   deps: SalesDeps,
 ): Promise<SalesResolved> {
@@ -159,8 +161,10 @@ export async function resolveSales(
       );
       continue;
     }
-    const blocking = doc.issues.filter((i) =>
-      ["LINE_AMOUNT", "LINE_VAT", "LINE_TOTAL", "NO_LINES", "NO_NUMBER", "TIN_FORMAT"].includes(i.code),
+    const blocking = doc.issues.filter(
+      (i) =>
+        ["LINE_AMOUNT", "LINE_VAT", "LINE_TOTAL", "NO_LINES", "NO_NUMBER", "TIN_FORMAT"].includes(i.code) &&
+        !(options.acceptFigures && i.code === "LINE_AMOUNT"),
     );
     if (blocking.length > 0) {
       problem(
@@ -313,7 +317,7 @@ export async function resolveSales(
     deps,
     cache,
   );
-  const sold = new Set<string>();
+  const sold: { inn: string; day: string; total: number }[] = [];
   if (live.length > 0) {
     const dates = live.map((d) => d.date).sort();
     const salesRows = await rowsOfPeriod(
@@ -324,10 +328,21 @@ export async function resolveSales(
     );
     for (const cells of salesRows ?? [])
       if (typeof cells[2] === "number")
-        sold.add(
-          `${textOf(cells[0]) || String(cells[0])}|${day(String(cells[1]))}|${Math.round(cells[2] * 100)}`,
-        );
+        sold.push({
+          inn: textOf(cells[0]) || String(cells[0]),
+          day: day(String(cells[1])),
+          total: Math.round(cells[2] * 100),
+        });
   }
+  // The same sale is 1C's own figures against Didox's: a sale 1C added up itself can differ by a few tiyin (a line's rounding),
+  // so the amounts are the same within a sum, and more for a long document.
+  const isSold = (doc: DidoxDocument) =>
+    sold.some(
+      (s) =>
+        s.inn === doc.buyer.tin &&
+        s.day === doc.date &&
+        Math.abs(s.total - Math.round(doc.totals.total)) <= Math.max(100, 50 * doc.lines.length),
+    );
   const values = live.length > 0 ? await vatValues(deps, cache) : null;
   // The default unit of each item, by its name: a sale line without one is refused by 1C's filling check.
   const units = new Map<string, unknown>();
@@ -366,7 +381,7 @@ export async function resolveSales(
       } else refs.push(found.ref);
     }
     if (open > 0) continue;
-    if (sold.has(`${doc.buyer.tin}|${doc.date}|${Math.round(doc.totals.total)}`)) {
+    if (isSold(doc)) {
       alreadyIn1c.push(key);
       continue;
     }
@@ -441,7 +456,7 @@ function buildSale(
   if (warehouseKey && ctx.warehouse)
     fields[warehouseKey] = refTo(template.fields[warehouseKey], ctx.warehouse, "Справочник.Склады");
   const commentKey = firstKey(["Комментарий"], template.fields);
-  if (commentKey) fields[commentKey] = `Didox ${doc.kind} ${doc.number}`;
+  if (commentKey) fields[commentKey] = `Didox ${doc.kind} ${doc.number}${figuresNote(doc)}`;
   const totalKey = firstKey(["СуммаДокумента"], template.fields);
   if (totalKey) fields[totalKey] = sum(doc.totals.total);
   // Whether the line's amount already holds the VAT is the company's own setting of the sale.

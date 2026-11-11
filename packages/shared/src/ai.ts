@@ -192,6 +192,12 @@ export const DidoxInvoicesInput = z.object({
     .array(z.object({ from: z.number().min(0).max(100), to: z.number().min(0).max(100) }))
     .max(10)
     .optional(),
+  /**
+   * Enter the documents whose quantity × price differs from the amount as the document's own amounts say (the amount, VAT and total
+   * are written as the supplier gave them, the difference is put in the comment). Only when the accountant said to enter them
+   * as Didox has them; VAT and total that do not add up still stop a document.
+   */
+  acceptFigures: z.boolean().optional(),
   /** The ledger accounts (codes) the lines are booked to: by kind, and by words in the line's name (the first rule that fits). */
   accounts: z
     .object({

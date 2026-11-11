@@ -347,6 +347,30 @@ describe("resolveDocuments", () => {
     expect(resolved.problems[0]?.message).toContain("2 × 100.00 = 200.00");
   });
 
+  it("enters a document whose quantity × price is not the amount only when told to, with the document's own amounts", async () => {
+    const odd = goods(1, "x", "1", "2", "100");
+    odd.deliverysum = "250";
+    odd.vatsum = "30";
+    odd.deliverysumwithvat = "280";
+    const stopped = await resolveDocuments([doc("2", [odd])], {}, deps({ counterparties: [NAVROZ] }));
+    expect(stopped.problems[0]).toMatchObject({ code: "CHECK" });
+    const accepted = await resolveDocuments(
+      [doc("2", [odd])],
+      { acceptFigures: true },
+      deps({ counterparties: [NAVROZ] }),
+    );
+    expect(accepted.problems.some((p) => p.code === "CHECK")).toBe(false);
+    // A document whose VAT does not add up is still stopped.
+    const badVat = goods(1, "x", "1", "2", "100");
+    badVat.vatsum = "99";
+    const still = await resolveDocuments(
+      [doc("3", [badVat])],
+      { acceptFigures: true },
+      deps({ counterparties: [NAVROZ] }),
+    );
+    expect(still.problems[0]).toMatchObject({ code: "CHECK" });
+  });
+
   it("names a counterparty that is missing or doubled", async () => {
     const missing = await resolveDocuments([doc("3", [goods(1, "x", "1", "1", "100")])], {}, deps({}));
     expect(missing.problems[0]).toMatchObject({ code: "COUNTERPARTY_NOT_FOUND" });

@@ -623,6 +623,7 @@ export class AssistantService {
     const task = readEngineTask(question, {
       hasBank: (chat.bank ?? []).length > 0,
       today: new Date().toISOString(),
+      lastDidox: chat.didoxPeriod,
     });
     if (!task) return null;
     const lang = langOf(question);
@@ -2750,6 +2751,8 @@ export class AssistantService {
     const today = new Date().toISOString().slice(0, 10);
     const from = input.from ?? `${today.slice(0, 4)}-01-01`;
     const to = input.to ?? today;
+    // What a follow-up with no period of its own means (engine-tasks.ts): the stretch of this read.
+    chat.didoxPeriod = { from, to };
     let read: Awaited<ReturnType<typeof fetchDidoxDocuments>>;
     try {
       read = await this.readDidox(
@@ -3551,6 +3554,7 @@ export class AssistantService {
           contracts: input.contracts,
         },
         rules: this.lineRules(chat.companyId, input),
+        acceptFigures: input.acceptFigures,
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),
@@ -3634,6 +3638,7 @@ export class AssistantService {
         };
       }
       const today = new Date().toISOString().slice(0, 10);
+      chat.didoxPeriod = { from: input.from ?? `${today.slice(0, 4)}-01-01`, to: input.to ?? today };
       try {
         const read = await this.readDidox(
           chat.companyId,
@@ -3690,6 +3695,7 @@ export class AssistantService {
           ...(input.vatRateMap ? { vatRateMap: input.vatRateMap } : {}),
         }),
         ...(input.warehouse ? { warehouse: input.warehouse } : {}),
+        acceptFigures: input.acceptFigures,
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),
