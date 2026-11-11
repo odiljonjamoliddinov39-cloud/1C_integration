@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   batchOf,
+  didoxKey,
   describeBatch,
   describeOutgoing,
   isDidoxJson,
@@ -382,16 +383,38 @@ describe("batchOf and describeBatch", () => {
     expect(batch.postable[0]?.issues.map((i) => i.code)).toEqual(["ACT_DIFFERS"]);
   });
 
-  it("does not take an act for the invoice of another day and another total that has the same number", () => {
-    // Numbers are the sellers' own: act 24 of September is not invoice 24 of January.
-    const september = { ...act("24", "90"), actdoc: { actno: "24", actdate: "2026-09-01" } };
-    const batch = batchOf([noVat("24", "100"), september].map((j) => parseDidoxDocument(j)!));
-    expect(batch.pairedActs).toBe(0);
-    expect(batch.postable.map((d) => `${d.kind} ${d.number}`)).toEqual(["invoice 24", "act 24"]);
-    expect(batch.postable.every((d) => d.issues.length === 0)).toBe(true);
-    // The same number and the same total, even far apart, is still the same transaction.
-    const twin = { ...act("24", "100"), actdoc: { actno: "24", actdate: "2026-09-01" } };
-    expect(batchOf([noVat("24", "100"), twin].map((j) => parseDidoxDocument(j)!)).pairedActs).toBe(1);
+  it("does not take an act for the invoice of another day that has the same number, whatever the totals", () => {
+    // Numbers are the sellers' own: act 24 of September is not invoice 24 of January, even for the same monthly total.
+    for (const total of ["90", "100"]) {
+      const september = { ...act("24", total), actdoc: { actno: "24", actdate: "2026-09-01" } };
+      const batch = batchOf([noVat("24", "100"), september].map((j) => parseDidoxDocument(j)!));
+      expect(batch.pairedActs).toBe(0);
+      expect(batch.postable.map((d) => `${d.kind} ${d.number}`)).toEqual(["invoice 24", "act 24"]);
+      expect(batch.postable.every((d) => d.issues.length === 0)).toBe(true);
+      // They are two documents: two keys.
+      expect(new Set(batch.postable.map((d) => didoxKey(d))).size).toBe(2);
+    }
+  });
+
+  it("pairs an act with the nearest invoice of its number, and flags a difference there", () => {
+    const near = { ...act("24", "90"), actdoc: { actno: "24", actdate: "2026-01-03" } };
+    const far = invoice({ facturadoc: { facturano: "24", facturadate: "2025-06-01" } }, [
+      {
+        ordno: 1,
+        name: "x",
+        count: "1",
+        summa: "90",
+        deliverysum: "90",
+        vatrate: 0,
+        vatsum: 0,
+        deliverysumwithvat: "90",
+      },
+    ]);
+    const batch = batchOf([far, noVat("24", "100"), near].map((j) => parseDidoxDocument(j)!));
+    expect(batch.pairedActs).toBe(1);
+    const january = batch.postable.find((d) => d.date === "2026-01-01");
+    expect(january?.issues.map((i) => i.code)).toEqual(["ACT_DIFFERS"]);
+    expect(batch.postable.find((d) => d.date === "2025-06-01")?.issues).toEqual([]);
   });
 
   it("describes the batch briefly: the buyer once, one line per goods line, the result of the checks", () => {

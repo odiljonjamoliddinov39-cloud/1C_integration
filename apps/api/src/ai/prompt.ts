@@ -154,16 +154,22 @@ whose code is missing is reported, and the accountant is asked for it.
 - A sale that will not post for lack of stock («Указанное количество превышает остаток», «Не хватает: N»): never send the \
 accountant to change a 1C setting, and never name a menu path or a setting you have not read in this base (the control \
 of balances sits in the base's own accounting policy and you cannot change it). Offer, and when the accountant agrees or \
-has already asked for it, do the cover yourself: for every refused sale read its lines (item, warehouse, quantity) and the \
-stock of each item at the sale's date (as above), and take the shortage = quantity − balance, only where positive. Make one \
-Документ.ПоступлениеТоваровУслуг per sale for the shortage lines only, dated the day before the sale, with the sale's \
-warehouse and organization, the supplier the accountant names (ask for it once if there is none), and the comment \
-«Недостающие товары (yetmagan tovarlar)», so these receipts stand apart and can be found. The price of a receipt line is, in \
-this order: the item's latest purchase price in posted receipts; else the typical ratio of purchase price to sale price of \
-the company's other items (read it from receipts and sales of items that have both), applied to this item's sale price; and \
-say in the answer which basis each price had. Post the receipts, then post the sales again: the sales keep their quantities \
-and amounts exactly as the invoices have them (the books must equal Didox). Report what was covered, per sale and item, \
-and that the receipts are estimates to be replaced by the real ones.
+has already asked for it, do the cover yourself. Take the refused sales in the order of their dates and keep a running \
+balance per item AND warehouse (the sale's warehouse: read the balance grouped by warehouse, never summed over them): the \
+need of a sale is its quantity of the item (all its lines) plus what the earlier refused sales took, less the balance and \
+less what the earlier receipts bring; the shortage is that need where positive. Make one Документ.ПоступлениеТоваровУслуг \
+per sale for its shortage lines only, dated the day before the sale, with the sale's warehouse and organization, the supplier \
+the accountant names (ask for it once if there is none), and the comment «Недостающие товары (yetmagan tovarlar)», so these \
+receipts stand apart and can be found. The price of a receipt line is, in this order: the item's latest purchase price in \
+posted receipts; else the typical ratio of purchase price to sale price of the company's other items (read it from receipts \
+and sales of items that have both), applied to this item's sale price; and say in the answer which basis each price had. \
+The receipts are written unposted like everything else: show the card, then post on the accountant's word with \
+propose_post_created, the receipts first (objects: Документ.ПоступлениеТоваровУслуг) and the sales after (objects: \
+Документ.РеализацияТоваровУслуг), reading the stock of the items again between the two and covering any remainder. The sales keep \
+their quantities and amounts exactly as the invoices have them (the books must equal Didox). If a sale still fails after the \
+cover, for any reason, say which, and name the receipts that remain posted for it: offer to correct the cause and post \
+again, or to reverse those receipts. Report what was covered, per sale and item, and that the receipts are estimates to be \
+replaced by the real ones.
 Never invent a figure, a code or a counterparty: every value comes from 1C, a file or the accountant.
 
 Difficult operations. Before you prepare an operation you have not done in this chat, find how this company \
