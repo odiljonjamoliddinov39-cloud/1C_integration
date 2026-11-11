@@ -348,27 +348,43 @@ describe("resolveDocuments", () => {
   });
 
   it("enters a document whose quantity × price is not the amount only when told to, with the document's own amounts", async () => {
+    const world = {
+      counterparties: [NAVROZ],
+      contracts: [CONTRACT],
+      items: [["1", "00000003-0000-4000-8000-000000000003", "x"]] as [string, string, string][],
+    };
+    // 2 × 100 is 200, the supplier's amount is 250 with VAT 30 and total 280: its own figures, which add up.
     const odd = goods(1, "x", "1", "2", "100");
     odd.deliverysum = "250";
     odd.vatsum = "30";
     odd.deliverysumwithvat = "280";
-    const stopped = await resolveDocuments([doc("2", [odd])], {}, deps({ counterparties: [NAVROZ] }));
+    const stopped = await resolveDocuments([doc("2", [odd])], {}, deps(world));
     expect(stopped.problems[0]).toMatchObject({ code: "CHECK" });
-    const accepted = await resolveDocuments(
-      [doc("2", [odd])],
-      { acceptFigures: true },
-      deps({ counterparties: [NAVROZ] }),
-    );
-    expect(accepted.problems.some((p) => p.code === "CHECK")).toBe(false);
+    expect(stopped.ready).toEqual([]);
+    const accepted = await resolveDocuments([doc("2", [odd])], { acceptFigures: true }, deps(world));
+    expect(accepted.problems).toEqual([]);
+    expect(accepted.ready).toHaveLength(1);
+    const { draft } = accepted.ready[0]!;
+    expect(draft.lines[0]).toMatchObject({
+      quantity: 2,
+      price: 100,
+      amount: 250,
+      vatAmount: 30,
+      total: 280,
+      figuresAsGiven: true,
+    });
+    expect(draft.comment).toContain("line 1: quantity × price is not the amount");
     // A document whose VAT does not add up is still stopped.
     const badVat = goods(1, "x", "1", "2", "100");
     badVat.vatsum = "99";
-    const still = await resolveDocuments(
-      [doc("3", [badVat])],
-      { acceptFigures: true },
-      deps({ counterparties: [NAVROZ] }),
-    );
+    const still = await resolveDocuments([doc("3", [badVat])], { acceptFigures: true }, deps(world));
     expect(still.problems[0]).toMatchObject({ code: "CHECK" });
+    // A line with no quantity of its own is not a figure to enter: it stays stopped.
+    const noQuantity = goods(1, "x", "1", "2", "100");
+    noQuantity.count = "";
+    const missing = await resolveDocuments([doc("4", [noQuantity])], { acceptFigures: true }, deps(world));
+    expect(missing.problems[0]).toMatchObject({ code: "CHECK" });
+    expect(missing.ready).toEqual([]);
   });
 
   it("names a counterparty that is missing or doubled", async () => {

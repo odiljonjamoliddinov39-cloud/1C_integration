@@ -9,7 +9,7 @@
  */
 import { InvoiceReceivedDraft, type RunQueryInput } from "@platform/shared";
 
-import { type DidoxDocument, type DidoxLine, didoxKey } from "./document.js";
+import { type DidoxDocument, type DidoxIssue, type DidoxLine, didoxKey } from "./document.js";
 
 export type QueryOutcome = { ok: true; data: unknown } | { ok: false; code: string; message: string };
 
@@ -168,6 +168,16 @@ export function accountFor(line: DidoxLine, kind: "goods" | "service", rules: Li
   return rules.accounts?.[kind];
 }
 
+/**
+ * A line's amount that is not quantity × price is waived when the accountant said to enter the document as the supplier wrote it,
+ * but only for a line that has a quantity and a price of its own: a missing one (read as 0) is not a figure to enter.
+ */
+export function figuresAccepted(doc: DidoxDocument, issue: DidoxIssue, accept: boolean | undefined): boolean {
+  if (!accept || issue.code !== "LINE_AMOUNT") return false;
+  const line = doc.lines.find((l) => l.n === issue.line);
+  return !!line && line.qty > 0 && line.price > 0;
+}
+
 /** Lines whose quantity × price is not the amount, when the document was entered with its own amounts: said in the comment. */
 export function figuresNote(doc: DidoxDocument): string {
   const lines = doc.issues.filter((i) => i.code === "LINE_AMOUNT" && i.line !== null).map((i) => i.line);
@@ -203,6 +213,10 @@ export function draftOf(
         vatAmount: sum(l.vat),
         total: sum(l.total),
         ...(account ? { account } : {}),
+        // The supplier's own amount, though quantity × price is not it (only reachable when the accountant said to enter it so).
+        ...(doc.issues.some((i) => i.code === "LINE_AMOUNT" && i.line === l.n)
+          ? { figuresAsGiven: true }
+          : {}),
       };
     }),
     comment: `Didox ${doc.kind} ${doc.number}${figuresNote(doc)}`,
@@ -420,7 +434,7 @@ export async function resolveDocuments(
       continue;
     }
     const blocking = doc.issues.filter(
-      (i) => BLOCKING.has(i.code) && !(options.acceptFigures && i.code === "LINE_AMOUNT"),
+      (i) => BLOCKING.has(i.code) && !figuresAccepted(doc, i, options.acceptFigures),
     );
     if (blocking.length > 0) {
       problem(

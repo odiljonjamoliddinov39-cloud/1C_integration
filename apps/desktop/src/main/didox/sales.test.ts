@@ -113,16 +113,45 @@ describe("sales from the company's own Didox documents", () => {
   });
 
   it("takes a sale 1C added up a few tiyin differently for the same one, not for a new one", async () => {
-    // 1C's own total is 112.00 against Didox's 112.42 (rounding of a line): the same sale.
+    // 1C's own total is 11199.58 against Didox's 112.00: the same sale (no number on it in 1C: the amount within a sum).
     const same = await run([invoice([line("Жидкое мыло")])], {
       existing: [[BUYER_INN, "2026-09-10T00:00:00", 11199.58]],
     });
     expect(same.alreadyIn1c).toEqual([`${OWN_INN}/24`]);
-    // 5 sum apart is another sale.
+    expect(same.ready).toEqual([]);
+    // 5 sum apart is another sale: it is made.
     const other = await run([invoice([line("Жидкое мыло")])], {
       existing: [[BUYER_INN, "2026-09-10T00:00:00", 11195]],
     });
     expect(other.alreadyIn1c).toEqual([]);
+    expect(other.problems).toEqual([]);
+    expect(other.ready).toHaveLength(1);
+  });
+
+  it("tells one sale from another by the number it was issued under, when 1C has it", async () => {
+    // The same number, the same buyer and day: the same sale, whatever the amount 1C added up to.
+    const numbered = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11190, "24"]],
+    });
+    expect(numbered.alreadyIn1c).toEqual([`${OWN_INN}/24`]);
+    // Another number with an amount a few tiyin off is another sale (it has its own number); the same amount to the tiyin is not.
+    const another = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11199.58, "99"]],
+    });
+    expect(another.alreadyIn1c).toEqual([]);
+    expect(another.ready).toHaveLength(1);
+    const exact = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11200, "99"]],
+    });
+    expect(exact.alreadyIn1c).toEqual([`${OWN_INN}/24`]);
+  });
+
+  it("asks again without the outgoing number when the base has no such attribute", async () => {
+    const out = await run([invoice([line("Жидкое мыло")])], {
+      existing: [[BUYER_INN, "2026-09-10T00:00:00", 11200]],
+      noOutgoingNumber: true,
+    });
+    expect(out.alreadyIn1c).toEqual([`${OWN_INN}/24`]);
   });
 
   it("applies the accountant's VAT map when the base lacks the rate", async () => {

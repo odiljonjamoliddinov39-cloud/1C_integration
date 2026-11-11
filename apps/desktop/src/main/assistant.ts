@@ -2751,8 +2751,6 @@ export class AssistantService {
     const today = new Date().toISOString().slice(0, 10);
     const from = input.from ?? `${today.slice(0, 4)}-01-01`;
     const to = input.to ?? today;
-    // What a follow-up with no period of its own means (engine-tasks.ts): the stretch of this read.
-    chat.didoxPeriod = { from, to };
     let read: Awaited<ReturnType<typeof fetchDidoxDocuments>>;
     try {
       read = await this.readDidox(
@@ -2767,6 +2765,8 @@ export class AssistantService {
       return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
     }
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    // What a follow-up with no period of its own means (engine-tasks.ts): the stretch of the last read that worked.
+    chat.didoxPeriod = { from, to };
     const incoming = read.documents.filter((d) => d.buyer.tin === own);
     const outgoing = read.documents.filter((d) => d.seller.tin === own);
     const other = read.documents.length - incoming.length - outgoing.length;
@@ -3638,7 +3638,6 @@ export class AssistantService {
         };
       }
       const today = new Date().toISOString().slice(0, 10);
-      chat.didoxPeriod = { from: input.from ?? `${today.slice(0, 4)}-01-01`, to: input.to ?? today };
       try {
         const read = await this.readDidox(
           chat.companyId,
@@ -3652,6 +3651,8 @@ export class AssistantService {
           signal,
         );
         for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+        if (!signal.aborted)
+          chat.didoxPeriod = { from: input.from ?? `${today.slice(0, 4)}-01-01`, to: input.to ?? today };
         didoxRead = {
           ...readSummary(read),
           ofThisCompany: read.documents.filter((d) => d.seller.tin === own).length,

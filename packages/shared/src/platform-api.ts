@@ -188,6 +188,11 @@ export const InvoiceLine = z.object({
   total: Money,
   /** The ledger account (its code in ПланСчетов.Хозрасчетный, e.g. "2910", "9410") the line is booked to; absent: as 1C's earlier receipts. */
   account: z.string().trim().min(1).max(20).optional(),
+  /**
+   * The supplier's own amount is entered although quantity × price is not it (the accountant said to enter the document as the
+   * supplier wrote it): the amount check is skipped for the line, the VAT and total checks are not.
+   */
+  figuresAsGiven: z.boolean().optional(),
 });
 export type InvoiceLine = z.infer<typeof InvoiceLine>;
 
@@ -219,7 +224,10 @@ export const InvoiceReceivedFields = z.object({
 
 function checkLines(invoice: { lines: InvoiceLine[] }, ctx: z.RefinementCtx) {
   invoice.lines.forEach((line, i) => {
-    if (Math.abs(line.quantity * line.price - line.amount) > CENT * Math.max(1, line.quantity)) {
+    if (
+      !line.figuresAsGiven &&
+      Math.abs(line.quantity * line.price - line.amount) > CENT * Math.max(1, line.quantity)
+    ) {
       ctx.addIssue({ code: "custom", path: ["lines", i, "amount"], message: "amount ≠ quantity × price" });
     }
     if (Math.abs(line.amount + line.vatAmount - line.total) > CENT) {
