@@ -321,14 +321,22 @@ export function batchOf(documents: DidoxDocument[]): DidoxBatch {
     invoices.set(base(d), [...same, d]);
     postable.push(d);
   }
-  const nearest = (list: DidoxDocument[], date: string) =>
-    [...list].sort(
-      (a, b) =>
-        Math.abs(Date.parse(a.date) - Date.parse(date)) - Math.abs(Date.parse(b.date) - Date.parse(date)),
-    )[0];
+  // An act and an invoice are numbered by their own sellers' books: the same number can be two transactions. They are one only when
+  // dated within a month of each other (then a different total is a difference to look at, and the nearest one is the twin; of two
+  // as near, the one with the same total).
+  const apart = (a: DidoxDocument, date: string) => Math.abs(Date.parse(a.date) - Date.parse(date));
+  const MONTH = 31 * 24 * 3_600_000;
+  const twin = (list: DidoxDocument[], act: DidoxDocument) =>
+    [...list]
+      .filter((x) => apart(x, act.date) <= MONTH)
+      .sort(
+        (a, b) =>
+          apart(a, act.date) - apart(b, act.date) ||
+          Number(b.totals.total === act.totals.total) - Number(a.totals.total === act.totals.total),
+      )[0];
   for (const d of documents) {
     if (d.kind === "act") {
-      const invoice = nearest(invoices.get(base(d)) ?? [], d.date);
+      const invoice = twin(invoices.get(base(d)) ?? [], d);
       if (invoice) {
         pairedActs += 1;
         if (invoice.totals.total !== d.totals.total) {
@@ -341,7 +349,9 @@ export function batchOf(documents: DidoxDocument[]): DidoxBatch {
         continue;
       }
       if (seenActs.some((x) => base(x) === base(d) && sameDocument(x, d))) continue;
-      if (seenActs.some((x) => base(x) === base(d))) d.keySuffix = `@${d.date}`;
+      // An act that is no invoice's twin but has an invoice's seller and number keeps a key of its own.
+      if (invoices.has(base(d))) d.keySuffix = `@act${d.date}`;
+      else if (seenActs.some((x) => base(x) === base(d))) d.keySuffix = `@${d.date}`;
       seenActs.push(d);
       postable.push(d);
     } else if (d.kind !== "invoice") {
