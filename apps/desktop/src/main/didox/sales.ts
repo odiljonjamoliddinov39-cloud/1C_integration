@@ -19,6 +19,8 @@ import {
   type Overrides,
   type Problem,
   type ResolverCache,
+  figuresAccepted,
+  figuresNote,
   isService,
   itemFor,
   lookup,
@@ -134,6 +136,7 @@ export async function resolveSales(
     cache?: SalesCache;
     rules?: LineRules;
     warehouse?: string;
+    acceptFigures?: boolean | undefined;
   },
   deps: SalesDeps,
 ): Promise<SalesResolved> {
@@ -159,8 +162,10 @@ export async function resolveSales(
       );
       continue;
     }
-    const blocking = doc.issues.filter((i) =>
-      ["LINE_AMOUNT", "LINE_VAT", "LINE_TOTAL", "NO_LINES", "NO_NUMBER", "TIN_FORMAT"].includes(i.code),
+    const blocking = doc.issues.filter(
+      (i) =>
+        ["LINE_AMOUNT", "LINE_VAT", "LINE_TOTAL", "NO_LINES", "NO_NUMBER", "TIN_FORMAT"].includes(i.code) &&
+        !figuresAccepted(doc, i, options.acceptFigures),
     );
     if (blocking.length > 0) {
       problem(
@@ -313,21 +318,37 @@ export async function resolveSales(
     deps,
     cache,
   );
-  const sold = new Set<string>();
+  const sold: { inn: string; day: string; total: number; number: string }[] = [];
   if (live.length > 0) {
     const dates = live.map((d) => d.date).sort();
-    const salesRows = await rowsOfPeriod(
-      deps,
-      `ВЫБРАТЬ Т.Контрагент.ИНН КАК ИНН, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма ИЗ ${SALE} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
-      day(dates[0] ?? ""),
-      day(dates.at(-1) ?? ""),
-    );
+    const asked = (outgoing: boolean) =>
+      rowsOfPeriod(
+        deps,
+        `ВЫБРАТЬ Т.Контрагент.ИНН КАК ИНН, Т.Дата КАК Дата, Т.СуммаДокумента КАК Сумма${outgoing ? ", Т.НомерИсходящегоДокумента КАК Исх" : ""} ИЗ ${SALE} КАК Т ГДЕ Т.Дата МЕЖДУ &начало И &конец И НЕ Т.ПометкаУдаления`,
+        day(dates[0] ?? ""),
+        day(dates.at(-1) ?? ""),
+      );
+    // The number the sale was issued under (the app writes Didox's) tells one sale from another; a base without it is asked without.
+    const salesRows = (await asked(true)) ?? (await asked(false));
     for (const cells of salesRows ?? [])
       if (typeof cells[2] === "number")
-        sold.add(
-          `${textOf(cells[0]) || String(cells[0])}|${day(String(cells[1]))}|${Math.round(cells[2] * 100)}`,
-        );
+        sold.push({
+          inn: textOf(cells[0]) || String(cells[0]),
+          day: day(String(cells[1])),
+          total: Math.round(cells[2] * 100),
+          number: typeof cells[3] === "string" ? cells[3].trim().toLowerCase() : "",
+        });
   }
+  // The same sale: the buyer, the day and the number Didox gave it; or, when 1C has no number on it, the amount within a sum (a sale
+  // 1C added up itself differs from Didox's by a few tiyin, more for a long document); or the amount to the tiyin, as before.
+  const isSold = (doc: DidoxDocument) =>
+    sold.some((s) => {
+      if (s.inn !== doc.buyer.tin || s.day !== doc.date) return false;
+      const total = Math.round(doc.totals.total);
+      if (s.number && s.number === doc.number.trim().toLowerCase()) return true;
+      if (s.total === total) return true;
+      return !s.number && Math.abs(s.total - total) <= Math.max(100, 50 * doc.lines.length);
+    });
   const values = live.length > 0 ? await vatValues(deps, cache) : null;
   // The default unit of each item, by its name: a sale line without one is refused by 1C's filling check.
   const units = new Map<string, unknown>();
@@ -366,7 +387,7 @@ export async function resolveSales(
       } else refs.push(found.ref);
     }
     if (open > 0) continue;
-    if (sold.has(`${doc.buyer.tin}|${doc.date}|${Math.round(doc.totals.total)}`)) {
+    if (isSold(doc)) {
       alreadyIn1c.push(key);
       continue;
     }
@@ -441,7 +462,7 @@ function buildSale(
   if (warehouseKey && ctx.warehouse)
     fields[warehouseKey] = refTo(template.fields[warehouseKey], ctx.warehouse, "Справочник.Склады");
   const commentKey = firstKey(["Комментарий"], template.fields);
-  if (commentKey) fields[commentKey] = `Didox ${doc.kind} ${doc.number}`;
+  if (commentKey) fields[commentKey] = `Didox ${doc.kind} ${doc.number}${figuresNote(doc)}`;
   const totalKey = firstKey(["СуммаДокумента"], template.fields);
   if (totalKey) fields[totalKey] = sum(doc.totals.total);
   // Whether the line's amount already holds the VAT is the company's own setting of the sale.

@@ -41,6 +41,17 @@ describe("InvoiceReceivedInput", () => {
     expect(result.error?.issues[0]?.path).toEqual(["lines", 0, "total"]);
   });
 
+  it("takes a line whose amount is the supplier's own when it says so, and still checks VAT and total", () => {
+    // 2 × 10000 is 20000; the supplier's amount is 25000 with VAT 3000 and total 28000.
+    const odd = { ...line, amount: 25000, vatAmount: 3000, total: 28000 };
+    expect(InvoiceReceivedInput.safeParse({ ...invoice, lines: [odd] }).success).toBe(false);
+    expect(
+      InvoiceReceivedInput.safeParse({ ...invoice, lines: [{ ...odd, figuresAsGiven: true }] }).success,
+    ).toBe(true);
+    const bad = { ...odd, figuresAsGiven: true, total: 27000 };
+    expect(InvoiceReceivedInput.safeParse({ ...invoice, lines: [bad] }).success).toBe(false);
+  });
+
   it("needs a way to find the counterparty and each item", () => {
     expect(InvoiceReceivedInput.safeParse({ ...invoice, counterparty: {} }).success).toBe(false);
     expect(InvoiceReceivedInput.safeParse({ ...invoice, lines: [{ ...line, item: {} }] }).success).toBe(

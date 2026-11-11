@@ -623,6 +623,7 @@ export class AssistantService {
     const task = readEngineTask(question, {
       hasBank: (chat.bank ?? []).length > 0,
       today: new Date().toISOString(),
+      lastDidox: chat.didoxPeriod,
     });
     if (!task) return null;
     const lang = langOf(question);
@@ -2764,6 +2765,8 @@ export class AssistantService {
       return { ok: false, code: "DIDOX_FAILED", message: e instanceof Error ? e.message : String(e) };
     }
     if (signal.aborted) return { ok: false, code: "STOPPED", message: "Stopped by the user" };
+    // What a follow-up with no period of its own means (engine-tasks.ts): the stretch of the last read that worked.
+    chat.didoxPeriod = { from, to };
     const incoming = read.documents.filter((d) => d.buyer.tin === own);
     const outgoing = read.documents.filter((d) => d.seller.tin === own);
     const other = read.documents.length - incoming.length - outgoing.length;
@@ -3551,6 +3554,7 @@ export class AssistantService {
           contracts: input.contracts,
         },
         rules: this.lineRules(chat.companyId, input),
+        acceptFigures: input.acceptFigures,
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),
@@ -3647,6 +3651,8 @@ export class AssistantService {
           signal,
         );
         for (const d of read.documents) if (d.seller.tin === own) found.set(`${d.kind}|${didoxKey(d)}`, d);
+        if (!signal.aborted)
+          chat.didoxPeriod = { from: input.from ?? `${today.slice(0, 4)}-01-01`, to: input.to ?? today };
         didoxRead = {
           ...readSummary(read),
           ofThisCompany: read.documents.filter((d) => d.seller.tin === own).length,
@@ -3690,6 +3696,7 @@ export class AssistantService {
           ...(input.vatRateMap ? { vatRateMap: input.vatRateMap } : {}),
         }),
         ...(input.warehouse ? { warehouse: input.warehouse } : {}),
+        acceptFigures: input.acceptFigures,
       },
       {
         query: (query) => this.deps.connector.tool(connection, "run_query", query),

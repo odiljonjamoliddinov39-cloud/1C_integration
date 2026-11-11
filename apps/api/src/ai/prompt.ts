@@ -404,6 +404,10 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "answer them with references in items (document, line, ref), counterparties and contracts, and call it again. " +
     "For a period of Didox documents send from and to (YYYY-MM-DD, one call, no fetch_didox_documents first): the app reads " +
     "Didox, applies this company's standing VAT and account decisions by itself and makes the card in that step. " +
+    "A document stopped with CHECK because a line's quantity × price is not its amount (\"the document says …\") is the supplier's " +
+    "own data: when the accountant says to enter the documents as Didox has them (or that 1C must equal Didox), call again with " +
+    "acceptFigures: true, without asking which way again (the amounts, VAT and total are the document's own and the comment of " +
+    "the document names the lines); a document whose VAT or total does not add up stays stopped, and you say so. " +
     "Use it instead of propose_invoices_received for Didox documents: never write their lines out yourself. It enters " +
     "invoices (receipt + received invoice) and acts with no invoice (a receipt of services only), with each line's unit " +
     "as the supplier's document has it. When 1C lacks a VAT rate on the lines it comes back as VAT_RATE_MISSING naming " +
@@ -561,7 +565,7 @@ const DESCRIPTIONS: Record<AiToolName, string> = {
     "company's last posted sale (to that buyer, else the newest) for the accounts, warehouse and operation, changing " +
     "the date, buyer, contract, lines and sums; an invoice goes to the goods table and an act of services to the " +
     "services one. The sales are saved unposted. What it could not settle comes back as problems with candidates: " +
-    "answer with references in items (document, line, ref), counterparties and contracts, vatRateMap {from, to} when " +
+    "answer with references in items (document, line, ref), counterparties and contracts, acceptFigures: true as for propose_didox_invoices (a sale whose quantity × price is not its amount, when the accountant said to enter as Didox has it), vatRateMap {from, to} when " +
     "the accountant decided to write a rate the base lacks under another, and call it again. Never write sale lines " +
     "yourself. After the accountant checks them: propose_post_created, then propose_invoices_issued for the issued invoices.",
   propose_didox_reconciliation:

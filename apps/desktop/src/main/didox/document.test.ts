@@ -378,9 +378,12 @@ describe("batchOf and describeBatch", () => {
     expect(batch.pairedActs).toBe(1);
   });
 
-  it("flags an invoice whose act comes to another total", () => {
+  it("notes, and does not stop, an invoice whose act comes to another total", () => {
     const batch = batchOf([noVat("24", "100"), act("24", "90")].map((j) => parseDidoxDocument(j)!));
-    expect(batch.postable[0]?.issues.map((i) => i.code)).toEqual(["ACT_DIFFERS"]);
+    expect(batch.postable[0]?.issues).toEqual([]);
+    expect(batch.postable[0]?.notes.join(" ")).toContain(
+      "the act with the same number comes to 90.00, the invoice to 100.00",
+    );
   });
 
   it("does not take an act for the invoice of another day that has the same number, whatever the totals", () => {
@@ -396,7 +399,7 @@ describe("batchOf and describeBatch", () => {
     }
   });
 
-  it("pairs an act with the nearest invoice of its number, and flags a difference there", () => {
+  it("pairs an act with the nearest invoice of its number, and notes a difference there", () => {
     const near = { ...act("24", "90"), actdoc: { actno: "24", actdate: "2026-01-03" } };
     const far = invoice({ facturadoc: { facturano: "24", facturadate: "2025-06-01" } }, [
       {
@@ -413,7 +416,8 @@ describe("batchOf and describeBatch", () => {
     const batch = batchOf([far, noVat("24", "100"), near].map((j) => parseDidoxDocument(j)!));
     expect(batch.pairedActs).toBe(1);
     const january = batch.postable.find((d) => d.date === "2026-01-01");
-    expect(january?.issues.map((i) => i.code)).toEqual(["ACT_DIFFERS"]);
+    expect(january?.issues).toEqual([]);
+    expect(january?.notes.join(" ")).toContain("the act with the same number comes to");
     expect(batch.postable.find((d) => d.date === "2025-06-01")?.issues).toEqual([]);
   });
 

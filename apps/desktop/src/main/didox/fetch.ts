@@ -533,6 +533,13 @@ export function readSummary(result: FetchResult) {
     seen: result.seen,
     listed: result.listed,
     read: result.documents.length,
+    // The kinds of the documents that were read (invoice, act, contract…): what the list's entries turned out to be.
+    byKind: tally(
+      result.documents.reduce(
+        (map, d) => map.set(d.kind, (map.get(d.kind) ?? 0) + 1),
+        new Map<string, number>(),
+      ),
+    ),
     unreadable: result.unreadable,
     outsidePeriod: result.outsidePeriod,
     newerThanPeriod: result.newerThanPeriod,

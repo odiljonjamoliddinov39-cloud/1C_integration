@@ -117,7 +117,9 @@ export interface World {
   contracts?: [string, string, string][];
   vat?: string[];
   items?: [string, string][];
-  existing?: [string, string, number][];
+  existing?: [string, string, number, string?][];
+  /** A base whose sales have no outgoing number: the query naming it fails. */
+  noOutgoingNumber?: boolean;
   sales?: { ref: string; kind: "goods" | "services"; buyer?: boolean; over?: Record<string, unknown> }[];
 }
 
@@ -174,8 +176,16 @@ export function deps(world: World = {}): BankDeps {
             .filter(([name]) => params.includes(name))
             .map(([name, id]) => [name, ref("Справочник.Номенклатура", id, name)]),
         );
-      if (q.includes("РеализацияТоваровУслуг") && q.includes("Т.Дата МЕЖДУ"))
-        return rows((world.existing ?? []).map(([inn, date, sum]) => [inn, date, sum]));
+      if (q.includes("РеализацияТоваровУслуг") && q.includes("Т.Дата МЕЖДУ")) {
+        const numbered = q.includes("НомерИсходящегоДокумента");
+        if (numbered && world.noOutgoingNumber)
+          return { ok: false as const, error: "no such attribute" } as never;
+        return rows(
+          (world.existing ?? []).map(([inn, date, sum, number]) =>
+            numbered ? [inn, date, sum, number ?? ""] : [inn, date, sum],
+          ),
+        );
+      }
       if (q.includes("РеализацияТоваровУслуг") && q.includes("ПЕРВЫЕ 10")) {
         const byBuyer = q.includes("Контрагент.ИНН = &инн");
         return rows(

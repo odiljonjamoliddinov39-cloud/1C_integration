@@ -52,7 +52,9 @@ const norm = (text: string) =>
 
 const ENTER =
   /(кирит|киргиз|kirit|kirgiz|введи|ввести|вноси|внес[иё]|занес[иё]|оприходу|enter\b|import|загрузи в 1[сc]|1[сc]\s*(га|ga)\s*(кирит|kirit))/u;
-const SALES = /(sotuv|сотув|реализац|продаж|chiquvchi|чиқувчи|исходящ|выставлен|sales)/u;
+// "Issued" and "outgoing" as the accountants write them, in Uzbek (with or without the accents) and Russian, and the sale as they misspell it.
+const SALES =
+  /(sotuv|сотув|реал[иь]?[зц]|продаж|chiquvchi|chikuvchi|чиқувчи|чикувчи|исходящ|выставлен|chiqarilgan|chikarilgan|чиқарилган|чикарилган|issued|sales)/u;
 const DIDOX = /(didox|дидокс|дидок|didoks)/u;
 const STATEMENT = /(выписк|ko'chirma|кўчирма|кучирма|bank|банк|statement|vypiska)/u;
 
@@ -185,7 +187,10 @@ function readReport(t: string, hasBank: boolean): ReportKind | null {
   return null;
 }
 
-export function readEngineTask(text: string, ctx: { hasBank: boolean; today: string }): EngineTask | null {
+export function readEngineTask(
+  text: string,
+  ctx: { hasBank: boolean; today: string; lastDidox?: { from: string; to: string } | undefined },
+): EngineTask | null {
   const t = norm(text);
   if (t.trim().length > 400) return null;
   const period = periodIn(t);
@@ -222,7 +227,9 @@ export function readEngineTask(text: string, ctx: { hasBank: boolean; today: str
   )
     return { kind: "balances", date: period?.to ?? todayOf(ctx.today) };
   if (DIDOX.test(t) && ENTER.test(t)) {
-    return SALES.test(t) ? { kind: "didox_sales", ...whole } : { kind: "didox_in", ...whole };
+    // No period named: the one of the last Didox read in this chat (a follow-up about the same stretch), else the year so far.
+    const span = period ?? ctx.lastDidox ?? whole;
+    return SALES.test(t) ? { kind: "didox_sales", ...span } : { kind: "didox_in", ...span };
   }
   if (ctx.hasBank && ENTER.test(t) && (STATEMENT.test(t) || !DIDOX.test(t)))
     return { kind: "bank", ...(period ?? {}) };
@@ -369,7 +376,13 @@ interface BatchData {
     seen?: number;
     read?: number;
     ofThisCompany?: number;
-    audit?: { seenByYear?: string; readAt?: string };
+    byKind?: string;
+    unreadable?: number;
+    outsidePeriod?: number;
+    newerThanPeriod?: number;
+    failed?: number;
+    entryFields?: string[];
+    audit?: { seenByYear?: string; byDoctype?: string; byStatus?: string; readAt?: string };
   };
 }
 
@@ -408,16 +421,30 @@ export function batchText(data: unknown, lang: Lang): string {
   if (d.ratesNotLoaded) lines.push(`${w.rates} ${d.ratesNotLoaded}`);
   if (lines.length === 0) lines.push(w.nothing);
   // What Didox's list gave, when nothing was entered from it: so "nothing" can be told from "Didox gave nothing".
-  if (entered === 0 && d.didoxRead)
+  if (entered === 0 && d.didoxRead) {
+    const r = d.didoxRead;
     lines.push(
       w.didoxRead(
-        d.didoxRead.seen ?? 0,
-        d.didoxRead.read ?? 0,
-        d.didoxRead.ofThisCompany,
-        d.didoxRead.audit?.seenByYear ?? "",
-        d.didoxRead.audit?.readAt?.slice(0, 16).replace("T", " ") ?? "",
+        r.seen ?? 0,
+        r.read ?? 0,
+        r.ofThisCompany,
+        r.audit?.seenByYear ?? "",
+        r.audit?.readAt?.slice(0, 16).replace("T", " ") ?? "",
       ),
     );
+    // The facts behind it, as they are (no words to translate): what the list's entries are and where the rest went.
+    const facts = [
+      r.audit?.byDoctype ? `types ${r.audit.byDoctype}` : "",
+      r.audit?.byStatus ? `statuses ${r.audit.byStatus}` : "",
+      r.byKind ? `read as ${r.byKind}` : "",
+      r.outsidePeriod ? `outside the period ${r.outsidePeriod}` : "",
+      r.newerThanPeriod ? `after the period ${r.newerThanPeriod}` : "",
+      r.unreadable ? `unreadable ${r.unreadable}` : "",
+      r.failed ? `refused by Didox ${r.failed}` : "",
+      r.entryFields?.length ? `list fields ${r.entryFields.slice(0, 30).join(",")}` : "",
+    ].filter(Boolean);
+    if (facts.length > 0) lines.push(`  ${facts.join("; ")}.`);
+  }
   if (left > 0 || failed.length > 0 || transfersLeft > 0) lines.push(w.next);
   lines.push(w.sources);
   return lines.join("\n");
