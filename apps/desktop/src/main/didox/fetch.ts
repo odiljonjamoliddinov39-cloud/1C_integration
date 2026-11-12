@@ -402,7 +402,7 @@ export async function fetchDidoxDocuments(
 
   // The limit counts the documents read, not the entries listed: an entry whose own date the list does not give (only the day it
   // was last changed) may be of any year. A document is never changed before its own date, so the entries changed inside the
-  // period come first, then those changed after it, the nearest first (a period's own documents are the likelier the closer they
+  // period come first, then those changed after it (within 400 days, then later), the nearest first (a period's own documents are the likelier the closer they
   // were changed); entries changed before the period cannot be of it and come last. The list's own order (newest first) must not
   // decide: with thousands of later entries it would fill the limit before the period's were reached.
   const near = options.to && isDay(options.to) ? addDays(options.to, 400) : today;
@@ -419,7 +419,7 @@ export async function fetchDidoxDocuments(
   let listed = entries.size;
   let ids = [...entries.keys()]
     .map((id, order) => ({ id, order, ...rank(entries.get(id)) }))
-    .sort((a, b) => a.rank - b.rank || (a.rank <= 2 ? a.day.localeCompare(b.day) : 0) || a.order - b.order)
+    .sort((a, b) => a.rank - b.rank || (a.rank <= 3 ? a.day.localeCompare(b.day) : 0) || a.order - b.order)
     .map((entry) => entry.id);
   if (ids.length > options.limit) {
     truncated = true;
