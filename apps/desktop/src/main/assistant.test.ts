@@ -5294,6 +5294,84 @@ describe("bank accounts of the company", () => {
   });
 });
 
+describe("a bank account the accountant names", () => {
+  const propose = (number: string) => [
+    () => [
+      {
+        type: "message" as const,
+        stopReason: "tool_use",
+        content: [
+          {
+            type: "tool_use",
+            id: "a1",
+            name: "propose_change",
+            input: {
+              action: "create",
+              object: "Справочник.БанковскиеСчета",
+              fields: { НомерСчета: number, Наименование: "Asosiy" },
+            },
+          },
+        ],
+      },
+    ],
+    () => [{ type: "message" as const, stopReason: "end_turn", content: [{ type: "text", text: "OK" }] }],
+  ];
+
+  it("is proposed on a card when its number was typed in the chat", async () => {
+    const t = setup(propose("20208000500438330001"));
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({
+      companyId: t.company.id,
+      text: "20208000500438330001 hisobini qo'sh",
+    });
+    // The card waits for the accountant: it is declined here, which ends the run.
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = t.events.find((e) => e.type === "confirm");
+        if (card?.type === "confirm") {
+          clearInterval(timer);
+          t.assistant.decide(card.companyId, card.id, false);
+          resolve();
+        }
+      }, 1);
+    });
+    await sending;
+    expect(t.events.find((e) => e.type === "confirm")).toMatchObject({
+      proposal: { kind: "change", preview: { object: "Справочник.БанковскиеСчета" } },
+    });
+    expect([...t.base.objects.values()].some((o) => o.object === "Справочник.БанковскиеСчета")).toBe(false);
+  });
+
+  it("is written in digits alone when it was typed, and given, with spaces", async () => {
+    const t = setup(propose("2020 8000 5004 3833 0001"));
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({
+      companyId: t.company.id,
+      text: "20208000 5004 3833 0001 hisobini qo'sh",
+    });
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = t.events.find((e) => e.type === "confirm");
+        if (card?.type === "confirm") {
+          clearInterval(timer);
+          t.assistant.decide(card.companyId, card.id, false);
+          resolve();
+        }
+      }, 1);
+    });
+    await sending;
+    expect(JSON.stringify(t.events.find((e) => e.type === "confirm"))).toContain("20208000500438330001");
+  });
+
+  it("is refused when the number was not typed (a statement's or a guess)", async () => {
+    const t = setup(propose("20208000500438330001"));
+    t.store.setAiEnabled(t.company.id, true);
+    await t.assistant.send({ companyId: t.company.id, text: "Qo'sh hisobni" });
+    expect(t.events.some((e) => e.type === "confirm")).toBe(false);
+    expect(JSON.stringify(t.proxy.requests[1]?.messages.at(-1))).toContain("BANK_ACCOUNT_NOT_CREATED");
+  });
+});
+
 describe("checking the books after an import", () => {
   it("reads the balances once and hands the model what is wrong, not the registers", async () => {
     const t = setup([

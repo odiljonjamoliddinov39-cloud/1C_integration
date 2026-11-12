@@ -239,7 +239,7 @@ exchange-difference accounts); the note on each leg says so.
 - **Red 6400/6500** (tax and contribution accounts in debit) are payments with no accrual behind them: the base has the
   bank statement but no payroll or tax accruals. The program does not hide it; `ledger_check` names it.
 - **Bank accounts are never created** (the run made accounts for bank branches and for counterparties): the company has
-  its own few (main, block, dollar, ruble), and the app refuses to create `Справочник.БанковскиеСчета` items.
+  its own few (main, block, dollar, ruble), and the app refuses to create `Справочник.БанковскиеСчета` items, except an own account whose 20-digit number the accountant typed in the chat (never one read from a statement): it is proposed on a card they confirm.
   The bank's own ledger lines in a statement («К получению с Головного Офиса…», «Депозит до востребования», «транзитный
   счет…») are not created as counterparties either; the row says why.
 - **Statements are worked in the order dollar, ruble, then the soum accounts.**

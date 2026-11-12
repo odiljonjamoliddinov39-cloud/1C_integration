@@ -1877,7 +1877,16 @@ export class AssistantService {
       const prepared =
         tool === "propose_currency_rates"
           ? await this.prepareRates(chat, input as CurrencyRatesToolInput, connection, signal)
-          : await this.prepareBatch(chat.companyId, chat.id, tool, input, connection, signal, origins);
+          : await this.prepareBatch(
+              chat.companyId,
+              chat.id,
+              tool,
+              input,
+              connection,
+              signal,
+              origins,
+              typedAccountNumbers(chat),
+            );
       if (!("entries" in prepared)) return prepared;
       const { title, entries } = prepared;
       proposal = { kind: "batch", title, items: entries.map((entry) => entry.item) };
@@ -1909,7 +1918,11 @@ export class AssistantService {
     } else if (tool === "propose_change") {
       const change = this.unpostedIfImport(companyId, input as ChangeInput);
       emit({ type: "tool", name: tool, detail: describe(tool, change) });
-      if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+      if (
+        change.action === "create" &&
+        change.object === BANK_ACCOUNTS &&
+        !namedByAccountant(change, typedAccountNumbers(chat))
+      ) {
         return { ok: false, code: "BANK_ACCOUNT_NOT_CREATED", message: NO_BANK_ACCOUNTS };
       }
       const preview = await this.deps.connector.tool(connection, "previewChange", change);
@@ -3268,6 +3281,7 @@ export class AssistantService {
     connection: ReturnType<LocalStore["connection"]>,
     signal: AbortSignal,
     origins?: DidoxOrigin[],
+    named: ReadonlySet<string> = new Set(),
   ): Promise<{ title: string; entries: BatchEntry[] } | ToolResult> {
     const stopped = { ok: false, code: "STOPPED", message: "Stopped by the user" } as const;
     const entries: BatchEntry[] = [];
@@ -3291,7 +3305,11 @@ export class AssistantService {
           continue;
         }
         const change = this.unpostedIfImport(chatCompanyId, item.change);
-        if (change.action === "create" && change.object === BANK_ACCOUNTS) {
+        if (
+          change.action === "create" &&
+          change.object === BANK_ACCOUNTS &&
+          !namedByAccountant(change, named)
+        ) {
           entries.push({
             item: {
               action: change.action,
@@ -5674,10 +5692,37 @@ function lastUserText(chat: StoredChat): string {
   return "";
 }
 
-/** The bank accounts directory: the assistant never adds to it (the company's own accounts are few and known). */
+/**
+ * The bank accounts directory: the assistant adds to it only an own account whose number the accountant typed in this chat,
+ * and only through a card they confirm. Any other (a counterparty's, a bank branch's, one read from a statement) is refused:
+ * a run once made accounts for bank branches and counterparties.
+ */
 const BANK_ACCOUNTS = "Справочник.БанковскиеСчета";
 const NO_BANK_ACCOUNTS =
-  "The assistant does not create bank accounts: the company's own accounts (the main one, the block one, the dollar and the ruble ones) are already in 1C, and a counterparty's or a bank branch's account is not needed. Use one of the existing accounts, or tell the accountant which own account is missing so that they add it in 1C.";
+  "The assistant does not create bank accounts of its own accord: the company's own accounts (the main one, the block one, the dollar and the ruble ones) are already in 1C, and a counterparty's or a bank branch's account is not needed. Use one of the existing accounts. If an own account is really missing, ask the accountant to type its 20-digit number in the chat (and its owner, bank, currency and ledger account): then it is proposed on a card they confirm.";
+
+/** The 20-digit account numbers the accountant typed in this chat (what they wrote, never an attached statement). */
+function typedAccountNumbers(chat: StoredChat): Set<string> {
+  const numbers = new Set<string>();
+  for (const entry of chat.entries) {
+    if (entry.kind !== "user") continue;
+    for (const match of entry.text.matchAll(/(?<!\d)\d(?:[ \u00a0]?\d){19}(?!\d)/g))
+      numbers.add(match[0].replace(/\D/g, ""));
+  }
+  return numbers;
+}
+
+/**
+ * The new bank account's number is one of those the accountant typed. The number is then written the way 1C and the
+ * statements know it, in digits alone, whatever spacing the model gave it.
+ */
+function namedByAccountant(change: ChangeInput, typed: ReadonlySet<string>): boolean {
+  const fields = change.fields as Record<string, unknown> | undefined;
+  const value = fields?.["НомерСчета"];
+  if (!fields || typeof value !== "string" || !typed.has(value.replace(/\s+/g, ""))) return false;
+  fields["НомерСчета"] = value.replace(/\s+/g, "");
+  return true;
+}
 
 /** What follows once the rates are in 1C: the documents entered before them took no rate. */
 const RATES_NEXT =
