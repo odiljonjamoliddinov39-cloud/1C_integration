@@ -598,6 +598,34 @@ describe("Didox documents read through the API", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("reads the entries changed in the period before the many changed after it, whatever the list's order", async () => {
+    const { server, client } = setup();
+    server.dateFormat = "dmy";
+    // Newest first, as Didox lists: many entries changed in 2021 come before the ones changed in 2020.
+    const entry = (id: string, date: string, updated: string) => ({
+      id,
+      doctype: "002",
+      status: 3,
+      owner: 0 as const,
+      updated,
+      json: invoice(id, date, "1", "302936161"),
+    });
+    server.documents = [
+      ...Array.from({ length: 6 }, (_, i) => entry(`a${i}`, "2021-03-01", "2021-03-02 10:00:00")),
+      entry("b", "2020-04-12", "2020-04-13 10:00:00"),
+      entry("c", "2020-05-12", "2020-05-13 10:00:00"),
+    ];
+    const result = await fetchDidoxDocuments(client, {
+      direction: "incoming",
+      from: "2020-01-01",
+      to: "2020-12-31",
+      limit: 3,
+      today: "2026-11-10",
+    });
+    expect(result.documents.map((d) => d.id).sort()).toEqual(["b", "c"]);
+    expect(result.truncated).toBe(true);
+  });
+
   it("does not fail on a date that is not a real day", async () => {
     const { client } = setup();
     const result = await fetchDidoxDocuments(client, {

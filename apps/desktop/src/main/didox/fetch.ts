@@ -401,16 +401,25 @@ export async function fetchDidoxDocuments(
   }
 
   // The limit counts the documents read, not the entries listed: an entry whose own date the list does not give (only the day it
-  // was last changed) may be of any year, so those changed near the period are read first, after the entries known to be in it.
+  // was last changed) may be of any year. A document is never changed before its own date, so the entries changed inside the
+  // period come first, then those changed after it (within 400 days, then later), the nearest first (a period's own documents are the likelier the closer they
+  // were changed); entries changed before the period cannot be of it and come last. The list's own order (newest first) must not
+  // decide: with thousands of later entries it would fill the limit before the period's were reached.
   const near = options.to && isDay(options.to) ? addDays(options.to, 400) : today;
-  const rank = (item: Record<string, unknown> | undefined): number => {
+  const lower = options.from && isDay(options.from) ? options.from : "";
+  const upper = options.to && isDay(options.to) ? options.to : today;
+  const rank = (item: Record<string, unknown> | undefined): { rank: number; day: string } => {
     const { day, exact } = dayOf(item ?? {});
-    return exact ? 0 : day && day <= near ? 1 : 2;
+    if (exact) return { rank: 0, day: "" };
+    if (!day) return { rank: 4, day: "" };
+    if (day >= lower && day <= upper) return { rank: 1, day };
+    if (day > upper && day <= near) return { rank: 2, day };
+    return { rank: day < lower ? 4 : 3, day };
   };
   let listed = entries.size;
   let ids = [...entries.keys()]
-    .map((id, order) => ({ id, order, rank: rank(entries.get(id)) }))
-    .sort((a, b) => a.rank - b.rank || a.order - b.order)
+    .map((id, order) => ({ id, order, ...rank(entries.get(id)) }))
+    .sort((a, b) => a.rank - b.rank || (a.rank <= 3 ? a.day.localeCompare(b.day) : 0) || a.order - b.order)
     .map((entry) => entry.id);
   if (ids.length > options.limit) {
     truncated = true;
