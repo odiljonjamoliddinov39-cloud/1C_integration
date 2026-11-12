@@ -5342,6 +5342,27 @@ describe("a bank account the accountant names", () => {
     expect([...t.base.objects.values()].some((o) => o.object === "Справочник.БанковскиеСчета")).toBe(false);
   });
 
+  it("is written in digits alone when it was typed, and given, with spaces", async () => {
+    const t = setup(propose("2020 8000 5004 3833 0001"));
+    t.store.setAiEnabled(t.company.id, true);
+    const sending = t.assistant.send({
+      companyId: t.company.id,
+      text: "20208000 5004 3833 0001 hisobini qo'sh",
+    });
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const card = t.events.find((e) => e.type === "confirm");
+        if (card?.type === "confirm") {
+          clearInterval(timer);
+          t.assistant.decide(card.companyId, card.id, false);
+          resolve();
+        }
+      }, 1);
+    });
+    await sending;
+    expect(JSON.stringify(t.events.find((e) => e.type === "confirm"))).toContain("20208000500438330001");
+  });
+
   it("is refused when the number was not typed (a statement's or a guess)", async () => {
     const t = setup(propose("20208000500438330001"));
     t.store.setAiEnabled(t.company.id, true);

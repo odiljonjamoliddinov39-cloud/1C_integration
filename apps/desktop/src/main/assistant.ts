@@ -5706,15 +5706,22 @@ function typedAccountNumbers(chat: StoredChat): Set<string> {
   const numbers = new Set<string>();
   for (const entry of chat.entries) {
     if (entry.kind !== "user") continue;
-    for (const match of entry.text.matchAll(/(?<!\d)\d{20}(?!\d)/g)) numbers.add(match[0]);
+    for (const match of entry.text.matchAll(/(?<!\d)\d(?:[ \u00a0]?\d){19}(?!\d)/g))
+      numbers.add(match[0].replace(/\D/g, ""));
   }
   return numbers;
 }
 
-/** The new bank account's number is one of those the accountant typed. */
+/**
+ * The new bank account's number is one of those the accountant typed. The number is then written the way 1C and the
+ * statements know it, in digits alone, whatever spacing the model gave it.
+ */
 function namedByAccountant(change: ChangeInput, typed: ReadonlySet<string>): boolean {
-  const value = (change.fields as Record<string, unknown> | undefined)?.["НомерСчета"];
-  return typeof value === "string" && typed.has(value.replace(/\s+/g, ""));
+  const fields = change.fields as Record<string, unknown> | undefined;
+  const value = fields?.["НомерСчета"];
+  if (!fields || typeof value !== "string" || !typed.has(value.replace(/\s+/g, ""))) return false;
+  fields["НомерСчета"] = value.replace(/\s+/g, "");
+  return true;
 }
 
 /** What follows once the rates are in 1C: the documents entered before them took no rate. */
