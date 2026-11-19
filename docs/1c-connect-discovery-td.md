@@ -68,7 +68,7 @@ same tier of access the existing folder-picker already has.
 ### Explicitly out of scope for this TD
 
 - Detecting a currently-running 1C process's live session (stretch; skip for v1).
-- Having the app provision its *own* 1C user once it has any working access (the "stop depending
+- Having the app provision its _own_ 1C user once it has any working access (the "stop depending
   on the human's credentials at all" idea) — bigger change, its own TD if we come back to it.
 - macOS/Linux — the COM transport is Windows-only already (TD §5); discovery is too.
 

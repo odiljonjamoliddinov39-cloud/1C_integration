@@ -20,6 +20,7 @@ import {
   type CompanyView,
   ConnectionInput,
   type ConnectionTestResult,
+  type DiscoveredInfobase,
   RegisterAccountInput,
   ReportRunInput,
   type ReportView,
@@ -53,6 +54,8 @@ export interface HandlerDeps {
   installExtension: (connection: ConnectionInput) => Promise<Result<unknown>>;
   /** Registers 1C's COM connector for this app (regsvr32, administrator approval asked by Windows). */
   registerComConnector: () => Promise<Result<{ version: string; dll: string }>>;
+  /** Shortcuts and ibases.v8i already on this computer (docs/1c-connect-discovery-td.md); [] when absent, e.g. in tests. */
+  discoverInfobases?: () => Promise<DiscoveredInfobase[]>;
   /** E-IMZO and the network for the Didox test; the real ones unless a test hands in fakes. */
   didox?: { eimzo?: EImzoClient; fetch?: typeof fetch };
   /** Telegram remote control; absent in tests that do not cover it. */
@@ -77,6 +80,7 @@ export function createHandlers({
   saveFile,
   installExtension,
   registerComConnector,
+  discoverInfobases,
   didox,
   remote,
 }: HandlerDeps) {
@@ -117,6 +121,9 @@ export function createHandlers({
     listCompanies: async (): Promise<CompanyView[]> => store.listCompanies(),
 
     pickFolder: async (): Promise<string | null> => pickFolder(),
+
+    discoverInfobases: async (): Promise<DiscoveredInfobase[]> =>
+      discoverInfobases ? discoverInfobases() : [],
 
     testConnection: async (raw: unknown): Promise<ConnectionTestResult> => {
       const input = ConnectionInput.safeParse(raw);

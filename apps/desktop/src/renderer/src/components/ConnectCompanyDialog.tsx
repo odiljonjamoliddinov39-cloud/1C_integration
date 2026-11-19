@@ -1,8 +1,13 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ConnectionInput, ConnectionTestResult, InfobaseInput } from "../../../shared/ipc";
+import type {
+  ConnectionInput,
+  ConnectionTestResult,
+  DiscoveredInfobase,
+  InfobaseInput,
+} from "../../../shared/ipc";
 import { errorText } from "@/components/ConnectorStatus";
 import { useLimitDialog } from "@/components/Limit";
 import { Button } from "@/components/ui/button";
@@ -40,6 +45,12 @@ export function ConnectCompanyDialog({
       setTest(null); // any change needs a new test
     };
 
+  // Shortcuts and ibases.v8i already proving a working connection daily (docs/1c-connect-discovery-td.md).
+  const discovered = useQuery({
+    queryKey: ["infobase-discovery"],
+    queryFn: () => window.platform.companies.discoverInfobases(),
+  });
+
   const showLimit = useLimitDialog();
   const runTest = useMutation({
     mutationFn: () => window.platform.companies.testConnection(connection()),
@@ -48,6 +59,32 @@ export function ConnectCompanyDialog({
       setOrganizationRef(result.organizations[0]?.ref ?? "");
     },
   });
+  // A discovered candidate is tested with its own values directly, rather than through `connection()`
+  // (which would read stale state -- the setX calls below aren't committed yet at this point).
+  const testCandidate = useMutation({
+    mutationFn: (input: ConnectionInput) => window.platform.companies.testConnection(input),
+    onSuccess: (result) => {
+      setTest(result);
+      setOrganizationRef(result.organizations[0]?.ref ?? "");
+    },
+  });
+
+  function selectCandidate(candidate: DiscoveredInfobase) {
+    setTest(null);
+    setKind(candidate.infobase.kind);
+    if (candidate.infobase.kind === "file") setFile(candidate.infobase.file);
+    else {
+      setServer(candidate.infobase.server);
+      setRef(candidate.infobase.ref);
+    }
+    setUser(candidate.user);
+    setPassword(candidate.password);
+    testCandidate.mutate({
+      infobase: candidate.infobase,
+      user: candidate.user,
+      password: candidate.password,
+    });
+  }
   const install = useMutation({
     mutationFn: () => window.platform.companies.installExtension(connection()),
     onSuccess: (result) => {
@@ -88,7 +125,7 @@ export function ConnectCompanyDialog({
   const saveError =
     save.data && !save.data.ok
       ? errorText(t, save.data.code, save.data.message)
-      : (save.error?.message ?? runTest.error?.message ?? null);
+      : (save.error?.message ?? runTest.error?.message ?? testCandidate.error?.message ?? null);
   const registerError =
     registerCom.data && !registerCom.data.ok
       ? errorText(t, registerCom.data.code, registerCom.data.message)
@@ -105,6 +142,26 @@ export function ConnectCompanyDialog({
       >
         <h2 className="text-lg font-semibold">{t("connect.title")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("connect.hint")}</p>
+        {discovered.data && discovered.data.length > 0 && (
+          <div className="mt-4 space-y-2 rounded-lg border border-border p-3">
+            <div className="text-sm font-medium">{t("connect.foundTitle")}</div>
+            <div className="text-xs text-muted-foreground">{t("connect.foundHint")}</div>
+            <div className="space-y-1">
+              {discovered.data.map((candidate) => (
+                <button
+                  key={`${candidate.source}:${candidate.label}`}
+                  type="button"
+                  disabled={testCandidate.isPending}
+                  className="flex w-full items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
+                  onClick={() => selectCandidate(candidate)}
+                >
+                  <span className="truncate">{candidate.label}</span>
+                  <span className="shrink-0 text-xs text-primary">{t("connect.useThis")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <form onSubmit={submit} className="mt-4 space-y-3">
           <div>
             <Label>{t("connect.kind")}</Label>
@@ -175,9 +232,12 @@ export function ConnectCompanyDialog({
                 onChange={(e) => changed(setPassword)(e.target.value)}
               />
             </div>
+            <p className="text-xs text-muted-foreground">{t("connect.credentialsHint")}</p>
           </div>
 
-          {runTest.isPending && <div className="text-sm text-muted-foreground">{t("connect.testing")}</div>}
+          {(runTest.isPending || testCandidate.isPending) && (
+            <div className="text-sm text-muted-foreground">{t("connect.testing")}</div>
+          )}
           {install.isPending && (
             <div className="text-sm text-muted-foreground">{t("connect.installing")}</div>
           )}
@@ -255,12 +315,14 @@ export function ConnectCompanyDialog({
             <Button
               type="button"
               variant="outline"
-              disabled={runTest.isPending || install.isPending}
+              disabled={runTest.isPending || install.isPending || testCandidate.isPending}
               onClick={() => runTest.mutate()}
             >
               {t("connect.test")}
             </Button>
-            <Button disabled={!test?.status.ok || !organizationRef || save.isPending}>
+            <Button
+              disabled={!test?.status.ok || !organizationRef || save.isPending || testCandidate.isPending}
+            >
               {t("connect.save")}
             </Button>
           </div>

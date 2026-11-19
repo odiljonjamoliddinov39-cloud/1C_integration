@@ -23,6 +23,12 @@ import {
 import { findDesigner, installExtension, runDesigner } from "./extension-installer.js";
 import { WorkerConnector } from "./connector.js";
 import { createHandlers } from "./handlers.js";
+import {
+  discoverInfobases,
+  listShortcutsWindows,
+  readTextFileOrEmpty,
+  resolveShortcutWindows,
+} from "./infobase-discovery.js";
 import { RemoteService } from "./remote/service.js";
 import { RemoteState } from "./remote/state.js";
 import { machineIdHash, newFallbackId } from "./machine-id.js";
@@ -234,6 +240,14 @@ void app.whenReady().then(async () => {
       });
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
+    discoverInfobases: () =>
+      discoverInfobases({
+        platform: process.platform,
+        env: process.env,
+        listShortcuts: listShortcutsWindows,
+        resolveShortcut: resolveShortcutWindows,
+        readTextFile: readTextFileOrEmpty,
+      }),
   });
 
   ipcMain.handle(CHANNELS.remoteState, () => handlers.remoteState());
@@ -263,6 +277,7 @@ void app.whenReady().then(async () => {
   });
   ipcMain.handle(CHANNELS.listCompanies, () => handlers.listCompanies());
   ipcMain.handle(CHANNELS.pickFolder, () => handlers.pickFolder());
+  ipcMain.handle(CHANNELS.discoverInfobases, () => handlers.discoverInfobases());
   ipcMain.handle(CHANNELS.testConnection, (_e, input: unknown) => handlers.testConnection(input));
   ipcMain.handle(CHANNELS.addCompany, (_e, input: unknown) => handlers.addCompany(input));
   ipcMain.handle(CHANNELS.checkStatus, (_e, id: unknown) => handlers.checkStatus(id));

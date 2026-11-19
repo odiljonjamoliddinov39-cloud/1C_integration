@@ -34,3 +34,30 @@ export function buildConnectionString({ infobase, user, password }: ConnectionOp
 export function describeInfobase(infobase: InfobaseLocation): string {
   return "file" in infobase ? infobase.file : `${infobase.server}/${infobase.ref}`;
 }
+
+/**
+ * The inverse of buildConnectionString: reads a connection string back into its parts. Used for
+ * ibases.v8i's Connect= value, which is written in this exact grammar. Unknown keys are ignored;
+ * a string with neither File= nor both Srvr= and Ref= has no infobase to report.
+ */
+export function parseConnectionString(raw: string): {
+  infobase: InfobaseLocation | null;
+  user?: string;
+  password?: string;
+} {
+  const values: Record<string, string> = {};
+  const re = /([A-Za-z]+)=("(?:[^"]|"")*"|[^;]*);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) {
+    const key = m[1]?.toLowerCase();
+    const raw2 = m[2];
+    if (key === undefined || raw2 === undefined) continue;
+    values[key] = raw2.startsWith('"') && raw2.endsWith('"') ? raw2.slice(1, -1).replaceAll('""', '"') : raw2;
+  }
+  const infobase: InfobaseLocation | null = values.file
+    ? { file: values.file }
+    : values.srvr && values.ref
+      ? { server: values.srvr, ref: values.ref }
+      : null;
+  return { infobase, user: values.usr, password: values.pwd };
+}

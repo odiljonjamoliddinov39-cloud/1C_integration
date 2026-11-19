@@ -39,6 +39,18 @@ export const AddCompanyInput = ConnectionInput.extend({
 });
 export type AddCompanyInput = z.infer<typeof AddCompanyInput>;
 
+/**
+ * A connection found already sitting on this computer (docs/1c-connect-discovery-td.md) -- a
+ * Desktop/Start Menu shortcut or 1C's own ibases.v8i -- offered instead of a blank login form.
+ */
+export interface DiscoveredInfobase {
+  infobase: InfobaseInput;
+  user: string;
+  password: string;
+  source: "shortcut" | "ibases";
+  label: string;
+}
+
 export const SignInInput = z.object({
   serverUrl: z.url({ protocol: /^https?$/ }),
   email: z.email(),
@@ -498,6 +510,8 @@ export interface PlatformBridge {
   companies: {
     list(): Promise<CompanyView[]>;
     pickInfobaseFolder(): Promise<string | null>;
+    /** Shortcuts and ibases.v8i already on this computer, so the connect dialog can offer them instead of a blank form. */
+    discoverInfobases(): Promise<DiscoveredInfobase[]>;
     testConnection(input: ConnectionInput): Promise<ConnectionTestResult>;
     add(input: AddCompanyInput): Promise<Result<CompanyView>>;
     checkStatus(id: string): Promise<CompanyView>;
